@@ -83,7 +83,7 @@ test('SC7: real wave runner and coordinator publication excludes typed path and 
     'wave-start': createWaveStartHandler(deps), 'wave-finish': createWaveFinishHandler(deps),
     handoff: async (effect: { id: string }) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: session, warning: null }],
   } };
-  const result = await start({ ...options, runStarted: { ...RUN_STARTED, verb: 'review', argument: 'objective-canary', orchestrator: 'claude', overrides: { sessionDir: session }, config: { diagnostics: true, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] }, claude: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native', effort: 'medium' } }] } } } } });
+  const result = await start({ ...options, runStarted: { ...RUN_STARTED, verb: 'review', argument: 'objective-canary', orchestrator: 'claude', overrides: { sessionDir: session }, config: { diagnostics: true, phases: { 'code-review': { targets: { low: 2 }, rounds: { low: 1 } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] }, claude: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native', effort: 'medium' } }] } } } } });
   assert.equal(result.frame?.await, 'native', JSON.stringify(result.frame));
   const descriptors = result.frame?.data['slots'] as NativeDescriptor[];
   assert.ok(descriptors.some((d) => d.promptPath.includes('canary') && d.attachments.some((v) => v.includes('canary'))));

@@ -1,3 +1,6 @@
+import { bindingHash } from '../../../skills/dispatch/scripts/machines/change-resolution.ts';
+import type { ChangeNotice } from '../../../skills/dispatch/scripts/core/types.ts';
+const notice: ChangeNotice = { id: 'change', phase: 'review', pendingId: 'check', beforeHash: 'before', afterHash: 'after', rawDeltaRef: { version: 1, sha256: 'a'.repeat(64), bytes: 10, path: 'recovery-deltas/a.json' }, paths: ['target.plan.md'], pathCount: 1, relevance: 'relevant', reason: 'Reviewed input changed', affectedEvidence: [] };
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EFFECT_ID_PATTERN } from '../../../skills/dispatch/scripts/core/effect-id.ts';
@@ -138,6 +141,15 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[], bindReview = fal
       if (pending.tag !== nextTag) triples.add(`${pending.tag} --SNAPSHOT--> ${nextTag}`);
       state = resumed.state; open.push(...resumed.effects); ids.push(...resumed.effects.map((effect) => effect.id));
     }
+    const assessment = open.at(-1);
+    if (assessment?.kind === 'assess-recovery') {
+      const beforeHash=bindingHash(assessment.before), afterHash=bindingHash(assessment.after);
+      const from=(state as Tagged).tag;
+      const resumed=machine.step(state,{type:'RECOVERY_ASSESSED',effectId:assessment.id,purpose:assessment.purpose,beforeHash,afterHash,notice:{id:'fixture',phase:assessment.phase,pendingId:assessment.pendingId,beforeHash,afterHash,rawDeltaRef:{version:1,sha256:'b'.repeat(64),bytes:10,path:'recovery-deltas/b.json'},paths:[],pathCount:0,relevance:'expected',reason:'No delta',affectedEvidence:[]}});
+      const to=(resumed.state as Tagged).tag;
+      if(from!==to) triples.add(`${from} --RECOVERY_ASSESSED--> ${to}`);
+      state=resumed.state;open.push(...resumed.effects);ids.push(...resumed.effects.map((effect)=>effect.id));
+    }
   }
   return { triples, ids };
 }
@@ -155,6 +167,16 @@ function parity<S>(machine: Machine<S>, scenarios: readonly (readonly Step[])[],
   assert.deepEqual([...table].filter((triple) => !observed.has(triple)), [], 'table rows no fixture drives');
 }
 
+function materialResolution(parent: ImplementState, action: 'reconcile' | 'escalate'): readonly [ImplementState, Event] {
+  if (!('c' in parent) || !parent.c?.lastFingerprint) throw new Error('observation context');
+  const c = parent.c, fingerprint = { ...c.lastFingerprint, worktree: 'material-change' };
+  const beforeHash = bindingHash(c.lastFingerprint), afterHash = bindingHash(fingerprint);
+  const boundNotice = { ...notice, beforeHash, afterHash, phase: parent.tag, pendingId: 'AUTHORED' };
+  return [{ tag: 'assessing-host-event', c, parent, parked: { type: 'AUTHORED', path: c.planPath }, effectId: 'assessment', fingerprint,
+    resolution: { by: 'orchestrator', noticeId: boundNotice.id, afterHash, action, rationale: 'Resolve changed input', evidenceIds: [] } },
+  { type: 'RECOVERY_ASSESSED', effectId: 'assessment', purpose: 'drift', beforeHash, afterHash, notice: boundNotice }];
+}
+
 // SECTION: Tests
 
 test('review-target transitions table matches step', () => {
@@ -162,6 +184,16 @@ test('review-target transitions table matches step', () => {
   const launch = reviewMachine.step(boot.state, { type: 'REVIEW_PREPARED', effectId: boot.effects[0]!.id, scope: { manifestPath: 'binding.json' }, promptPaths: {} });
   const completed: Event = { type: 'WAVE_STARTED', effectId: launch.effects[0]!.id, waveKey: 'wave', attempt: 0, roster: [], native: [], early: [], claimPath: null, inputPath: '', completed: { type: 'WAVE_DONE', effectId: launch.effects[0]!.id, round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [] } } as Event;
   const checking = reviewMachine.step(launch.state, completed);
+  if (checking.state.tag !== 'target-check') throw new Error('target check');
+  const changed: Event = { type: 'REVIEW_TARGET_CHECKED', effectId: checking.state.effectId, manifestPath: 'changed.json', result: 'changed', notice };
+  const resolving = reviewMachine.step(checking.state, changed);
+  const answer = { by: 'orchestrator', noticeId: notice.id, afterHash: notice.afterHash, action: 'refresh' as const, rationale: 'Refresh changed input', evidenceIds: [] };
+  const rechecking = reviewMachine.step(resolving.state, { type: 'DECISION', kind: 'drift', answer });
+  if (rechecking.state.tag !== 'target-check') throw new Error('target recheck');
+  const emptyParent: ReviewState = { tag: 'prepare', c: { ...checking.state.c, effectId: 'prepare' } };
+  const emptyPrepared = reviewMachine.step(emptyParent, { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: true }, promptPaths: {} });
+  if (emptyPrepared.state.tag !== 'target-check') throw new Error('empty target check');
+  const emptyCheck = emptyPrepared.state;
   parity(reviewMachine, [
     [run('review'), prepared, wave([f(1)]), rule('accept'), applyFailed, applyFailed, applyFailed],
     [run('review'), prepared, wave([f(1)]), rule('accept'), applied, verified(1), applied, verified(1), applied, verified(1)],
@@ -189,7 +221,10 @@ test('review-target transitions table matches step', () => {
     [run('review'), prepared, wave([f(1), f(1, { id: 'R1-F002', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
-  ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }]]);
+  ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }],
+    [checking.state, changed], [resolving.state, { type: 'DECISION', kind: 'drift', answer }],
+    [rechecking.state, { ...changed, effectId: rechecking.state.effectId }],
+    [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
 });
 
 test('ask transitions table matches step', () => {
@@ -222,6 +257,7 @@ test('root transitions table matches step', () => {
     [{ tag: 'revision', run: runInfo, child: settled }, { type: 'SNAPSHOT', effectId: 'revision.snapshot', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } }],
     [{ tag: 'revision', run: runInfo, child: stopped }, { type: 'SNAPSHOT', effectId: 'revision.snapshot', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } }],
     [{ tag: 'revision', run: runInfo, child: refused }, { type: 'DECISION', kind: 'scope-deviation', answer: {} }],
+    ...(['reconcile', 'escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
   ];
   parity(rootMachine, [
     [run('ask', badPins)],
@@ -366,6 +402,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   const boundPlan = { ...implementPlan(), traceability: { Design: binding.path, Revision: binding.revision, Increment: binding.increment, ...binding.contract } };
   const context = { ...active.child.c, levelGatePassed: true, plan: boundPlan, planHash: IMPLEMENT_HASH, lastFingerprint: fingerprint, startFingerprint: fingerprint };
   const activeParent: DesignState = { ...active, child: { tag: 'author', c: context, defects: [] } };
+  for (const action of ['reconcile', 'escalate'] as const) { const [child, event] = materialResolution(activeParent.child, action); extra.push([{ ...active, child }, event]); }
   const planRevision = stepDesign(activeParent, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' });
   extra.push([planRevision.state, { type: 'SNAPSHOT', effectId: planRevision.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
   const stop = stepDesign({ ...active, child: { tag: 'failure', c: context, reason: 'Stop', changedPaths: [] } }, { type: 'DECISION', kind: 'failure', answer: { action: 'stop' } });
@@ -381,12 +418,18 @@ test('every design and design revision transition row has a reducer fixture', ()
   if (planScopeChild.state.tag !== 'scope-adjudication') throw new Error(`plan scope adjudication: ${planScopeChild.state.tag}`);
   extra.push([planParent, expandedPlanEvent]);
   const planScopeParent: DesignState = { ...planParent, child: planScopeChild.state };
+  const planDisagreement = stepRevision(planScopeChild.state, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'disagree', rationale: 'Needs user intent decision' } });
+  if (planDisagreement.state.tag !== 'checking-host-event') throw new Error('scope observation');
+  const planDisagreed = stepRevision(planDisagreement.state, { type: 'SNAPSHOT', effectId: planDisagreement.effects[0]!.id, fingerprint, diff: { paths: [] } }).state;
+  if (planDisagreed.tag !== 'scope-user-decision') throw new Error('scope user decision');
+  const declined = stepDesign({ ...planParent, child: planDisagreed }, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: planScopeChild.state.request.requestId, choice: 'decline', quote: 'Keep approved scope.' } });
+  extra.push([declined.state, { type: 'SNAPSHOT', effectId: declined.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
   extra.push([planScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'approve', rationale: 'The added path is required by the settled outcome.' } }]);
   extra.push([planScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'disagree', rationale: 'The added path is not needed for this outcome.' } }]);
   extra.push([planScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop the revision.' } }]);
   const stoppingPlanRevision = stepDesign(planScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop the revision.' } });
   extra.push([stoppingPlanRevision.state, { type: 'SNAPSHOT', effectId: stoppingPlanRevision.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
-  extra.push([{ ...planParent, child: { tag: 'drift', r: revision.r, parent: revision, parked: { type: 'AUTHORED', path: revision.r.workingPath }, paths: ['caller.ts'], fingerprint } }, { type: 'DECISION', kind: 'drift', answer: { 'caller.ts': 'stop' } }]);
+  extra.push([{ ...planParent, child: { tag: 'drift', r: revision.r, parent: revision, parked: { type: 'AUTHORED', path: revision.r.workingPath }, paths: ['caller.ts'], fingerprint, notice: { id: 'n', phase: 'revision', pendingId: 'AUTHORED', beforeHash: 'before', afterHash: 'after', rawDeltaRef: { version: 1, sha256: 'b'.repeat(64), bytes: 10, path: 'recovery-deltas/b.json' }, paths: ['caller.ts'], pathCount: 1, relevance: 'unknown', reason: 'dependency coverage', affectedEvidence: [] } } }, { type: 'DECISION', kind: 'drift', answer: { 'caller.ts': 'stop' } }]);
 
   const integrated = integration();
   if (integrated.tag !== 'integration' || !('c' in integrated.review)) throw new Error('integration');

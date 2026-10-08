@@ -8,6 +8,15 @@ import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.t
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 
+test('change receipt: drift envelope preserves actor notice hash and evidence bindings through transport', () => {
+  const [event] = awaitEnvelopes('decide', { kind: 'drift', notice: { id: 'n', afterHash: 'after', affectedEvidence: ['SC1'] } });
+  assert.equal(event?.type, 'DECISION');
+  if (event?.type !== 'DECISION') return;
+  assert.deepEqual(event.answer, { by: 'orchestrator', noticeId: 'n', afterHash: 'after', action: '<preserve|refresh|reconcile|escalate>', rationale: '<observed intent and dependency evidence>', evidenceIds: ['SC1'] });
+  assert.equal(validateHostEvent('decide', JSON.parse(JSON.stringify(event))).ok, false);
+  assert.equal(validateHostEvent('decide', { ...event, answer: { ...(event.answer as object), action: 'refresh' } }).ok, true);
+});
+
 test('a projected frame carries the envelope fields in order', () => {
   const frame = projectFrame(awaitingMachine, { tag: 'authoring', counters: {} }, 'runs/001');
   assert.deepEqual(frame, {

@@ -1,7 +1,8 @@
 // Append-only run journal `<run>/events.jsonl` (spec §4.1).
 
 import path from 'node:path';
-import type { EventType, JournalLine, Ports } from './types.ts';
+import type { EventType, JournalLine, Ports, ExecutionConfigUpdated } from './types.ts';
+import { applyExecutionConfig } from '../domain/execution-config.ts';
 
 export const JOURNAL_FILE = 'events.jsonl';
 
@@ -16,7 +17,13 @@ export class LayoutUnsupported extends Error {
 }
 
 export interface JournalRead {
-  lines: JournalLine[];
+  records: Iterable<JournalLine>;
+  count: number;
+  started?: JournalLine;
+  authored?: JournalLine;
+  parsedPlan?: JournalLine;
+  execution?: { config: Record<string, unknown>; revision: number };
+  recent: JournalLine[];
   tornTail: boolean;
   /** Byte length of the valid prefix (excludes a torn tail). */
   goodBytes: number;
@@ -42,34 +49,66 @@ function parseLine(text: string): JournalLine | null {
   }
 }
 
-export function readJournal(ports: Ports, runDir: string): JournalRead {
-  const file = journalPath(runDir);
-  if (!ports.fs.exists(file)) return { lines: [], tornTail: false, goodBytes: 0 };
-  const text = ports.fs.readText(file);
-  const segments = text.split('\n');
-  // NOTE: a trailing newline leaves one empty final segment; anything else there is a torn write.
-  const last = segments.pop() ?? '';
-  let tornTail = last !== '';
-  const lines: JournalLine[] = [];
-  let goodBytes = 0;
-  for (const [index, segment] of segments.entries()) {
-    const line = parseLine(segment);
+function* scan(ports: Ports, file: string, metadata: JournalRead): Generator<JournalLine> {
+  if (!ports.fs.exists(file)) return;
+  let pieces: Buffer[] = [], physical = 0, pending: { bytes: number; text: string; invalidUtf8?: boolean } | null = null;
+  const accept = (row: { bytes: number; text: string; invalidUtf8?: boolean }, final: boolean): JournalLine | null => {
+    physical++;
+    const line = parseLine(row.text);
     if (!line) {
-      if (index === segments.length - 1 && !tornTail) { tornTail = true; break; }
-      throw new EngineFault(`journal ${file}: unparseable line ${index + 1} mid-file`);
+      if (final) { metadata.tornTail = true; return null; }
+      throw new EngineFault(`journal ${file}: unparseable line ${physical} mid-file${row.invalidUtf8 ? ' (invalid UTF-8)' : ''}`);
     }
-    if (line.v !== 1) throw new EngineFault(`journal ${file}: line ${index + 1} has v=${String(line.v)}; only v=1 is supported`);
-    if (line.seq !== index + 1) throw new EngineFault(`journal ${file}: seq gap at line ${index + 1} (found ${line.seq})`);
-    lines.push(line);
-    goodBytes += Buffer.byteLength(segment, 'utf8') + 1;
+    if (line.v !== 1) throw new EngineFault(`journal ${file}: line ${physical} has v=${String(line.v)}; only v=1 is supported`);
+    if (line.seq !== physical) throw new EngineFault(`journal ${file}: seq gap at line ${physical} (found ${line.seq})`);
+    metadata.goodBytes += row.bytes; metadata.count++;
+    return line;
+  };
+  for (const raw of ports.fs.readChunks(file)) {
+    const chunk = Buffer.from(raw);
+    let start = 0, at: number;
+    while ((at = chunk.indexOf(10, start)) >= 0) {
+      pieces.push(chunk.subarray(start, at));
+      const bytes = Buffer.concat(pieces); pieces = [];
+      if (pending) { const line = accept(pending, false); if (line) yield line; }
+      let text: string, invalidUtf8 = false;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { text = ''; invalidUtf8 = true; }
+      pending = { bytes: bytes.length + 1, text, invalidUtf8 };
+      start = at + 1;
+    }
+    if (start < chunk.length) pieces.push(chunk.subarray(start));
   }
-  if (tornTail) ports.proc.stderr(`[dispatch] dropped torn last journal line in ${file}\n`);
-  return { lines, tornTail, goodBytes };
+  const tail = pieces.some((piece) => piece.length > 0);
+  if (pending) { const line = accept(pending, !tail); if (line) yield line; }
+  if (tail) metadata.tornTail = true;
+}
+
+export function readJournal(ports: Ports, runDir: string, defer = false): JournalRead {
+  const file = journalPath(runDir);
+  const metadata: JournalRead = { records: [], count: 0, recent: [], tornTail: false, goodBytes: 0 };
+  let latestConfig: JournalLine | undefined, boundary: JournalLine | undefined;
+  let collected = false;
+  metadata.records = { *[Symbol.iterator]() {
+    if (collected) { yield* scan(ports, file, { records: [], count: 0, recent: [], tornTail: false, goodBytes: 0 }); return; }
+    for (const line of scan(ports, file, metadata)) {
+      if (line.type === 'RUN_STARTED') { metadata.started = line; if (isRecord(line.data['config'])) metadata.execution = { config: line.data['config'], revision: 0 }; }
+      if (line.type === 'AUTHORED') metadata.authored = line;
+      if (line.type === 'ARTIFACT_PARSED' && line.data['kind'] === 'plan') metadata.parsedPlan = line;
+      if (line.type === 'EXECUTION_CONFIG_UPDATED') { latestConfig = line; if (metadata.execution) { const event = { type: line.type, ...line.data } as ExecutionConfigUpdated; metadata.execution = { config: applyExecutionConfig(metadata.execution.config, event.delta), revision: event.revision }; } }
+      if (line.type !== 'LOCK_BROKEN') boundary = line;
+      yield line;
+    }
+    metadata.recent = [...new Map([metadata.started, latestConfig, boundary].filter((line): line is JournalLine => !!line).map((line) => [line.seq, line])).values()].sort((a,b) => a.seq-b.seq);
+    collected = true;
+    if (metadata.tornTail) ports.proc.stderr(`[dispatch] dropped torn last journal line in ${file}\n`);
+  } };
+  if (!defer) for (const _line of metadata.records) { /* Collect summaries without retaining records. */ }
+  return metadata;
 }
 
 /** Appends one line; `nextSeq` skips a re-read when the caller already knows it. */
 export function appendEvent(ports: Ports, runDir: string, type: EventType, data: Readonly<Record<string, unknown>>, nextSeq?: number): JournalLine {
-  const seq = nextSeq ?? readJournal(ports, runDir).lines.length + 1;
+  const seq = nextSeq ?? readJournal(ports, runDir).count + 1;
   const line: JournalLine = { seq, v: 1, at: new Date(ports.clock.now()).toISOString(), type, data };
   ports.fs.appendDurable(journalPath(runDir), `${JSON.stringify(line)}\n`);
   return line;

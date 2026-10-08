@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Event, RecoverySnapshot, RunStartedEvent, TreeFingerprint } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Event, RecoveryManifest, RunStartedEvent, TreeFingerprint } from '../../../skills/dispatch/scripts/core/types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { artifactRelative, type VerifyRecord } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { HASH, metadata, FP, PLAN, RUN, failedRow, approvalState, host, classify, failure, taskFailure } from './fixtures/implement-recovery.ts';
+import { HASH, FP, PLAN, RUN, failedRow, approvalState, host, classify, failure, taskFailure, assessed } from './fixtures/implement-recovery.ts';
 
 test('implement-failure-disposition: task retry re-pends failed tasks within the attempt bound', () => {
   const retry = host(taskFailure(1), { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'wrong mapping' } });
@@ -30,13 +30,13 @@ test('rewrite SC1 manual waiver retains user attribution and RED provenance', ()
   assert.equal(r.state.c.evidence['SC1']?.['redProvenance'], 'waived');
   assert.match(r.state.summary, /0 passed; 1 waived/);
 });
-test('implement-hotfix: inline baseline hotfix immediately reruns stalled check and expands finalFocus', () => {
+test('recovery manifest: inline baseline hotfix immediately reruns stalled check and expands finalFocus', () => {
   const c = approvalState().c;
   const baseline: ImplementState = { tag: 'baseline-decision', c, items: [failedRow] };
   let r = classify(host(baseline, { type: 'DECISION', kind: 'baseline', answer: { action: 'hotfix', rootCause: 'environment' } }));
   assert.equal(r.state.tag, 'hotfix-snapshot');
-  const changed = { ...FP, worktree: 'fixed', recovery: { ...metadata, changed: [{ path: 'env.txt', added: 1, removed: 0, deleted: false, outsideRepo: false }] } };
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['env.txt'] } });
+  const changed = { ...FP, worktree: 'fixed', recovery: FP['recovery'] };
+  r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['env.txt'] } }), ['env.txt']);
   assert.equal(r.state.tag, 'hotfix-verify');
   assert.deepEqual(r.effects[0]?.kind === 'verify' && r.effects[0].commands.map((row) => row['command']), ['check']);
   if ('c' in r.state && r.state.c) assert.ok(r.state.c.finalFocus.includes('env.txt'));
@@ -74,23 +74,23 @@ test('writer hotfix single-shot uses configured first writer and never cascades'
 });
 test('failure inline hotfix nested spec answer preserves pre-await delta and checks its full budget', () => {
   const f = failure();
-  const after = { ...FP, worktree: 'edited', recovery: { ...metadata, changed: [{ path: 'src/a.ts', added: 151, removed: 0, deleted: false, outsideRepo: false }] } };
+  const after = { ...FP, worktree: 'edited', recovery: FP['recovery'] };
   let r = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'hotfix', rootCause: 'bad branch', hotfix: { mode: 'inline', external: [] } } }, after, ['src/a.ts']);
   assert.equal(r.state.tag, 'hotfix-snapshot'); if (r.state.tag === 'hotfix-snapshot') assert.deepEqual(r.state.before, FP);
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: after, diff: { paths: ['src/a.ts'] } });
+  r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: after, diff: { paths: ['src/a.ts'] } }), ['src/a.ts'], ['budget: 151 lines']);
   assert.equal(r.state.tag, 'failure'); assert.deepEqual(r.effects, []);
   assert.equal(host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I verified', criteria: { SC1: { outcome: 'pass', evidence: 'checked' } } } }).state.tag, 'complete');
 });
 for (const violation of ['budget', 'hard-limit'] as const) test(`hotfix ${violation} violation re-asks without stalled check`, () => {
   const c = approvalState().c;
   let r = classify(host({ tag: 'baseline-decision', c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { action: 'hotfix', rootCause: 'fix' } }));
-  const changed = { ...FP, recovery: { ...metadata, changed: [{ path: 'src/a.ts', added: violation === 'budget' ? 151 : 1, removed: 0, deleted: violation === 'hard-limit', outsideRepo: false }] } };
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } });
+  const changed = { ...FP, recovery: FP['recovery'] };
+  r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } }), ['src/a.ts'], [violation]);
   assert.equal(r.state.tag, 'baseline-decision'); assert.deepEqual(r.effects, []);
 });
 test('unchanged failure withdraws hotfix for stage', () => {
   let r = classify(host({ tag: 'baseline-decision', c: approvalState().c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { action: 'hotfix', rootCause: 'fix' } }));
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+  r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } }));
   r = stepImplement(r.state, { type: 'VERIFY_DONE', effectId: r.effects[0]!.id, purpose: 'hotfix', results: [failedRow], fingerprint: FP });
   assert.equal(r.state.tag, 'baseline-decision');
   assert.ok('c' in r.state && r.state.c?.withdrawnHotfix.includes('baseline'));
@@ -105,11 +105,11 @@ test('rewrite SC1 observed RED stays distinct from a manual waived RED requireme
 });
 
 test('artifactRelative: case folding is pure and derived from repoRoot path format', () => {
-  const winFp = { recovery: { ...metadata, repoRoot: 'C:/Repo' } };
+  const winFp = { repoRoot: 'C:/Repo', recovery: FP['recovery'] };
   assert.equal(artifactRelative(winFp, 'c:/repo/plan.md'), 'plan.md');
   assert.equal(artifactRelative(winFp, 'C:/Other/file.ts'), 'C:/Other/file.ts');
 
-  const posixFp = { recovery: { ...metadata, repoRoot: '/Repo' } };
+  const posixFp = { repoRoot: '/Repo', recovery: FP['recovery'] };
   assert.equal(artifactRelative(posixFp, '/Repo/plan.md'), 'plan.md');
   assert.equal(artifactRelative(posixFp, '/repo/plan.md'), '/repo/plan.md');
 });

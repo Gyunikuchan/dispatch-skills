@@ -74,6 +74,13 @@ function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
   return out;
 }
 
+/** Observation refresh preserves attempts, failure budgets, and live writer identities. */
+export function invalidateTaskEvidence(tasks: Tasks, plan: ParsedPlan, affected: ReadonlySet<string>): Tasks {
+  const invalid = descendants(plan, new Set(plan.tasks.filter((task) => task.criteria.some((id) => affected.has(id))).map((task) => task.id)));
+  const pending = rependTasks(tasks, plan);
+  return Object.fromEntries(Object.entries(tasks).map(([id, old]) => [id, !invalid.has(id) || old.status === 'running' || old.status === 'submitted' ? old : pending[id]! ]));
+}
+
 /** Rebinds records to a revised plan: unchanged tasks keep their records; changed, new, and dependent tasks re-pend. */
 export function reconcileTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
   const changed = new Set(plan.tasks.filter((task) => tasks[task.id]?.signature !== taskSignature(plan, task)).map((task) => task.id));

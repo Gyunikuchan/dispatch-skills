@@ -1,6 +1,7 @@
 // `verify`: run commands sequentially, preserve complete logs, and return stable failure and input identities.
 
 import crypto from 'node:crypto';
+import { runOwnedPaths } from './snapshot.ts';
 import path from 'node:path';
 import { runPaths } from '../lib/session.ts';
 import type { Effect, Handler } from '../core/types.ts';
@@ -155,7 +156,7 @@ export function createVerify(base: VerifyDeps): Handler<VerifyEffect> {
       results.push({ command, exit, logPath, failureId, failedTests, testCounts: testCounts(combined), loadError, diagnostic, inputFingerprint: currentInput });
     }
     let fingerprint;
-    try { fingerprint = await deps.git.fingerprint(deps.cwd); } catch (error) {
+    try { fingerprint = await deps.git.fingerprint(deps.cwd, runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), ctx.runDir, ctx.ownedArtifacts)); } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `fingerprint: ${error instanceof Error ? error.message : String(error)}` }];
     }
     return [{ type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, results, fingerprint }];

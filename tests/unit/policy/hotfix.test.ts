@@ -11,8 +11,6 @@ const input = (overrides: Partial<HotfixInput> = {}): HotfixInput => ({
   before: fingerprint,
   after: fingerprint,
   taskStartFiles: ['src/a.ts', 'src/old.ts'],
-  ignoredBefore: [],
-  ignoredAfter: [],
   preRed: false,
   productionPaths: ['src/a.ts'],
   failureIdentityBefore: 'tests/a.test.ts#cap',
@@ -34,7 +32,7 @@ test('hotfix: budget is 10 files and 150 lines, excluding reasoned external path
   assert.ok(judgeHotfix(input({ external: [{ path: 'vendor/x.js', reason: ' ' }] })).violations.some((item) => item.includes('needs a reason')));
 });
 
-test('hotfix: hard limits — outside repo, .git/, secrets, task-start deletion, git fingerprints, ignored manifest', () => {
+test('observation boundary: hard limits — outside repo, .git/, secrets, task-start deletion, git fingerprints', () => {
   const violations = judgeHotfix(input({
     changed: [
       { path: '../x.ts', added: 1, removed: 0, deleted: false, outsideRepo: true },
@@ -44,11 +42,9 @@ test('hotfix: hard limits — outside repo, .git/, secrets, task-start deletion,
       { path: 'src/old.ts', added: 0, removed: 10, deleted: true, outsideRepo: false },
     ],
     after: { head: 'h2', index: 'i2', stash: 's2', gitDir: 'g2' },
-    ignoredBefore: [{ path: 'build/cache', hash: 'a' }, { path: 'secrets/token.txt', hash: 'b' }],
-    ignoredAfter: [{ path: 'secrets/token.txt', hash: 'c' }],
   })).violations;
   for (const expected of ['outside the repository', '.git/ path', 'config/.env.local: secrets path', 'home/.ssh/config: secrets path', 'deleted a file that existed at task start',
-    'HEAD moved', 'index changed', 'stash list changed', '.git/ config', 'build/cache: deleted an ignored path', 'secrets/token.txt: secrets path (ignored)']) {
+    'HEAD moved', 'index changed', 'stash list changed', '.git/ config']) {
     assert.ok(violations.some((item) => item.includes(expected)), expected);
   }
   assert.ok(isSecretPath('keys\\deploy.pem'));

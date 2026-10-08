@@ -6,6 +6,35 @@ import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/
 import { createCheckout, worktreePath } from '../../../skills/dispatch/scripts/effects/checkout.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
+test('delivery uses Git filemode default when the config key is absent', async () => {
+  const cwd = tempDir(), runDir = tempDir(), ports = fakePorts(); let queried = false;
+  ports.git.run = async (argv) => {
+    if (argv[0] === 'rev-parse') return 'candidate';
+    if (argv[0] === 'config') { queried = true; if (!argv.includes('--default=true')) throw Object.assign(new Error('unset'), { exitCode: 1 }); return 'true'; }
+    return '';
+  };
+  const result = await createCheckout({ cwd, links: { create: () => {}, remove: () => {} } })({ kind: 'checkout', id: 'deliver', op: 'deliver', input: { base: 'base', revision: 'candidate' } }, ports, { runDir, attempt: 1 });
+  assert.equal(result[0]?.type, 'CHECKOUT_DONE'); assert.equal(queried, true);
+});
+
+test('change receipt: delivery refuses a newer ignored destination before any caller mutation', async () => {
+  const cwd = tempDir(), runDir = tempDir(), root = worktreePath(runDir, 'integration'), ports = fakePorts();
+  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(cwd, '.gitignore'), 'ignored.txt\n');
+  fs.writeFileSync(path.join(cwd, 'ignored.txt'), 'newer caller bytes');
+  let writes = 0; ports.fs.writeBase64Atomic = () => { writes++; };
+  ports.git.run = async (argv) => {
+    if (argv[0] === 'rev-parse') return 'candidate';
+    if (argv[0] === 'diff') return 'ignored.txt\0';
+    if (argv[0] === 'hash-object') return 'c'.repeat(40);
+    if (argv[0] === 'ls-tree') return `100644 blob ${argv[2] === 'base' ? 'a'.repeat(40) : 'b'.repeat(40)}\tignored.txt\0`;
+    return '';
+  };
+  const result = (await createCheckout({ cwd, links: { create: () => {}, remove: () => {} } })({ kind: 'checkout', id: 'checkout.deliver.1', op: 'deliver', input: { base: 'base', revision: 'candidate' } }, ports, { runDir, attempt: 1 }))[0]!;
+  assert.equal(result.type, 'CHECKOUT_DONE');
+  if (result.type === 'CHECKOUT_DONE') assert.deepEqual(result.result['conflicts'], ['ignored.txt']);
+  assert.equal(writes, 0); assert.equal(fs.readFileSync(path.join(cwd, 'ignored.txt'), 'utf8'), 'newer caller bytes');
+});
+
 test('level-journal: scope replacement checkout resets an incomplete transfer and replays it', async () => {
   const cwd = tempDir(), runDir = path.join(cwd, 'run');
   const originalName = 'task-t1', name = 'task-t1-scope-2';

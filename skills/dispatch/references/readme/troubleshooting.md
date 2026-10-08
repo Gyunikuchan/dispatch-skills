@@ -2,6 +2,10 @@
 
 Start with the diagnostic or decision Dispatch provides. Keep the session folder until the work is complete; it contains the artifacts and logs needed to understand or resume a run.
 
+Dispatch observes tracked files and non-ignored untracked files. Tracked files remain observed even when an ignore pattern matches. Ignored dependency and secret changes are outside automatic drift detection; required checks still run. Review [change handling](../change-handling.md) for notice resolution and evidence refresh.
+
+Recovery manifests and content blobs are immutable files linked by the journal. Preserve the entire run when moving or recovering it. Missing/corrupt references are errors. Protocol 7 requires a new run for older live journals; their files remain preserved. A delivery/restore collision requires rebuilding or rebinding the candidate before retry, followed by live destination preflight.
+
 ## Run a configuration check
 
 From the Dispatch skill folder:

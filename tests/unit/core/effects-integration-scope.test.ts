@@ -16,9 +16,9 @@ test('integration rejects a non-ancestor, missing ownership and empty intersecti
     assert.deepEqual(ports.fs.listFiles(runDir), []);
   }
 });
-test('first integration prompt explicitly bounds baseline and owned diff while excluding caller paths', async () => {
+test('change receipt: integration prompt explicitly bounds baseline and owned diff while excluding caller paths', async () => {
   const ports = fakePorts(), runDir = tempDir();
-  const git = { ancestor: async () => true, baselineDiff: async () => ['caller.ts', 'src/a.ts'] } as unknown as Git;
+  const git = { toplevel: async () => runDir, ancestor: async () => true, baselineDiff: async () => ['caller.ts', 'src/a.ts'] } as unknown as Git;
   const result = await createPrepareReview({ cwd: runDir, skillRoot: path.resolve('skills/dispatch'), git })(effect(), ports, { runDir, attempt: 1 });
   assert.equal(result[0]?.type, 'REVIEW_PREPARED');
   if (result[0]?.type !== 'REVIEW_PREPARED') throw new Error('prepared');
@@ -44,7 +44,7 @@ test('review fix integration hash validation accepts only complete Git object id
 
 test('review fix brace-prefixed focus remains ordinary review context', async () => {
   const ports = fakePorts(), runDir = tempDir();
-  const git = { diffNames: async () => ['src/a.ts'] } as unknown as Git;
+  const git = { toplevel: async () => runDir, diffNames: async () => ['src/a.ts'] } as unknown as Git;
   const request = { ...effect(), review: { ...effect().review, context: '{general} review' }, scope: { scope: 'full' } };
   const result = await createPrepareReview({ cwd: runDir, skillRoot: path.resolve('skills/dispatch'), git })(request, ports, { runDir, attempt: 1 });
   assert.equal(result[0]?.type, 'REVIEW_PREPARED');

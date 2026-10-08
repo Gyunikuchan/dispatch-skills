@@ -103,7 +103,7 @@ test('implement-baseline-known-red: records failure identities, requires the ful
   assert.equal(accepted.state.tag, 'approval');
 
   const sideEffect = toDecision(state, effect.id, 0, null, { ...FP, worktree: 'changed' });
-  assert.equal(sideEffect.tag, 'failure-snapshot');
+  assert.equal(sideEffect.tag, 'assessing-host-event');
 });
 
 test('prewrite-level: approval-by-quote resolves classification before checkout', () => {

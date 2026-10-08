@@ -4,13 +4,16 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, WriteEnvelope, PlanAmendment, Ports, ScopeCriterionDefinition, ScopeDeviation } from '../core/types.ts';
 import type { Git } from './git.ts';
+import { loadRecovery } from './recovery-manifest.ts';
+import { runOwnedPaths } from './snapshot.ts';
 
 type CheckEffect = Extract<Effect, { kind: 'check-envelope' }>;
 export type CheckEnvelopeDeps = { cwd: string; git: Git };
 
 /** Dirty-path contents and index entries distinguish caller dirt from subsequent writer edits. */
-export async function pathHashes(deps: CheckEnvelopeDeps, ports: Ports): Promise<Record<string, string>> {
-  const files = await deps.git.diffNames(deps.cwd, '');
+export async function pathHashes(deps: CheckEnvelopeDeps, ports: Ports, runDir?: string, artifacts: readonly string[] = []): Promise<Record<string, string>> {
+  const owned = new Set(runDir ? runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), runDir, artifacts) : []);
+  const files = (await deps.git.diffNames(deps.cwd, '')).filter((file) => !owned.has(file));
   const entries = new Map<string, string[]>();
   for (const entry of (await deps.git.indexEntries(deps.cwd)).split(/\r?\n/)) {
     const file = entry.slice(entry.indexOf('\t') + 1);
@@ -272,7 +275,7 @@ function cleanRepoPath(value: string): string | null {
 }
 
 export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffect> {
-  return async (effect, ports) => {
+  return async (effect, ports, ctx) => {
     const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
     const defects: string[] = [];
     let envelope: ParsedEnvelope | null = null;
@@ -293,7 +296,10 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
       }
     }
     let paths: string[] = [];
-    try { paths = changedPaths(effect.since, await pathHashes(deps, ports)); } catch (error) {
+    try {
+      const prior = effect.since?.['recovery'] ? loadRecovery(ports, ctx.runDir, effect.since['recovery']) : null;
+      paths = changedPaths(prior ? { pathHashes: prior.pathHashes } : effect.since, await pathHashes(deps, ports, ctx.runDir, ctx.ownedArtifacts));
+    } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `diff: ${error instanceof Error ? error.message : String(error)}` }];
     }
     const allowed = new Set(effect.permitted.map((file) => cleanRepoPath(file)).filter((file): file is string => file !== null));

@@ -3,6 +3,7 @@
 
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { stableValue } from '../domain/stable-value.ts';
 import type { CheckoutOp, Effect, Handler, Ports } from '../core/types.ts';
 
 type CheckoutEffect = Extract<Effect, { kind: 'checkout' }>;
@@ -20,10 +21,11 @@ export const BASELINE_TRAILER = 'Dispatch-Baseline:';
 export const CANDIDATE_TRAILER = 'Dispatch-Candidate:';
 
 const text = (value: unknown): string => typeof value === 'string' ? value : '';
+const bindingHash = (value: unknown): string => crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 const split = (output: string): string[] => output.split('\0').filter(Boolean);
 const safe = (file: string): boolean => !!file && !file.includes('\\') && !file.startsWith('/') && !/^[A-Za-z]:/.test(file)
-  && !file.split('/').some((part) => !part || part === '.' || part === '..') && !/^\.git(?:\/|$)/i.test(file);
+  && !/[\x00-\x1f]/.test(file) && !file.split('/').some((part) => !part || part === '.' || part === '..' || part.includes(':') || part.endsWith('.') || part.endsWith(' ')) && !/^\.git(?:\/|$)/i.test(file);
 
 export function worktreePath(runDir: string, name: string): string {
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(name)) throw new Error(`Invalid worktree name: ${name}`);
@@ -86,8 +88,11 @@ async function discard(ports: Ports, root: string, revision: string): Promise<vo
 
 // SECTION: Ops
 
-async function init(deps: CheckoutDeps, ports: Ports, runDir: string): Promise<Row> {
+async function init(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row): Promise<Row> {
   const root = worktreePath(runDir, 'integration');
+  if (input['rebase'] === true && !ports.fs.inspectPath(worktreePath(runDir, text(input['archivedName']))) && ports.fs.inspectPath(root)) {
+    await ports.git.run(['worktree', 'move', root, worktreePath(runDir, text(input['archivedName']))], deps.cwd);
+  }
   const runRelative = path.relative(deps.cwd, runDir).split(path.sep).join('/');
   const ignored = split(await ports.git.run(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], deps.cwd));
   const linked = ignored.filter((entry) => /^[^/]+\/$/.test(entry) && !runRelative.startsWith(entry)).map((entry) => entry.slice(0, -1));
@@ -190,6 +195,8 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
   if (await head(ports, root) !== revision) throw new Error(`Integration checkout is not at ${revision}.`);
   await discard(ports, root, revision);
   const files = split(await ports.git.run(['diff', '--name-only', '-z', base, revision, '--'], root)).sort();
+  const callerRoot = ports.fs.inspectPath(deps.cwd)?.realPath ?? path.resolve(deps.cwd);
+  const fileModes = (await ports.git.run(['config', '--bool', '--default=true', 'core.filemode'], deps.cwd)).trim() === 'true';
   const plan: { file: string; action: 'write' | 'delete' | 'already' }[] = [], conflicts: string[] = [];
   for (const file of files) {
     if (!safe(file)) throw new Error(`Unsafe delivery path: ${file}`);
@@ -197,15 +204,16 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
     // NOTE: a linked or replaced ancestor would redirect the write outside the caller checkout.
     const parts = file.split('/');
     const ancestors = parts.slice(0, -1).map((_, index) => ports.fs.inspectPath(path.join(deps.cwd, ...parts.slice(0, index + 1))));
-    if ((info && info.kind !== 'file') || ancestors.some((item) => item && item.kind !== 'directory')) { conflicts.push(file); continue; }
+    if ((info && info.kind !== 'file') || ancestors.some((item) => item && (item.kind !== 'directory' || !item.realPath || path.relative(callerRoot, item.realPath).startsWith('..') || path.isAbsolute(path.relative(callerRoot, item.realPath))))) { conflicts.push(file); continue; }
     const caller = info ? (await ports.git.run(['hash-object', '--', file], deps.cwd)).trim() : null;
     const before = await entry(ports, root, base, file), after = await entry(ports, root, revision, file);
-    const modeOnly = !!before && !!after && before.blob === after.blob && before.mode !== after.mode;
-    if (caller === (after?.blob ?? null) && !modeOnly) plan.push({ file, action: 'already' });
-    else if (caller === (before?.blob ?? null)) plan.push({ file, action: after === null ? 'delete' : 'write' });
+    const mode = info && fileModes ? info.mode & 0o111 ? '100755' : '100644' : null;
+    const matches = (entry: { mode: string; blob: string } | null) => caller === (entry?.blob ?? null) && (!fileModes || (entry?.mode ?? null) === mode);
+    if (matches(after)) plan.push({ file, action: 'already' });
+    else if (matches(before)) plan.push({ file, action: after === null ? 'delete' : 'write' });
     else conflicts.push(file);
   }
-  if (conflicts.length) return { conflicts, transferred: [], already: [] };
+  if (conflicts.length) return { conflicts, transferred: [], already: [], collision: { kind: 'newer-content', paths: conflicts, binding: bindingHash({ base, revision, conflicts }) } };
   for (const item of plan) {
     const target = path.join(deps.cwd, item.file);
     if (item.action === 'write') copy(ports, path.join(root, item.file), target);
@@ -301,7 +309,7 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
     const done = (op: CheckoutOp, result: Row) => [{ type: 'CHECKOUT_DONE' as const, effectId: effect.id, op, result }];
     try {
       switch (effect.op) {
-        case 'init': return done('init', await init(deps, ports, ctx.runDir));
+        case 'init': return done('init', await init(deps, ports, ctx.runDir, input));
         case 'task': {
           const root = worktreePath(ctx.runDir, text(input['name']));
           await worktree(deps, ports, root, text(input['revision']), input['reset'] === true, input['keep'] === true);

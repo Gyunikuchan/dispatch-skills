@@ -2,12 +2,21 @@
 
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, RecoverySnapshot, Ports, FileEntry } from '../core/types.ts';
+import type { Effect, Handler, RecoveryManifest, Ports, FileEntry } from '../core/types.ts';
 import type { Git, TreeFingerprint } from './git.ts';
+import { artifactPath, loadRecovery, publishRecovery } from './recovery-manifest.ts';
+import { stableValue } from '../domain/stable-value.ts';
 
 type SnapshotEffect = Extract<Effect, { kind: 'snapshot' }>;
 
-export type SnapshotDeps = { cwd: string; git: Git };
+export type SnapshotDeps = { cwd: string; git: Git; ownedArtifacts?: readonly string[]; pathHashes?: (cwd: string, ports: Ports, runDir: string) => Promise<Record<string, string>> };
+export function runOwnedPaths(ports: Ports, root: string, runDir: string, artifacts: readonly string[] = []): string[] {
+  const owned = artifacts.map((file) => path.relative(root, file).replaceAll('\\', '/')).filter((file) => file && !file.startsWith('../') && !path.isAbsolute(file));
+  const relative = path.relative(root, runDir).replaceAll('\\', '/');
+  if (relative.startsWith('../') || path.isAbsolute(relative)) return owned;
+  return [...owned, ...ports.fs.listFiles(runDir).filter((file) => /^(?:diagnostics\/|events\/|recovery-(?:manifests|contents|deltas)\/|wt\/|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/)/.test(file)
+    || ['events.jsonl', 'lock', 'progress.json', 'owner.json'].includes(file)).map((file) => relative ? `${relative}/${file}` : file)];
+}
 
 const hash = (base64: string) => crypto.createHash('sha256').update(Buffer.from(base64, 'base64')).digest('hex');
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -23,15 +32,6 @@ function safeFile(cwd: string, file: string, ports: Ports): boolean {
     if (info.realPath && (path.relative(root, info.realPath).startsWith('..') || path.isAbsolute(path.relative(root, info.realPath)))) return false;
   }
   return ports.fs.inspectPath(current)?.kind === 'file';
-}
-function linkedAncestor(cwd: string, file: string, ports: Ports): { path: string; hash: string } | null {
-  if (!safe(file)) return null;
-  const parts = file.split('/');
-  for (let i = 1; i < parts.length; i++) {
-    const rel = parts.slice(0, i).join('/'), info = ports.fs.inspectPath(path.join(cwd, rel));
-    if (info?.kind === 'symlink') return { path: rel, hash: hash(info.linkTarget ?? '') };
-  }
-  return null;
 }
 export function lineChanges(oldBase64: string | null, newBase64: string | null): { added: number; removed: number } {
   const decode = (value: string | null) => value === null ? [] : Buffer.from(value, 'base64').toString('utf8').split('\n').filter((line, index, all) => index < all.length - 1 || line !== '');
@@ -69,23 +69,36 @@ export function verifiedManifests(cwd: string, files: readonly string[], ports: 
   return result;
 }
 
-export function snapshotContent(snapshot: Pick<RecoverySnapshot, 'contents' | 'contentStore'>, file: string, ports: Ports, runDir: string): string | null {
+export function snapshotContent(snapshot: Pick<RecoveryManifest, 'contents' | 'contentStore'>, file: string, ports: Ports, runDir: string): string | null {
   const value = snapshot.contents[file] ?? null;
-  if (value === null || snapshot.contentStore === undefined) return value;
+  if (value === null) return null;
   if (snapshot.contentStore !== 'recovery-contents' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid recovery content reference.');
-  const stored = path.join(runDir, snapshot.contentStore, value);
+  const stored = artifactPath(ports, runDir, `${snapshot.contentStore}/${value}`);
   if (ports.fs.inspectPath(stored)?.kind !== 'file') throw new Error('Missing recovery content.');
   const bytes = ports.fs.readBase64(stored);
   if (hash(bytes) !== value) throw new Error('Corrupt recovery content.');
   return bytes;
 }
 
-async function capture(deps: SnapshotDeps, ports: Ports, since: unknown, fingerprint: TreeFingerprint, runDir: string): Promise<RecoverySnapshot | null> {
+async function capture(deps: SnapshotDeps, ports: Ports, since: unknown, fingerprint: TreeFingerprint, runDir: string): Promise<RecoveryManifest | null> {
   if (!deps.git.recoveryFiles) return null;
   const metadata = await deps.git.recoveryFiles(deps.cwd);
-  const previous = record(since) && record(since['recovery']) ? since['recovery'] : null;
+  const owned = new Set(runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), runDir, deps.ownedArtifacts));
+  metadata.files = metadata.files.filter((file) => !owned.has(file));
+  metadata.dirty = metadata.dirty.filter((file) => !owned.has(file));
+  if (metadata.tracked) metadata.tracked = metadata.tracked.filter((file) => !owned.has(file));
+  const previous = record(since) && since['recovery'] ? loadRecovery(ports, runDir, since['recovery']) : null;
   const before = previous && record(previous['contents']) ? previous['contents'] : {};
-  const files = [...new Set([...metadata.files, ...Object.keys(before)])].sort();
+  const omitted: string[] = [];
+  const deleted: string[] = [];
+  const observed = new Set(metadata.files), removed = Object.keys(before).filter((file) => !observed.has(file));
+  const ignored = deps.git.ignoredPaths ? new Set(await deps.git.ignoredPaths(deps.cwd, removed)) : null;
+  for (const file of removed) {
+    if ((ignored ? ignored.has(file) : deps.git.isIgnored && await deps.git.isIgnored(deps.cwd, file)) && ports.fs.inspectPath(path.resolve(deps.cwd, file))) omitted.push(file);
+    else deleted.push(file);
+  }
+  const files = [...new Set([...metadata.files, ...deleted])].sort();
+  const fileSet = new Set(files);
   const entries: Record<string, FileEntry | null> = {};
   const contents: Record<string, string | null> = {};
   const store = path.join(runDir, 'recovery-contents');
@@ -101,22 +114,21 @@ async function capture(deps: SnapshotDeps, ports: Ports, since: unknown, fingerp
     contents[file] = info?.kind === 'file' ? ports.fs.hashFile(absolute) : null;
     const digest = contents[file];
     if (digest !== null) {
-      const stored = path.join(store, digest);
-      if (!ports.fs.exists(stored)) ports.fs.copyFileAtomic(absolute, stored);
+      const stored = artifactPath(ports, runDir, `recovery-contents/${digest}`);
+      if (!ports.fs.exists(stored)) ports.fs.copyFileExclusive(absolute, stored);
       if (ports.fs.inspectPath(stored)?.kind !== 'file' || ports.fs.hashFile(stored) !== digest) throw new Error(`Recovery content changed during capture: ${file}`);
     }
   }
   const oldEntries = previous && record(previous['entries']) ? previous['entries'] : {};
-  const oldDigest = (file: string) => typeof before[file] !== 'string' ? null : previous?.['contentStore'] ? before[file] : hash(before[file] as string);
-  const changed = previous ? files.filter((file) => oldDigest(file) !== contents[file] || JSON.stringify(oldEntries[file] ?? null) !== JSON.stringify(entries[file])).map((file) => ({ path: file, ...lineChanges(snapshotContent({ contents: before as Record<string, string | null>, ...(previous['contentStore'] ? { contentStore: previous['contentStore'] as 'recovery-contents' } : {}) }, file, ports, runDir), snapshotContent({ contents, contentStore: 'recovery-contents' }, file, ports, runDir)), deleted: entries[file] === null, outsideRepo: false })) : [];
+  const changed = previous ? files.filter((file) => (before[file] ?? null) !== contents[file] || stableValue(oldEntries[file] ?? null) !== stableValue(entries[file])).map((file) => ({ path: file, ...lineChanges(snapshotContent(previous, file, ports, runDir), snapshotContent({ contents, contentStore: 'recovery-contents' }, file, ports, runDir)), deleted: entries[file] === null, outsideRepo: false })) : [];
   const gitPaths = ['config', 'hooks', 'info', ...['hooks', 'info'].flatMap((dir) => ports.fs.listFiles(path.join(metadata.gitDir, dir)).map((f) => `${dir}/${f}`))].sort();
   const gitDir = crypto.createHash('sha256').update(JSON.stringify(gitPaths.map((f) => { const absolute = path.join(metadata.gitDir, f), info = ports.fs.inspectPath(absolute); return [f, info?.mode ?? null, info?.kind === 'symlink' ? info.linkTarget : info?.kind === 'file' ? ports.fs.hashFile(absolute) : null]; }))).digest('hex');
   return {
-    repoRoot: await deps.git.toplevel(deps.cwd), contents, contentStore: 'recovery-contents', entries, changed, taskStartFiles: previous && Array.isArray(previous['taskStartFiles']) ? previous['taskStartFiles'] as string[] : metadata.files,
-    callerDirty: previous && Array.isArray(previous['callerDirty']) ? previous['callerDirty'] as string[] : metadata.dirty,
-    // NOTE: transient ignored files (daemon locks) can vanish between Git listing and hashing; skip them.
-    // Windows Git lists files through linked directories (worktree node_modules junctions); record the link once instead.
-    ignored: [...new Map(metadata.ignored.flatMap((file) => { const link = linkedAncestor(deps.cwd, file, ports); if (link) return [[link.path, link] as const]; const absolute = path.resolve(deps.cwd, file), info = ports.fs.inspectPath(absolute); if (!info) return []; if (info.kind !== 'symlink' && !safeFile(deps.cwd, file, ports)) throw new Error(`Ignored snapshot path escape: ${file}`); return [[file, { path: file, hash: info.kind === 'symlink' ? hash(info.linkTarget ?? '') : ports.fs.hashFile(absolute) }] as const]; })).values()],
+    ...(deps.pathHashes ? { pathHashes: await deps.pathHashes(deps.cwd, ports, runDir) } : {}),
+    repoRoot: await deps.git.toplevel(deps.cwd), contents, contentStore: 'recovery-contents', entries, changed, taskStartFiles: previous && Array.isArray(previous['taskStartFiles']) ? (previous['taskStartFiles'] as string[]).filter((file) => fileSet.has(file)) : metadata.files,
+    callerDirty: previous && Array.isArray(previous['callerDirty']) ? (previous['callerDirty'] as string[]).filter((file) => fileSet.has(file)) : metadata.dirty,
+
+    membership: omitted, tracked: metadata.tracked ?? metadata.files, ignoreRules: metadata.ignoreRules ?? '',
     git: { head: fingerprint.head ?? '', index: fingerprint.index, stash: metadata.stash, gitDir },
     verifiedManifestDirs: verifiedManifests(deps.cwd, metadata.files, ports),
     hashManifestDirs: metadata.files.filter((file) => path.posix.basename(file) === 'skill-hashes.json').map((file) => path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file)),
@@ -133,13 +145,14 @@ function asFingerprint(value: unknown): TreeFingerprint | null {
 export function createSnapshot(base: SnapshotDeps): Handler<SnapshotEffect> {
   return async (effect, ports, ctx) => {
     // A task worktree effect names its checkout; the default remains the caller checkout.
-    const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
+    const deps = { ...base, ...(effect.cwd ? { cwd: effect.cwd } : {}), ownedArtifacts: ctx.ownedArtifacts ?? [] };
     try {
-      const fingerprint = await deps.git.fingerprint(deps.cwd);
+      const fingerprint = await deps.git.fingerprint(deps.cwd, runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), ctx.runDir, ctx.ownedArtifacts));
       const since = asFingerprint(effect.since);
       const paths = since === null ? [] : await deps.git.changedSince(deps.cwd, since);
       const recovery = await capture(deps, ports, effect.since, fingerprint, ctx.runDir);
-      return [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint: { ...fingerprint, ...(recovery ? { recovery } : {}) }, diff: { paths } }];
+      const observation = recovery ? crypto.createHash('sha256').update(stableValue({ contents: recovery.contents, entries: recovery.entries, git: recovery.git, ignoreRules: recovery.ignoreRules })).digest('hex') : undefined;
+      return [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint: { ...fingerprint, ...(recovery ? { recovery: publishRecovery(ports, ctx.runDir, recovery), repoRoot: recovery.repoRoot, observation } : {}) }, diff: { paths } }];
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];
     }

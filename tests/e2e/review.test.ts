@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { CLEAN, fixture, until } from '../helpers/e2e.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../skills/dispatch/scripts/core/types.ts';
 
-test('review-target code drift at native boundary fails and retains the capture', async () => {
+test('review-target code drift at native boundary parks a bound notice and retains the capture', async () => {
   const f = fixture();
   try {
     fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-stub', effort: 'low' } }] } } }));
@@ -23,15 +23,15 @@ test('review-target code drift at native boundary fails and retains the capture'
     for (const slot of event.slots) fs.writeFileSync(String(slot['outputPath']), JSON.stringify(CLEAN));
     fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'external edit');
     const done = await f.reply(f.absoluteRun(frame.run), event);
-    assert.equal(done.data['outcome'], 'failed', JSON.stringify(done));
-    assert.match(String(done.data['summary']), /target-changed/);
+    assert.equal(done.await, 'decide', JSON.stringify(done));
+    assert.equal(done.data['kind'], 'drift');
     for (const slot of event.slots) assert.ok(fs.existsSync(String(slot['outputPath'])));
     const replay = await f.cli(['send', '--run', done.run]);
-    assert.equal(replay.data['outcome'], 'failed'); assert.match(String(replay.data['summary']), /target-changed/);
+    assert.equal(replay.data['kind'], 'drift'); assert.deepEqual(replay.data['notice'], done.data['notice']);
   } finally { f.cleanup(); }
 });
 
-for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact drift at ruling boundary fails`, async () => {
+for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact drift at ruling boundary parks a bound notice`, async () => {
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, `target.${kind}.md`);
@@ -40,8 +40,8 @@ for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} arti
     assert.equal(frame.await, 'rule', JSON.stringify(frame));
     fs.writeFileSync(target, '# Target\n\n## Goal\nExternal condition\n');
     const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-    assert.equal(done.data['outcome'], 'failed', JSON.stringify(done)); assert.match(String(done.data['summary']), /target-changed/);
-    assert.match(fs.readFileSync(path.join(done.run, 'events.jsonl'), 'utf8'), /Missing condition/);
+    assert.equal(done.await, 'decide', JSON.stringify(done)); assert.equal(done.data['kind'], 'drift');
+    assert.match(fs.readFileSync(path.join(f.absoluteRun(done.run), 'events.jsonl'), 'utf8'), /Missing condition/);
   } finally { f.cleanup(); }
 });
 
@@ -93,7 +93,7 @@ test('rewrite SC2 round delta preserves caller dirt and detects staged untracked
     assert.deepEqual(delta.paths, ['src/a.ts', 'src/b.ts', 'src/new.ts']);
     assert.deepEqual(delta.staged, ['src/a.ts']); assert.deepEqual(delta.deleted, ['src/b.ts']); assert.deepEqual(delta.untracked, ['src/new.ts']);
     const indexAfter = f.git('ls-files', '--stage'); await git.reviewDelta!(f.repo, prior); assert.equal(f.git('ls-files', '--stage'), indexAfter); assert.notEqual(indexAfter, indexBefore);
-    f.git('commit', '-qm', 'drift'); await assert.rejects(git.reviewDelta!(f.repo, prior), /binding-drift/);
+    f.git('commit', '-qm', 'drift'); assert.notEqual((await git.reviewSnapshot!(f.repo, '')).head, prior.head);
   } finally { f.cleanup(); }
 });
 
@@ -135,9 +135,9 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     assert.deepEqual(names(session, true), ['.state']);
     assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json']);
     const folders = names(run, true);
-    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', ...(diagnostics ? ['diagnostics'] : [])].sort());
+    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', 'recovery-deltas', ...(diagnostics ? ['diagnostics'] : [])].sort());
     assert.deepEqual(fs.readdirSync(path.join(run, 'events')), [path.basename(named)]);
-    for (const folder of folders.filter((name) => name !== 'diagnostics' && name !== 'events')) {
+    for (const folder of folders.filter((name) => !['diagnostics', 'events', 'recovery-deltas'].includes(name))) {
       assert.deepEqual(names(path.join(run, folder), false).filter((name) => /^(claim|heartbeat|done)(\.a\d+)?\.json$|^launch\.json$/.test(name)), [], folder);
     }
   } finally { f.cleanup(); }
@@ -195,7 +195,7 @@ test('rewrite SC3 production native await precedes CLI completion and survives r
   } finally { f.cleanup(); }
 });
 
-test('review fix bounded manifests skip unrelated content and audit scratch and retain deletion tombstones', async () => {
+test('review fix bounded manifests observe non-ignored scratch and retain deletion tombstones', async () => {
   const { nodePorts } = await import('../../skills/dispatch/scripts/core/ports.ts');
   const f = fixture();
   try {
@@ -206,8 +206,8 @@ test('review fix bounded manifests skip unrelated content and audit scratch and 
     const git = createGit({ run: native.run, fileContent: (file,cwd) => { reads.push(file); return native.fileContent!(file,cwd); } });
     const index = f.git('ls-files', '--stage');
     const prior = await git.reviewSnapshot!(f.repo, '', ['src/a.ts', 'new.ts', '.scratch/audits/report.md']);
-    assert.deepEqual(reads, ['src/a.ts']); assert.deepEqual(prior.governedPaths, ['new.ts', 'src/a.ts']);
-    assert.ok(!(await git.diffNames(f.repo, '')).includes('.scratch/audits/report.md'));
+    assert.deepEqual(reads, ['src/a.ts', '.scratch/audits/report.md']); assert.deepEqual(prior.governedPaths, ['.scratch/audits/report.md', 'new.ts', 'src/a.ts']);
+    assert.ok((await git.diffNames(f.repo, '')).includes('.scratch/audits/report.md'));
     fs.rmSync(path.join(f.repo, 'src/a.ts')); fs.writeFileSync(path.join(f.repo, 'new.ts'), 'new');
     const delta = await git.reviewDelta!(f.repo, prior);
     assert.deepEqual(delta.paths, ['new.ts', 'src/a.ts']); assert.deepEqual(delta.deleted, ['src/a.ts']);

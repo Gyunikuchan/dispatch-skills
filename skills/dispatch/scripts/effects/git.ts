@@ -17,13 +17,15 @@ export type Git = {
   reviewDelta?(cwd: string, prior: ReviewSnapshot, current?: ReviewSnapshot): Promise<ReviewDelta>;
   ancestor?(cwd: string, baseline: string): Promise<boolean>;
   baselineDiff?(cwd: string, baseline: string): Promise<string[]>;
-  recoveryFiles?(cwd: string): Promise<{ files: string[]; dirty: string[]; ignored: string[]; stash: string; gitDir: string }>;
+  recoveryFiles?(cwd: string): Promise<{ files: string[]; tracked?: string[]; ignoreRules?: string; dirty: string[]; stash: string; gitDir: string }>;
+  isIgnored?(cwd: string, file: string): Promise<boolean>;
+  ignoredPaths?(cwd: string, files: readonly string[]): Promise<string[]>;
   toplevel(cwd: string): Promise<string>;
   /** `git ls-files --stage` output, cached by index content hash. */
   indexEntries(cwd: string): Promise<string>;
   /** Changed paths for a range (`a..b`, a commit) or, when empty, the working tree against HEAD plus untracked. */
   diffNames(cwd: string, range: string): Promise<string[]>;
-  fingerprint(cwd: string): Promise<TreeFingerprint>;
+  fingerprint(cwd: string, owned?: readonly string[]): Promise<TreeFingerprint>;
   /** Paths changed since a fingerprint's HEAD (tracked and untracked). */
   changedSince(cwd: string, since: TreeFingerprint | null): Promise<string[]>;
   /** Formatted commit log (%s%n%b) for a range, or empty string on failure or option-like range. */
@@ -35,8 +37,6 @@ export type ReadIndex = (toplevel: string) => string | null;
 
 const sha256 = (text: string): string => crypto.createHash('sha256').update(text).digest('hex');
 export const isCommitHash = (value: unknown): value is string => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
-const reviewOwned = (file: string): boolean => !/^\.scratch\/(?:dispatch-skills|audits)\/|(?:^|\/)\.state\//.test(file);
-const lines = (text: string): string[] => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
 export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git {
   const toplevels = new Map<string, string>();
@@ -50,11 +50,11 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const head = (await port.run(['rev-parse', 'HEAD'], root)).trim();
       const comparison = target ? (await port.run(['rev-parse', '--revs-only', target], root)).trim() : head;
       const allowed = paths ? new Set(paths) : null;
-      const owned = (file: string) => reviewOwned(file) && (!allowed || allowed.has(file));
+      const owned = (file: string) => !allowed || allowed.has(file);
       const index: Record<string, string> = {};
       for (const entry of await listed(['ls-files', '--stage', '-z'])) {
         const at = entry.indexOf('\t');
-        if (at >= 0 && (owned(entry.slice(at + 1)) || (options?.fullIndex && reviewOwned(entry.slice(at + 1))))) index[entry.slice(at + 1)] = entry.slice(0, at);
+        if (at >= 0 && (owned(entry.slice(at + 1)) || options?.fullIndex)) index[entry.slice(at + 1)] = entry.slice(0, at);
       }
       const tracked = await listed(['ls-files', '-z']);
       const other = await listed(['ls-files', '--others', '--exclude-standard', '-z']);
@@ -74,11 +74,10 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
         for (const file of [...new Set(files)].filter(owned).sort()) out[file] = await hash(file);
         return out;
       };
-      return { ...(paths ? { governedPaths: [...new Set(paths)].filter(reviewOwned).sort() } : {}), ...(options?.fullIndex ? { fullIndex: true } : {}), head, target, comparison, index, working: await manifest(tracked), untracked: await manifest(other) };
+      return { ...(paths ? { governedPaths: [...new Set(paths)].sort() } : {}), ...(options?.fullIndex ? { fullIndex: true } : {}), head, target, comparison, index, working: await manifest(tracked), untracked: await manifest(other) };
     },
     async reviewDelta(cwd, prior, captured) {
       const current = captured ?? await git.reviewSnapshot!(cwd, prior.target, prior.governedPaths, prior.fullIndex ? { fullIndex: true } : undefined);
-      if (current.head !== prior.head || current.comparison !== prior.comparison) throw new Error('review-round-binding-drift: HEAD or comparison changed');
       const changed = (a: Record<string, unknown>, b: Record<string, unknown>) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((file) => a[file] !== b[file]).sort();
       const staged = changed(prior.index, current.index);
       const unstaged = changed(prior.working, current.working);
@@ -102,13 +101,35 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
     async recoveryFiles(cwd) {
       const root = await git.toplevel(cwd);
       const listed = async (args: string[]) => (await port.run(args, root)).split('\0').filter(Boolean);
+      const tracked = await listed(['ls-files', '-z']);
+      const untracked = await listed(['ls-files', '--others', '--exclude-standard', '-z']);
+      const gitDir = (await port.run(['rev-parse', '--absolute-git-dir'], root)).trim();
+      const global = await port.run(['config', '--path', '--get', 'core.excludesFile'], root).then((s) => s.trim()).catch((error: unknown) => {
+        if (Number((error as { exitCode?: unknown }).exitCode) === 1) return port.defaultExcludesFile ?? '';
+        throw error;
+      });
+      const rules = [...new Set(['.gitignore', ...[...tracked, ...untracked].flatMap((file) => file.split('/').slice(0, -1).map((_, index) => `${file.split('/').slice(0, index + 1).join('/')}/.gitignore`))])].sort();
+      const ruleSources = [...rules.map((file) => [file, port.fileContent ? port.fileContent(file, root) : null]),
+        ['info/exclude', port.fileContent ? port.fileContent('info/exclude', gitDir) : null],
+        [global, global && port.fileContent ? port.fileContent(global, root) : null]];
       return {
-        files: [...new Set([...await listed(['ls-files', '-z']), ...await listed(['ls-files', '--others', '--exclude-standard', '-z'])])].sort(),
+        files: [...new Set([...tracked, ...untracked])].sort(), tracked, ignoreRules: sha256(JSON.stringify(ruleSources)),
         // NOTE: nested run worktrees list as directory entries (`path/`); they are not caller files.
-        dirty: await git.diffNames(root, ''), ignored: (await listed(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).filter((file) => !file.endsWith('/')),
+        dirty: await git.diffNames(root, ''),
         stash: await port.run(['rev-parse', '--verify', 'refs/stash'], root).then((s) => s.trim()).catch(() => ''),
-        gitDir: (await port.run(['rev-parse', '--absolute-git-dir'], root)).trim(),
+        gitDir,
       };
+    },
+    async isIgnored(cwd, file) {
+      const root = await git.toplevel(cwd);
+      try { await port.run(['check-ignore', '--quiet', '--', file], root); return true; }
+      catch (error) { if (Number((error as { code?: unknown }).code) === 1 || Number((error as { exitCode?: unknown }).exitCode) === 1) return false; throw error; }
+    },
+    async ignoredPaths(cwd, files) {
+      if (!files.length) return [];
+      const root = await git.toplevel(cwd);
+      try { return (await port.run(['check-ignore', '--stdin', '-z'], root, files.join('\0') + '\0')).split('\0').filter(Boolean); }
+      catch (error) { if (Number((error as { exitCode?: unknown }).exitCode) === 1) return []; throw error; }
     },
     async toplevel(cwd) {
       const cached = toplevels.get(cwd);
@@ -133,27 +154,30 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const root = await git.toplevel(cwd);
       // NOTE: a leading '-' would parse as a git option (e.g. --output=<path> writes files), so ranges must be revisions.
       if (range.trim().startsWith('-')) throw new Error(`review range must be a revision, got option-like ${range.trim()}`);
-      if (range.trim()) return lines(await port.run(['diff', '--name-only', range.trim(), '--'], root)).filter(reviewOwned);
-      const tracked = lines(await port.run(['diff', '--name-only', 'HEAD'], root));
-      const untracked = lines(await port.run(['ls-files', '--others', '--exclude-standard'], root));
-      return [...new Set([...tracked, ...untracked])].filter(reviewOwned);
+      if (range.trim()) return (await port.run(['diff', '--name-only', '-z', range.trim(), '--'], root)).split('\0').filter(Boolean);
+      const tracked = (await port.run(['diff', '--name-only', 'HEAD', '-z'], root)).split('\0').filter(Boolean);
+      const untracked = (await port.run(['ls-files', '--others', '--exclude-standard', '-z'], root)).split('\0').filter(Boolean);
+      return [...new Set([...tracked, ...untracked])];
     },
-    async fingerprint(cwd) {
+    async fingerprint(cwd, owned = []) {
       const root = await git.toplevel(cwd);
       let head: string | null;
       try { head = (await port.run(['rev-parse', 'HEAD'], root)).trim() || null; } catch { head = null; }
       const index = sha256(await git.indexEntries(cwd));
-      const status = await port.run(['status', '--porcelain=v1', '-uall'], root);
-      const diff = await port.run(['diff', 'HEAD'], root).catch(() => '');
-      // NOTE: status/diff omit untracked contents, so hash them to catch edits to already-untracked files.
-      const untracked = lines(await port.run(['ls-files', '--others', '--exclude-standard'], root));
-      const blobs = port.fileContent ? JSON.stringify(untracked.map((file) => [file, port.fileContent!(file, root)])) : untracked.length ? await port.run(['hash-object', '--', ...untracked], root) : '';
-      return { head, index, worktree: sha256(`${status}\0${diff}\0${blobs}`) };
+      const excluded = new Set(owned);
+      const tracked = (await port.run(['ls-files', '-z'], root)).split('\0').filter(Boolean);
+      const untracked = (await port.run(['ls-files', '--others', '--exclude-standard', '-z'], root)).split('\0').filter(Boolean);
+      const digest = crypto.createHash('sha256');
+      for (const file of [...new Set([...tracked, ...untracked])].filter((file) => !excluded.has(file)).sort()) {
+        const content = port.fileContent ? port.fileContent(file, root) : await port.run(['hash-object', '--', file], root).then((s) => s.trim()).catch(() => '<missing>');
+        digest.update(JSON.stringify([file, content]));
+      }
+        return { head, index, worktree: digest.digest('hex') };
     },
     async changedSince(cwd, since) {
       const root = await git.toplevel(cwd);
-      const tracked = lines(await port.run(['diff', '--name-only', since?.head ?? 'HEAD'], root));
-      const untracked = lines(await port.run(['ls-files', '--others', '--exclude-standard'], root));
+      const tracked = (await port.run(['diff', '--name-only', '-z', since?.head ?? 'HEAD'], root)).split('\0').filter(Boolean);
+      const untracked = (await port.run(['ls-files', '--others', '--exclude-standard', '-z'], root)).split('\0').filter(Boolean);
       return [...new Set([...tracked, ...untracked])].sort();
     },
     async log(cwd, range) {

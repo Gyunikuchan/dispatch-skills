@@ -3,11 +3,25 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Effect, RecoverySnapshot } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, RecoveryManifest } from '../../../skills/dispatch/scripts/core/types.ts';
 import { nodeFs, nodePorts } from '../../../skills/dispatch/scripts/core/ports.ts';
+import { loadRecovery } from '../../../skills/dispatch/scripts/effects/recovery-manifest.ts';
 import { createRestore } from '../../../skills/dispatch/scripts/effects/restore.ts';
 import { createSnapshot, lineChanges, verifiedManifests } from '../../../skills/dispatch/scripts/effects/snapshot.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+
+for (const removed of [false, true]) test(`observation boundary: newly ignored ${removed ? 'deleted bytes stay a deletion' : 'existing bytes leave as membership'}`, async () => {
+  const cwd = tempDir(), runDir = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir); fs.writeFileSync(path.join(cwd, 'a'), 'before');
+  let files = ['a'];
+  const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], isIgnored: async () => true, recoveryFiles: async () => ({ files, dirty: [], tracked: [], stash: '', gitDir, ignoreRules: '' }) };
+  const ports = fakePorts(), handler = createSnapshot({ cwd, git });
+  const first = (await handler({ kind: 'snapshot', id: 'first', since: null }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(first.type, 'SNAPSHOT'); if (first.type !== 'SNAPSHOT') return;
+  files = []; if (removed) fs.unlinkSync(path.join(cwd, 'a'));
+  const second = (await handler({ kind: 'snapshot', id: 'second', since: first.fingerprint }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(second.type, 'SNAPSHOT'); if (second.type !== 'SNAPSHOT') return;
+  const recovery = loadRecovery(ports, runDir, second.fingerprint['recovery']);
+  assert.deepEqual(recovery.membership, removed ? [] : ['a']);
+  assert.equal(recovery.changed.some((row) => row.path === 'a' && row.deleted), removed);
+});
 
 // Split from effects-restore.test.ts to stay under the 1 s per-file budget: snapshot, fingerprint and fs-port cases.
 
@@ -63,7 +77,7 @@ test('link publication does not collide with or unlink a stale PID temporary lin
   assert.equal(fs.lstatSync(leaf).isSymbolicLink(), true); assert.equal(fs.lstatSync(stale).isSymbolicLink(), true);
 });
 
-test('snapshot journals digest references, deduplicates immutable bytes, streams ignored files and restores verified bytes', async () => {
+test('recovery manifest: snapshot journals digest references, deduplicates immutable bytes, excludes ignored files and restores verified bytes', async () => {
   const cwd = tempDir(), runDir = tempDir(), ports = fakePorts(), file = path.join(cwd, 'a.bin');
   const original = Buffer.alloc(128 * 1024, 0); fs.writeFileSync(file, original);
   fs.writeFileSync(path.join(cwd, 'ignored.bin'), Buffer.alloc(128 * 1024, 255));
@@ -74,15 +88,15 @@ test('snapshot journals digest references, deduplicates immutable bytes, streams
   const handler = createSnapshot({ cwd, git }), ctx = { runDir, attempt: 1 };
   const first = (await handler({ kind: 'snapshot', id: 'snapshot.1', since: null }, ports, ctx))[0]!;
   assert.equal(first.type, 'SNAPSHOT'); if (first.type !== 'SNAPSHOT') return;
-  const recovery = first.fingerprint['recovery'] as RecoverySnapshot;
+  const recovery = loadRecovery(ports, runDir, first.fingerprint['recovery']);
   assert.equal(recovery.contentStore, 'recovery-contents'); assert.match(recovery.contents['a.bin']!, /^[a-f0-9]{64}$/);
-  assert.ok(JSON.stringify(first).length < 4096); assert.equal(recovery.ignored[0]?.hash, ports.fs.hashFile(path.join(cwd, 'ignored.bin')));
+  assert.ok(JSON.stringify(first).length < 4096); assert.equal('ignored' in recovery, false);
   assert.equal((await handler({ kind: 'snapshot', id: 'snapshot.2', since: first.fingerprint }, ports, ctx))[0]?.type, 'SNAPSHOT');
   assert.equal(fs.readdirSync(path.join(runDir, 'recovery-contents')).length, 1);
   fs.writeFileSync(file, Buffer.from([0, 128]));
   const changed = (await handler({ kind: 'snapshot', id: 'snapshot.3', since: first.fingerprint }, ports, ctx))[0]!;
   assert.equal(changed.type, 'SNAPSHOT'); if (changed.type !== 'SNAPSHOT') return;
-  assert.deepEqual((changed.fingerprint['recovery'] as RecoverySnapshot).changed.map((row) => [row.path, row.added, row.removed]), [['a.bin', 1, 1]]);
+  assert.deepEqual(loadRecovery(ports, runDir, changed.fingerprint['recovery']).changed.map((row) => [row.path, row.added, row.removed]), [['a.bin', 1, 1]]);
   ports.fs.readBase64 = bytes;
   const effect = { kind: 'restore' as const, id: 'restore.store.1', paths: ['a.bin'], to: first.fingerprint };
   assert.equal((await createRestore({ cwd })(effect, ports, ctx))[0]?.type, 'RESTORED'); assert.deepEqual(fs.readFileSync(file), original);
@@ -92,23 +106,25 @@ test('snapshot journals digest references, deduplicates immutable bytes, streams
   assert.equal(fs.readFileSync(file, 'utf8'), 'caller edit');
 });
 
-test('snapshot skips ignored files that vanish before hashing', async () => {
+test('observation boundary: ignored files are never hashed', async () => {
   const cwd = tempDir(), runDir = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir);
   fs.writeFileSync(path.join(cwd, 'kept.bin'), 'kept');
   const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], recoveryFiles: async () => ({ files: [], dirty: [], ignored: ['gone.lock', 'kept.bin'], stash: '', gitDir }) };
-  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, fakePorts(), { runDir, attempt: 1 }))[0]!;
+  const ports = fakePorts(); ports.fs.hashFile = () => { throw new Error('ignored bytes read'); };
+  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, ports, { runDir, attempt: 1 }))[0]!;
   assert.equal(result.type, 'SNAPSHOT'); if (result.type !== 'SNAPSHOT') return;
-  assert.deepEqual((result.fingerprint['recovery'] as RecoverySnapshot).ignored.map((row) => row.path), ['kept.bin']);
+  assert.equal('ignored' in loadRecovery(ports, runDir, result.fingerprint['recovery']), false);
 });
 
-test('snapshot records a linked ignored directory once instead of files listed through it', async (t) => {
+test('observation boundary: linked ignored directories are never traversed', async (t) => {
   const cwd = tempDir(), runDir = tempDir(), outside = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir);
   fs.mkdirSync(path.join(outside, '.bin')); fs.writeFileSync(path.join(outside, '.bin', 'tool'), 'x');
   try { fs.symlinkSync(outside, path.join(cwd, 'node_modules'), 'junction'); } catch { t.skip('directory links unavailable'); return; }
   const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], recoveryFiles: async () => ({ files: [], dirty: [], ignored: ['node_modules/.bin/tool', 'node_modules/other'], stash: '', gitDir }) };
-  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, fakePorts(), { runDir, attempt: 1 }))[0]!;
+  const ports = fakePorts();
+  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, ports, { runDir, attempt: 1 }))[0]!;
   assert.equal(result.type, 'SNAPSHOT'); if (result.type !== 'SNAPSHOT') return;
-  assert.deepEqual((result.fingerprint['recovery'] as RecoverySnapshot).ignored.map((row) => row.path), ['node_modules']);
+  assert.equal('ignored' in loadRecovery(ports, runDir, result.fingerprint['recovery']), false);
 });
 
 test('binary deletion and creation report only their respective removed and added budget', () => {

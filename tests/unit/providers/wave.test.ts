@@ -69,6 +69,21 @@ const done = (events: readonly ResultEvent[]) => {
 };
 const states = (events: readonly ResultEvent[]) => done(events).slots.map((row) => [row['slot'], row['state']]);
 
+test('native reserve does not enter plan review frame', () => {
+  const w = setup({}, [slot('copilot[0]', 'copilot', { native: true, model: ['primary', 'fallback'] }), slot('copilot[1]', 'copilot', { native: true, reserve: true })], 'copilot');
+  const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps);
+  assert.deepEqual(start.native.map((row) => row.sourceKey), ['copilot[0]']);
+  assert.deepEqual(start.progress.map((row) => row.type === 'WAVE_PROGRESS' && row.slot), ['copilot[0]']);
+});
+
+test('orchestrator CLI primary retains early fallback', async () => {
+  const w = setup({ 'claude:primary:cli': [ok(CLEAN)] }, [slot('claude[0]', 'claude', { model: ['primary', 'fallback'] }), slot('claude[1]', 'claude', { reserve: true })], 'claude');
+  const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps);
+  assert.deepEqual(start.early.map((row) => row.sourceKey), ['claude[0]#fallback']);
+  await finishWave(w.effect, { runDir: '/run', attempt: 1 }, start, [], { ...w.deps, review: 'code' });
+  assert.deepEqual(w.calls, ['claude:primary:cli']);
+});
+
 test('ask-native-empty: sanitized-empty captures fail and usable neighbors survive', async () => {
   for (const text of ['   ', '```\n```', '```ts\nconst answer = 1;\n```']) {
     const w = setup({}, [slot('claude[0]', 'claude', { native: true }), slot('claude[1]', 'claude', { native: true })]);

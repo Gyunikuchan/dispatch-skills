@@ -46,7 +46,7 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
     if (!event.task || !('attempt' in event) || !child.active.includes(event.task) || !record?.worktree || !task || !record.baseline || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle || record.brief?.envelopePath !== event.envelopePath) return 'Receipt names no original active task attempt';
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
   } else if (child.tag === 'hotfix-write') {
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...effectivePlan(child.c).changes.map((change) => change.path), ...child.c.adoptedPaths])], since: child.before };
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...effectivePlan(child.c).changes.map((change) => change.path)])], since: child.before };
   } else return null;
   const checker = handlers['check-envelope']; if (!checker) return 'Receipt checker is unavailable';
   const results = await checker(effect, ports, { runDir, attempt: 1 });
@@ -70,6 +70,7 @@ export const TERMINAL_RESULT: TerminalResultMap = {
   'write-brief': 'BRIEF_READY',
   'check-envelope': 'ENVELOPE_CHECKED',
   snapshot: 'SNAPSHOT',
+  'assess-recovery': 'RECOVERY_ASSESSED',
   restore: 'RESTORED',
   handoff: 'HANDOFF_DONE',
   checkout: 'CHECKOUT_DONE',
@@ -119,6 +120,7 @@ export function createFolder<S>(machine: Machine<S>): Folder<S> {
         if (effect && (event.type === 'EFFECT_FAILED' || event.type === TERMINAL_RESULT[effect.kind])) {
           folder.open.delete(event.effectId);
           folder.queue.splice(index, 1);
+          folder.attempts.delete(event.effectId);
         }
       }
       const result = machine.step(folder.state, event);
@@ -140,15 +142,20 @@ export function toEvent(line: JournalLine, protocolRevision: number = JOURNAL_PR
 }
 
 /** Folds journal lines; `inFlight` is the head effect when it started without a terminal result. */
-export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sessionRoot?: string): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
-  const run = lines.find((line) => line.type === 'RUN_STARTED');
+export function fold<S>(machine: Machine<S>, lines: Iterable<JournalLine>, sessionRoot?: string, observe?: (state: S, line: JournalLine) => void): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
   const protocolRevision = JOURNAL_PROTOCOL_REVISION;
-  if (run && typeof run.data['protocolRevision'] === 'number' && run.data['protocolRevision'] < JOURNAL_PROTOCOL_REVISION) throw new LayoutUnsupported();
-  if (run && run.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
   const folder = createFolder(machine);
   let revision = 0;
-  let config = run?.data['config'] as Record<string, unknown> | undefined;
+  let config: Record<string, unknown> | undefined;
+  let first = true;
   for (const line of lines) {
+    if (first && line.type !== 'RUN_STARTED') throw new EngineFault('journal must start with RUN_STARTED');
+    first = false;
+    if (line.type === 'RUN_STARTED') {
+      if (typeof line.data['protocolRevision'] === 'number' && line.data['protocolRevision'] < JOURNAL_PROTOCOL_REVISION) throw new LayoutUnsupported();
+      if (line.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
+      config = line.data['config'] as Record<string, unknown>;
+    }
     const event = toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line, protocolRevision);
     if (event.type === 'EXECUTION_CONFIG_UPDATED') {
       if (event.revision !== ++revision || !config) throw new EngineFault('execution-config-invalid: revision sequence mismatch');
@@ -157,6 +164,7 @@ export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sess
       if (errors.length) throw new EngineFault(`execution-config-invalid: ${errors.join('; ')}`);
     }
     folder.apply(event);
+    observe?.(folder.state, line);
   }
   const head = folder.queue[0];
   const inFlight = head && folder.open.has(head.id) ? { effect: head, attempt: folder.attempts.get(head.id) ?? 1 } : null;
@@ -248,7 +256,11 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     if (!diagnosticEnabled || machine !== rootMachine as unknown as Machine<S>) return;
     try {
       const phases = diagnosticPhases(state as RootState), data = machine.project(state).data;
-      timeline.push({ seq: line.seq, at: Date.parse(line.at), phases, awaiting: data['kind'] === 'approval' ? 'approval' : machine.awaitOf(state), ...(machine.awaitOf(state) === 'done' ? { outcome: String(data['outcome'] ?? 'partial') } : {}) });
+      const awaiting = data['kind'] === 'approval' ? 'approval' : machine.awaitOf(state);
+      const signature = (entry: { phases: unknown; awaiting: unknown }) => JSON.stringify([entry.phases, entry.awaiting]);
+      if (timeline.length > 1 && signature(timeline.at(-1)!) === signature({ phases, awaiting }) && signature(timeline.at(-2)!) === signature({ phases, awaiting })) timeline.pop();
+      if (timeline.length >= DIAGNOSTIC_LIMITS.phases) timeline.splice(1, 1);
+      timeline.push({ seq: line.seq, at: Date.parse(line.at), phases, awaiting, ...(machine.awaitOf(state) === 'done' ? { outcome: String(data['outcome'] ?? 'partial') } : {}) });
     } catch { warn(); }
   };
   try {
@@ -260,33 +272,31 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
       throw error;
     }
     locked = true;
-    const read: JournalRead = readJournal(ports, runDir);
+    const read: JournalRead = readJournal(ports, runDir, true);
+    const sessionRoot = runSession(runDir);
+    const folder = fold(machine, read.records, sessionRoot, (state, line) => {
+      if (line.type === 'RUN_STARTED') diagnosticEnabled = resolveDiagnosticToggle(ports, runDir, (line.data['config'] as Record<string, unknown>)?.['diagnostics'] === true, options.diagnosticToggle, warn);
+      collectState(state, line);
+    });
     if (read.tornTail) ports.fs.truncate(file, read.goodBytes);
     baseline = { existed: ports.fs.exists(file), bytes: read.goodBytes };
-
-    const sessionRoot = runSession(runDir);
-    const folder = fold(machine, read.lines, sessionRoot);
-    diagnosticLines = [...read.lines];
-    diagnosticEnabled = resolveDiagnosticToggle(ports, runDir, read.lines.find((line) => line.type === 'RUN_STARTED')?.data['config'] !== undefined && (read.lines.find((line) => line.type === 'RUN_STARTED')!.data['config'] as Record<string, unknown>)['diagnostics'] === true, options.diagnosticToggle, warn);
-    diagnosticBinding = { seq: read.lines.length, at: ports.clock.now() };
+    diagnosticLines = read.recent;
+    diagnosticBinding = { seq: read.count, at: ports.clock.now() };
     if (diagnosticEnabled) {
       try {
         instruction = options.diagnosticInstruction?.() ?? '';
         if (Buffer.byteLength(instruction) > DIAGNOSTIC_LIMITS.instructionBytes) { instruction = ''; warn(); }
         identity = options.diagnosticIdentity?.();
-        if (identity) identity = { ...identity, host: String(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['orchestrator'] ?? 'unavailable') };
-      } catch { warn(); }
-      try {
-        const replay = createFolder(machine), revision = Number(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['protocolRevision'] ?? JOURNAL_PROTOCOL_REVISION);
-        for (const line of read.lines) { replay.apply(toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line, revision)); collectState(replay.state, line); }
+        if (identity) identity = { ...identity, host: String(read.started?.data['orchestrator'] ?? 'unavailable') };
       } catch { warn(); }
     }
-    let seq = read.lines.length + 1;
+    let seq = read.count + 1;
     const record = (event: Event): void => {
       const { type, ...data } = event;
       const stored = sessionRoot ? storeSessionPaths(data, sessionRoot) : data;
       const line = appendEvent(ports, runDir, type, stored, seq++);
-      diagnosticLines.push(line);
+      const boundary = event.type === 'LOCK_BROKEN' ? diagnosticLines.filter((prior) => prior.type !== 'LOCK_BROKEN').at(-1) : undefined;
+      diagnosticLines = [...diagnosticLines.filter((prior) => prior.type === 'RUN_STARTED' || prior.type === 'EXECUTION_CONFIG_UPDATED' || prior === boundary), line].slice(-DIAGNOSTIC_LIMITS.phases);
       folder.apply(sessionRoot ? restoreJournalPaths({ ...stored, type } as Event, sessionRoot) : event);
       machine.render?.(folder.state, ports, runDir);
       collectState(folder.state, line);
@@ -294,7 +304,7 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
 
     let refreshStatus: Record<string, unknown> | undefined;
     if (options.refreshConfig) {
-      const refresh = prepareRefresh(options, folder, read.lines);
+      const refresh = prepareRefresh(options, folder, read);
       if ('error' in refresh) return { frame: boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(diagnosticLines))), exitCode: 0 };
       refreshStatus = refresh.status;
       if (refresh.event) record(refresh.event);
@@ -308,7 +318,7 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
         if (checked.event.type === 'NATIVE_RESULTS') for (const slot of checked.event.slots) {
           const source = String(slot['sourceKey'] ?? slot['slot']);
           const producer = diagnosticId(`${source}:${activePhaseId()}:${seq}`);
-          publishInvocation(ports, runDir, { id: producer, producer, sequence: 1, phase: activePhaseId(), surface: 'native', provider: String(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['orchestrator'] ?? 'unavailable'), configuredModel: null, mode: 'native', start: ports.clock.now(), durationMs: null, outcome: 'captured', launched: true }, warn);
+          publishInvocation(ports, runDir, { id: producer, producer, sequence: 1, phase: activePhaseId(), surface: 'native', provider: String(read.started?.data['orchestrator'] ?? 'unavailable'), configuredModel: null, mode: 'native', start: ports.clock.now(), durationMs: null, outcome: 'captured', launched: true }, warn);
         }
       }
       record(checked.event);
@@ -319,7 +329,7 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
       const effect = folder.queue[0] as Effect;
       const attempt = (folder.attempts.get(effect.id) ?? 0) + 1;
       record({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt });
-      const results = await runEffect(effect, attempt, handlers, ports, runDir, diagnosticEnabled ? { runDir, phase: activePhaseId(), boundary: seq - 1 } : undefined);
+      const results = await runEffect(effect, attempt, handlers, ports, runDir, diagnosticEnabled ? { runDir, phase: activePhaseId(), boundary: seq - 1 } : undefined, machine.ownedArtifacts?.(folder.state, runDir));
       for (const result of results) record(result);
     }
     if (machine.awaitOf(folder.state) === null) throw new EngineFault('machine neither awaits nor emits effects');
@@ -342,10 +352,10 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
 }
 
 /** Event files are named by the last host-visible journal seq; lock recovery lines are skipped, so a stale-lock break keeps the reply path. */
-function hostBoundary(lines: readonly JournalLine[]): number {
-  let end = lines.length;
-  while (end > 0 && lines[end - 1]!.type === 'LOCK_BROKEN') end--;
-  return lines[end - 1]?.seq ?? 0;
+function hostBoundary(lines: Iterable<JournalLine>): number {
+  let seq = 0;
+  for (const line of lines) if (line.type !== 'LOCK_BROKEN') seq = line.seq;
+  return seq;
 }
 
 /** Creates `events/` before a frame names a path inside it, so hosts write the reply without a mkdir. */
@@ -373,7 +383,7 @@ function restoreJournal(ports: Ports, file: string, baseline: { existed: boolean
   else if (ports.fs.size(file) !== baseline.bytes) ports.fs.truncate(file, baseline.bytes);
 }
 
-async function runEffect(effect: Effect, attempt: number, handlers: Handlers, ports: Ports, runDir: string, diagnostics?: import('./types.ts').DiagnosticBinding): Promise<readonly ResultEvent[]> {
+async function runEffect(effect: Effect, attempt: number, handlers: Handlers, ports: Ports, runDir: string, diagnostics?: import('./types.ts').DiagnosticBinding, ownedArtifacts?: readonly string[]): Promise<readonly ResultEvent[]> {
   const handler = handlers[effect.kind] as Handler | undefined;
   if (!handler) throw new EngineFault(`no handler for effect kind ${effect.kind}`);
   const startedAt = new Date(ports.clock.now()).toISOString();
@@ -383,7 +393,7 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
   const stop = ports.clock.every(HEARTBEAT_MS, () => writeProgress(ports, runDir, snapshot()));
   let results: readonly ResultEvent[];
   try {
-    results = await handler(effect, ports, { runDir, attempt, ...(diagnostics ? { diagnostics } : {}) });
+    results = await handler(effect, ports, { runDir, attempt, ...(diagnostics ? { diagnostics } : {}), ...(ownedArtifacts ? { ownedArtifacts } : {}) });
   } finally {
     stop();
   }
@@ -401,16 +411,16 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
 async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendResult> {
   const { machine, ports, runDir } = options;
   try {
-    const lines = readJournal(ports, runDir).lines;
+    const read = readJournal(ports, runDir, true), lines = read.records;
     const folder = fold(machine, lines, runSession(runDir));
     if (options.refreshConfig) {
-      const refresh = prepareRefresh(options, folder, lines);
-      return { frame: 'error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(lines)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(lines)), refresh.status), exitCode: 0 };
+      const refresh = prepareRefresh(options, folder, read);
+      return { frame: 'error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(read.recent)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), refresh.status), exitCode: 0 };
     }
-    if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel, undefined, hostBoundary(lines)), exitCode: 0 };
+    if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), exitCode: 0 };
     const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
     const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
-    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(lines)), exitCode: 0 };
+    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(read.recent)), exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };
@@ -432,7 +442,7 @@ const runSession = (runDir: string): string | undefined => {
   return root === runDir ? undefined : root;
 };
 /** Historical discovery skips legacy-layout runs, so they cannot block new runs in the same session. */
-function foldCurrent<S>(machine: Machine<S>, lines: readonly JournalLine[]): Folder<S> | null {
+function foldCurrent<S>(machine: Machine<S>, lines: Iterable<JournalLine>): Folder<S> | null {
   try { return fold(machine, lines); } catch (error) { if (error instanceof LayoutUnsupported) return null; throw error; }
 }
 function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
@@ -440,8 +450,10 @@ function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machin
   for (const file of ports.fs.listFiles(runsDir)) {
     if (path.basename(file) !== JOURNAL_FILE) continue;
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
-    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
-    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    const read = readJournal(ports, runDir);
+    const root = runSession(runDir) ?? runDir;
+    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
+    const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'design') continue;
     const folder = foldCurrent(machine, lines);
     if (!folder) continue;
@@ -469,8 +481,10 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
   for (const file of ports.fs.listFiles(runsDir)) {
     if (path.basename(file) !== JOURNAL_FILE) continue;
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
-    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
-    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    const read = readJournal(ports, runDir);
+    const root = runSession(runDir) ?? runDir;
+    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
+    const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
     const folder = foldCurrent(machine, lines);
     if (!folder) continue;
@@ -509,10 +523,12 @@ export function findSettledPlan<S>(
   for (const file of ports.fs.listFiles(runsDir)) {
     if (path.basename(file) !== JOURNAL_FILE) continue;
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
-    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
-    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    const read = readJournal(ports, runDir);
+    const root = runSession(runDir) ?? runDir;
+    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
+    const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'plan') continue;
-    const authoredLine = [...lines].reverse().find((line) => line.type === 'AUTHORED' && typeof line.data['path'] === 'string');
+    const authoredLine = read.authored ? restoreJournalPaths(read.authored, root) : undefined;
     const planArg = typeof started.data['argument'] === 'string' ? started.data['argument'] : '';
     const overrides = started.data['overrides'] as Record<string, unknown> | undefined;
     const planPath = typeof overrides?.['path'] === 'string'
@@ -526,7 +542,7 @@ export function findSettledPlan<S>(
     if (machine.awaitOf(folder.state) !== 'done') continue;
     const projected = machine.project(folder.state).data;
     if (projected['outcome'] !== 'complete') continue;
-    const parsedLine = [...lines].reverse().find((line) => line.type === 'ARTIFACT_PARSED' && line.data['kind'] === 'plan');
+    const parsedLine = read.parsedPlan;
     const hash = parsedLine?.data['hash'];
     if (typeof hash !== 'string' || hash !== currentHash) continue;
     const summary = String(projected['summary'] ?? '');
@@ -571,28 +587,22 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
 function executionFrame(frame: Frame, status?: Record<string, unknown>): Frame {
   return status ? { ...frame, progress: { ...frame.progress, executionConfig: status } } : frame;
 }
-function executionStatus(lines: readonly JournalLine[], current: string | null, deferred = current === 'native' || current === 'write'): Record<string, unknown> | undefined {
-  const latest = lines.findLast((line) => line.type === 'EXECUTION_CONFIG_UPDATED');
+function executionStatus(lines: Iterable<JournalLine>, current: string | null, deferred = current === 'native' || current === 'write'): Record<string, unknown> | undefined {
+  let latest: JournalLine | undefined;
+  for (const line of lines) if (line.type === 'EXECUTION_CONFIG_UPDATED') latest = line;
   return latest ? { revision: latest.data['revision'], status: deferred ? 'deferred' : 'applied', effectiveAt: 'next-unissued-descriptor', overrides: 'explicit start model/effort take precedence' } : undefined;
 }
-function prepareRefresh<S>(options: SendOptions<S>, folder: Folder<S>, lines: readonly JournalLine[]): { error: string } | { event?: ExecutionConfigUpdated; status: Record<string, unknown> } {
+function prepareRefresh<S>(options: SendOptions<S>, folder: Folder<S>, read: JournalRead): { error: string } | { event?: ExecutionConfigUpdated; status: Record<string, unknown> } {
   try {
     if (options.machine.awaitOf(folder.state) === 'done') throw new Error('execution-config-terminal: start a new run');
-    const started = lines.find((line) => line.type === 'RUN_STARTED');
-    if (!started) throw new Error('execution-config-unavailable: missing RUN_STARTED');
+    const started = read.started, config = read.execution?.config, revision = read.execution?.revision ?? 0, sequence = read.count;
+    if (!started || !config) throw new Error('execution-config-unavailable: missing RUN_STARTED');
     if (!options.machine.reconfigure || !options.configSource) throw new Error('execution-config-unavailable: configuration source and reconfigure hook required');
-    let config = started.data['config'] as Record<string, unknown>;
-    let revision = 0;
-    for (const line of lines) if (line.type === 'EXECUTION_CONFIG_UPDATED') {
-      const event = toEvent(line, JOURNAL_PROTOCOL_REVISION) as ExecutionConfigUpdated;
-      config = applyExecutionConfig(config, event.delta);
-      revision = event.revision;
-    }
     const next = options.configSource(), errors = validateConfig(next);
     if (errors.length) throw new Error(`execution-config-invalid: ${errors.join('; ')}`);
     const delta = executionDelta(config, next);
     const changed = delta.read.length + delta.write.length > 0;
-    const event: ExecutionConfigUpdated = { type: 'EXECUTION_CONFIG_UPDATED', revision: revision + 1, boundarySeq: lines.length + 1, delta };
+    const event: ExecutionConfigUpdated = { type: 'EXECUTION_CONFIG_UPDATED', revision: revision + 1, boundarySeq: sequence + 1, delta };
     const error = validateExecutionUpdate(event);
     if (error) throw new Error(error);
     if (changed) options.machine.reconfigure(folder.state, event);

@@ -16,6 +16,8 @@ import { createPrepareReview } from './prepare-review.ts';
 import { createCheckReviewTarget } from './check-review-target.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRestore } from './restore.ts';
+import { createAssessRecovery } from './assess-recovery.ts';
+import { loadRecovery } from './recovery-manifest.ts';
 import { createVerify } from './verify.ts';
 import { createWaveStartHandler, createWaveFinishHandler, createWaveHandler, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
 import { isNativeRoster, nativeWave } from './wave-native.ts';
@@ -88,12 +90,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
     },
     snapshot: async (effect, ports, ctx) => {
-      const events = await createSnapshot(deps)(effect, ports, ctx);
+      const events = await createSnapshot({ ...deps, pathHashes: (cwd, ports, runDir) => pathHashes({ ...deps, cwd }, ports, runDir, ctx.ownedArtifacts) })(effect, ports, ctx);
       for (const event of events) if (event.type === 'SNAPSHOT') {
         try {
-          const hashes = await pathHashes(effect.cwd ? { ...deps, cwd: effect.cwd } : deps, ports);
-          const recovery = event.fingerprint['recovery'] as { changed?: { path: string }[] } | undefined;
-          return [{ ...event, fingerprint: { ...event.fingerprint, pathHashes: hashes }, diff: { paths: [...new Set([...changedPaths(effect.since, hashes), ...(recovery?.changed?.map((row) => row.path) ?? [])])].sort() } }];
+          const recovery = event.fingerprint['recovery'] ? loadRecovery(ports, ctx.runDir, event.fingerprint['recovery']) : undefined;
+          const prior = effect.since?.['recovery'] ? loadRecovery(ports, ctx.runDir, effect.since['recovery']) : undefined;
+          const hashes = recovery?.pathHashes ?? await pathHashes(effect.cwd ? { ...deps, cwd: effect.cwd } : deps, ports, ctx.runDir, ctx.ownedArtifacts);
+          const omitted = new Set(recovery?.membership ?? []);
+          return [{ ...event, diff: { paths: [...new Set([...changedPaths(prior ? { pathHashes: prior.pathHashes } : null, hashes).filter((file) => !omitted.has(file)), ...(recovery?.changed?.map((row) => row.path) ?? [])])].sort() } }];
         } catch (error) {
           return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `path snapshot: ${error instanceof Error ? error.message : String(error)}` }];
         }
@@ -101,6 +105,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return events;
     },
     restore: createRestore(deps),
+    'assess-recovery': createAssessRecovery(),
     handoff: createHandoff(deps),
     checkout: createCheckout({ cwd: deps.cwd, links: deps.links ?? nodeLinks }),
   };

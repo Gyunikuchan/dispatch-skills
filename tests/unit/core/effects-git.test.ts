@@ -2,6 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
 
+test('observation boundary: ignore classification batches NUL paths and propagates Git errors', async () => {
+  let calls = 0, exit = 0;
+  const git = createGit({ run: async (args, _cwd, stdin) => {
+    if (args[0] === 'rev-parse') return '/repo';
+    assert.deepEqual(args, ['check-ignore', '--stdin', '-z']); assert.equal(stdin, 'a\0with\nnewline\0'); calls++;
+    if (exit) throw Object.assign(new Error('git failure'), { exitCode: exit });
+    return 'with\nnewline\0';
+  } });
+  assert.deepEqual(await git.ignoredPaths!('/repo', ['a', 'with\nnewline']), ['with\nnewline']);
+  exit = 1; assert.deepEqual(await git.ignoredPaths!('/repo', ['a', 'with\nnewline']), []);
+  exit = 128; await assert.rejects(git.ignoredPaths!('/repo', ['a', 'with\nnewline']), /git failure/);
+  assert.equal(calls, 3); assert.deepEqual(await git.ignoredPaths!('/repo', []), []); assert.equal(calls, 3);
+});
+
 function fakeGit(failToplevel = 0) {
   const calls: string[] = [];
   let failures = failToplevel;
@@ -22,6 +36,21 @@ function fakeGit(failToplevel = 0) {
   };
 }
 const count = (calls: readonly string[], prefix: string) => calls.filter((call) => call.startsWith(prefix)).length;
+
+test('observation boundary: recovery inventory never enumerates ignored paths and uses NUL names', async () => {
+  const calls: string[][] = [];
+  const git = createGit({ run: async (args) => {
+    calls.push([...args]);
+    if (args[0] === 'config') throw Object.assign(new Error('unset'), { exitCode: 1 });
+    if (args[0] === 'rev-parse') return '/repo';
+    if (args[0] === 'ls-files') return args.includes('--others') ? 'new\nname.txt\0' : 'tracked.bin\0';
+    return '';
+  }, fileContent: () => '<missing>' });
+  const inventory = await git.recoveryFiles!('/repo');
+  assert.deepEqual(inventory.files, ['new\nname.txt', 'tracked.bin']);
+  assert.equal(calls.some((args) => args.includes('--ignored')), false);
+  assert.ok(calls.filter((args) => args[0] === 'ls-files').every((args) => args.includes('-z')));
+});
 
 test('toplevel is cached after success only', async () => {
   const fake = fakeGit(1);
@@ -51,7 +80,7 @@ test('index entries are cached by the index content hash; worktree reads are nev
   assert.equal(count(fake.calls, 'diff --name-only HEAD'), 2);
   await git.fingerprint('/repo');
   await git.fingerprint('/repo');
-  assert.equal(count(fake.calls, 'status'), 2);
+  assert.equal(count(fake.calls, 'ls-files -z'), 2);
 });
 
 test('an option-like review range is rejected before git runs', async () => {
@@ -60,7 +89,7 @@ test('an option-like review range is rejected before git runs', async () => {
   assert.equal(count(fake.calls, 'diff'), 0);
 });
 
-test('the worktree fingerprint changes when an untracked file changes', async () => {
+test('change receipt: the worktree fingerprint changes when an untracked file changes', async () => {
   let blob = 'aaa';
   const port = { run: async (args: readonly string[]) => (args[0] === 'hash-object' ? `${blob}\n` : args[0] === 'rev-parse' ? '/repo\n' : args[0] === 'ls-files' && args[1] === '--others' ? 'new.txt\n' : '') };
   const git = createGit(port);

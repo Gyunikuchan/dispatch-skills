@@ -1,6 +1,7 @@
+import { bindingHash } from '../../../skills/dispatch/scripts/machines/change-resolution.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { beginRevision, stepRevision, revisionDelta, revisionData, reboundRevision, validateRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
+import { beginRevision, stepRevision as coreStepRevision, revisionDelta, revisionData, reboundRevision, validateRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { effectivePlan, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
@@ -10,10 +11,20 @@ import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.t
 import { approvalState, PLAN, HASH, FP, host } from './fixtures/implement-recovery.ts';
 
 const revision = { type: 'REVISE' as const, artifact: 'plan' as const, reason: 'blocked-by-plan', evidence: 'stalled check report' };
+function stepRevision(...args: Parameters<typeof coreStepRevision>) {
+ const result=coreStepRevision(...args);
+ return args[1].type==='SNAPSHOT' ? assessment(result, Array.isArray(args[1].diff['paths']) ? args[1].diff['paths'] as string[] : []) : result;
+}
+function assessment(r: ReturnType<typeof coreStepRevision>, paths: string[] = []) {
+ if(r.state.tag !== 'assessing-host-event') return r;
+ const e=r.effects[0]; if(e?.kind !== 'assess-recovery') return r;
+ const beforeHash=bindingHash(e.before), afterHash=bindingHash(e.after);
+ return coreStepRevision(r.state,{ type:'RECOVERY_ASSESSED',effectId:e.id,purpose:'drift',beforeHash,afterHash,notice:{ id:'revision-notice',phase:e.phase,pendingId:e.pendingId,beforeHash,afterHash,rawDeltaRef:{version:1,sha256:'b'.repeat(64),bytes:10,path:'recovery-deltas/b.json'},paths,pathCount:paths.length,relevance:paths.length?'unknown':'expected',reason:'Fixture',affectedEvidence:[] }});
+}
 function parsingRevision() {
   const begun = beginRevision(approvalState(), revision);
   const authored = stepRevision(begun.state, { type: 'AUTHORED', path: begun.state.r.workingPath });
-  return stepRevision(authored.state, { type: 'SNAPSHOT', effectId: authored.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+  return assessment(stepRevision(authored.state, { type: 'SNAPSHOT', effectId: authored.effects[0]!.id, fingerprint: FP, diff: { paths: [] } }));
 }
 
 test('plan revision diagnostics: retry retains exact parser records and deterministic replay', () => {
@@ -160,13 +171,16 @@ test('prewrite-level: expanded criteria are proposed to the orchestrator before 
   assert.deepEqual(result.state.request.affectedTasks, ['T1']);
 });
 
-test('revision author await snapshots drift and refuses incomplete per-path settlement', () => {
-  let r = beginRevision(approvalState(), revision);
-  r = stepRevision(r.state, { type: 'AUTHORED', path: r.state.r.workingPath });
-  r = stepRevision(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: ['unexpected'] } });
-  assert.equal(r.state.tag, 'drift');
-  r = stepRevision(r.state, { type: 'DECISION', kind: 'drift', answer: { unexpected: 'adopt' } });
-  assert.equal(r.state.tag, 'parse'); assert.ok(r.state.r.c.finalFocus.includes('unexpected'));
+test('change receipt: revision resumes without writable-scope widening', () => {
+ let r=beginRevision(approvalState(),revision); const working=r.state.r.workingPath;
+ r=stepRevision(r.state,{type:'AUTHORED',path:working});
+ r=assessment(stepRevision(r.state,{type:'SNAPSHOT',effectId:r.effects[0]!.id,fingerprint:{...FP,worktree:'new'},diff:{paths:['unexpected']}}),['unexpected']);
+ assert.equal(r.state.tag,'drift'); if(r.state.tag!=='drift') return;
+ const notice=r.state.notice;
+ r=stepRevision(r.state,{type:'DECISION',kind:'drift',answer:{by:'orchestrator',noticeId:notice.id,afterHash:notice.afterHash,action:'refresh',rationale:'Accept within intent; rerun evidence.',evidenceIds:[]}});
+ assert.equal(r.effects[0]?.kind,'snapshot');
+ r=assessment(stepRevision(r.state,{type:'SNAPSHOT',effectId:r.effects[0]!.id,fingerprint:{...FP,worktree:'new'},diff:{paths:['unexpected']}}),['unexpected']);
+ assert.equal(r.state.tag,'parse'); assert.equal('adoptedPaths' in r.state.r.c,false);
 });
 
 test('level-journal: revision scope adjudication journals and settles run-stop after its host snapshot', () => {

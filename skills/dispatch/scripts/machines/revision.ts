@@ -1,10 +1,10 @@
-import type { Await, Event, HostEvent, TreeFingerprint, RevisionScopeProposal, ScopeAdjustment, ScopeDelta } from '../core/types.ts';
+import type { Await, Event, HostEvent, TreeFingerprint, RevisionScopeProposal, ScopeAdjustment, ScopeDelta, ChangeNotice, DriftResolution } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import type { ParsedPlan, PlanCriterion } from '../domain/types.ts';
 import { effectivePlan, type Context, type ImplementState } from './implement.ts';
 import { invalidatesIntegration, reconcileTasks } from './implement-tasks.ts';
-import { asParsedPlan, approvedPaths, commandMappings, recoverySnapshot, driftAnswer, isFingerprint, artifactRelative } from './implement-types.ts';
-import { classifyDrift } from '../policy/drift.ts';
+import { asParsedPlan, approvedPaths, commandMappings, isFingerprint, sameFingerprint, artifactRelative } from './implement-types.ts';
+import { bindingHash, evidenceAssessment, refreshEvidence, resolution } from './change-resolution.ts';
 import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, nextId, stay, type Step } from './types.ts';
 import { validateDesignTraceability } from '../domain/plan.ts';
@@ -14,8 +14,9 @@ export type RevisionContext = {
   reason: string; evidence: string; plan: ParsedPlan | null; hash: string | null; changed: readonly string[]; removed: readonly string[]; grew: boolean; scopeAdjudicated: boolean;
 };
 export type RevisionState = { tag: 'author'; r: RevisionContext; error: string | null; defects: readonly Readonly<Record<string, unknown>>[] }
-  | { tag: 'checking-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string }
-  | { tag: 'drift'; r: RevisionContext; parent: RevisionState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint }
+  | { tag: 'checking-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string; resolution?: DriftResolution }
+  | { tag: 'assessing-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string; fingerprint: TreeFingerprint; resolution?: DriftResolution }
+  | { tag: 'drift'; r: RevisionContext; parent: RevisionState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint; notice: ChangeNotice }
   | { tag: 'parse'; r: RevisionContext; effectId: string; afterReview: boolean }
   | { tag: 'review'; r: RevisionContext; review: ReviewState }
   | { tag: 'scope-adjudication'; r: RevisionContext; request: RevisionScopeProposal }
@@ -147,7 +148,7 @@ function applyRevision(state: RevisionState, event: Event): S {
       const c = { ...state.r.c, scopeAdjustments: [...state.r.c.scopeAdjustments, adjustment], scopeNotice: { requestId: state.request.requestId, approvedBy: adjustment.approvedBy, rationale: adjustment.rationale, quote: answer.quote } };
       return stay({ tag: 'resume', r: { ...state.r, c, scopeAdjudicated: true } });
     }
-    case 'resume': case 'refused': case 'checking-host-event': case 'drift': return stay(state);
+    case 'resume': case 'refused': case 'assessing-host-event': case 'checking-host-event': case 'drift': return stay(state);
     case 'stopped': return stay(state);
   }
 }
@@ -155,21 +156,30 @@ export function stepRevision(state: RevisionState, event: Event): S {
   if (state.tag === 'checking-host-event') {
     if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'refused', r: state.r, error: `Revision snapshot failed: ${event.detail}` });
     if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-    const paths = Array.isArray(event.diff['paths']) ? event.diff['paths'] as string[] : [];
-    const metadata = recoverySnapshot(event.fingerprint);
-    const artifact = artifactRelative(event.fingerprint, state.r.workingPath);
-    const classified = classifyDrift({ awaiting: revisionAwait(state.parent) ?? 'done', ctx: { stagePaths: [artifact], testPaths: [], testsOnly: false, artifactPath: artifact }, changed: paths, callerDirty: recoverySnapshot(state.r.c.startFingerprint)?.callerDirty ?? [], hashManifestDirs: metadata?.hashManifestDirs ?? [] });
-    classified.drift.push(...classified.autoAdopt.filter((file) => !(metadata?.verifiedManifestDirs ?? []).includes(file.slice(0, -'skill-hashes.json'.length).replace(/\/$/, ''))));
-    if (classified.drift.length) return stay({ tag: 'drift', r: state.r, parent: state.parent, parked: state.parked, paths: classified.drift, fingerprint: event.fingerprint });
-    return applyRevision({ ...state.parent, r: { ...state.r, c: { ...state.r.c, lastFingerprint: event.fingerprint } } }, state.parked);
+    if (!state.r.c.lastFingerprint) return stay({ tag: 'refused', r: state.r, error: 'Missing observation baseline.' });
+    if (!state.resolution && sameFingerprint(state.r.c.lastFingerprint, event.fingerprint)) return applyRevision({ ...state.parent, r: { ...state.r, c: { ...state.r.c, lastFingerprint: event.fingerprint } } }, state.parked);
+    const next = nextId(state.r.c.counters, 'implement.revision', 'assess-recovery');
+    const r = { ...state.r, c: { ...state.r.c, counters: next.counters } };
+    return { state: { tag: 'assessing-host-event', r, parent: state.parent, parked: state.parked, effectId: next.id, fingerprint: event.fingerprint, ...(state.resolution ? { resolution: state.resolution } : {}) }, effects: [{ kind: 'assess-recovery', id: next.id, purpose: 'drift', before: r.c.lastFingerprint!, after: event.fingerprint, phase: 'revision', pendingId: state.parked.type, input: { managedPlans: [artifactRelative(event.fingerprint, r.workingPath), artifactRelative(event.fingerprint, r.c.planPath)], expectedPaths: state.parked.type === 'AUTHORED' ? [artifactRelative(event.fingerprint, r.workingPath)] : [], inputs: approvedPaths(r.original), ...evidenceAssessment(r.c) } }] };
+  }
+  if (state.tag === 'assessing-host-event') {
+    if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'refused', r: state.r, error: event.detail });
+    if (event.type !== 'RECOVERY_ASSESSED' || !answers(event, state.effectId) || event.purpose !== 'drift' || event.beforeHash !== bindingHash(state.r.c.lastFingerprint) || event.afterHash !== bindingHash(state.fingerprint)) return stay(state);
+    if (state.resolution && state.resolution.afterHash === event.afterHash) {
+      if (state.resolution.action === 'escalate') return stay({ tag: 'stopped', r: state.r, summary: `Changed intent requires a user decision. Evidence retained: ${event.notice.rawDeltaRef.path}` });
+      if (state.resolution.action === 'reconcile') return stay({ tag: 'author', r: { ...state.r, c: { ...refreshEvidence(state.r.c, event.notice), lastFingerprint: state.fingerprint }, reason: state.resolution.rationale, evidence: event.notice.rawDeltaRef.path }, error: 'Reconcile changed inputs within the settled objective and scope.', defects: [] });
+      const r = { ...state.r, c: { ...(state.resolution.action === 'refresh' ? refreshEvidence(state.r.c, event.notice) : state.r.c), lastFingerprint: state.fingerprint } };
+      return applyRevision({ ...state.parent, r }, state.parked);
+    }
+    if (event.notice.relevance !== 'expected' && event.notice.relevance !== 'irrelevant') return stay({ tag: 'drift', r: state.r, parent: state.parent, parked: state.parked, paths: event.notice.paths, fingerprint: state.fingerprint, notice: event.notice });
+    return applyRevision({ ...state.parent, r: { ...state.r, c: { ...state.r.c, lastFingerprint: state.fingerprint } } }, state.parked);
   }
   if (state.tag === 'drift') {
     if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
-    const answer = driftAnswer(event.answer, state.paths);
-    if (!answer) return stay(state);
-    if (Object.values(answer).includes('stop')) return stay({ tag: 'refused', r: state.r, error: 'User stopped revision drift.' });
-    const r = { ...state.r, c: { ...state.r.c, lastFingerprint: state.fingerprint, adoptedPaths: [...new Set([...state.r.c.adoptedPaths, ...state.paths])], finalFocus: [...new Set([...state.r.c.finalFocus, ...state.paths])] } };
-    return applyRevision({ ...state.parent, r }, state.parked);
+    const answer = resolution(event.answer, state.notice); if (!answer) return stay(state);
+    const next = nextId(state.r.c.counters, 'implement.revision', 'snapshot');
+    const r = { ...state.r, c: { ...state.r.c, counters: next.counters } };
+    return { state: { tag: 'checking-host-event', r, parent: state.parent, parked: state.parked, effectId: next.id, resolution: answer }, effects: [{ kind: 'snapshot', id: next.id, since: r.c.lastFingerprint }] };
   }
   if (['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'DECISION'].includes(event.type) && revisionAwait(state) !== null && revisionAwait(state) !== 'done') {
     if (validateRevision(state, event as HostEvent)) return stay(state);
@@ -193,6 +203,7 @@ export function reboundRevision(state: Extract<RevisionState, { tag: 'resume' }>
 }
 export function revisionAwait(state: RevisionState): Await | null { return state.tag === 'author' ? 'author' : state.tag === 'review' ? reviewAwait(state.review) : state.tag === 'drift' || state.tag === 'scope-adjudication' || state.tag === 'scope-user-decision' ? 'decide' : state.tag === 'resume' || state.tag === 'stopped' || state.tag === 'refused' ? 'done' : null; }
 export function revisionData(state: RevisionState): Record<string, unknown> {
+  if (state.tag === 'drift') return { kind: 'drift', notice: state.notice, options: ['preserve', 'refresh', 'reconcile', 'escalate'] };
   if (state.tag === 'author') return { artifact: 'plan', path: state.r.workingPath, originalPath: state.r.c.planPath, originalHash: state.r.originalHash, reason: state.r.reason, error: state.error, defects: state.defects };
   if (state.tag === 'review') return { ...reviewData(state.review), delta: state.r.changed };
   if (state.tag === 'scope-adjudication') return { kind: 'scope-deviation', pendingProposal: state.request, choices: ['approve', 'disagree', 'stop'], stopAllowed: true };
@@ -202,7 +213,7 @@ export function revisionData(state: RevisionState): Record<string, unknown> {
 }
 export function validateRevision(state: RevisionState, event: HostEvent): string | null {
   if (event.type === 'REVISE') return 'event.type: settle the outstanding revision first.';
-  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !driftAnswer(event.answer, state.paths))) return 'event.answer: rule adopt or stop for every revision drift path.';
+  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !resolution(event.answer, state.notice))) return 'event.answer: bind the current notice and affected evidence.';
   if (state.tag === 'author' && (event.type !== 'AUTHORED' || event.path !== state.r.workingPath)) return 'event.path: expected the session revision working copy.';
   if (state.tag === 'scope-adjudication') {
     if (event.type === 'DECISION' && event.kind === 'run-stop' && isRecord(event.answer) && typeof event.answer['quote'] === 'string' && event.answer['quote'].trim()) return null;

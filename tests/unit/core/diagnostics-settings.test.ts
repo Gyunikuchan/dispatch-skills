@@ -31,7 +31,7 @@ test('SC5: refresh is journaled and changes future plan review defaults on repla
   const f = await fixture();
   const result = await send({ ...f, refreshConfig: true, configSource: () => config('second') });
   assert.equal(result.frame?.progress?.['executionConfig'] && (result.frame.progress['executionConfig'] as { status: string }).status, 'applied');
-  const lines = readJournal(f.ports, f.runDir).lines;
+  const lines = Array.from(readJournal(f.ports, f.runDir).records);
   assert.equal(lines.filter((line) => line.type === 'EXECUTION_CONFIG_UPDATED').length, 1);
   const author = await send({ ...f, dryRun: true });
   const handlers: Handlers = {
@@ -53,7 +53,7 @@ test('SC5: no-op refresh records no update', async () => {
   const f = await fixture();
   const result = await send({ ...f, refreshConfig: true, configSource: () => config() });
   assert.equal((result.frame?.progress?.['executionConfig'] as { status: string }).status, 'unchanged');
-  assert.equal(readJournal(f.ports, f.runDir).lines.length, 1);
+  assert.equal(Array.from(readJournal(f.ports, f.runDir).records).length, 1);
 });
 
 test('SC5: no-op refresh resumes queued work and records a broken stale lock', async () => {
@@ -66,7 +66,7 @@ test('SC5: no-op refresh resumes queued work and records a broken stale lock', a
   const result = await send({ ports, runDir, machine: dispatchMachine, handlers, refreshConfig: true, configSource: () => config() });
   assert.equal(result.frame?.await, 'done', JSON.stringify(result.frame));
   assert.equal((result.frame?.progress?.['executionConfig'] as { status: string }).status, 'unchanged');
-  const types = readJournal(ports, runDir).lines.map((line) => line.type);
+  const types = Array.from(readJournal(ports, runDir).records).map((line) => line.type);
   assert.ok(types.includes('LOCK_BROKEN') && types.includes('REVIEW_PREPARED'));
   assert.ok(!types.includes('EXECUTION_CONFIG_UPDATED'));
 });

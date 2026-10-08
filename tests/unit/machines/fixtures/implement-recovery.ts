@@ -1,12 +1,12 @@
+import { bindingHash } from '../../../../skills/dispatch/scripts/machines/change-resolution.ts';
 import assert from 'node:assert/strict';
-import type { Event, RecoverySnapshot, RunStartedEvent, TreeFingerprint } from '../../../../skills/dispatch/scripts/core/types.ts';
+import type { Event, RunStartedEvent, TreeFingerprint } from '../../../../skills/dispatch/scripts/core/types.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../../../skills/dispatch/scripts/core/types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { artifactRelative, type VerifyRecord } from '../../../../skills/dispatch/scripts/machines/implement-types.ts';
 
 export const HASH = `sha256:${'a'.repeat(64)}`;
-export const metadata: RecoverySnapshot = { repoRoot: '', contents: { 'src/a.ts': Buffer.from('before').toString('base64') }, entries: { 'src/a.ts': { kind: 'file', mode: 0o644, linkTarget: null } }, taskStartFiles: ['src/a.ts'], callerDirty: [], ignored: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
-export const FP: TreeFingerprint = { head: 'h', index: 'i', worktree: 'w', recovery: metadata };
+export const FP: TreeFingerprint = { head: 'h', index: 'i', worktree: 'w', repoRoot: '', recovery: { version: 1, sha256: 'a'.repeat(64), bytes: 300, path: `recovery-manifests/${'a'.repeat(64)}.json` } };
 export const PLAN = { title: 'Feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], criteria: [{ id: 'SC1', title: 'works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'check', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'feature', command: null, line: 1 }], verification: { automated: ['check'], none: null, manual: [] }, tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1'], paths: ['src/a.ts'], generated: [] }], finalCommands: [], traceability: null, governedText: 'original governed text' };
 export const RUN: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {}, overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } };
 export const failedRow: VerifyRecord = { command: 'check', exit: 1, logPath: 'failure.log', failureId: 'same-failure', failedTests: ['test:behavior'], diagnostic: 'failed', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' };
@@ -23,7 +23,7 @@ export function host(state: ImplementState, event: Event, fingerprint = FP, path
   const r = stepImplement(state, event);
   if (r.state.tag !== 'checking-host-event') return r;
   assert.equal(r.effects[0]?.kind, 'snapshot');
-  return stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.state.effectId, fingerprint, diff: { paths } });
+  return assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.state.effectId, fingerprint, diff: { paths } }), paths);
 }
 export function classify(result: ReturnType<typeof stepImplement>) {
   if (result.state.tag !== 'level-classification') return result;
@@ -33,4 +33,13 @@ export function failure(): Extract<ImplementState, { tag: 'failure' }> { const c
 export function taskFailure(attempt: number, failures = attempt): Extract<ImplementState, { tag: 'failure' }> {
   const f = failure();
   return { ...f, c: { ...f.c, phase: 'tasks', stalled: null, tasks: { T1: { id: 'T1', status: 'failed', attempt, failures, signature: '', input: null, worktree: null, handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: 'check failed' } } } };
+}
+
+export function assessed(r: ReturnType<typeof stepImplement>, paths: readonly string[] = [], violations: readonly string[] = []) {
+  if (r.state.tag !== 'assessing-host-event' && r.state.tag !== 'hotfix-assessment') return r;
+  const effect = r.effects[0]; if (effect?.kind !== 'assess-recovery') return r;
+  const beforeHash = bindingHash(effect.before), afterHash = bindingHash(effect.after);
+  return stepImplement(r.state, { type: 'RECOVERY_ASSESSED', effectId: effect.id, purpose: effect.purpose, beforeHash, afterHash,
+    notice: { id: bindingHash({ beforeHash, afterHash, paths }), phase: effect.phase, pendingId: effect.pendingId, beforeHash, afterHash, rawDeltaRef: { version: 1, sha256: 'b'.repeat(64), bytes: 50, path: 'recovery-deltas/b.json' }, paths, pathCount: paths.length, relevance: paths.length ? 'unknown' : 'expected', reason: 'Fixture assessment', affectedEvidence: Object.keys(r.state.c.evidence) },
+    ...(effect.purpose === 'hotfix' ? { judgement: { violations, withdrawn: false, files: paths.length, lines: paths.length } } : {}) });
 }

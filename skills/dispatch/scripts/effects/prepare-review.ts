@@ -14,6 +14,7 @@ import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import { reviewArtifactText } from './check-review-target.ts';
 import type { IntegrationScope } from '../core/types.ts';
+import { runOwnedPaths } from './snapshot.ts';
 
 const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -190,6 +191,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
       } else {
         let scopeText: string;
         if (kind === 'code') {
+          const driverOwned = new Set(runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), ctx.runDir, ctx.ownedArtifacts));
           let integration: unknown = scope['integration'];
           if (integration === undefined && text(spec['context']).startsWith('{')) {
             let context: unknown;
@@ -204,7 +206,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             changed = (await deps.git.baselineDiff(deps.cwd, bound.baseline)).filter((p) => owned.has(p));
             if (!changed.length) throw new Error('Integration has an empty intersection with journal-owned paths.');
           } else changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
-          bindingChanges = integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed];
+          changed = changed.filter((file) => !driverOwned.has(file));
+          bindingChanges = (integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed]).filter((file) => !driverOwned.has(file));
           let prior: ReviewSnapshot | undefined;
           if (typeof scope['priorManifest'] === 'string') {
             const raw = ports.fs.readText(scope['priorManifest']);
@@ -222,7 +225,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           if (deps.git.reviewSnapshot) {
             manifestPath = runPaths(ctx.runDir).scope(effect.id);
             snapshot ??= scopedSnapshot(bindingSnapshot!, governedPaths ?? changed);
-            ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...snapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
+            ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...bindingSnapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
           }
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
           scopeText = reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']));

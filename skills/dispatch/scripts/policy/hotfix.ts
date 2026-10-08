@@ -27,7 +27,6 @@ export const DEFAULT_SECRET_PATTERNS: SecretPatterns = {
 export type SecretPatterns = { file: readonly string[]; basename: readonly string[]; dir: readonly string[] };
 export type ChangedPath = { path: string; added: number; removed: number; deleted: boolean; outsideRepo: boolean };
 export type GitFingerprint = { head: string; index: string; stash: string; gitDir: string };
-export type ManifestEntry = { path: string; hash: string };
 
 export type HotfixInput = {
   /** Informational; every path below is already repo-relative. */
@@ -38,8 +37,6 @@ export type HotfixInput = {
   after: GitFingerprint;
   taskStartFiles: readonly string[];
   secretPatterns?: SecretPatterns;
-  ignoredBefore: readonly ManifestEntry[];
-  ignoredAfter: readonly ManifestEntry[];
   preRed: boolean;
   productionPaths: readonly string[];
   failureIdentityBefore: string | null;
@@ -70,15 +67,6 @@ export function judgeHotfix(input: HotfixInput): HotfixJudgement {
   if (input.after.index !== input.before.index) violations.push('index changed (staging or restore)');
   if (input.after.stash !== input.before.stash) violations.push('stash list changed');
   if (input.after.gitDir !== input.before.gitDir) violations.push('.git/ config, hooks, or info changed');
-
-  // SECTION: Ignored manifest
-  const after = new Map(input.ignoredAfter.map((entry) => [slash(entry.path), entry.hash]));
-  const before = new Map(input.ignoredBefore.map((entry) => [slash(entry.path), entry.hash]));
-  for (const [file, hash] of before) {
-    if (!after.has(file)) violations.push(`${file}: deleted an ignored path`);
-    else if (after.get(file) !== hash && isSecretPath(file, patterns)) violations.push(`${file}: secrets path (ignored)`);
-  }
-  for (const file of after.keys()) if (!before.has(file) && isSecretPath(file, patterns)) violations.push(`${file}: created an ignored secrets path`);
 
   // SECTION: Changed paths
   const external = new Map(input.external.map((entry) => [slash(entry.path), entry.reason.trim()]));

@@ -113,7 +113,7 @@ export function oneOf<T>(...options: readonly Validator<T>[]): Validator<T> {
 // SECTION: Host events
 
 const payload = rec(any);
-const LEGACY_DECIDE_KINDS = lit('approval', 'baseline', 'failure', 'concerns', 'escalation', 'needs-user', 'opt-in', 'drift');
+const LEGACY_DECIDE_KINDS = lit('approval', 'baseline', 'failure', 'concerns', 'escalation', 'needs-user', 'opt-in');
 const strings = arr(str);
 const nullableString: Validator<string | null> = (value, at) => value === null ? ok(null) : str(value, at);
 const nullableBoolean: Validator<boolean | null> = (value, at) => value === null || typeof value === 'boolean' ? ok(value) : fail(at, 'boolean or null', value);
@@ -156,6 +156,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
   WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str }),
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
+    obj({ type: lit('DECISION'), kind: lit('drift'), answer: obj({ by: lit('orchestrator'), noticeId: nonBlank, afterHash: nonBlank, action: lit('preserve', 'refresh', 'reconcile', 'escalate'), rationale: nonBlank, evidenceIds: strings }) }),
     obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
     obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),
     obj({ type: lit('DECISION'), kind: lit('scope-deviation'), answer: obj({ by: lit('orchestrator'), request: scopeProposal, ruling: lit('approve', 'disagree'), rationale: nonBlank }) }),

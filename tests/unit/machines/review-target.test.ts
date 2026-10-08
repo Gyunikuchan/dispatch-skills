@@ -20,7 +20,7 @@ test('review-target defers wave consumption and rejects host replies while check
   assert.equal(failed.state.tag, 'failed'); assert.equal(reviewData(failed.state)['outcome'], 'failed');
 });
 
-test('review-target recorded identity results replay without checking the live target', () => {
+test('change receipt: recorded identity results replay without checking the live target', () => {
   const folder = createFolder(reviewMachine), events: Event[] = [started]; folder.apply(started);
   const apply = (event: Event) => { events.push(event); folder.apply(event); };
   const effect = folder.queue[0]!; apply({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt: 1 });

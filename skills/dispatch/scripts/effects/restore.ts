@@ -1,12 +1,19 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, RecoverySnapshot, Ports, FileEntry } from '../core/types.ts';
+import type { Effect, Handler, RecoveryManifest, Ports, FileEntry } from '../core/types.ts';
 import { snapshotContent } from './snapshot.ts';
 import { runPaths } from '../lib/session.ts';
+import { loadRecovery } from './recovery-manifest.ts';
+import { stableValue } from '../domain/stable-value.ts';
 
 type RestoreEffect = Extract<Effect, { kind: 'restore' }>;
 export type RestoreDeps = { cwd: string };
 const digest = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
+class RestoreConflict extends Error {
+  readonly paths: readonly string[];
+  readonly binding: string;
+  constructor(paths: readonly string[], binding: string) { super(`Restore destination changed: ${paths.join(', ')}`); this.paths = paths; this.binding = binding; }
+}
 const base64 = (value: unknown): value is string => typeof value === 'string' && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value) && Buffer.from(value, 'base64').toString('base64') === value;
 function validEntry(entry: unknown, content: unknown): boolean {
   if (entry === null) return content === null;
@@ -32,9 +39,8 @@ export function createRestore(deps: RestoreDeps): Handler<RestoreEffect> {
   return async (effect, ports, ctx) => {
     try {
       if (!effect.paths.every(safePath) || new Set(effect.paths).size !== effect.paths.length) throw new Error('Invalid restore paths.');
-      const raw = effect.to['recovery'];
-      const snapshot = typeof raw === 'object' && raw !== null && 'contents' in raw ? raw as RecoverySnapshot : null;
-      if (!snapshot) throw new Error('Missing immutable pre-attempt contents.');
+      const snapshot = loadRecovery(ports, ctx.runDir, effect.to['recovery']);
+      if (path.resolve(snapshot.repoRoot) !== path.resolve(deps.cwd)) throw new Error('Recovery repository binding mismatch.');
       if (typeof snapshot.contents !== 'object' || snapshot.contents === null || Object.values(snapshot.contents).some((value) => value !== null && (typeof value !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)))) throw new Error('Invalid immutable contents.');
       const paths = [...effect.paths].sort();
       if (paths.some((file) => !Object.hasOwn(snapshot.contents, file) || !Object.hasOwn(snapshot.entries, file))) throw new Error('Restore target lacks a path binding.');
@@ -80,6 +86,14 @@ export function createRestore(deps: RestoreDeps): Handler<RestoreEffect> {
         ports.fs.writeAtomic(sidecar, digest(original));
       }
       if (ports.fs.readText(sidecar) !== digest(original)) throw new Error('Restore patch sidecar verification failed.');
+      const conflicts: string[] = [];
+      for (const file of paths) {
+        checkAncestors(deps.cwd, file, ports);
+        const info = ports.fs.inspectPath(path.resolve(deps.cwd, file));
+        const live = { content: info?.kind === 'file' ? ports.fs.readBase64(path.resolve(deps.cwd, file)) : null, entry: info ? { kind: info.kind, mode: info.mode, linkTarget: info.linkTarget } : null };
+        if (stableValue(live) !== stableValue(target[file]) && stableValue(live) !== stableValue(failures[file])) conflicts.push(file);
+      }
+      if (conflicts.length) throw new RestoreConflict(conflicts, binding);
       // Verify every binding before mutating any path; a crash then safely repeats the same target.
       for (const file of paths) {
         const content = target[file]?.content, entry = target[file]?.entry;
@@ -108,7 +122,7 @@ export function createRestore(deps: RestoreDeps): Handler<RestoreEffect> {
       }
       return [{ type: 'RESTORED', effectId: effect.id, paths, patchPath }];
     } catch (error) {
-      return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'integrity', detail: error instanceof Error ? error.message : String(error) }];
+      return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'integrity', detail: error instanceof Error ? error.message : String(error), ...(error instanceof RestoreConflict ? { conflict: { kind: 'newer-content' as const, paths: error.paths, binding: error.binding } } : {}) }];
     }
   };
 }

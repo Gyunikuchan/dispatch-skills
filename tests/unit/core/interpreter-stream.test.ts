@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+import { findDesignDelivery, findSettledPlan, fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
+import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
+import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { PLAN, HASH } from '../machines/fixtures/implement-recovery.ts';
+import { design, hash as designHash, run as designRun } from '../machines/fixtures/design.ts';
+import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
+
+test('journal stream: public send dry-run and fold never read a whole journal string', async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  const original = ports.fs.readText;
+  ports.fs.readText = (file) => { assert.notEqual(file, journalPath(runDir)); return original(file); };
+  const begun = await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
+  assert.equal(begun.frame?.await, 'author');
+  const chunks = ports.fs.readChunks; let passes = 0;
+  ports.fs.readChunks = function* (file, size) { if (file === journalPath(runDir)) passes++; yield* chunks(file, size); };
+  assert.equal((await send({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, dryRun: true })).frame?.await, 'author');
+  assert.equal(passes, 1, 'fold, metadata and boundary projection share one scan');
+  passes = 0;
+  const done = await send({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, rawEvent: { type: 'AUTHORED', path: 'valid.plan.md' } });
+  assert.equal(done.frame?.await, 'done');
+  assert.equal(passes, 1, 'send and diagnostics share the fold scan');
+  assert.equal(fold(awaitingMachine, readJournal(ports, runDir).records).state.tag, 'done');
+  assert.ok(fs.statSync(journalPath(runDir)).size > 0);
+});
+test('journal stream: settled-plan and design-delivery lookups scan without whole-file reads', async () => {
+  const ports = fakePorts(), session = tempDir(), runsDir = path.join(session, '.state', 'runs');
+  const read = ports.fs.readText;
+  ports.fs.readText = (file) => { assert.notEqual(path.basename(file), 'events.jsonl'); return read(file); };
+  const planRun = path.join(runsDir, '001-plan'), planPath = path.join(session, 'x.plan.md');
+  const planHandlers: Handlers = { 'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] }] };
+  await start({ ports, runDir: planRun, machine: planMachine, handlers: planHandlers, runStarted: { ...RUN_STARTED, verb: 'plan', argument: planPath, overrides: { path: planPath }, config: { phases: { 'plan-review': { rounds: { low: 0 }, targets: { low: 0 } } } } } });
+  assert.equal((await send({ ports, runDir: planRun, machine: planMachine, handlers: planHandlers, rawEvent: { type: 'AUTHORED', path: planPath } })).frame?.await, 'done');
+  assert.deepEqual(findSettledPlan(ports, runsDir, planMachine, session, { path: planPath, currentHash: HASH }), { path: planPath, hash: HASH, outcome: 'skipped' });
+  const designDir = path.join(runsDir, '002-implement');
+  const handlers: Handlers = { 'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash: designHash, parsed: design, defects: [] }] };
+  const begun = await start({ ports, runDir: designDir, machine: rootMachine, handlers, runStarted: designRun('implement') });
+  assert.equal(begun.frame?.await, 'decide');
+  assert.equal(findDesignDelivery(ports, runsDir, rootMachine, { path: 'x.design.md', revision: designHash })?.finished, false);
+});

@@ -1,7 +1,8 @@
 // Reusable review sub-machine (spec §5.5, §7): prepare → wave → [native] → rule → [fix → fix-verify] → next?.
 // Pure reducer; rounds policy lives in policy/rounds.ts. Parents embed `ReviewState` and forward events via `stepReview`.
 
-import type { Effect, Event, FindingId, HostEvent, Level, Machine, RunStartedEvent } from '../core/types.ts';
+import type { ChangeNotice, DriftResolution, Effect, Event, FindingId, HostEvent, Level, Machine, RunStartedEvent } from '../core/types.ts';
+import { resolution } from './change-resolution.ts';
 import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
 import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, ReviewerView, RosterSlot } from '../domain/types.ts';
@@ -145,6 +146,8 @@ export type ReviewCtx = {
   drafts: readonly Finding[];
   priorManifest?: string;
   targetManifest?: string;
+  reviewedRevision?: string;
+  findingBindings?: Readonly<Record<string, string>>;
   fixCandidate?: string;
   waveBinding?: { waveKey: string; attempt: number; roster: readonly Row[] };
 };
@@ -153,7 +156,8 @@ export type Pass = 'main' | 'opt-in';
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly FindingId[] };
 
 export type ReviewState =
-  | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' }>; pending: Event; effectId: string }
+  | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' | 'change-resolution' }>; pending: Event; effectId: string; resolution?: DriftResolution }
+  | { tag: 'change-resolution'; c: ReviewCtx; check: Extract<ReviewState, { tag: 'target-check' }>; notice: ChangeNotice }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'prepare'; c: ReviewCtx }
   | { tag: 'wave'; c: ReviewCtx; phase: 'cli' | 'native' }
@@ -273,7 +277,7 @@ function afterWave(c0: ReviewCtx): S {
     ...c0.rows.filter((row) => row['state'] === 'reserve').map((row) => ({ slot: String(row['slot']), reason: failureReasonOf(row) })),
   ];
   const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate' }));
-  const c1: ReviewCtx = { ...c0, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed }] };
+  const c1: ReviewCtx = { ...c0, findingBindings: { ...c0.findingBindings, ...Object.fromEntries(fresh.map((row) => [row.id, c0.reviewedRevision ?? c0.targetManifest ?? 'unbound'])) }, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed }] };
   const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot || row['by'] === entry.slot));
   if (!reviewers.length || uncovered.length) return stay({ tag: 'failed', c: c1, detail: `reviewer-coverage: ${uncovered.length ? `responsible reviewer unavailable for ${uncovered.map((entry) => entry.id).join(', ')}` : 'no usable reviewer capture'}` });
   const verdict = convergence(fresh.filter((finding) => finding.status === 'open').map(matchKey), c0.history);
@@ -543,6 +547,7 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
       }
       return null;
     }
+    case 'change-resolution': return event.type === 'DECISION' && event.kind === 'drift' && resolution(event.answer, state.notice) ? null : 'event.answer: bind the current change notice and evidence.';
     case 'target-check': return 'event: review target check is pending';
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty':
       return null;
@@ -553,22 +558,43 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
 // SECTION: Step
 
 export function stepReview(state: ReviewState, event: Event): S {
+  if (state.tag === 'change-resolution') {
+    if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
+    const answer = resolution(event.answer, state.notice); if (!answer) return stay(state);
+    const next = nextId(state.c.counters, state.c.path, 'check-review-target');
+    const c = { ...state.c, counters: next.counters };
+    return { state: { ...state.check, c, effectId: next.id, resolution: answer }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: c.fixCandidate ?? c.targetManifest ?? c.priorManifest!, allowedPaths: [] }] };
+  }
   if (state.tag === 'target-check') {
     if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'failed', c: state.c, detail: event.detail });
     if (event.type !== 'REVIEW_TARGET_CHECKED' || !answers(event, state.effectId)) return stay(state);
+    if (event.result === 'changed') {
+      if (!event.notice) return stay({ tag: 'failed', c: state.c, detail: 'Changed target lacks binding evidence.' });
+      if (!state.resolution || state.resolution.afterHash !== event.notice.afterHash) return stay({ tag: 'change-resolution', c: state.c, check: state, notice: event.notice });
+      if (state.resolution.action === 'refresh') {
+        const c = { ...state.c, targetManifest: event.manifestPath, priorManifest: event.manifestPath, reviewedRevision: event.notice.afterHash,
+          findings: state.c.findings.map((row): ReviewFinding => ['open', 'accepted', 'pending-rejection', 'needs-user'].includes(row.status) ? { ...row, status: 'superseded' } : row), carried: [] };
+        delete c.fixCandidate;
+        const round = state.before.tag === 'prepare' ? c.round : c.round + 1;
+        if (round > c.spec.cap) return stay({ tag: 'escalated', c, escalation: { kind: 'deadlock', ids: c.findings.map((row) => row.id) } });
+        return prepare(c, round, 'full', c.carried);
+      }
+      return stay({ tag: 'decide-escalation', c: state.c, escalation: { kind: 'deadlock', ids: state.c.findings.map((row) => row.id) } });
+    }
     const before = state.before;
     if (!('c' in before)) return stay({ tag: 'failed', c: state.c, detail: 'target-changed: missing review context' });
     const verifying = before.tag === 'fix-verify';
     const verified = verifying && ((state.pending.type === 'VERIFY_DONE' && state.pending.results.every((row) => row['exit'] === 0))
       || (state.pending.type === 'ARTIFACT_PARSED' && state.pending.defects.length === 0));
     const candidate = state.pending.type === 'FIXES_APPLIED' || (verifying && !verified);
-    const c: ReviewCtx = { ...before.c, counters: state.c.counters,
+    const c: ReviewCtx = { ...before.c, counters: state.c.counters, ...(event.notice ? { reviewedRevision: event.notice.afterHash } : {}),
       ...(candidate ? { fixCandidate: event.manifestPath } : { targetManifest: event.manifestPath }) };
     if (verified) delete c.fixCandidate;
     return stepReviewUnchecked({ ...before, c }, state.pending);
   }
   const manifest = 'c' in state ? state.c.fixCandidate ?? state.c.targetManifest ?? state.c.priorManifest : undefined;
-  const consumes = (state.tag === 'native' && event.type === 'NATIVE_RESULTS' && validateNativeResults(event.slots, state.slots) === null)
+  const consumes = (state.tag === 'prepare' && event.type === 'REVIEW_PREPARED' && answers(event, state.c.effectId))
+    || (state.tag === 'native' && event.type === 'NATIVE_RESULTS' && validateNativeResults(event.slots, state.slots) === null)
     || (state.tag === 'wave' && (event.type === 'WAVE_DONE' || (event.type === 'WAVE_STARTED' && 'completed' in event)) && answers(event, state.c.effectId))
     || (state.tag === 'rule' && event.type === 'RULINGS' && validateRulings(state.c, event.rulings) === null)
     || (state.tag === 'fix' && event.type === 'FIXES_APPLIED' && validateFixes(state.clusters, event.clusters) === null)
@@ -577,13 +603,14 @@ export function stepReview(state: ReviewState, event: Event): S {
   if (manifest && consumes && 'c' in state) {
     const next = nextId(state.c.counters, state.c.path, 'check-review-target');
     const c = { ...state.c, counters: next.counters };
-    const allowedPaths = state.tag === 'fix' ? state.clusters.flatMap((cluster) => cluster.paths) : [];
+    const applied = state.tag === 'fix' && event.type === 'FIXES_APPLIED' ? state.clusters.filter((cluster) => event.clusters.some((row) => row['clusterId'] === cluster.clusterId && row['status'] !== 'failed')) : [];
+    const allowedPaths = applied.length ? c.spec.kind === 'code' ? applied.flatMap((cluster) => cluster.paths) : [c.spec.target] : [];
     return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, allowedPaths }] };
   }
   return stepReviewUnchecked(state, event);
 }
 
-function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }>, event: Event): S {
+function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' | 'change-resolution' }>, event: Event): S {
   if (event.type === 'EFFECT_FAILED' && 'c' in state && answers(event, state.c.effectId)
     && (state.tag === 'prepare' || state.tag === 'wave' || state.tag === 'fix-verify')) {
     return stay({ tag: 'failed', c: state.c, detail: `${event.cls}: ${event.detail}` });
@@ -633,7 +660,7 @@ export function reviewAwait(state: ReviewState) {
     case 'native': return 'native' as const;
     case 'rule': return 'rule' as const;
     case 'fix': return 'fix' as const;
-    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
+    case 'change-resolution': case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return 'done' as const;
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return null;
     default: return never(state, 'review state');
@@ -654,6 +681,7 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
 }
 
 export function reviewData(state: ReviewState): Readonly<Record<string, unknown>> {
+  if (state.tag === 'change-resolution') return { kind: 'drift', question: 'Resolve changed reviewed content before consuming the parked receipt.', notice: state.notice, options: ['preserve', 'refresh', 'reconcile', 'escalate'] };
   switch (state.tag) {
     case 'native': return { round: state.c.round, slots: state.slots };
     case 'rule': {
@@ -717,11 +745,15 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
 
 export const reviewTransitions = [
   ...[
-    ['native', 'NATIVE_RESULTS'], ['wave', 'WAVE_DONE'], ['wave', 'WAVE_STARTED'], ['rule', 'RULINGS'],
+    ['prepare', 'REVIEW_PREPARED'], ['native', 'NATIVE_RESULTS'], ['wave', 'WAVE_DONE'], ['wave', 'WAVE_STARTED'], ['rule', 'RULINGS'],
     ['fix', 'FIXES_APPLIED'], ['fix-verify', 'VERIFY_DONE'], ['fix-verify', 'ARTIFACT_PARSED'],
     ['decide-needs-user', 'DECISION'], ['decide-opt-in', 'DECISION'],
   ].map(([from, on]) => ({ from: from!, on: on!, to: 'target-check' })),
   ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
+  { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'empty' },
+  { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'change-resolution' },
+  { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'escalated' },
+  { from: 'change-resolution', on: 'DECISION', to: 'target-check' },
   { from: 'target-check', on: 'EFFECT_FAILED', to: 'failed' },
   { from: 'booting', on: 'RUN_STARTED', to: 'prepare' },
   { from: 'booting', on: 'RUN_STARTED', to: 'skipped' },

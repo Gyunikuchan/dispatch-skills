@@ -1,15 +1,15 @@
 // @ts-check
 
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, ScopeDeviation, ScopeProposal, PlanAmendment } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, ScopeDeviation, ScopeProposal, PlanAmendment, ChangeNotice, DriftResolution } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, stay, type Counters, type Step } from './types.ts';
-import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
-import { classifyDrift } from '../policy/drift.ts';
-import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
+import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
+import { bindingHash, evidenceAssessment, refreshEvidence, resolution } from './change-resolution.ts';
+import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, validateDesignTraceability } from '../domain/plan.ts';
 import { activeTasks, checkpointPathOf, failureItems, initialTasks, invalidatesIntegration, rependTasks, readyTasks, reconcileTasks, taskCriteria, taskRedCriteria, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { slugOf } from './plan.ts';
@@ -53,7 +53,6 @@ export type Context = {
   changedPaths: readonly string[];
   finalGate: string;
   failureReason: string | null;
-  adoptedPaths: readonly string[];
   finalFocus: readonly string[];
   withdrawnHotfix: readonly string[];
   retryContext: { rootCause: string; failure: string } | null;
@@ -73,12 +72,14 @@ type CheckoutStep = 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | '
 
 export type ImplementState =
   | { tag: 'revision-request'; c: Context; parent: ImplementState; event: Extract<HostEvent, { type: 'REVISE' }> }
-  | { tag: 'checking-host-event'; c: Context; parent: ImplementState; parked: HostEvent; effectId: string }
-  | { tag: 'drift'; c: Context; parent: ImplementState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint }
+  | { tag: 'checking-host-event'; c: Context; parent: ImplementState; parked: Event; effectId: string; resolution?: DriftResolution }
+  | { tag: 'assessing-host-event'; c: Context; parent: ImplementState; parked: Event; effectId: string; fingerprint: TreeFingerprint; resolution?: DriftResolution }
+  | { tag: 'drift'; c: Context; parent: ImplementState; parked: Event; paths: readonly string[]; fingerprint: TreeFingerprint; notice: ChangeNotice }
   | { tag: 'hotfix-brief'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
   | { tag: 'hotfix-write'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; brief: { path: string; sha256: string; envelopePath: string }; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
   | { tag: 'hotfix-envelope'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
   | { tag: 'hotfix-snapshot'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
+  | { tag: 'hotfix-assessment'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; fingerprint: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
   | { tag: 'hotfix-verify'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; changedPaths: readonly string[] }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'starting'; c: Context; effectId: string; next: 'author' | 'parse' }
@@ -151,7 +152,7 @@ function baseContext(run: RunStartedEvent): Context {
     mutationEpoch: 0, criterionMutation: {}, baseline: [], acceptedBaseline: [], records: {}, evidence: {}, redMatrix: [], concerns: [],
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, phase: 'setup', tasks: {}, integration: null,
     approval: null, changedPaths: [], finalGate: 'pending', failureReason: null,
-    adoptedPaths: [], finalFocus: [], withdrawnHotfix: [], retryContext: null, stalled: null, revisions: [], revisionReviewRound: 0,
+    finalFocus: [], withdrawnHotfix: [], retryContext: null, stalled: null, revisions: [], revisionReviewRound: 0,
     levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, scopeRebaseQueue: [],
   };
 }
@@ -208,7 +209,7 @@ function fromPlanReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `plan review failed: ${review.detail}`);
     case 'escalated': case 'empty': return beginFailure(c, `plan review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'change-resolution': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
     default: return never(review, 'plan review state');
   }
 }
@@ -775,7 +776,10 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
     case 'reset': return taskFailed(c, id, state.reason ?? 'Integration verification failed.');
     case 'rewind': return schedule({ ...c, integration: { ...c.integration!, head: c.integration!.base, rewind: false } });
     case 'deliver': {
-      if (list('conflicts').length) return beginFailure(c, `Delivery refused: caller paths changed since the baseline: ${list('conflicts').join(', ')}. Integrated work is preserved in ${c.integration!.path}.`);
+      if (list('conflicts').length) {
+        const next = effectId(c, 'snapshot');
+        return { state: { tag: 'checking-host-event', c: next.c, parent: state, parked: event, effectId: next.id }, effects: [{ kind: 'snapshot', id: next.id, since: c.lastFingerprint }] };
+      }
       const delivered = [...list('transferred'), ...list('already')];
       const names = [...new Set([...Object.entries(c.tasks).flatMap(([task, record]) => [worktreeName('task', task), worktreeName('red', task), ...(record.worktreeNames ?? []), ...(record.worktree ? [taskWorktreeName(record)] : [])]), 'integration'])];
       return checkout({ ...markMutation(c, delivered), phase: 'delivered', changedPaths: [...new Set([...c.changedPaths, ...delivered])].sort() }, 'cleanup', 'cleanup', { names, links: c.integration!.links });
@@ -964,7 +968,7 @@ function fromCodeReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `code review failed: ${review.detail}`);
     case 'escalated': return beginFailure(c, `code review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'change-resolution': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
     default: return never(review, 'code review state');
   }
 }
@@ -1008,11 +1012,13 @@ function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Rec
   for (const id of ids) {
     const value = values[id];
     if (!isRecord(value) || !(value['outcome'] === 'pass' || waiver && value['outcome'] === 'waived') || !nonEmpty(value['evidence'])) return null;
+    const dependencies = value['dependencies'];
+    if (dependencies !== undefined && (!isRecord(dependencies) || typeof dependencies['complete'] !== 'boolean' || !nonEmpty(dependencies['rationale']) || !Array.isArray(dependencies['inputs']) || !dependencies['inputs'].every((file) => typeof file === 'string' && file.length > 0 && !file.includes('\\') && !file.startsWith('/') && !file.includes(':') && !file.split('/').includes('..')))) return null;
     const criterion = effectivePlan(c).criteria.find((criterion) => criterion.id === id);
     const redProvenance = criterion?.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const attribution = waiver ?? c.redExceptionRulings[id];
     if (redProvenance === 'waived' && !attribution) return null;
-    evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion?.evidence ?? 'verify', redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
+    evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], ...(dependencies !== undefined ? { dependencies } : {}), planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion?.evidence ?? 'verify', redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
   }
   return { ...c, evidence };
 }
@@ -1103,7 +1109,8 @@ function applyImplement(state: ImplementState, event: Event): S {
     case 'baseline-snapshot': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return fail(state.c, `baseline snapshot failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-      if (!state.c.startFingerprint || !sameFingerprint(event.fingerprint, state.c.startFingerprint)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Baseline commands changed the repository: ${diffPaths(event).join(', ') || 'fingerprint changed'}.`);
+      if (!state.c.startFingerprint) return beginFailure(state.c, 'Missing baseline fingerprint.');
+      if (!sameFingerprint(event.fingerprint, state.c.startFingerprint)) return assessBoundary(state.c, state, event, state.c.startFingerprint, event.fingerprint, []);
       const c = { ...state.c, lastFingerprint: event.fingerprint };
       const failures = failingBaselineIds(state.results);
       return failures.length ? stay({ tag: 'baseline-decision', c, items: state.results.filter((row) => row.exit !== 0) }) : beginApproval(c);
@@ -1227,8 +1234,8 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
       const changed = diffPaths(event);
       const outside = changed.filter((file) => !state.paths.includes(file));
-      if (outside.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Generated verification changed out-of-scope paths: ${outside.join(', ')}.`);
-      if (!sameFingerprint(event.fingerprint, state.before) && !changed.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'Generated verification changed the repository without attributable paths.');
+      if (outside.length) return assessBoundary(state.c, state, event, state.before, event.fingerprint, state.paths);
+      if (!sameFingerprint(event.fingerprint, state.before) && !changed.length) return assessBoundary(state.c, state, event, state.before, event.fingerprint, state.paths);
       const c = sameFingerprint(event.fingerprint, state.before) ? { ...state.c, lastFingerprint: event.fingerprint } : markMutation({ ...state.c, lastFingerprint: event.fingerprint }, changed);
       return startFinalVerify(c);
     }
@@ -1237,7 +1244,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'VERIFY_DONE' || !answers(event, state.effectId) || event.purpose !== 'final' || !isFingerprint(event.fingerprint)) return stay(state);
       const rows = recordsFrom(resultEventRows(event), state.c, 'final');
       if (!rows) return beginFailure(state.c, 'Final verification returned malformed command results.');
-      if (!sameFingerprint(event.fingerprint, state.before)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'Final verification changed the repository; evidence is stale.');
+      if (!sameFingerprint(event.fingerprint, state.before)) { const { c, id } = effectId(state.c, 'snapshot'); return { state: { tag: 'checking-host-event', c: { ...c, lastFingerprint: state.before }, parent: state, parked: event, effectId: id }, effects: [{ kind: 'snapshot', id, since: state.before }] }; }
       const regression = rows.filter((row) => row.status === 'regression');
       if (regression.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint, stalled: { purpose: 'final', rows: regression } }, `Final verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
       const records = { ...state.c.records, ...Object.fromEntries(rows.map((row) => [row.command, row])) };
@@ -1260,7 +1267,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       const waived = c ? Object.values(c.evidence).filter((row) => row['outcome'] === 'waived').length : 0;
       return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion by user: ${answer.quote}` }, summary: `User manually completed implementation: ${Object.keys(c.evidence).length - waived} passed; ${waived} waived. ${answer.quote}` }) : stay(state);
     }
-    case 'checking-host-event': case 'drift': case 'hotfix-brief': case 'hotfix-write': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': return stepRecovery(state, event);
+    case 'checking-host-event': case 'assessing-host-event': case 'drift': case 'hotfix-brief': case 'hotfix-write': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-assessment': case 'hotfix-verify': return stepRecovery(state, event);
     case 'complete': case 'stopped': case 'failed': case 'revision-request': return stay(state);
     default: return never(state, 'implement state');
   }
@@ -1268,12 +1275,12 @@ function applyImplement(state: ImplementState, event: Event): S {
 
 function redTestPaths(c: Context): string[] { return c.plan ? [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort() : []; }
 
-function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(effectivePlan(c)) : [], ...c.adoptedPaths])].sort(); }
+function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(effectivePlan(c)) : []])].sort(); }
 function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
 const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED', 'EVIDENCE', 'DECISION', 'REVISE']);
 
 export function stepImplement(state: ImplementState, event: Event): S {
-  if (state.tag === 'checking-host-event' || state.tag === 'drift' && event.type !== 'REVISE') return stepRecovery(state, event);
+  if (state.tag === 'checking-host-event' || state.tag === 'assessing-host-event' || state.tag === 'drift' && event.type !== 'REVISE') return stepRecovery(state, event);
   if (hostTypes.has(event.type) && 'c' in state && state.c && implementAwait(state) !== null && implementAwait(state) !== 'done') {
     if (validateImplement(state, event as HostEvent)) return stay(state);
     // NOTE: caller edits during the task phase are reconciled by delivery drift checks, not host-event snapshots.
@@ -1288,9 +1295,9 @@ export function stepImplement(state: ImplementState, event: Event): S {
   return result;
 }
 
-function applyParked(parent: ImplementState, c: Context, parked: HostEvent): S {
+function applyParked(parent: ImplementState, c: Context, parked: Event): S {
   const updated = withContext(parent, c);
-  if (validateImplement(updated, parked)) return beginFailure(c, 'Parked host event no longer matches its bound parent.');
+  if (['AUTHORED','DECISION','NATIVE_RESULTS','RULINGS','FIXES_APPLIED','WRITE_ENVELOPE','WRITE_FAILED','EVIDENCE','REVISE'].includes(parked.type) && validateImplement(updated, parked as HostEvent)) return beginFailure(c, 'Parked host event no longer matches its bound parent.');
   return applyImplement(updated, parked);
 }
 
@@ -1299,7 +1306,7 @@ function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { ac
   const c0: Context = pendingWriter ? { ...bound, writer: pendingWriter } : origin.c;
   const stage = origin.tag === 'baseline-decision' ? 'baseline' : 'delivered';
   if (c0.withdrawnHotfix.includes(stage) || origin.tag === 'failure' && c0.phase !== 'delivered') return stay(origin);
-  if (!c0.lastFingerprint || !recoverySnapshot(c0.lastFingerprint)) return beginFailure(c0, 'Hotfix requires concrete snapshot metadata.');
+  if (!c0.lastFingerprint || !recoveryRef(c0.lastFingerprint)) return beginFailure(c0, 'Hotfix requires concrete snapshot metadata.');
   if (origin.tag === 'baseline-decision' || answer.mode === 'inline') {
     const { c, id } = effectId(c0, 'snapshot');
     return { state: { tag: 'hotfix-snapshot', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'snapshot', id, since: c0.lastFingerprint }] };
@@ -1324,32 +1331,61 @@ function hotfixSnapshot(state: Extract<ImplementState, { tag: 'hotfix-write' | '
   return { state: { tag: 'hotfix-snapshot', c, origin: state.origin, before: state.before, effectId: id, answer: state.answer }, effects: [{ kind: 'snapshot', id, since: state.before }] };
 }
 
-function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event' | 'drift' | 'hotfix-brief' | 'hotfix-write' | 'hotfix-envelope' | 'hotfix-snapshot' | 'hotfix-verify' }>, event: Event): S {
+function assessBoundary(c0: Context, parent: ImplementState, parked: Event, before: TreeFingerprint, after: TreeFingerprint, expectedPaths: readonly string[]): S {
+  const { c, id } = effectId({ ...c0, lastFingerprint: before }, 'assess-recovery');
+  return { state: { tag: 'assessing-host-event', c, parent, parked, effectId: id, fingerprint: after }, effects: [{ kind: 'assess-recovery', id, purpose: 'drift', before, after, phase: parent.tag, pendingId: parked.type, input: { managedPlans: [artifactRelative(after, c.planPath)], expectedPaths, inputs: scopePaths(c), ...evidenceAssessment(c) } }] };
+}
+
+function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event' | 'assessing-host-event' | 'drift' | 'hotfix-brief' | 'hotfix-write' | 'hotfix-envelope' | 'hotfix-snapshot' | 'hotfix-assessment' | 'hotfix-verify' }>, event: Event): S {
   switch (state.tag) {
     case 'checking-host-event': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `Host-event snapshot failed: ${event.detail}`);
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-      const metadata = recoverySnapshot(event.fingerprint);
-      const changed = diffPaths(event);
-      const awaiting = implementAwait(state.parent) ?? 'done';
       const hotfixDecision = (state.parent.tag === 'baseline-decision' || state.parent.tag === 'failure') && state.parked.type === 'DECISION' && failureAnswer(state.parked.answer)?.action === 'hotfix';
-      if (hotfixDecision) return applyParked(state.parent, state.c, state.parked);
-      if (state.parent.tag === 'hotfix-write') return applyParked(state.parent, state.c, state.parked);
-      const classified = classifyDrift({ awaiting, ctx: { stagePaths: scopePaths(state.c), testPaths: redTestPaths(state.c), testsOnly: false, artifactPath: artifactRelative(event.fingerprint, state.c.planPath), sessionDir: typeof state.c.run.overrides['sessionDir'] === 'string' ? artifactRelative(event.fingerprint, state.c.run.overrides['sessionDir']) : null }, changed, callerDirty: recoverySnapshot(state.c.startFingerprint)?.callerDirty ?? [], hashManifestDirs: metadata?.hashManifestDirs ?? [] });
-      classified.drift.push(...classified.autoAdopt.filter((file) => !(metadata?.verifiedManifestDirs ?? []).includes(file.slice(0, -'skill-hashes.json'.length).replace(/\/$/, ''))));
-      classified.autoAdopt = classified.autoAdopt.filter((file) => !classified.drift.includes(file));
-      const adoptedPaths = [...new Set([...state.c.adoptedPaths, ...classified.autoAdopt])];
-      const c = { ...state.c, adoptedPaths, finalFocus: [...new Set([...state.c.finalFocus, ...classified.autoAdopt])] };
-      if (classified.drift.length) return stay({ tag: 'drift', c, parent: state.parent, parked: state.parked, paths: classified.drift, fingerprint: event.fingerprint });
-      return applyParked(state.parent, { ...c, lastFingerprint: event.fingerprint }, state.parked);
+      if (hotfixDecision || state.parent.tag === 'hotfix-write') return applyParked(state.parent, state.c, state.parked);
+      if (!state.c.lastFingerprint) return beginFailure(state.c, 'Missing observed baseline.');
+      if (!state.resolution && sameFingerprint(state.c.lastFingerprint, event.fingerprint)
+        && !(state.parked.type === 'CHECKOUT_DONE' && state.parked.result['collision'])) return applyParked(state.parent, { ...state.c, lastFingerprint: event.fingerprint }, state.parked);
+      const { c, id } = effectId(state.c, 'assess-recovery');
+      const artifact = artifactRelative(event.fingerprint, c.planPath);
+      const expectedPaths = state.parked.type === 'AUTHORED' ? [artifact] : state.parent.tag === 'generated-snapshot' ? [...state.parent.paths] : [];
+      return { state: { tag: 'assessing-host-event', c, parent: state.parent, parked: state.parked, effectId: id, fingerprint: event.fingerprint, ...(state.resolution ? { resolution: state.resolution } : {}) }, effects: [{ kind: 'assess-recovery', id, purpose: 'drift', before: c.lastFingerprint!, after: event.fingerprint, phase: state.parent.tag, pendingId: state.parked.type, input: { collision: state.parked.type === 'CHECKOUT_DONE' && !!state.parked.result['collision'], additionalPaths: state.parked.type === 'CHECKOUT_DONE' ? state.parked.result['conflicts'] : [], expectedPaths, managedPlans: [artifactRelative(event.fingerprint, c.planPath)], ownedPaths: [], inputs: scopePaths(c), ...evidenceAssessment(c) } }] };
+    }
+    case 'assessing-host-event': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, event.detail);
+      if (event.type !== 'RECOVERY_ASSESSED' || !answers(event, state.effectId) || event.purpose !== 'drift' || event.beforeHash !== bindingHash(state.c.lastFingerprint) || event.afterHash !== bindingHash(state.fingerprint)) return stay(state);
+      if (state.resolution && state.resolution.afterHash === event.afterHash) {
+        if (state.resolution.action === 'escalate') return stop(state.c, `Changed intent requires a user decision. Evidence retained: ${event.notice.rawDeltaRef.path}`);
+        if (state.resolution.action === 'reconcile') return applyImplement(withContext(state.parent, state.c), { type: 'REVISE', artifact: 'plan', reason: state.resolution.rationale, evidence: event.notice.rawDeltaRef.path });
+        const c = state.resolution.action === 'refresh' ? refreshEvidence(state.c, event.notice) : state.c;
+        const rebound = { ...c, lastFingerprint: state.fingerprint };
+        if (state.resolution.action === 'refresh' && state.parent.tag === 'task-checkout' && state.parent.step === 'deliver') {
+          const rebuilt = { ...rebound, tasks: rependTasks(rebound.tasks, effectivePlan(rebound)), integration: null };
+          return checkout(rebuilt, 'init', 'init', { rebase: true, archivedName: `integration-${bindingHash({ notice: event.notice.id, counters: rebuilt.counters }).slice(0, 16)}` });
+        }
+        if (state.resolution.action === 'refresh' && state.parent.tag === 'baseline-snapshot') return runBaseline({ ...rebound, startFingerprint: state.fingerprint });
+        if (state.resolution.action === 'refresh' && (state.parent.tag === 'final-verify' || state.parent.tag === 'evidence')) return startFinalVerify(rebound);
+        if (state.resolution.action === 'refresh' && state.parent.tag === 'hotfix-verify') {
+          const next = effectId(rebound, 'verify');
+          return { state: { ...state.parent, c: next.c, effectId: next.id, before: state.fingerprint }, effects: [{ kind: 'verify', id: next.id, purpose: 'hotfix', commands: (rebound.stalled?.rows ?? []).map((row) => commandEffect(row.command, commandMappings(effectivePlan(rebound)).find((mapping) => mapping.command === row.command) ?? null, scopePaths(rebound), environmentKey(rebound))) }] };
+        }
+        if (state.resolution.action === 'refresh' && state.parent.tag === 'generated-snapshot') return startGeneratedOrFinal(rebound);
+        return applyParked(state.parent, rebound, state.parked);
+      }
+      if (event.notice.relevance === 'expected' || event.notice.relevance === 'irrelevant') {
+        const parent = state.parent.tag === 'final-verify' || state.parent.tag === 'hotfix-verify' ? { ...state.parent, before: state.fingerprint } : state.parent;
+        const parked = state.parked.type === 'VERIFY_DONE' ? { ...state.parked, fingerprint: state.fingerprint }
+          : state.parked.type === 'SNAPSHOT' && state.parent.tag === 'generated-snapshot' ? { ...state.parked, diff: { ...state.parked.diff, paths: diffPaths(state.parked).filter((file) => state.parent.tag === 'generated-snapshot' && state.parent.paths.includes(file)) } } : state.parked;
+        return applyParked(parent, { ...state.c, lastFingerprint: state.fingerprint, ...(state.parent.tag === 'baseline-snapshot' ? { startFingerprint: state.fingerprint } : {}) }, parked);
+      }
+      return stay({ tag: 'drift', c: state.c, parent: state.parent, parked: state.parked, paths: event.notice.paths, fingerprint: state.fingerprint, notice: event.notice });
     }
     case 'drift': {
       if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
-      const answer = driftAnswer(event.answer, state.paths);
+      const answer = resolution(event.answer, state.notice);
       if (!answer) return stay(state);
-      if (Object.values(answer).includes('stop')) return stop(state.c, 'User stopped at per-path drift reconciliation; files preserved.');
-      const c = markMutation({ ...state.c, adoptedPaths: [...new Set([...state.c.adoptedPaths, ...state.paths])], finalFocus: [...new Set([...state.c.finalFocus, ...state.paths])] }, state.paths);
-      return applyParked(state.parent, { ...c, lastFingerprint: state.fingerprint }, state.parked);
+      const { c, id } = effectId(state.c, 'snapshot');
+      return { state: { tag: 'checking-host-event', c, parent: state.parent, parked: state.parked, effectId: id, resolution: answer }, effects: [{ kind: 'snapshot', id, since: state.c.lastFingerprint }] };
     }
     case 'hotfix-brief': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
@@ -1377,23 +1413,31 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
     case 'hotfix-snapshot': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `Hotfix snapshot failed: ${event.detail}`);
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId)) return stay(state);
-      const before = recoverySnapshot(state.before), after = recoverySnapshot(event.fingerprint);
-      if (!before || !after) return beginFailure(state.c, 'Hotfix snapshot metadata is malformed.');
-      const judgement = judgeHotfix({ repoRoot: '', changed: after.changed, external: state.answer.external, before: before.git, after: after.git, taskStartFiles: before.taskStartFiles, ignoredBefore: before.ignored, ignoredAfter: after.ignored, preRed: false, productionPaths: scopePaths(state.c).filter((file) => !isTestPath(file)), failureIdentityBefore: null, failureIdentityAfter: null });
-      const violations = judgement.violations;
+      if (!recoveryRef(state.before) || !recoveryRef(event.fingerprint)) return beginFailure(state.c, 'Hotfix snapshot metadata is malformed.');
+      const { c, id } = effectId(state.c, 'assess-recovery');
+      return { state: { tag: 'hotfix-assessment', c, origin: state.origin, before: state.before, fingerprint: event.fingerprint, effectId: id, answer: state.answer }, effects: [{ kind: 'assess-recovery', id, purpose: 'hotfix', before: state.before, after: event.fingerprint, phase: 'hotfix', pendingId: state.effectId, input: { external: state.answer.external, productionPaths: scopePaths(c).filter((file) => !isTestPath(file)), ...evidenceAssessment(c) } }] };
+    }
+    case 'hotfix-assessment': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, event.detail);
+      if (event.type !== 'RECOVERY_ASSESSED' || !answers(event, state.effectId) || event.purpose !== 'hotfix' || event.beforeHash !== bindingHash(state.before) || event.afterHash !== bindingHash(state.fingerprint) || !event.judgement) return stay(state);
+      const violations = event.judgement.violations;
       if (violations.length) return stay(withContext(state.origin, { ...state.c, concerns: [...state.c.concerns, ...violations] }));
       const stalled = state.origin.tag === 'baseline-decision' ? { purpose: 'baseline' as const, rows: state.origin.items } : state.c.stalled;
       if (!stalled?.rows.length) return beginFailure(state.c, 'No stalled check is available for hotfix verification.');
-      const changedPaths = after.changed.map((item) => item.path);
-      const c0 = markMutation({ ...state.c, lastFingerprint: event.fingerprint, stalled, adoptedPaths: [...new Set([...state.c.adoptedPaths, ...changedPaths])], finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, changedPaths);
+      const changedPaths = event.notice.paths;
+      const c0 = markMutation({ ...state.c, lastFingerprint: state.fingerprint, stalled, finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, event.notice.pathCount > changedPaths.length ? [] : changedPaths);
       const { c, id } = effectId(c0, 'verify');
-      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: event.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(effectivePlan(c)).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
+      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: state.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(effectivePlan(c)).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
     }
     case 'hotfix-verify': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
       if (event.type !== 'VERIFY_DONE' || !answers(event, state.effectId) || event.purpose !== 'hotfix') return stay(state);
       const rows = recordsFrom(event.results, state.c, 'scoped');
-      if (!rows || !isFingerprint(event.fingerprint) || !sameFingerprint(state.before, event.fingerprint)) return beginFailure(state.c, 'Hotfix check mutated the tree or returned invalid results.');
+      if (!rows || !isFingerprint(event.fingerprint)) return beginFailure(state.c, 'Hotfix check returned invalid results.');
+      if (!sameFingerprint(state.before, event.fingerprint)) {
+        const { c, id } = effectId({ ...state.c, lastFingerprint: state.before }, 'snapshot');
+        return { state: { tag: 'checking-host-event', c, parent: state, parked: event, effectId: id }, effects: [{ kind: 'snapshot', id, since: state.before }] };
+      }
       const unchanged = rows.some((row) => row.exit !== 0 && state.c.stalled?.rows.some((old) => old.command === row.command && old.failureId !== null && old.failureId === row.failureId));
       const stage = state.origin.tag === 'baseline-decision' ? 'baseline' : 'delivered';
       const c = { ...state.c, withdrawnHotfix: unchanged ? [...new Set([...state.c.withdrawnHotfix, stage])] : state.c.withdrawnHotfix, lastFingerprint: event.fingerprint, records: { ...state.c.records, ...Object.fromEntries(rows.map((r) => [r.command, r])) } };
@@ -1425,7 +1469,7 @@ export function implementAwait(state: ImplementState): Await | null {
     case 'complete': case 'stopped': case 'failed': return 'done';
     case 'booting': case 'starting': case 'parsing': case 'baseline-preflight': case 'baseline': case 'baseline-snapshot':
     case 'task-checkout': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'scope-drain-envelope': case 'delivered-snapshot': case 'post-review-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
-    case 'checking-host-event': case 'hotfix-brief': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': case 'revision-request': return null;
+    case 'checking-host-event': case 'assessing-host-event': case 'hotfix-brief': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-assessment': case 'hotfix-verify': case 'revision-request': return null;
     default: return never(state, 'implement state');
   }
 }
@@ -1462,7 +1506,7 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     case 'failure': return state.c.phase === 'tasks'
       ? decideData('failure', state.reason, ['retry', 'revise', 'stop'], [{ tasks: state.c.plan ? failureItems(state.c.plan, state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }])
       : decideData('failure', state.reason, ['hotfix', 'retry', 'manual-complete', 'revise', 'stop'], [{ changedPaths: state.changedPaths, workPreserved: true, hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.phase === 'delivered' ? 'delivered' : 'baseline') }]);
-    case 'drift': return decideData('drift', 'Rule adopt or stop for every changed path before applying the parked event.', ['adopt', 'stop'], state.paths);
+    case 'drift': return { ...decideData('drift', 'Resolve the recorded change before applying the parked event.', ['preserve', 'refresh', 'reconcile', 'escalate']), notice: state.notice };
     case 'hotfix-write': {
       const acceptedHotfixAdjustments = applicableScopeAdjustments(state.c).filter(({ proposal }) => proposal.source === 'hotfix');
       const scopeNotice = state.c.scopeNotice && acceptedHotfixAdjustments.some(({ proposal }) => proposal.requestId === state.c.scopeNotice?.requestId)
@@ -1498,7 +1542,7 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
   return {
     planPath: c.planPath, planHash: c.planHash, mutationEpoch: c.mutationEpoch, acceptedBaseline: c.acceptedBaseline,
     settledLevel: c.run.level, levelSource: c.run.levelSource, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice, gateScope: c.gateScope, scopeAdjustments: c.scopeAdjustments,
-    adoptedPaths: c.adoptedPaths, finalFocus: c.finalFocus, revisions: c.revisions,
+    finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
     criteria: (c.plan ? effectivePlan(c).criteria : []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
     review: review['completion'] ?? review, limitations: [...c.concerns, ...Object.values(c.evidence).filter((item) => item['outcome'] === 'waived').map((item) => `${item.id}: user-waived criterion; ${item['evidence']}`)], finalGate: c.finalGate,
@@ -1544,7 +1588,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
   if (event.type === 'DECISION' && event.kind === 'run-stop' && !['level-classification', 'level-recommendation', 'scope-adjudication', 'scope-user-decision'].includes(state.tag)) return 'event.kind: run-stop is valid only at a level or scope decision gate.';
   if (state.tag === 'hotfix-write' && event.type === 'WRITE_ENVELOPE' && event.envelopePath !== state.brief.envelopePath) return 'event.envelopePath: expected the exact hotfix envelope path.';
   if (state.tag === 'hotfix-write' && event.type === 'WRITE_FAILED' && event.model !== state.c.writer?.models[0]) return 'event.model: expected the single-shot configured writer.';
-  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !driftAnswer(event.answer, state.paths))) return 'event.answer: rule adopt or stop for each drift path.';
+  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !resolution(event.answer, state.notice))) return 'event.answer: bind the current notice, afterHash, rationale and affected evidence.';
   if (state.tag === 'author' && event.type === 'AUTHORED' && event.path !== state.c.planPath) return `event.path: expected ${state.c.planPath}.`;
   if (state.tag === 'tasks') return validateTaskEvent(state.c, event);
   if (state.tag === 'level-classification') {
@@ -1603,6 +1647,13 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
 }
 
 export const implementTransitions = [
+  { from: 'checking-host-event', on: 'SNAPSHOT', to: 'assessing-host-event' },
+  ...['baseline', 'final-verify', 'hotfix-verify', 'task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot', 'revision-request', 'level-classification', 'level-recommendation', 'scope-adjudication', 'scope-user-decision', 'drift', 'stopped', 'failure-snapshot'].map((to) => ({ from: 'assessing-host-event', on: 'RECOVERY_ASSESSED', to })),
+  { from: 'assessing-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
+  { from: 'drift', on: 'DECISION', to: 'checking-host-event' },
+  { from: 'hotfix-snapshot', on: 'SNAPSHOT', to: 'hotfix-assessment' },
+  ...['hotfix-verify', 'failure', 'baseline-decision', 'failure-snapshot'].map((to) => ({ from: 'hotfix-assessment', on: 'RECOVERY_ASSESSED', to })),
+  { from: 'hotfix-assessment', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   ...['author', 'plan-review', 'code-review', 'tasks', 'hotfix-write', 'baseline-decision', 'approval', 'needs-user', 'concerns', 'failure', 'evidence', 'level-classification', 'level-recommendation'].flatMap((from) => ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'DECISION', 'EVIDENCE', 'REVISE'].map((on) => ({ from, on, to: 'checking-host-event' }))),
   ...['scope-adjudication', 'scope-user-decision'].map((from) => ({ from, on: 'DECISION', to: 'checking-host-event' })),
   ...['parsing', 'plan-review', 'code-review', 'task-checkout', 'tasks', 'needs-user', 'approval', 'baseline-decision', 'level-classification', 'level-recommendation', 'scope-adjudication', 'scope-user-decision', 'scope-draining', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'post-review-snapshot', 'revision-request'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),

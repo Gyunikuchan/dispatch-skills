@@ -36,7 +36,7 @@ test('a dead-pid lock on this host is broken and LOCK_BROKEN is appended', async
   writeLock(runDir, 999);
   const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
   assert.equal(result.exitCode, 0);
-  const last = readJournal(ports, runDir).lines.at(-1);
+  const last = Array.from(readJournal(ports, runDir).records).at(-1);
   assert.deepEqual([last?.type, last?.data], ['LOCK_BROKEN', { stalePid: 999 }]);
   assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
 });
@@ -59,5 +59,5 @@ test('a foreign-host lock exits 3 without LOCK_BROKEN', async () => {
   const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
   assert.equal(result.exitCode, 3);
   assert.match(result.message ?? '', /other-host/);
-  assert.equal(readJournal(ports, runDir).lines.some((line) => line.type === 'LOCK_BROKEN'), false);
+  assert.equal(Array.from(readJournal(ports, runDir).records).some((line) => line.type === 'LOCK_BROKEN'), false);
 });

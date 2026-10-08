@@ -213,7 +213,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       const result = await start({ runDir: reserved.dir, reservedRun: true, runStarted, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, runRel: path.relative(repo, reserved.dir).replaceAll('\\', '/'), ...diagnosticOptions });
       if (result.frame) emit(finish(result.frame, reserved.dir)); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
     }
-    const journal = readJournal(ports, runDir), started = journal.lines.find((line) => line.type === 'RUN_STARTED');
+    const journal = readJournal(ports, runDir), started = journal.started;
     if (!started) throw new Error('Run has no RUN_STARTED journal record');
     if (command.command === 'send' && !command.flags['dry-run']) { const diagnostic = integrityDiagnostic(checkIntegrity(SKILL_ROOT)); if (diagnostic) throw new Error(diagnostic); }
     const repoData = started.data['repo'] as Record<string, unknown>, repo = String(repoData['root'] ?? findRepoRoot(process.cwd()) ?? process.cwd());

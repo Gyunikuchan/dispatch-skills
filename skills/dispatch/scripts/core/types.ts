@@ -4,7 +4,7 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 6 as const;
+export const JOURNAL_PROTOCOL_REVISION = 7 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
   | 'level-classification' | 'level-recommendation' | 'scope-deviation' | 'scope-deviation-user' | 'run-stop';
@@ -16,7 +16,7 @@ export type ExitCode = 0 | 1 | 2 | 3;
 
 export type EffectKind =
   | 'parse-artifact' | 'prepare-review' | 'wave' | 'wave-start' | 'wave-finish' | 'verify' | 'write-brief'
-  | 'check-envelope' | 'check-review-target' | 'snapshot' | 'restore' | 'handoff' | 'checkout';
+  | 'check-envelope' | 'check-review-target' | 'snapshot' | 'assess-recovery' | 'restore' | 'handoff' | 'checkout';
 
 // Effect-handler failure classes.
 export type EffectFailureClass = 'io' | 'timeout' | 'crash' | 'invalid-output' | 'integrity' | 'config';
@@ -135,14 +135,25 @@ export type ScopeRebaseInput = { name: string; originalName: string; revision: s
 export type CheckoutEffect =
   | { kind: 'checkout'; id: string; op: 'scope-rebase'; input: ScopeRebaseInput }
   | { kind: 'checkout'; id: string; op: Exclude<CheckoutOp, 'scope-rebase'>; input: Payload };
-export type RecoverySnapshot = {
+export type RecoveryRef = { version: 1; sha256: string; bytes: number; path: string };
+export type ChangeNotice = {
+  id: string; phase: string; pendingId: string; beforeHash: string; afterHash: string;
+  rawDeltaRef: RecoveryRef; paths: readonly string[]; pathCount: number;
+  relevance: 'expected' | 'irrelevant' | 'relevant' | 'unknown'; reason: string; affectedEvidence: readonly string[];
+};
+export type DriftResolution = { by: 'orchestrator'; noticeId: string; afterHash: string; action: 'preserve' | 'refresh' | 'reconcile' | 'escalate'; rationale: string; evidenceIds: readonly string[] };
+/** Expanded metadata exists only in effect-local immutable manifests. */
+export type RecoveryManifest = {
+  pathHashes?: Readonly<Record<string, string>>;
+  membership?: readonly string[];
+  tracked?: readonly string[];
+  ignoreRules?: string;
   repoRoot: string;
   contents: Readonly<Record<string, string | null>>;
-  contentStore?: 'recovery-contents';
+  contentStore: 'recovery-contents';
   entries: Readonly<Record<string, FileEntry | null>>;
   taskStartFiles: readonly string[];
   callerDirty: readonly string[];
-  ignored: readonly { path: string; hash: string }[];
   git: { head: string; index: string; stash: string; gitDir: string };
   changed: readonly { path: string; added: number; removed: number; deleted: boolean; outsideRepo: boolean }[];
   verifiedManifestDirs: readonly string[];
@@ -212,7 +223,7 @@ export type HostEvent =
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
 
 export type ResultEvent =
-  | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string }
+  | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
   | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
   | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
@@ -222,10 +233,11 @@ export type ResultEvent =
   | { type: 'BRIEF_READY'; effectId: string; stage: WriteStage; path: string; sha256: string; envelopePath: string }
   | { type: 'ENVELOPE_CHECKED'; effectId: string; envelope: WriteEnvelope | null; defects: string[]; diff: PathDiff }
   | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
+  | { type: 'RECOVERY_ASSESSED'; effectId: string; purpose: 'drift' | 'hotfix'; beforeHash: string; afterHash: string; notice: ChangeNotice; judgement?: { violations: readonly string[]; violationCount?: number; withdrawn: boolean; files: number; lines: number } }
   | { type: 'RESTORED'; effectId: string; paths: string[]; patchPath: string }
   | { type: 'HANDOFF_DONE'; effectId: string; destination: string; warning: string | null }
   | { type: 'CHECKOUT_DONE'; effectId: string; op: CheckoutOp; result: Payload }
-  | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string };
+  | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string; conflict?: { kind: 'newer-content'; paths: readonly string[]; binding: string } };
 
 export type Event = HostEvent | ResultEvent | LifecycleEvent;
 export type EventType = Event['type'];
@@ -245,6 +257,7 @@ export type Effect =
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
   | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; since?: TreeFingerprint; cwd?: string }
   | { kind: 'snapshot'; id: string; since: TreeFingerprint | null; cwd?: string }
+  | { kind: 'assess-recovery'; id: string; purpose: 'drift' | 'hotfix'; before: TreeFingerprint; after: TreeFingerprint; phase: string; pendingId: string; input: Payload }
   | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }
   | { kind: 'handoff'; id: string; terminal: boolean }
   | CheckoutEffect;
@@ -295,11 +308,12 @@ export interface Machine<S> {
   render?(state: S, ports: Ports, runDir: string): void;
   reconfigure?(state: S, event: ExecutionConfigUpdated): S;
   executionDeferred?(state: S): boolean;
+  ownedArtifacts?(state: S, runDir: string): readonly string[];
 }
 
 export type DiagnosticBinding = { runDir: string; phase: string; boundary: number; producer?: string };
 export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[] };
-export interface HandlerContext { runDir: string; attempt: number; diagnostics?: DiagnosticBinding }
+export interface HandlerContext { runDir: string; attempt: number; diagnostics?: DiagnosticBinding; ownedArtifacts?: readonly string[] }
 
 /** Returns zero or more non-terminal results followed by exactly one terminal result. */
 export type Handler<E extends Effect = Effect> = (effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>;
@@ -311,11 +325,13 @@ export type Handlers = { readonly [K in EffectKind]?: Handler<Extract<Effect, { 
 export interface FsPort {
   hashFile(file: string): string;
   copyFileAtomic(source: string, destination: string): void;
+  copyFileExclusive(source: string, destination: string): boolean;
   listFiles(dir: string): string[];
   inspectPath(file: string): PathInfo | null;
   setMode(file: string, mode: number): void;
   writeLinkAtomic(file: string, target: string): void;
   readText(file: string): string;
+  readChunks(file: string, chunkBytes?: number): Iterable<Uint8Array>;
   /** Byte-preserving content encoded for serializable recovery snapshots. */
   readBase64(file: string): string;
   /** Decode bytes, then temp file + fsync + rename. */
@@ -340,7 +356,7 @@ export interface FsPort {
 export interface SpawnPort {
   run(argv: readonly string[], options: { cwd: string }): Promise<{ exit: number; stdout: string; stderr: string }>;
 }
-export interface GitPort { run(args: readonly string[], cwd: string): Promise<string>; fileContent?(file: string, cwd: string): string }
+export interface GitPort { run(args: readonly string[], cwd: string, stdin?: string): Promise<string>; fileContent?(file: string, cwd: string): string; defaultExcludesFile?: string }
 
 export interface ClockPort {
   now(): number;

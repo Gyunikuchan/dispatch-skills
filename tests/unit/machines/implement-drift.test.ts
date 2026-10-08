@@ -1,53 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { implementData, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { classifyDrift, permittedPaths } from '../../../skills/dispatch/scripts/policy/drift.ts';
-import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
-import { approvalState, FP, metadata, host } from './fixtures/implement-recovery.ts';
-
-function classify(result: ReturnType<typeof stepImplement>) {
-  if (result.state.tag !== 'level-classification') return result;
-  return host(result.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local implementation.', gateScope: implementData(result.state)['gateScope'] } });
+import { stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { approvalState, FP, assessed } from './fixtures/implement-recovery.ts';
+function drift() {
+ const r = stepImplement(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
+ return assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: { ...FP, worktree: 'changed' }, diff: { paths: ['external.ts'] } }), ['external.ts']);
 }
-
-test('implement-out-of-scope: park snapshot settle apply exactly once', () => {
-  const initial = approvalState();
-  const parked = stepImplement(initial, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  assert.equal(parked.state.tag, 'checking-host-event');
-  const event = { type: 'SNAPSHOT' as const, effectId: parked.effects[0]!.id, fingerprint: FP, diff: { paths: ['external.ts'] } };
-  const drift = stepImplement(parked.state, event); assert.equal(drift.state.tag, 'drift');
-  assert.equal('c' in drift.state && drift.state.c?.phase, 'setup');
-  const adopted = classify(stepImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { 'external.ts': 'adopt' } }));
-  assert.equal(adopted.state.tag, 'task-checkout');
-  assert.ok('c' in adopted.state && adopted.state.c?.finalFocus.includes('external.ts'));
-  assert.deepEqual('c' in adopted.state && Object.values(adopted.state.c?.tasks ?? {}).map((task) => task.attempt), [0]);
-  assert.deepEqual(stepImplement(adopted.state, event).state, adopted.state);
+test('change receipt: structured resolution rechecks live state and preserves write scope', () => {
+ const r = drift(); assert.equal(r.state.tag, 'drift'); if (r.state.tag !== 'drift') return;
+ const answer = { by: 'orchestrator', noticeId: r.state.notice.id, afterHash: r.state.notice.afterHash, action: 'refresh', rationale: 'Accept the in-intent input and invalidate affected evidence.', evidenceIds: [] };
+ const check = stepImplement(r.state, { type: 'DECISION', kind: 'drift', answer }); assert.equal(check.effects[0]?.kind, 'snapshot');
+ const next = assessed(stepImplement(check.state, { type: 'SNAPSHOT', effectId: check.effects[0]!.id, fingerprint: r.state.fingerprint, diff: { paths: ['external.ts'] } }), ['external.ts']);
+ assert.ok('c' in next.state && next.state.c); if ('c' in next.state && next.state.c) { assert.equal('adoptedPaths' in next.state.c, false); assert.equal(next.state.c.evidence['SC1'], undefined); }
 });
-test('permitted author/write/fix paths and caller-dirty exemption', () => {
-  const ctx = { stagePaths: ['src/a.ts'], testPaths: ['tests/a.test.ts'], testsOnly: false, artifactPath: 'x.plan.md' };
-  assert.deepEqual(permittedPaths('author', ctx), ['x.plan.md']);
-  assert.deepEqual(permittedPaths('write', ctx), ['src/a.ts']);
-  assert.deepEqual(permittedPaths('fix', ctx), ['src/a.ts']);
-  const initial = approvalState();
-  const c = { ...initial.c, startFingerprint: { ...FP, recovery: { ...metadata, callerDirty: ['caller.txt'] } } };
-  const result = classify(host({ ...initial, c }, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, FP, ['caller.txt']));
-  assert.equal(result.state.tag, 'task-checkout');
-});
-test('per-path adopt and stop require exhaustive ruling and stop preserves context', () => {
-  const parked = stepImplement(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  const drift = stepImplement(parked.state, { type: 'SNAPSHOT', effectId: parked.effects[0]!.id, fingerprint: FP, diff: { paths: ['a', 'b'] } });
-  assert.ok(validateImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { a: 'adopt' } }));
-  assert.equal(stepImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { a: 'adopt', b: 'stop' } }).state.tag, 'stopped');
-});
-test('nearest verified hashes auto-adopt; unverified and mismatched hashes require drift ruling', () => {
-  const input = { awaiting: 'write' as const, ctx: { stagePaths: ['skill/nested/src/a.ts'], testPaths: [], testsOnly: false, artifactPath: null }, changed: ['skill/skill-hashes.json', 'skill/nested/skill-hashes.json'], callerDirty: [] };
-  const verified = classifyDrift({ ...input, hashManifestDirs: ['skill', 'skill/nested'] });
-  assert.deepEqual(verified.autoAdopt, ['skill/nested/skill-hashes.json']); assert.deepEqual(verified.drift, ['skill/skill-hashes.json']);
-  assert.deepEqual(classifyDrift({ ...input, hashManifestDirs: [] }).drift, input.changed);
-});
-test('malformed parked-event payload refused before snapshot admission', () => {
-  const state: ImplementState = approvalState();
-  const result = validateHostEvent('decide', { type: 'DECISION', kind: 'approval', answer: { by: 'user' } }, (event) => validateImplement(state, event));
-  assert.equal(result.ok, false);
-  assert.equal(validateHostEvent('evidence', { type: 'EVIDENCE', criteria: null }).ok, false);
+test('phase adapter: stale and incomplete resolutions cannot resume a parked receipt', () => {
+ const r = drift(); assert.equal(r.state.tag, 'drift'); if (r.state.tag !== 'drift') return;
+ const answer = { by: 'orchestrator', noticeId: r.state.notice.id, afterHash: 'old', action: 'refresh', rationale: 'accept', evidenceIds: [] };
+ assert.ok(validateImplement(r.state, { type: 'DECISION', kind: 'drift', answer })); assert.deepEqual(stepImplement(r.state, { type: 'DECISION', kind: 'drift', answer }).state, r.state);
 });

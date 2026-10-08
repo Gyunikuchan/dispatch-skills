@@ -417,7 +417,7 @@ export function startWave(effect: WaveEffect, ctx: HandlerContext, deps: WaveDep
       cascadePosition: 0, promptPath: paths.promptPath, outputPath: outputOf(paths, substitutes ? `${slot.slot}#fallback` : slot.slot), attachments: paths.attachments,
     })];
   };
-  const native = roster.filter((slot) => slot.native).flatMap((slot) => describe(slot, false));
+  const native = roster.filter((slot) => slot.native && !slot.reserve).flatMap((slot) => describe(slot, false));
   const early = roster.filter((slot) => !slot.native && !slot.reserve && slot.provider === context.orchestratorPlatform).flatMap((slot) => describe(slot, true));
   const progress: ResultEvent[] = roster.filter((slot) => !slot.reserve)
     .map((slot) => ({ type: 'WAVE_PROGRESS', effectId: effect.id, slot: slot.slot, status: slot.native ? 'native-pending' : 'launched' }));

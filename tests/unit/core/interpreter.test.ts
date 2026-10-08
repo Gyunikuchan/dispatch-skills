@@ -15,7 +15,7 @@ async function startAwaiting(ports: FakePorts) {
 }
 
 const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
-const types = (ports: FakePorts, runDir: string) => readJournal(ports, runDir).lines.map((line) => line.type);
+const types = (ports: FakePorts, runDir: string) => Array.from(readJournal(ports, runDir).records).map((line) => line.type);
 
 test('start drives the machine to its await and returns one frame', async () => {
   const ports = fakePorts();

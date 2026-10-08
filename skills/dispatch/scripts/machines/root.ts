@@ -348,6 +348,8 @@ export const rootTransitions = [
   { from: 'design', on: 'DECISION', to: 'handoff' },
   { from: 'design', on: 'EFFECT_FAILED', to: 'handoff' },
   { from: 'implement', on: 'SNAPSHOT', to: 'revision' },
+  { from: 'implement', on: 'RECOVERY_ASSESSED', to: 'revision' },
+  { from: 'implement', on: 'RECOVERY_ASSESSED', to: 'handoff' },
   { from: 'revision', on: 'ARTIFACT_PARSED', to: 'implement' },
   { from: 'revision', on: 'SNAPSHOT', to: 'implement' },
   { from: 'revision', on: 'SNAPSHOT', to: 'handoff' },
@@ -386,6 +388,14 @@ export const rootMachine: Machine<RootState> = {
   transitions: rootTransitions,
   validate,
   render,
+  ownedArtifacts(state, runDir) {
+    const session = sessionDirOf(runDir), owned = [`${session}/manifest.json`, `${session}/diagnostics.md`];
+    if (!('run' in state)) return owned;
+    if (state.tag === 'review' && 'c' in state.child && state.child.c.spec.kind === 'code' && !state.child.c.spec.governing?.walkthroughPath) owned.push(reportPathOf(runDir, state.run.slug));
+    if (state.tag === 'implement' || state.tag === 'revision') owned.push(walkthroughPathOf(session, state.run.slug));
+    if (state.tag === 'design') for (const id of [...Object.keys(state.child.c.histories), ...(state.child.tag === 'increment' ? [state.child.increment] : [])]) owned.push(walkthroughPathOf(session, state.run.slug, id));
+    return owned;
+  },
   executionDeferred: executionBindingDeferred,
   reconfigure(state, event) {
     if (!('run' in state) || !state.run.defaults) throw new Error('execution-config-unavailable: run defaults are unavailable');

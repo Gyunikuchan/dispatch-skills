@@ -477,7 +477,9 @@ test('checkout: delivery transfers integrated changes and refuses caller drift w
   const candidate = await c.op('commit', { name: 't1', base });
   const revision = (await c.op('integrate', { task: 'T1', candidate: candidate['revision'], expected: base }))['revision'];
   c.write('src/a.ts', 'caller drift\n');
-  assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: ['src/a.ts'], transferred: [], already: [] });
+  const collision = await c.op('deliver', { base, revision });
+  assert.deepEqual(collision['conflicts'], ['src/a.ts']); assert.deepEqual(collision['transferred'], []);
+  assert.equal((collision['collision'] as { kind: string }).kind, 'newer-content');
   assert.equal(c.read(c.repo, 'src/a.ts'), 'caller drift\n'); assert.equal(fs.existsSync(path.join(c.repo, 'src/gone.ts')), true);
   c.write('src/a.ts', 'a1\n');
   assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: [], transferred: ['src/a.ts', 'src/gone.ts'], already: [] });

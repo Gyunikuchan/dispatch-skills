@@ -57,7 +57,7 @@ test('revision-handoff: replay reproduces the diagnostic author frame', () => {
   apply({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt: 1 });
   const defects = [{ code: 'missing', line: 5, message: 'Repair field.' }];
   apply({ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects });
-  const lines: JournalLine[] = events.map(({ type, ...data }, i) => ({ seq: i + 1, v: 1, at: 'now', type, data }));
+  const lines: JournalLine[] = [{ seq: 1, v: 1, at: 'now', type: 'RUN_STARTED', data: { ...base.c.run } }, ...events.map(({ type, ...data }, i): JournalLine => ({ seq: i + 2, v: 1, at: 'now', type, data }))];
   const replay = fold(machine, lines);
   assert.deepEqual(replay.state, folder.state);
   const data = machine.project(replay.state).data;

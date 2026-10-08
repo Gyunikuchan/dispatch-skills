@@ -125,7 +125,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath } });
   assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence']);
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
-  assert.equal(done.frame?.await, 'done');
+  assert.equal(done.frame?.await, 'done', JSON.stringify(done.frame));
   assert.equal(done.frame?.data['outcome'], 'complete', JSON.stringify(done.frame));
   assert.equal(commands.filter((command) => command === 'node --test tests/value.test.ts').length, 4, 'baseline, task, integration, and caller-checkout final runs execute');
   const walkthroughs = fs.readdirSync(sessionRoot).filter((name) => name.endsWith('.walkthrough.md'));

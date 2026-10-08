@@ -12,6 +12,8 @@ When required work exceeds the brief, the writer pauses before editing outside i
 
 ## Decision and receipt contract
 
+For changed observed inputs, verification mutation or a delivery collision, follow [change handling](../change-handling.md). Resolve the recorded notice as the orchestrator, refresh affected evidence, and retain approved write scope and attempt identities.
+
 Send each decision through `DECISION` with its exact `kind` and an `answer` matching the pending frame:
 
 - `DECISION kind=run-stop`: `{ by: "user", quote }` at a level or scope gate.

@@ -29,7 +29,7 @@ function waveJournal(ports: FakePorts, withProgress: boolean): string {
 test('an effect with only non-terminal results is in flight', () => {
   const ports = fakePorts();
   const runDir = waveJournal(ports, true);
-  const folded = fold(waveMachine, readJournal(ports, runDir).lines);
+  const folded = fold(waveMachine, Array.from(readJournal(ports, runDir).records));
   assert.deepEqual(folded.inFlight, { effect: { kind: 'wave', id: 'fixture.wave.1', round: 1, roster: [], timeoutMs: 1000 }, attempt: 1 });
 });
 
@@ -38,7 +38,7 @@ test('a started effect without a result relaunches as attempt 2 with exactly one
   const runDir = waveJournal(ports, false);
   const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
   assert.equal(result.frame?.await, 'done');
-  const lines = readJournal(ports, runDir).lines;
+  const lines = Array.from(readJournal(ports, runDir).records);
   const starts = lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
   assert.deepEqual(starts, [1, 2]);
   assert.equal(lines.filter((line) => line.type === 'WAVE_DONE').length, 1);
@@ -52,7 +52,7 @@ test('a torn tail is dropped and its effect re-executed', async () => {
   fs.writeFileSync(journalPath(runDir), text.slice(0, text.length - 10));
   const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
   assert.equal(result.frame?.await, 'done');
-  const starts = readJournal(ports, runDir).lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
+  const starts = Array.from(readJournal(ports, runDir).records).filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
   assert.deepEqual(starts, [1, 1, 2]);
 });
 
@@ -119,12 +119,12 @@ test('event path: a dry-run config refresh still names the boundary event path',
   assert.match(result.frame?.reply ?? '', /@runs\/001-ask\/events\/\d+-author\.json$/);
 });
 
-test('event path: a stale-lock break keeps the reply path for rejection and correction', async () => {
+test('change receipt: a stale-lock break keeps the reply path for rejection and correction', async () => {
   const ports = fakePorts();
   const { runDir, result } = await startAwaiting(ports);
   fs.writeFileSync(path.join(runDir, 'lock'), JSON.stringify({ pid: 2147483647, host: ports.proc.host, startedAt: new Date(0).toISOString() }));
   const rejected = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED' } });
-  assert.ok(readJournal(ports, runDir).lines.some((line) => line.type === 'LOCK_BROKEN'));
+  assert.ok(Array.from(readJournal(ports, runDir).records).some((line) => line.type === 'LOCK_BROKEN'));
   assert.ok(rejected.frame?.error);
   assert.equal(rejected.frame.reply, result.frame?.reply);
   const again = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED' } });

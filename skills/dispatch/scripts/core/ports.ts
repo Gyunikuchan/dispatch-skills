@@ -53,7 +53,27 @@ function publishAtomic(file: string, content: string | Buffer): void {
 }
 
 export const nodeFs: FsPort = {
+  *readChunks(file, chunkBytes = 64 * 1024) {
+    if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024) throw new Error('Invalid chunk size.');
+    const fd = fs.openSync(file, 'r');
+    try {
+      const chunk = Buffer.allocUnsafe(chunkBytes);
+      let count: number;
+      while ((count = fs.readSync(fd, chunk)) > 0) yield Buffer.from(chunk.subarray(0, count));
+    } finally { fs.closeSync(fd); }
+  },
   hashFile,
+  copyFileExclusive(source, destination) {
+    ensureParent(destination);
+    const temp = path.join(path.dirname(destination), `.${path.basename(destination)}.${crypto.randomUUID()}.tmp`);
+    try {
+      fs.copyFileSync(source, temp, fs.constants.COPYFILE_EXCL); fs.chmodSync(temp, 0o600);
+      const fd = fs.openSync(temp, 'r+');
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      try { fs.linkSync(temp, destination); syncDirectory(path.dirname(destination)); return true; }
+      catch (error) { if ((error as { code?: string }).code === 'EEXIST') return false; throw error; }
+    } finally { try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
+  },
   copyFileAtomic(source, destination) {
     const temp = path.join(path.dirname(destination), `.${path.basename(destination)}.${crypto.randomUUID()}.tmp`);
     try {
@@ -118,7 +138,7 @@ export const nodeFs: FsPort = {
     try {
       const fd = fs.openSync(temp, 'wx');
       try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      try { fs.linkSync(temp, file); return true; }
+      try { fs.linkSync(temp, file); syncDirectory(path.dirname(file)); return true; }
       catch (error) { if ((error as { code?: string }).code === 'EEXIST') return false; throw error; }
     } finally { try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
   },
@@ -132,15 +152,17 @@ export const nodeFs: FsPort = {
   remove: (file) => { fs.rmSync(file, { force: true }); },
 };
 
-function run(argv: readonly string[], cwd: string): Promise<{ exit: number; stdout: string; stderr: string }> {
+function run(argv: readonly string[], cwd: string, stdin?: string): Promise<{ exit: number; stdout: string; stderr: string }> {
   const [command, ...args] = argv;
   if (!command) return Promise.reject(new Error('spawn: empty argv'));
   return new Promise((resolve) => {
     const commandShell = process.platform === 'win32' && /(?:^|[/\\])cmd(?:\.exe)?$/i.test(command);
-    execFile(command, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: commandShell }, (error, stdout, stderr) => {
+    const child = execFile(command, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: commandShell }, (error, stdout, stderr) => {
       const code = error && typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : error ? 1 : 0;
       resolve({ exit: code, stdout, stderr });
     });
+    // NOTE: process exit owns failure reporting when stdin closes early.
+    if (stdin !== undefined) { child.stdin?.on('error', () => {}); child.stdin?.end(stdin); }
   });
 }
 
@@ -149,6 +171,7 @@ export function nodePorts(): Ports {
     fs: nodeFs,
     spawn: { run: (argv, options) => run(argv, options.cwd) },
     git: {
+      defaultExcludesFile: path.join(process.env['XDG_CONFIG_HOME'] || path.join(os.homedir(), '.config'), 'git', 'ignore'),
       fileContent(file, cwd) {
         let current = path.resolve(cwd);
         for (const part of file.replace(/\\/g, '/').split('/').slice(0, -1)) { current = path.join(current, part); if (nodeFs.inspectPath(current)?.kind === 'symlink') throw new Error(`Git fingerprint ancestor link: ${file}`); }
@@ -157,9 +180,9 @@ export function nodePorts(): Ports {
         if (info?.kind === 'file') digest.update(hashFile(absolute));
         return digest.digest('hex');
       },
-      async run(args, cwd) {
-        const result = await run(['git', ...args], cwd);
-        if (result.exit !== 0) throw new Error(`git ${args.join(' ')} failed (${result.exit}): ${result.stderr.trim()}`);
+      async run(args, cwd, stdin) {
+        const result = await run(['git', ...args], cwd, stdin);
+        if (result.exit !== 0) throw Object.assign(new Error(`git ${args.join(' ')} failed (${result.exit}): ${result.stderr.trim()}`), { exitCode: result.exit });
         return result.stdout;
       },
     },

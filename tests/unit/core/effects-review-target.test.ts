@@ -18,13 +18,12 @@ function artifact() {
   return { cwd, ports, target, manifestPath, source, effect, run: () => handler(effect, ports, { runDir: path.join(cwd, 'run'), attempt: 1 }) };
 }
 
-test('review-target artifact checks legacy raw-text evidence and ignores only managed sections', async () => {
+test('change receipt: artifact ignores only managed sections and returns readable deltas', async () => {
   const f = artifact();
   fs.appendFileSync(f.target, '\n## Review Findings & Resolutions\nDriver result\n\n## Execution Status\nDriver state\n');
   assert.equal((await f.run())[0]?.type, 'REVIEW_TARGET_CHECKED');
   fs.appendFileSync(f.target, '\n## Acceptance\nNew requirement\n');
-  const result = (await f.run())[0]; assert.equal(result?.type, 'EFFECT_FAILED');
-  assert.match(result?.type === 'EFFECT_FAILED' ? result.detail : '', /target-changed/);
+  const result = (await f.run())[0]; assert.equal(result?.type, 'REVIEW_TARGET_CHECKED'); assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'changed');
 });
 
 test('review-target preserves repeated headings and fenced managed-section text', () => {
@@ -33,14 +32,14 @@ test('review-target preserves repeated headings and fenced managed-section text'
   assert.match(reviewArtifactText(source), /Required text/);
 });
 
-test('review-target artifact captures an allowed fix then rejects edits during verification', async () => {
+test('change receipt: artifact captures an allowed fix and parks verification edits', async () => {
   const f = artifact(); f.effect.allowedPaths = [f.target];
   fs.writeFileSync(f.target, f.source.replace('Required', 'Repaired'));
   const captured = (await f.run())[0]; assert.equal(captured?.type, 'REVIEW_TARGET_CHECKED');
   if (captured?.type !== 'REVIEW_TARGET_CHECKED') return;
   f.effect.manifestPath = captured.manifestPath; f.effect.allowedPaths = [];
   assert.equal((await f.run())[0]?.type, 'REVIEW_TARGET_CHECKED');
-  fs.appendFileSync(f.target, '\nExternal edit\n'); assert.equal((await f.run())[0]?.type, 'EFFECT_FAILED');
+  fs.appendFileSync(f.target, '\nExternal edit\n'); const result = (await f.run())[0]; assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'changed');
 });
 
 for (const malformed of [null, '{}', '{bad']) test(`review-target fails closed on missing or malformed binding ${malformed}`, async () => {
@@ -55,7 +54,6 @@ test('review-target code permits fix paths but refuses outside index worktree an
   fs.writeFileSync(manifestPath, JSON.stringify(prior));
   let current = structuredClone(prior);
   const git = { toplevel: async () => cwd, reviewSnapshot: async () => current, reviewDelta: async (_cwd: string, baseline: ReviewSnapshot) => {
-    if (baseline.head !== current.head || baseline.comparison !== current.comparison) throw new Error('review-round-binding-drift');
     const paths = [...new Set([...Object.keys(baseline.working), ...Object.keys(current.working), ...Object.keys(baseline.index), ...Object.keys(current.index), ...Object.keys(current.untracked)])].filter((file) => baseline.working[file] !== current.working[file] || baseline.index[file] !== current.index[file] || baseline.untracked[file] !== current.untracked[file]);
     return { staged: [], unstaged: [], untracked: [], deleted: [], paths };
   } } as unknown as Git;
@@ -63,9 +61,9 @@ test('review-target code permits fix paths but refuses outside index worktree an
   const effect: Extract<Effect, { kind: 'check-review-target' }> = { kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '' }, manifestPath, allowedPaths: ['src/a.ts'] };
   const run = () => handler(effect, ports, { runDir: path.join(cwd, 'run'), attempt: 1 });
   current.working['src/a.ts'] = 'fix'; assert.equal((await run())[0]?.type, 'REVIEW_TARGET_CHECKED');
-  current.untracked['src/new.ts'] = 'external'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
-  current = structuredClone(prior); current.index['src/b.ts'] = 'staged external'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
-  current = structuredClone(prior); current.head = 'new head'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
+  current.untracked['src/new.ts'] = 'external'; const external = (await run())[0]; assert.equal(external?.type === 'REVIEW_TARGET_CHECKED' && external.result, 'changed', JSON.stringify(external));
+  current = structuredClone(prior); current.index['src/b.ts'] = 'staged external'; const staged = (await run())[0]; assert.equal(staged?.type === 'REVIEW_TARGET_CHECKED' && staged.result, 'changed');
+  current = structuredClone(prior); current.head = 'new head'; const moved = (await run())[0]; assert.equal(moved?.type === 'REVIEW_TARGET_CHECKED' && moved.result, 'changed');
   current = structuredClone(prior); fs.writeFileSync(manifestPath, JSON.stringify({ ...prior, index: [] }));
   assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
 });
@@ -90,9 +88,9 @@ test('review-target bounds content capture and detects new paths and clean-file 
   const handler = createCheckReviewTarget({ cwd, git });
   const check = () => handler(effect, ports, { runDir, attempt: 1 });
   assert.equal((await check())[0]?.type, 'REVIEW_TARGET_CHECKED');
-  names = ['src/a.ts', 'src/new.ts']; assert.equal((await check())[0]?.type, 'EFFECT_FAILED');
+  names = ['src/a.ts', 'src/new.ts']; const added = (await check())[0]; assert.equal(added?.type === 'REVIEW_TARGET_CHECKED' && added.result, 'changed', JSON.stringify(added));
   names = ['src/a.ts']; indexBlob = 'c'.repeat(40);
-  const drift = (await check())[0]; assert.match(drift?.type === 'EFFECT_FAILED' ? drift.detail : '', /unrelated.bin/);
+  const drift = (await check())[0]; assert.ok(drift?.type === 'REVIEW_TARGET_CHECKED' && drift.notice?.paths.includes('unrelated.bin'));
 });
 
 test('review-target accepts absolute fix paths when invoked in a repository subdirectory', async () => {

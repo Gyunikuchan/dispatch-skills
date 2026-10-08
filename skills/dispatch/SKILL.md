@@ -17,7 +17,7 @@ Use `design` for multiple increments, `plan` for one coherent unit, and `impleme
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit JSON; doctor emits a table or `--json` diagnostics.
 3. Run `send --run <dir> [--event @<reply-path>]` in the background; keep its handle until done or blocked; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
 
-Read the selected [verb guide](references/verbs/). Use [review rules](references/review-rules.md), [providers](references/providers.md), and the [glossary](references/glossary.md) as needed.
+Read the [verb guide](references/verbs/), [review rules](references/review-rules.md), and [providers](references/providers.md).
 
 ## Await author
 
@@ -45,7 +45,7 @@ Inspect command summaries and logs; do not rerun emitted gates. Verify each crit
 
 ## Await decide
 
-Answer `data.kind` with a listed option. Production approval and manual completion require `{by:"user",quote:"..."}`. Assess the exact `gateScope`; for a higher explicit-level recommendation, ask the user to adopt or retain. The orchestrator approves or disagrees with scope proposals; disagreement goes to the user. A `run-stop` choice ends the run. Rule verified concerns and RED exceptions as `by:"orchestrator"` with evidence; escalate intent changes, drift, and failures. Never invent decisions. Reply `DECISION` with `kind` and `answer`.
+Answer `data.kind` with a listed option. Production approval and manual completion require `{by:"user",quote:"..."}`. Assess the `gateScope`; for a higher explicit-level recommendation, ask the user to adopt or retain. The orchestrator approves or disagrees with scope proposals; disagreement goes to the user. Resolve drift under [change handling](references/change-handling.md); escalate changed intent. A `run-stop` choice ends the run. Rule verified concerns and RED exceptions as `by:"orchestrator"` with evidence; follow the recorded failure decision. Never invent decisions. Reply `DECISION` with `kind` and `answer`.
 
 ## Await done
 
