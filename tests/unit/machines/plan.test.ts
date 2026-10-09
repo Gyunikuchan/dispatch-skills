@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { planInputFromRun, planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
+import { planInputFromRun, planMachine, slugOf } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
 
@@ -78,3 +78,29 @@ test('plan: default plan path is scoped to sessionDir', () => {
   }
 });
 
+test('slugOf keeps the leading words of an objective that mentions a path', () => {
+  const slug = slugOf('Fix review tags; see skills/dispatch/scripts/domain/report.ts and opencode usage parsers');
+  assert.ok(slug.startsWith('fix-review-tags-see-skills-dispatch'), slug);
+});
+
+test('slugOf slugs the basename of a bare path', () => {
+  assert.equal(slugOf('skills/dispatch/scripts/domain/report.ts'), 'report-ts');
+});
+
+test('slugOf slugs the basename of .plan.md and .design.md paths', () => {
+  assert.equal(slugOf('work/session/add-a-cache.plan.md'), 'add-a-cache');
+  assert.equal(slugOf('work/session/add-a-cache.design.md'), 'add-a-cache');
+});
+
+test('slugOf slugs the basename of a Windows backslash path', () => {
+  assert.equal(slugOf('C:\\work\\session\\foo-bar.design.md'), 'foo-bar');
+});
+
+test('slugOf keeps the leading words of an objective that ends in a markdown path', () => {
+  const slug = slugOf('Update documentation in docs/README.md');
+  assert.ok(slug.startsWith('update-documentation-in-docs'), slug);
+});
+
+test('slugOf slugs the basename of a .design.md path in a directory with spaces', () => {
+  assert.equal(slugOf('C:\\Users\\John Smith\\work\\foo-bar.design.md'), 'foo-bar');
+});

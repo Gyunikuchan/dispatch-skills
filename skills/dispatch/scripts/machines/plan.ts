@@ -21,9 +21,14 @@ export type PlanState =
 
 type S = Step<PlanState>;
 
-/** Kebab slug of an objective, at most 40 characters. */
+/** Kebab slug of an objective or path, at most 40 characters; only a path (no whitespace, or ending in `.plan.md`, `.design.md` or `.report.md`) is reduced to its basename. */
 export function slugOf(text: string, fallback = 'dispatch'): string {
-  const slug = text.toLowerCase().replace(/\.(plan|design|report)\.md$/, '').replace(/^.*[\\/]/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+  const trimmed = text.trim().toLowerCase();
+  const artifactSuffix = /\.(plan|design|report)\.md$/;
+  // Dispatch artifact paths may sit in directories with spaces; free text ending in another `.md` path stays an objective.
+  const isPath = !/\s/.test(trimmed) || artifactSuffix.test(trimmed);
+  const base = trimmed.replace(artifactSuffix, '');
+  const slug = (isPath ? base.replace(/^.*[\\/]/, '') : base).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
   return slug || fallback;
 }
 
