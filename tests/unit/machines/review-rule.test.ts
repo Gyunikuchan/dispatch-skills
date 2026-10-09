@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, HostEvent, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { resolutionRounds, reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -101,4 +101,37 @@ test('deadlock: a pending rejection re-raised twice escalates', () => {
     prepared(2), waveDone(2, [finding('R2-F001')]), reject('R2-F001'), prepared(3), waveDone(3, [finding('R3-F001')])]);
   assert.equal(state.tag, 'decide-escalation');
   assert.equal(state.tag === 'decide-escalation' && state.escalation.kind, 'deadlock');
+});
+
+// SECTION: Unknown tag recovery
+
+const recovered = (id: string, over: Record<string, unknown> = {}) => finding(id, { category: 'uncategorized', originalTag: 'robustness', ...over });
+const known = (id: string) => finding(id, { locus: 'src/b.ts:L40', defect: 'quadratic scan over rows', requiredChange: 'index the lookup' });
+
+test('SC5 rule frame shows recovered original tag', () => {
+  const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')])]);
+  assert.equal(state.tag, 'rule');
+  const findings = reviewMachine.project(state).data['findings'] as Record<string, unknown>[];
+  assert.deepEqual(findings.map((item) => [item['id'], item['category'], item['originalTag'] ?? null]), [
+    ['R1-F001', 'uncategorized', 'robustness'], ['R1-F002', 'correctness', null],
+  ]);
+  assert.ok(!('originalTag' in (findings[1] ?? {})));
+});
+
+test('SC5 uncategorized finding takes an ordinary ruling', () => {
+  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [recovered('R1-F001', { originalTag: 'Intent' })])]);
+  const event = rulings({ 'R1-F001': { ruling: 'accept' } });
+  assert.equal(reviewMachine.validate?.(state, event), null);
+  const next = reviewMachine.step(state, event).state;
+  const ruled = 'c' in next ? next.c.findings[0] : undefined;
+  assert.deepEqual([ruled?.status, ruled?.category, ruled?.originalTag], ['accepted', 'uncategorized', 'Intent']);
+});
+
+test('SC5 resolution entries keep original tag', () => {
+  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')]),
+    rulings({ 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } })]);
+  assert.ok('c' in state);
+  const entries = resolutionRounds(state.c)[0]?.entries ?? [];
+  assert.deepEqual(entries.map((entry) => [entry.id, entry.originalTag ?? null]), [['R1-F001', 'robustness'], ['R1-F002', null]]);
+  assert.ok(!('originalTag' in (entries[1] ?? {})));
 });

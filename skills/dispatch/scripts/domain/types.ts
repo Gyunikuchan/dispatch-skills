@@ -23,6 +23,8 @@ export type Finding = {
   scope: FindingScope;
   fix?: FindingFix;
   dupOf?: FindingId;
+  /** Sanitized reviewer tag kept when the category is `uncategorized`. */
+  originalTag?: string;
 };
 
 /** A parsed finding before the round assigns its id. */
@@ -146,6 +148,8 @@ export type ResolutionEntry = {
   resolution?: string;
   requiredChange?: string;
   dupOf?: FindingId;
+  /** Sanitized reviewer tag kept when the category is `uncategorized`. */
+  originalTag?: string;
 };
 
 export type ReviewerView = { slot: SlotId; model?: string; effort?: string };

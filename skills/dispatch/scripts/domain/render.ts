@@ -52,6 +52,7 @@ export function renderResolutionSection(rounds: readonly ResolutionRound[]): str
       out.push('', `#### ${entry.id}`, '',
         `- Status: **[${statusLabel(entry.status)}]**`, `- Severity: ${entry.severity}`,
         `- Sources: ${entry.sources.join(', ')}`, `- Location: ${line(entry.locus)}`, `- Category: ${line(entry.category)}`);
+      if (entry.originalTag) out.push(`- Reviewer tag: ${line(entry.originalTag)}`);
       const defect = sanitizeText(entry.defect);
       out.push(`- Finding: ${defect}`);
       if (entry.requiredChange) out.push(`- Required change: ${sanitizeText(entry.requiredChange)}`);

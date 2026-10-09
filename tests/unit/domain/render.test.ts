@@ -168,3 +168,16 @@ test('readable artifact rendering: report leads with recorded summary and unreso
   }
   assert.match(renderReport({ title: 'Review', kind: 'code', target: 'HEAD', summary: 'Not reviewed', rounds: [] }), /No action recorded/);
 });
+
+test('SC6 resolution entry renders reviewer tag line', () => {
+  const entry = { ...rounds[0]!.entries[0]!, category: 'uncategorized', originalTag: 'robust<!--x-->ness' };
+  const section = renderResolutionSection([{ ...rounds[0]!, entries: [entry] }]);
+  assert.match(section, /- Category: uncategorized\n- Reviewer tag: robust&lt;!--x--&gt;ness\n- Finding:/);
+  assert.ok(!section.includes('<!--'));
+});
+
+test('SC6 entry without original tag has no reviewer tag line', () => {
+  const section = renderResolutionSection(rounds);
+  assert.ok(!section.includes('Reviewer tag'));
+  assert.match(section, /- Category: correctness\n- Finding:/);
+});

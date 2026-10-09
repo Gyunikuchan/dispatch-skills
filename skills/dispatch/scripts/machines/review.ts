@@ -737,6 +737,7 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
       ...(finding.requiredChange === undefined ? {} : { requiredChange: finding.requiredChange }),
       ...(finding.resolution === undefined ? {} : { resolution: finding.resolution }),
       ...(finding.dupOf === undefined ? {} : { dupOf: finding.dupOf }),
+      ...(finding.originalTag === undefined ? {} : { originalTag: finding.originalTag }),
     })),
   }));
 }

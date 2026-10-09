@@ -114,7 +114,9 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
 /**
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
  * uncovered scope (no structured `{status, findings}` review of the requested scope); loose locus (a finding
- * whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted.
+ * whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted. A nonempty
+ * tag outside the kind's vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
+ * sanitized `originalTag`.
  */
 export function parseReport(input: ReportInput): ReportResult {
   const { kind, source } = input;
@@ -144,21 +146,27 @@ export function parseReport(input: ReportInput): ReportResult {
     if (Object.keys(finding).sort().join('\0') !== FINDING_FIELDS.join('\0')) return fail('uncovered-scope', `finding ${index} fields must be exactly: severity, locus, tag, defect, requiredChange`);
     const { severity, locus, tag, defect, requiredChange } = finding;
     if (typeof severity !== 'string' || !SEVERITIES.has(severity)) return fail('uncovered-scope', `finding ${index} severity must be MUST, SHOULD, or CONSIDER`);
-    if (!nonEmpty(tag) || !REVIEW_TAGS[kind].has(tag.trim())) return fail('uncovered-scope', `finding ${index} tag is not an allowed ${kind} review tag`);
+    if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
+    const known = REVIEW_TAGS[kind].has(tag.trim());
+    const category = known ? tag.trim() : 'uncategorized';
+    // Markup-inert by construction; the raw spelling stays only in the provider log.
+    const originalTag = known ? undefined : tag.trim().replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
     if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
     if (!nonEmpty(locus) || !pattern.test(normalizeLocus(kind, locus))) return fail('loose-locus', `finding ${index} locus must match ${description}`);
     // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
     if (!sanitizeText(defect) || !sanitizeText(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
     const draft: DraftFinding = {
       severity: severity as Severity,
-      category: tag.trim(),
+      category,
       locus: normalizeLocus(kind, locus),
       defect: sanitizeText(defect),
       requiredChange: sanitizeText(requiredChange),
       sources: [source],
-      scope: tag.trim() === 'adjacent' ? 'adjacent' : 'in',
+      scope: category === 'adjacent' ? 'adjacent' : 'in',
+      ...(originalTag === undefined ? {} : { originalTag }),
     };
-    const key = JSON.stringify([draft.severity, draft.locus, draft.category, draft.defect, draft.requiredChange]);
+    // Raw tag, not the lossy sanitized one, so distinct unknown tags never collide.
+    const key = JSON.stringify([draft.severity, draft.locus, draft.category, draft.defect, draft.requiredChange, known ? null : tag.trim()]);
     if (seen.has(key)) continue;
     seen.add(key);
     findings.push(draft);

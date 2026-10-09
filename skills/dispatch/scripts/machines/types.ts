@@ -98,6 +98,7 @@ export function asFinding(value: unknown): Finding | null {
     out.fix = { paths: list('paths'), dependencies: list('dependencies'), verification: list('verification') };
   }
   if (isString(value['dupOf'])) out.dupOf = value['dupOf'];
+  if (isString(value['originalTag'])) out.originalTag = value['originalTag'];
   return out;
 }
 
