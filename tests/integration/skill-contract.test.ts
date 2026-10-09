@@ -204,3 +204,7 @@ test('amendment: writers propose plan changes on BLOCKED and the orchestrator ad
   const implement = read('skills/dispatch/references/verbs/implement.md');
   assert.match(implement, /verify each failed task's `amendment` against plan intent, invariants, and code/);
 });
+
+test('run-loop: long-running work runs as background tasks', () => {
+  assert.match(read(`skills/dispatch/${contractName}`), /`start`, subagents, and long checks as separate background tasks; act on completion notices/);
+});

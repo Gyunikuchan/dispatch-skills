@@ -15,7 +15,7 @@ Use `design` for multiple increments, `plan` for one coherent unit, `implement` 
 
 1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir`/`sessionId`; fallback identity: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON.
-3. Run `send --run <dir> [--event @<reply-path>]` in the background; keep its handle until done or blocked; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
+3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as separate background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
 
 Read the [verb guide](references/verbs/), [review rules](references/review-rules.md), and [providers](references/providers.md).
 
