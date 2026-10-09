@@ -264,6 +264,22 @@ export function normalizePlanPath(raw: string): { path: string | null; reason: s
   return normalized ? { path: normalized, reason: null } : { path: null, reason: 'empty' };
 }
 
+const LISTED_PATH = /^(`[^`]+`|[^\s,`]+)\s*,\s*/;
+
+/** Paths named by a change heading; only [DELETE] may group comma-separated paths, each bare or backticked. */
+export function headingPaths(action: ChangeAction, text: string): { paths: ReturnType<typeof normalizePlanPath>[] } | { error: string } {
+  const parts: string[] = [];
+  let rest = text.trim();
+  // A comma ends a path only directly after it, so a trailing note after the last path may hold commas.
+  for (let match = LISTED_PATH.exec(rest); match; match = LISTED_PATH.exec(rest)) {
+    parts.push(match[1] ?? '');
+    rest = rest.slice(match[0].length);
+  }
+  parts.push(rest);
+  if (parts.length > 1 && action !== 'DELETE') return { error: `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text.trim()}".` };
+  return { paths: parts.map((part) => normalizePlanPath(part)) };
+}
+
 // SECTION: Plan parse
 
 const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
@@ -338,8 +354,9 @@ export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan
 
       const taskEnd = (headings.find((index) => index > start) ?? result.length) + (headerAdded ? 1 : 0);
       const existing = new Set(taskStructuralView(structuralLines(result.join('\n'))).slice(start + 1, taskEnd).flatMap(({ text }) => {
-        const match = /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/.exec(text);
-        return match?.[1] ? [normalizePlanPath(match[1]).path] : [];
+        const match = ACTION_HEADING.exec(text);
+        const listed = match?.[1] && match[2] ? headingPaths(match[1] as ChangeAction, match[2]) : null;
+        return listed && 'paths' in listed ? listed.paths.map((item) => item.path) : [];
       }));
       const nested = result.slice(start + 1, taskEnd).some((line) => /^- ####\s/.test(line));
       const additions = task.paths.filter((path) => !existing.has(path)).flatMap((path) => {
@@ -558,15 +575,21 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
     }
     inHeader = false;
     const action = match[1] as ChangeAction;
-    const normalized = normalizePlanPath(match[2] ?? '');
-    if (!normalized.path) { out.push(lint('invalid-change-path', entry.line, `Invalid change path: ${normalized.reason ?? 'empty'}.`)); return; }
-    // NOTE: case-insensitive filesystems make case variants one file, so they count as duplicate ownership.
-    const folded = normalized.path.toLowerCase();
-    const prior = seen.get(folded);
-    if (prior !== undefined) out.push(lint('duplicate-change-path', entry.line, prior === normalized.path ? `Change path "${normalized.path}" appears more than once.` : `Change path "${normalized.path}" aliases "${prior}" on case-insensitive filesystems.`));
-    seen.set(folded, normalized.path);
-    if (EXCLUDED_CHANGE_PATH.test(normalized.path)) out.push(excluded(entry.line, normalized.path));
-    if (!current && !malformed) out.push(lint('task-ownership', entry.line, `Change "${normalized.path}" has no owning task; group every change under "### T<n> — <outcome title>" (reauthor component-form plans).`));
+    const listed = headingPaths(action, match[2] ?? '');
+    if ('error' in listed) { out.push(lint('change-heading', entry.line, listed.error)); return; }
+    const paths: string[] = [];
+    for (const normalized of listed.paths) {
+      if (!normalized.path) { out.push(lint('invalid-change-path', entry.line, `Invalid change path: ${normalized.reason ?? 'empty'}.`)); continue; }
+      // NOTE: case-insensitive filesystems make case variants one file, so they count as duplicate ownership.
+      const folded = normalized.path.toLowerCase();
+      const prior = seen.get(folded);
+      if (prior !== undefined) out.push(lint('duplicate-change-path', entry.line, prior === normalized.path ? `Change path "${normalized.path}" appears more than once.` : `Change path "${normalized.path}" aliases "${prior}" on case-insensitive filesystems.`));
+      seen.set(folded, normalized.path);
+      if (EXCLUDED_CHANGE_PATH.test(normalized.path)) out.push(excluded(entry.line, normalized.path));
+      if (!current && !malformed) out.push(lint('task-ownership', entry.line, `Change "${normalized.path}" has no owning task; group every change under "### T<n> — <outcome title>" (reauthor component-form plans).`));
+      paths.push(normalized.path);
+    }
+    if (!paths.length) return;
     const block: string[] = [];
     for (const next of body.slice(offset + 1)) {
       if (/^#{2,4}\s+/.test(next.text)) break;
@@ -575,13 +598,15 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
     const bullet = (name: string) => block.find((text) => text.match(/^[-*+]\s+(\w+):/)?.[1] === name);
     const command = action === 'GENERATED' ? /^[-*+]\s+Command:\s*`([^`]+)`\s*$/.exec(bullet('Command') ?? '')?.[1]?.trim() ?? null : null;
     if (action === 'GENERATED' && !command) out.push(lint('generated-command', entry.line, 'A [GENERATED] path requires a "- Command: `<generator>`" bullet.'));
+    // Only [DELETE] lists several paths, so GENERATED inputs stay single-path.
     if (current) {
-      current.paths = [...current.paths, normalized.path];
-      if (action === 'GENERATED') current.generated = [...current.generated, { path: normalized.path, inputs: generatedInputs(bullet('Inputs'), entry.line, out) }];
+      current.paths = [...current.paths, ...paths];
+      if (action === 'GENERATED') current.generated = [...current.generated, ...paths.map((path) => ({ path, inputs: generatedInputs(bullet('Inputs'), entry.line, out) }))];
     }
-    changes.push({ action, path: normalized.path, note: changeNote(block), command, line: entry.line });
+    const note = changeNote(block);
+    for (const path of paths) changes.push({ action, path, note, command, line: entry.line });
   });
-  if (!changes.length && !out.some((item) => item.code === 'invalid-change-path' || item.code === 'unknown-change-marker')) {
+  if (!changes.length && !out.some((item) => item.code === 'invalid-change-path' || item.code === 'unknown-change-marker' || item.code === 'change-heading')) {
     out.push(lint('change-heading', lines[range.start]?.line ?? null, 'Proposed Changes requires an H4 action heading.'));
   }
   return { changes, tasks };
@@ -916,13 +941,18 @@ function lintAutomatedDuplicates(automated: readonly string[], criteria: readonl
 function lintNotes(lines: readonly StructuralLine[], out: LintDefect[]): void {
   const range = sectionRanges(lines, '## Proposed Changes')[0];
   if (!range) return;
+  let current: string | null = null;
   const notes = taskStructuralView(lines).slice(range.start + 1, range.end).flatMap((entry) => {
+    current = ACTION_HEADING.exec(entry.text)?.[1] ?? current;
     const note = /^[-*+]\s+(?:Changes|Purpose):[ \t]*(.*)$/.exec(entry.text)?.[1]?.trim();
-    return note ? [{ note, line: entry.line }] : [];
+    return note ? [{ note, line: entry.line, action: current }] : [];
   });
-  notes.forEach(({ note, line }, index) => {
-    const siblings = notes.filter((_item, other) => other !== index).map((item) => item.note);
-    if (isFillerNote(note, siblings)) out.push(lint('filler-note', line, `Change note "${note}" is filler; say what changes in this file.`));
+  notes.forEach(({ note, line, action }, index) => {
+    const siblings = notes.filter((_item, other) => other !== index);
+    if (!isFillerNote(note, siblings.map((item) => item.note))) return;
+    // A note shared by separate [DELETE] entries belongs on one grouped heading.
+    const grouping = action === 'DELETE' && !isFillerNote(note) && isFillerNote(note, siblings.filter((item) => item.action === 'DELETE').map((item) => item.note));
+    out.push(lint('filler-note', line, `Change note "${note}" is filler; say what changes in this file${grouping ? '; group these [DELETE] paths under one heading' : ''}.`));
   });
 }
 export function incrementPathMatches(file: string, scope: string): boolean {

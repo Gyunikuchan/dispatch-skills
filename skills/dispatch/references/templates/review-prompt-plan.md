@@ -52,6 +52,12 @@ when missing evidence, an adjudication dispute or recovery requires it; follow
 - simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
+## severity
+
+In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding
+constraint. A gap that the plan's own Verify gates would surface deterministically during
+implementation, such as a fixture update or a test assertion, is SHOULD.
+
 ## budget
 
 If unspecified, target `8 + 2 × proposed-change entries`; on re-review count changed entries only.

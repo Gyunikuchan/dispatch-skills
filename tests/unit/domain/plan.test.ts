@@ -420,3 +420,71 @@ test('task-plan: the journal boundary preserves the task graph and rejects pre-t
   const { tasks: _tasks, ...legacy } = payload;
   assert.equal(asParsedPlan(legacy), null);
 });
+
+// SECTION: Grouped DELETE headings and comma rejection
+
+const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
+const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
+const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === code); };
+
+test('SC1 grouped delete registers every path', () => {
+  const source = withDelete('src/old-a.ts, src/old-b.ts');
+  const plan = parsed(source);
+  const deletes = plan.changes.filter((change) => change.action === 'DELETE');
+  const line = source.split('\n').findIndex((text) => text.startsWith('#### [DELETE]')) + 1;
+  assert.deepEqual(deletes.map((change) => change.path), ['src/old-a.ts', 'src/old-b.ts']);
+  assert.deepEqual(deletes.map((change) => change.note), ['remove the obsolete retry shims.', 'remove the obsolete retry shims.']);
+  assert.deepEqual(deletes.map((change) => change.line), [line, line]);
+  assert.ok(['src/old-a.ts', 'src/old-b.ts'].every((path) => plan.tasks[0]?.paths.includes(path)));
+});
+
+test('SC1 grouped delete accepts backticked paths', () => {
+  const plan = parsed(withDelete('`src/old-a.ts`, `src/old-b.ts`'));
+  assert.deepEqual(plan.changes.filter((change) => change.action === 'DELETE').map((change) => change.path), ['src/old-a.ts', 'src/old-b.ts']);
+});
+
+test('SC1 grouped delete flags a duplicate path', () => {
+  assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/old-a.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/old-a.ts" appears more than once.']);
+  assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/fetch.ts" appears more than once.']);
+});
+
+test('SC1 revision seed keeps grouped delete without duplicates', () => {
+  const source = withDelete('src/old-a.ts, src/old-b.ts');
+  const base = parsed(source);
+  const seed = materializePlanRevisionSeed(source, base, base);
+  assert.equal(seed, source);
+  assert.ok(parsePlan(seed).ok);
+});
+
+const splitMessage = (action: string, text: string) => `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text}".`;
+
+test('SC2 rejects comma list under modify', () => {
+  const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
+  assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')]);
+});
+
+test('SC2 rejects backticked comma list under new', () => {
+  const source = PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`');
+  assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('NEW', '`tests/fetch.test.ts`, `tests/other.test.ts`')]);
+});
+
+test('SC2 rejected heading registers no path', () => {
+  // Real headings for both paths follow; registering either from the rejected heading would add duplicate-change-path.
+  const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts');
+  assert.deepEqual(defects(source), ['change-heading']);
+});
+
+test('SC2 rejected sole heading emits only change-heading', () => {
+  const source = PLAN.replace(/#### \[MODIFY\][\s\S]*?- Inputs: src\/fetch\.ts\n/, '#### [GENERATED] src/fetch.ts, docs/api.md\n- Command: `npm run docs`\n- Inputs: src/fetch.ts\n');
+  assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('GENERATED', 'src/fetch.ts, docs/api.md')]);
+});
+
+test('SC3 duplicate delete notes hint grouping', () => {
+  const source = PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`);
+  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." is filler; say what changes in this file; group these [DELETE] paths under one heading.'));
+});
+
+test('SC3 duplicate modify notes keep filler message', () => {
+  const source = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n');
+  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." is filler; say what changes in this file.'));
+});

@@ -44,6 +44,7 @@ in-scope risk.
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
 constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
 improvement; no defect.
+<<slot:severity>>
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 
 ### Reply

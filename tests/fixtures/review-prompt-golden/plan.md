@@ -58,6 +58,9 @@ If unspecified, target `8 + 2 × proposed-change entries`; on re-review count ch
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
 constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
 improvement; no defect.
+In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding
+constraint. A gap that the plan's own Verify gates would surface deterministically during
+implementation, such as a fixture update or a test assertion, is SHOULD.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 
 ### Reply

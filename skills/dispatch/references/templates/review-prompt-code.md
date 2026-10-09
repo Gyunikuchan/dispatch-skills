@@ -49,6 +49,8 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
 - out of scope: `adjacent` — a concrete defect you meet outside Scope while inspecting; cite its real locus; spend no extra turns hunting
 
+## severity
+
 ## budget
 
 If unspecified, target `8 + 2 × changed files`; on re-review count files changed since the prior
