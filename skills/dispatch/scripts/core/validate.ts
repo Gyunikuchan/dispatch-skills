@@ -138,22 +138,35 @@ const revisionPlan = obj({ requestId: str, source: lit('plan-revision'), baseArt
 const revisionDesign = obj({ requestId: str, source: lit('design-revision'), baseArtifactHash: str, proposedArtifactHash: str, affectedIncrements: strings, rationale: nonBlank, delta: scopeDelta });
 const scopeProposal = oneOf(deviationTask, deviationHotfix, revisionPlan, revisionDesign);
 const positiveInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) > 0 ? ok(Number(value)) : fail(at, 'positive integer', value);
+const nonNegativeInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) >= 0 ? ok(Number(value)) : fail(at, 'non-negative integer', value);
+/** Optional host-attested figures (diagnostics, best effort); accepted whether or not diagnostics are enabled. */
+const attestation = { tokens: opt(nonNegativeInt), durationMs: opt(nonNegativeInt) };
+const nativeSlot: Validator<Record<string, unknown>> = (value, at) => {
+  const shape = payload(value, at);
+  if (!shape.ok) return shape;
+  for (const key of Object.keys(attestation)) {
+    if (!(key in shape.value)) continue;
+    const result = nonNegativeInt(shape.value[key], `${at}.${key}`);
+    if (!result.ok) return result;
+  }
+  return shape;
+};
 
 export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Record<string, unknown>> } = {
   AUTHORED: obj({ type: lit('AUTHORED'), path: str }),
-  NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(payload) }),
+  NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(nativeSlot) }),
   RULINGS: obj({ type: lit('RULINGS'), rulings: rec(payload) }),
   FIXES_APPLIED: obj({ type: lit('FIXES_APPLIED'), clusters: arr(payload) }),
   WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, attempt: positiveInt, signature: str, handle: str, model: nonBlank, effort: opt(str), substitution: opt(nonBlank) })) }),
   WRITE_ENVELOPE: oneOf(
-    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str }),
-    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: str, attempt: positiveInt, signature: str, handle: str }),
+    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, ...attestation }),
+    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: str, attempt: positiveInt, signature: str, handle: str, ...attestation }),
   ),
   WRITE_FAILED: oneOf(
-    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str }),
-    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: str, attempt: positiveInt, signature: str, handle: str }),
+    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, ...attestation }),
+    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: str, attempt: positiveInt, signature: str, handle: str, ...attestation }),
   ),
-  WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str }),
+  WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str, ...attestation }),
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
     obj({ type: lit('DECISION'), kind: lit('drift'), answer: obj({ by: lit('orchestrator'), noticeId: nonBlank, afterHash: nonBlank, action: lit('preserve', 'refresh', 'reconcile', 'escalate'), rationale: nonBlank, evidenceIds: strings }) }),
@@ -165,6 +178,8 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
     obj({ type: lit('DECISION'), kind: LEGACY_DECIDE_KINDS, answer: any }),
   ),
   REVISE: obj({ type: lit('REVISE'), artifact: lit('plan', 'design'), reason: str, evidence: str }),
+  // Per-item gating (≤3 items, dispatch-owned component, redaction) happens at render time, so a bad item never blocks completion.
+  RETRO: obj({ type: lit('RETRO'), observations: arr(any) }),
 };
 
 // NOTE: REVISE is accepted at every live await; the machine's validate hook narrows it (spec §5.7).
@@ -176,6 +191,7 @@ export const AWAIT_ACCEPTS: { readonly [K in Await]: readonly HostEventType[] } 
   write: ['WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED', 'REVISE'],
   evidence: ['EVIDENCE', 'REVISE'],
   decide: ['DECISION', 'REVISE'],
+  retro: ['RETRO'],
   done: [],
 };
 

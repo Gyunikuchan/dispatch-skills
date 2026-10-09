@@ -41,7 +41,7 @@ function worker(fs: LinkFs, now: () => number = () => 0): WorkerDeps & { launche
   const state = { launched: 0 };
   return Object.assign(state, {
     fs, proc: { pid: 10, host: 'h' }, clock: { now, every: () => () => {} }, specs: SPECS, modes: () => ['cli' as const],
-    run: async () => { state.launched++; return { status: 'ok' as const, text: '{"status":"CLEAN","findings":[]}', sessionId: null, resume: null }; },
+    run: async () => { state.launched++; return { outcome: { status: 'ok' as const, text: '{"status":"CLEAN","findings":[]}', sessionId: null, resume: null }, invocations: [] }; },
   });
 }
 

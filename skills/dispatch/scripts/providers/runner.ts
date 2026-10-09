@@ -4,7 +4,7 @@
 
 import type { FailureClass, DiagnosticUsage } from '../core/types.ts';
 import type { OsId } from '../lib/platform.ts';
-import type { DelegateRequest, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import type { DelegateRequest, Invocation, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 1800 * 1000;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
@@ -211,7 +211,6 @@ export const tail = (text: string, max = 2000): string => (text.length > max ? t
 export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void };
 
 export type RunnerPorts = {
-  observe?: (event: { attempt: number; start: number; durationMs: number | null; launched: boolean; outcome: string; usage?: DiagnosticUsage }) => void;
   process: ProcessPort;
   clock: RunnerClock;
   fs: RunnerFs;
@@ -224,7 +223,8 @@ export type RunnerPorts = {
   workspaceRoot?: string;
 };
 
-export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null };
+/** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
+export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
 /** Launches one process; on timeout kills the tree (POSIX: SIGTERM, then SIGKILL after 1 s). */
 async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts): Promise<ProcessResult> {
@@ -261,18 +261,29 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
  * signature, yields `sandbox-unsupported` (never a downgrade). `retryWithoutEffort` reruns once without effort.
  */
 export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts): Promise<DelegateRun> {
-  const started = ports.clock.now();
-  const run = await runDelegateBody(spec, req, mode, ports);
-  if (ports.observe && run.attempts === 0) {
-    try { ports.observe({ attempt: 1, start: started, durationMs: null, launched: false, outcome: run.outcome.status === 'ok' ? 'ok' : run.outcome.cls }); } catch { /* Observational failure cannot change provider results. */ }
+  const track: Attempts = { invocations: [], model: req.model, effort: req.effort };
+  try {
+    return await runAttempts(spec, req, mode, ports, track);
+  } catch (error) {
+    // NOTE: the original error object is rethrown unchanged; it only gains the attempts so far for the slot row.
+    track.invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: 'launch-failed' });
+    if (error !== null && typeof error === 'object') (error as { invocations?: Invocation[] }).invocations = [...track.invocations];
+    throw error;
   }
-  return run;
 }
-async function runDelegateBody(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts): Promise<DelegateRun> {
+
+type Attempts = { invocations: Invocation[]; model: string | null; effort: string | null };
+
+async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
+  const { invocations } = track;
+  const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null): DelegateRun => {
+    invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls });
+    return { outcome, result: null, attempts, briefFile, invocations };
+  };
   const deadline = ports.clock.now() + req.timeoutMs;
   const sandbox = req.sandbox && spec.sandbox !== undefined;
   if (req.sandbox && spec.sandbox && !spec.sandbox.supported(ports.platform)) {
-    return { outcome: failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), result: null, attempts: 0, briefFile: null };
+    return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
   }
   const attachments = buildAttachmentBlock(req.attachments, ports.fs, ports.nonce);
   const body = ports.fs.readText(req.promptPath);
@@ -294,35 +305,29 @@ async function runDelegateBody(spec: ProviderSpec, req: DelegateRequest, mode: M
   let current = prepared;
   for (;;) {
     const pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
-    if (pre?.kind === 'fail') return { outcome: pre.outcome, result: null, attempts, briefFile };
+    if (pre?.kind === 'fail') return unlaunched(pre.outcome, attempts, briefFile);
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return { outcome: failOutcome('timeout', 'preparation exhausted delegate deadline'), result: null, attempts, briefFile }; }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
-    const attemptStarted = ports.clock.now();
     try {
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
       result = await launchOnce({ ...launch, env }, current, ports);
-    } catch (error) {
-      try { ports.observe?.({ attempt: Math.max(1, attempts), start: attemptStarted, durationMs: null, launched: false, outcome: 'launch-failed' }); } catch { /* Preserve the operational launch error. */ }
-      throw error;
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }
     const outcome = settle(spec, current, result);
-    if (ports.observe) {
-      try {
-        const usage = !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined;
-        ports.observe({ attempt: attempts, start: attemptStarted, durationMs: result.durationMs, launched: true, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : {}) });
-      } catch { /* Observational failure cannot change provider results. */ }
-    }
+    let usage: DiagnosticUsage | undefined;
+    try { usage = !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
+    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
+      track.effort = null;
       continue;
     }
-    return { outcome, result, attempts, briefFile };
+    return { outcome, result, attempts, briefFile, invocations };
   }
 }
 

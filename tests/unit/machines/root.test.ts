@@ -95,3 +95,24 @@ test('a terminal child emits handoff { terminal: true }, then done carries outco
   const warned = play(rootMachine, [started('review'), empty, { type: 'EFFECT_FAILED', effectId: 'root.handoff.1', cls: 'io', detail: 'EBUSY' }]).at(-1);
   assert.deepEqual(warned?.data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: null, warning: 'handoff failed: io: EBUSY' });
 });
+
+test('HANDOFF_DONE with diagnostics true enters retro, and RETRO completes the run with the handoff outcome', () => {
+  const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
+  const retro = drive([started('review'), empty, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning: null, diagnostics: true }]);
+  assert.equal(retro.state.tag, 'retro');
+  assert.equal(rootMachine.awaitOf(retro.state), 'retro');
+  assert.deepEqual(rootMachine.project(retro.state), { at: 'review › retro', data: { kind: 'retro' } });
+  assert.equal(rootMachine.step(retro.state, { type: 'AUTHORED', path: 'x' }).state.tag, 'retro');
+  const done = rootMachine.step(retro.state, { type: 'RETRO', observations: [] });
+  assert.equal(done.state.tag, 'done');
+  assert.deepEqual(done.effects, []);
+  assert.deepEqual(rootMachine.project(done.state).data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
+});
+
+test('HANDOFF_DONE with diagnostics false or absent goes straight to done', () => {
+  const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
+  for (const extra of [{ diagnostics: false }, {}]) {
+    const { state } = drive([started('review'), empty, { ...handoffDone(), ...extra } as Event]);
+    assert.equal(state.tag, 'done');
+  }
+});

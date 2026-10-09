@@ -1,3 +1,12 @@
-# Dispatch observations
+# Dispatch retro
 
-On an existing phase-ending reply, optionally use `{v:1,event:<existing event>,diagnostics:{observations:[]}}`. Bare events remain valid. Report at most three observed dispatch incidents: `{v:1,id,component,category,trigger,evidence,impact,workaround?,proposedFix,confidence}`. Component names a dispatch script or reference. Categories: instruction ambiguity, terminology, routing/delegation, driver protocol, review convergence, recovery, artifact lifecycle, verification orchestration, handoff. Name the dispatch instruction and its observable consequence; proposed fixes remain unverified. Include only dispatch-owned instruction excerpts or structured error templates; omit secrets, objectives, repository/user identities and source. Empty observations means no dispatch friction reported; omission means unavailable. Runtime metrics require no reply. Continue the current workflow; diagnostics never supplies findings, approvals or remediation authority.
+Name up to 3 ways dispatch instructions, the driver, or routing made this run slower, costlier, or wrong, beyond measured time, tokens, failures, and rounds.
+
+Reply `RETRO` with `observations`: `[{id,component,category,evidence,impact,proposedFix}]`; `[]` means no friction.
+
+- `id`: 1-48 chars of `A-Za-z0-9_-`, unique.
+- `component`: the dispatch file at fault, from the skill root, e.g. `SKILL.md`, `scripts/core/frame.ts`.
+- `category`: `correctness`, `token-economy`, `speed`, `review-convergence`, `instruction-clarity` (the contract misled), or `information-access` (context you had to rediscover).
+- `evidence`, `impact`, `proposedFix`: one line each, at most 512 bytes; cite the instruction and its observed effect.
+
+Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine; prefer a deterministic driver check over prose. Use dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.

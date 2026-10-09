@@ -17,7 +17,9 @@ Instruction word counts measure prose load only. A word reduction alone does not
 | Source | Provides | Coverage caveat |
 | --- | --- | --- |
 | Git revision and `skills/dispatch/skill-hashes.json` | Instruction revision and shipped file hashes | Unshipped `.agents/skills/` files need their own Git blob hashes |
-| `diagnostics.md` (opt-in `"diagnostics": true`) | Session timing and supported provider-usage summaries | Partial when a provider or execution surface reports no usage; see [usage provenance](diagnostic-usage-provenance.md) |
+| `diagnostics.md` (opt-in `"diagnostics": true`) Overview | Per-phase wall, driver, host, and user-wait time; invocation counts; input, cache-read, cache-write, and output tokens; coverage | Rendered at run end from session journals; `—` is unavailable; token columns exclude `~` attested or estimated figures |
+| `diagnostics.md` Appendix | Per-invocation provider, model, effort, duration, tokens, and outcome; dispatch-owned config values | Compacted first when the report reaches its size limit |
+| Journaled slot `invocations` (`WAVE_DONE` in each run's `events.jsonl`) | One record per CLI launch attempt: provider, model, mode, effort, launched, duration, outcome, usage | Recorded whether or not diagnostics is on; usage absent when a provider reports none or output is truncated or resumed; see [usage provenance](diagnostic-usage-provenance.md) |
 | Session journals and receipts | Phase transitions, admission and integration results, repair attempts | Only for runs whose session directory was retained |
 | Verification and admission records | Commands run, pass/fail, admission defects | Durations only where recorded |
 | Review reports and rulings | Findings, adjudicated outcomes, rounds | Rulings are adjudicated claims, not proof of defects |
@@ -33,10 +35,10 @@ Record one row per run. Every cell names its source artifact and collection meth
 | Task | Representative task id and size class; compare like with like |
 | Model, effort, provider, concurrency, tooling | Confounders; differences prevent a direct comparison |
 | Whitespace-delimited word counts | Changed instruction files, before and after (`wc -w`) |
-| Elapsed active time per phase | Exclude approval and user wait; record that wait separately |
+| Elapsed active time per phase | Overview driver and host time; exclude approval and user wait and record that wait separately |
 | Verification duration | Only when recorded; otherwise `unavailable` |
 | Invocation counts | Writers, reviewers, providers; distinct from elapsed time, since overlapping delegates make total work exceed wall time |
-| Token subtotals | Per provider and scope as diagnostics reports them; never sum incompatible scopes |
+| Token subtotals | Input, cache read, cache write, and output per provider and model, as the Overview reports them; exclude `~` figures and never sum incompatible scopes |
 | Repair attempts and admission defects | From journals and admission records |
 | Review findings and adjudicated outcomes | Accepted/rejected counts by severity |
 | Final verification outcome | Pass/fail of required final commands |

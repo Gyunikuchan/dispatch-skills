@@ -10,13 +10,13 @@
 //   <slot>[.a<n>].outcome.json one SlotFinal per roster slot
 //   done[.a<n>].json          written last
 
-import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, DiagnosticBinding } from '../core/types.ts';
+import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect } from '../core/types.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
 import { collectFindings, parseReport, type ReportFailureKind } from '../domain/report.ts';
 import { sanitizeText } from '../domain/sanitize.ts';
 import { hasReserve, next, reservePool, takeReserve, type Position, type ReservePool } from '../policy/cascade.ts';
 import { nativeDescriptor, type NativeDescriptor } from '../providers/native.ts';
-import type { DelegateRequest, ModeId, ProviderId, ProviderSpec, RunOutcome } from '../providers/types.ts';
+import type { DelegateRequest, Invocation, ModeId, ProviderId, ProviderSpec, RunResult } from '../providers/types.ts';
 import { publishExclusive, type LinkFs } from '../lib/fs-ext.ts';
 import { attemptOf, runPaths } from '../lib/session.ts';
 
@@ -43,7 +43,6 @@ const readJson = <T>(fs: LinkFs, file: string): T | null => {
 export type SlotPaths = { promptPath: string; logPath: string; attachments: readonly string[] };
 
 export type WaveInput = {
-  diagnostics?: DiagnosticBinding;
   effectId: string;
   round: number;
   timeoutMs: number;
@@ -76,12 +75,14 @@ const modelsOf = (slot: RosterSlot): string[] => (slot.model === undefined ? [] 
 // SECTION: Slot finals (closed union)
 
 type Success = { outputPath?: string; provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string; effort?: string | null };
+/** Every CLI launch attempt the slot took (cascade, reserve, effort retry), journaled once on its row. */
+type Attempts = { invocations?: Invocation[] };
 
 export type SlotFinal =
-  | ({ state: 'success'; slot: string } & Success)
-  | ({ state: 'reserve'; slot: string; by: string; record: string; reason?: string } & Success)
-  | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; outputPath?: string; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string }
-  | { state: 'failed'; slot: string; cls: FailureClass | 'worker'; reason: string; records: string[] };
+  | ({ state: 'success'; slot: string } & Success & Attempts)
+  | ({ state: 'reserve'; slot: string; by: string; record: string; reason?: string } & Success & Attempts)
+  | ({ state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; outputPath?: string; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string } & Attempts)
+  | ({ state: 'failed'; slot: string; cls: FailureClass | 'worker'; reason: string; records: string[] } & Attempts);
 
 export function slotStatus(final: SlotFinal): string {
   switch (final.state) {
@@ -93,12 +94,12 @@ export function slotStatus(final: SlotFinal): string {
   }
 }
 
-/** The WAVE_DONE row: every field except the raw drafts (findings travel separately, with ids). */
+/** The WAVE_DONE row: every field except the raw drafts (findings travel separately, with ids), plus the attempts. */
 export function slotOutcome(final: SlotFinal): SlotOutcome {
   switch (final.state) {
     case 'success': case 'reserve': case 'native': case 'failed': {
       const { drafts: _drafts, ...row } = final as SlotFinal & { drafts?: unknown };
-      return row;
+      return { ...row, invocations: final.invocations ?? [] };
     }
     default: return unreachable(final, 'slot final');
   }
@@ -175,7 +176,7 @@ export type WorkerDeps = {
   specs: Readonly<Record<ProviderId, ProviderSpec>>;
   /** Modes with a launchable binary, in cascade order. */
   modes(provider: ProviderId): readonly ModeId[];
-  run(provider: ProviderId, req: DelegateRequest, mode: ModeId): Promise<RunOutcome>;
+  run(provider: ProviderId, req: DelegateRequest, mode: ModeId): Promise<RunResult>;
   outputCapBytes?: number;
   configSelectors?: Readonly<Record<string, string>>;
 };
@@ -184,7 +185,18 @@ export const REPORT_CLASS: Readonly<Record<ReportFailureKind, FailureClass>> = {
   'empty-output': 'empty-output', refusal: 'refusal', truncated: 'truncated', 'uncovered-scope': 'refusal', 'loose-locus': 'refusal',
 };
 
-type Attempted = { ok: true; value: Success } | { ok: false; cls: FailureClass; reason: string; records: string[] };
+type Attempted = ({ ok: true; value: Success } | { ok: false; cls: FailureClass; reason: string; records: string[] }) & { invocations: Invocation[] };
+
+/** A worker error keeps the attempts each catch site already holds ahead of its own, so every record is journaled once. */
+function prependInvocations(error: unknown, prior: readonly Invocation[]): unknown {
+  if (error === null || typeof error !== 'object') return error;
+  (error as { invocations?: unknown }).invocations = [...prior, ...invocationsOf(error)];
+  return error;
+}
+function invocationsOf(error: unknown): Invocation[] {
+  const value = error !== null && typeof error === 'object' ? (error as { invocations?: unknown }).invocations : undefined;
+  return Array.isArray(value) ? value as Invocation[] : [];
+}
 
 async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, deadline: number): Promise<Attempted & { position?: Position }> {
   const provider = slot.provider as ProviderId;
@@ -192,45 +204,56 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
   const models = modelsOf(slot);
   const modes = spec ? deps.modes(provider) : [];
   const records: string[] = [];
-  if (!spec || !modes.length) return { ok: false, cls: 'not-found', reason: `${slot.slot}: no launchable ${slot.provider} binary`, records };
+  const invocations: Invocation[] = [];
+  // A prelaunch failure still journals one unlaunched attempt, so diagnostics count it with the launch failures.
+  const unlaunched = (cls: FailureClass, mode: ModeId): Invocation[] => [{ provider, model: models[0] ?? null, mode, effort: slot.effort ?? null, launched: false, outcome: cls }];
+  if (!spec || !modes.length) return { ok: false, cls: 'not-found', reason: `${slot.slot}: no launchable ${slot.provider} binary`, records, invocations: unlaunched('not-found', spec?.modes[0]?.id ?? 'cli') };
   const paths = input.paths[slot.slot];
-  if (!paths) return { ok: false, cls: 'config', reason: `${slot.slot}: no prompt paths in the wave input`, records };
+  if (!paths) return { ok: false, cls: 'config', reason: `${slot.slot}: no prompt paths in the wave input`, records, invocations: unlaunched('config', modes[0] ?? 'cli') };
   const voice = { slot: slot.slot, platform: slot.provider, models: models.length ? models : [null], modes, modeCascadeOn: spec.modeCascadeOn };
   let position: Position = { model: 0, mode: 0 };
   for (;;) {
     const remaining = deadline - deps.clock.now();
-    if (remaining <= 0) return { ok: false, cls: 'timeout', reason: `${slot.slot}: wave deadline passed`, records, position };
+    if (remaining <= 0) return { ok: false, cls: 'timeout', reason: `${slot.slot}: wave deadline passed`, records, invocations, position };
     const mode = modes[position.mode] ?? 'cli';
     const model = voice.models[position.model] ?? null;
     const req: DelegateRequest = {
-      ...(input.diagnostics ? { diagnostics: { ...input.diagnostics, producer: `${input.effectId}:${input.diagnostics.producer}:${slot.slot}:${position.model}:${position.mode}` } } : {}),
       promptPath: paths.promptPath, model, effort: slot.effort ?? null, sandbox: slot.sandbox ?? true, schemaPath: null, resume: null,
       cwd: input.cwd, timeoutMs: Math.min(input.timeoutMs, remaining), outputCapBytes: deps.outputCapBytes ?? 10 * 1024 * 1024,
       configSelectors: deps.configSelectors ?? {},
       attachments: paths.attachments, logPath: paths.logPath, briefPath: paths.logPath.replace(/\.log$/, '.spill.md'),
     };
-    const outcome = await deps.run(provider, req, mode);
+    let result: RunResult;
+    try { result = await deps.run(provider, req, mode); } catch (error) { throw prependInvocations(error, invocations); }
+    const from = invocations.length;
+    invocations.push(...result.invocations);
+    const outcome = result.outcome;
     let cls: FailureClass;
     let reason: string;
     if (outcome.status === 'ok' && input.review === 'ask') {
       const claim = sanitizeText(outcome.text);
-      if (claim) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim, effort: slot.effort ?? null }, position };
+      if (claim) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim, effort: slot.effort ?? null }, invocations, position };
       cls = 'empty-output';
       reason = 'empty-output: the delegate returned no text';
     } else if (outcome.status === 'ok') {
       const report = parseReport({ kind: input.review === 'ask' ? 'code' : input.review, source: slot.slot, text: outcome.text });
-      if (report.ok) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records, effort: slot.effort ?? null }, position };
+      if (report.ok) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records, effort: slot.effort ?? null }, invocations, position };
       cls = REPORT_CLASS[report.failure.kind];
       reason = `${report.failure.kind}: ${report.failure.detail}`;
     } else {
       cls = outcome.cls;
       reason = `${outcome.cls}: ${outcome.detail}`;
     }
+    if (outcome.status === 'ok') {
+      // The runner saw a clean exit; the attempt that produced the rejected output journals the class it earned.
+      const last = invocations.findLastIndex((entry, index) => index >= from && entry.launched);
+      if (last >= 0) invocations[last] = { ...invocations[last]!, outcome: cls };
+    }
     records.push(`${slot.slot} ${model ?? 'default'}@${mode} → ${reason}`);
     const decision = next(cls, position, voice, { orchestratorPlatform: null, reserveAvailable: false });
     switch (decision.kind) {
       case 'next-model': case 'next-mode': position = decision.position; continue;
-      case 'reserve': case 'native-fallback': case 'terminal': return { ok: false, cls, reason, records, position };
+      case 'reserve': case 'native-fallback': case 'terminal': return { ok: false, cls, reason, records, invocations, position };
       default: return unreachable(decision, 'cascade decision');
     }
   }
@@ -238,7 +261,7 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
 
 async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, deadline: number, pool: { current: ReservePool }, reserves: ReadonlyMap<string, RosterSlot>): Promise<SlotFinal> {
   const own = await runVoice(slot, input, deps, deadline);
-  if (own.ok) return { state: 'success', slot: slot.slot, ...own.value };
+  if (own.ok) return { state: 'success', slot: slot.slot, ...own.value, invocations: own.invocations };
   // The voice is exhausted: reserve (once per wave), then native fallback on the orchestrator platform.
   // An empty voice asks the cascade only for its post-exhaustion step.
   const decision = next(own.cls, { model: 0, mode: 0 }, { slot: slot.slot, platform: slot.provider, models: [], modes: [], modeCascadeOn: [] },
@@ -249,18 +272,20 @@ async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, dea
       pool.current = taken.pool;
       const reserve = taken.reserve === null ? undefined : reserves.get(taken.reserve);
       const record = taken.pool.records[taken.pool.records.length - 1] ?? '';
-      if (!reserve) return { state: 'failed', slot: slot.slot, cls: own.cls, reason: own.reason, records: own.records };
+      if (!reserve) return { state: 'failed', slot: slot.slot, cls: own.cls, reason: own.reason, records: own.records, invocations: own.invocations };
       // The reserve answers the failed slot's prompt; its log sits beside the slot's.
       const own_ = input.paths[slot.slot];
       const paths = own_ ? { ...input.paths, [reserve.slot]: { ...own_, logPath: own_.logPath.replace(/\.log$/, `.${safeSlot(reserve.slot)}.log`) } } : input.paths;
-      const substitute = await runVoice(reserve, { ...input, paths }, deps, deadline);
-      if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, reason: own.reason, ...substitute.value, records: [...own.records, ...substitute.value.records] };
-      return { state: 'failed', slot: slot.slot, cls: substitute.cls, reason: `${own.reason}; reserve ${reserve.slot}: ${substitute.reason}`, records: [...own.records, record, ...substitute.records] };
+      let substitute: Attempted;
+      try { substitute = await runVoice(reserve, { ...input, paths }, deps, deadline); } catch (error) { throw prependInvocations(error, own.invocations); }
+      const invocations = [...own.invocations, ...substitute.invocations];
+      if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, reason: own.reason, ...substitute.value, records: [...own.records, ...substitute.value.records], invocations };
+      return { state: 'failed', slot: slot.slot, cls: substitute.cls, reason: `${own.reason}; reserve ${reserve.slot}: ${substitute.reason}`, records: [...own.records, record, ...substitute.records], invocations };
     }
     case 'native-fallback':
-      return { state: 'native', slot: slot.slot, sourceKey: `${slot.slot}#fallback`, reason: own.reason, records: own.records };
+      return { state: 'native', slot: slot.slot, sourceKey: `${slot.slot}#fallback`, reason: own.reason, records: own.records, invocations: own.invocations };
     case 'next-model': case 'next-mode': case 'terminal':
-      return { state: 'failed', slot: slot.slot, cls: own.cls, reason: own.reason, records: own.records };
+      return { state: 'failed', slot: slot.slot, cls: own.cls, reason: own.reason, records: own.records, invocations: own.invocations };
     default: return unreachable(decision, 'cascade decision');
   }
 }
@@ -274,7 +299,6 @@ export type WorkerResult = { launched: false } | { launched: true; finals: SlotF
 export async function runWaveWorker(runDir: string, id: string, n: number, deps: WorkerDeps): Promise<WorkerResult> {
   const input = readJson<WaveInput>(deps.fs, runPaths(runDir).input(id));
   if (!input) throw new Error(`wave worker: missing input ${runPaths(runDir).input(id)}`);
-  if (input.diagnostics) input.diagnostics = { ...input.diagnostics, producer: `worker-${n}` };
   const startedAt = deps.clock.now();
   const claim: ClaimFile = { pid: deps.proc.pid, host: deps.proc.host, startedAt };
   if (!publishExclusive(deps.fs, runPaths(runDir).claim(id, n), JSON.stringify(claim))) return { launched: false };
@@ -289,8 +313,16 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
     // Primary slots run concurrently so one slow delegate cannot starve the rest of the deadline.
     const primaries = input.roster.filter((slot) => !slot.reserve && !slot.native);
     finals.push(...await Promise.all(primaries.map(async (slot) => {
-      const final = await runSlot(slot, input, deps, deadline, pool, reserves);
-      deps.fs.writeAtomic(runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n), JSON.stringify(final));
+      const file = runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n);
+      let final: SlotFinal;
+      try {
+        final = await runSlot(slot, input, deps, deadline, pool, reserves);
+      } catch (error) {
+        // The failed final `readFinals` would substitute, plus the attempts the error carries; the worker still fails.
+        try { deps.fs.writeAtomic(file, JSON.stringify({ ...missingOutcome(slot.slot, n), invocations: invocationsOf(error) })); } catch { /* Keep the original worker error. */ }
+        throw error;
+      }
+      deps.fs.writeAtomic(file, JSON.stringify(final));
       return final;
     })));
     deps.fs.writeAtomic(runPaths(runDir).done(id, n), JSON.stringify({ at: deps.clock.now(), slots: finals.length }));
@@ -315,7 +347,7 @@ const failed = (effectId: string, cls: EffectFailureClass, detail: string): Resu
 function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): number {
   const file = runPaths(ctx.runDir).input(effect.id);
   if (deps.fs.readText(file) === null) {
-    const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster, ...(ctx.diagnostics ? { diagnostics: ctx.diagnostics } : {}) };
+    const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster };
     deps.fs.writeAtomic(file, JSON.stringify(input));
   }
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);
@@ -337,10 +369,13 @@ async function collectWorker(effect: WaveEffect, roster: readonly RosterSlot[], 
   return n;
 }
 
+function missingOutcome(slot: string, n: number): SlotFinal {
+  return { state: 'failed', slot, cls: 'worker', reason: `attempt ${n} wrote no outcome for ${slot}`, records: [] };
+}
+
 function readFinals(deps: WaveDeps, runDir: string, id: string, n: number, roster: readonly RosterSlot[]): SlotFinal[] {
   return roster.filter((slot) => !slot.reserve && !slot.native).map((slot): SlotFinal =>
-    readJson<SlotFinal>(deps.fs, runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n))
-      ?? { state: 'failed', slot: slot.slot, cls: 'worker', reason: `attempt ${n} wrote no outcome for ${slot.slot}`, records: [] });
+    readJson<SlotFinal>(deps.fs, runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n)) ?? missingOutcome(slot.slot, n));
 }
 
 export function waveDone(effect: WaveEffect, finals: readonly SlotFinal[]): ResultEvent[] {
@@ -390,7 +425,7 @@ export function createWaveHandler(deps: WaveDeps): Handler<Extract<Parameters<Ha
       const descriptor = describe(slot.slot, true, modelsOf(slot), slot.effort ?? null);
       return [descriptor
         ? { ...final, descriptor }
-        : { state: 'failed', slot: final.slot, cls: 'worker', reason: `native fallback unavailable in single-shot mode (${final.reason})`, records: final.records }];
+        : { state: 'failed', slot: final.slot, cls: 'worker', reason: `native fallback unavailable in single-shot mode (${final.reason})`, records: final.records, ...(final.invocations ? { invocations: final.invocations } : {}) }];
     });
     return waveDone(effect, finals);
   };
@@ -442,7 +477,11 @@ export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start:
   const n = await start.attempt;
   if (n > 0) await deps.awaitWorker(ctx.runDir, effect.id, n);
   const captures = new Map(nativeResults.map((value) => captureOf(value, deps.fs)).filter((capture): capture is Capture => capture !== null).map((capture) => [capture.sourceKey, capture.text]));
-  const fromCapture = (slot: string, key: string, prior: string[]): SlotFinal | null => {
+  const fromCapture = (slot: string, key: string, prior: string[], attempts: readonly Invocation[] = []): SlotFinal | null => {
+    const found = capture(slot, key, prior);
+    return found && attempts.length ? { ...found, invocations: [...attempts] } : found;
+  };
+  const capture = (slot: string, key: string, prior: string[]): SlotFinal | null => {
     const text = captures.get(key);
     if (text === undefined) return null;
     if (deps.review === 'ask') {
@@ -467,8 +506,8 @@ export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start:
     switch (final.state) {
       case 'success': case 'reserve': finals.push(final); break;
       case 'native': case 'failed':
-        finals.push(fromCapture(slot.slot, `${slot.slot}#fallback`, final.records)
-          ?? (final.state === 'native' ? { state: 'failed', slot: slot.slot, cls: 'empty-output', reason: `no native capture for ${final.sourceKey}`, records: final.records } : final));
+        finals.push(fromCapture(slot.slot, `${slot.slot}#fallback`, final.records, final.invocations)
+          ?? (final.state === 'native' ? { state: 'failed', slot: slot.slot, cls: 'empty-output', reason: `no native capture for ${final.sourceKey}`, records: final.records, ...(final.invocations ? { invocations: final.invocations } : {}) } : final));
         break;
       default: unreachable(final, 'slot final');
     }

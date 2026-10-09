@@ -38,6 +38,11 @@ export function claudeUsage(raw: string): DiagnosticUsage | undefined {
     if (parts.some((v) => !v)) return undefined;
     const out: DiagnosticUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, scope: 'invocation', provenance: 'claude.result.modelUsage', inputSemantics: 'uncached', actualModels: Object.keys(models) };
     for (const part of parts) for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const) if (part?.[key] !== undefined) out[key] = (out[key] ?? 0) + part[key];
+    // Per-model counters let the report split a cascade's cost by the model that actually ran.
+    out.models = Object.fromEntries(Object.keys(models).map((name, index) => {
+      const part = parts[index]!;
+      return [name, { input: part.input, output: part.output, ...(part.cacheRead === undefined ? {} : { cacheRead: part.cacheRead }), ...(part.cacheWrite === undefined ? {} : { cacheWrite: part.cacheWrite }) }];
+    }));
     return Object.values(out).some((v) => typeof v === 'number' && !count(v)) ? undefined : out;
   }
   return counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, 'claude.result.usage', 'uncached');

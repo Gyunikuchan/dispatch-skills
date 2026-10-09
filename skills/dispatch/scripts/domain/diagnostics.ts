@@ -1,149 +1,494 @@
-import crypto from 'node:crypto';
-import type { DiagnosticUsage } from '../core/types.ts';
+// Pure diagnostics retrospective: per-run facts in, a severity-ordered, shareable Markdown report out.
+// The core collector derives the facts from session journals; nothing here reads ports or files.
 
-export const DIAGNOSTIC_LIMITS = { observations: 3, excerptBytes: 512, incidentBytes: 2048, runBytes: 65536, reportBytes: 131072, instructionBytes: 1024, producers: 64, sparse: 16, details: 48, phases: 48 } as const;
-export type Phase = { key: string; name: 'plan' | 'plan review' | 'implementation' | 'code review' | 'design' | 'design review' | 'integration review' | 'ask'; outcome?: string };
-export type Observation = { v: 1; id: string; sourceRole: 'host'; component: string; category: string; trigger: string; evidence: string; impact: string; proposedFix: string; confidence: string; workaround?: string };
-export type Usage = DiagnosticUsage;
-export type Invocation = { id: string; producer: string; sequence: number; phase: string; surface: 'cli' | 'native'; provider: string; configuredModel: string | null; mode: string; start: number; durationMs: number | null; outcome: string; launched: boolean; usage?: Usage };
-export type PhaseTiming = { id: string; name: Phase['name']; start: number; end?: number; outcome: string; approvalMs: number; observations?: Observation[]; rejected?: number };
-export type Capture = {
-  v: 1; refresh: number; enabled: boolean; intervals: Array<{ seq: number; at: number; enabled: boolean }>;
-  phases: PhaseTiming[]; elapsedMs: number | null; outcome: string; anomalies: number;
-  invocations: Invocation[]; totals: { launched: number; prelaunch: number; covered: number; input: number; output: number; workMs: number; failures: number; omitted: number };
-  longest?: Invocation; largest?: Invocation;
-  nativeObserved?: number;
-  byProvider?: Record<string, { input: number; output: number; covered: number; observed: number; semantics: string }>;
-  byPhase?: Record<string, { input: number; output: number; covered: number; observed: number; workMs: number }>;
-  executionRevisions?: number[];
-  identity?: { integrity: string; osFamily: string; host: string };
-  instructionBytes?: number;
-  watermarks: Record<string, { contiguous: number; sparse: number[] }>; omittedProducers: number; notices: number;
+// SECTION: Types
+
+const PHASE_NAMES = ['plan', 'plan review', 'implementation', 'code review', 'design', 'design review', 'integration review', 'ask'] as const;
+/** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
+export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
+/** Review phases carry the review machine's convergence result: findings re-raised across rounds, and any escalation. */
+export type Phase = { key: string; name: typeof PHASE_NAMES[number]; outcome?: string; reraised?: readonly string[]; escalation?: Escalation };
+
+/** Key order is severity order. Hosts send the keys; the report renders the labels. */
+export const CATEGORIES = {
+  correctness: 'Correctness / protocol',
+  'token-economy': 'Token economy',
+  speed: 'Speed',
+  'review-convergence': 'Review convergence',
+  'instruction-clarity': 'Instruction clarity',
+  'information-access': 'Information access',
+} as const;
+export type Category = keyof typeof CATEGORIES;
+
+export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+/** `input` is canonical uncached input; `models` holds per-model counters when the provider reports them. */
+export type Usage = ModelUsage & { models?: Record<string, ModelUsage> };
+
+/** Phases are disjoint: their wall times sum to the run's wall time. */
+export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
+/** One launch attempt (`phase` is a phase key; `outcome` is `ok` or a failure class). Estimated rows carry attested or derived figures. */
+export type InvocationFacts = {
+  phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
+  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[];
+  estimated?: boolean; tokens?: number;
 };
+/** `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation. */
+export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation };
+export type RunFacts = {
+  version?: string; build?: string; os?: string; host?: string; verb?: string; level?: string; pins?: string;
+  config?: Record<string, unknown>; outcome?: string;
+  fault?: { effectId?: string; cls: string; hostWaitMs?: number; driverMs?: number };
+  phases: PhaseFacts[];
+  hostGaps: { await: string; ms: number }[];
+  invocations: InvocationFacts[];
+  reviews: ReviewFacts[];
+  rejectedEvents: { eventType: string; reason: string }[];
+  repairs?: number; admissionDefects?: number; orchestratorBytes?: number;
+  /** Raw `RETRO` items; gated by `retroObservations` at render time. */
+  observations?: unknown;
+};
+export type RetroObservation = { id: string; component: string; category: Category; evidence: string; impact: string; proposedFix: string };
+/** `source` is a heuristic id (`H1`…) or `retro`. */
+export type Finding = { source: string; run?: number; id?: string; category: Category; component: string; evidence: string; impact: string; proposedFix: string };
+
+export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, hostGapMs: 600_000 } as const;
+export const DIAGNOSTIC_LIMITS = { observations: 3, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
+
+const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
+/** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
+export const COMPONENTS: ReadonlySet<string> = new Set([
+  'SKILL.md',
+  'scripts/dispatch.ts',
+  ...files('scripts/core', 'diagnostics effect-id frame interpreter journal lock ports progress types validate', '.ts'),
+  ...files('scripts/domain', 'design diagnostics execution-config fix-clustering plan prompt render report sanitize stable-value types', '.ts'),
+  ...files('scripts/effects', 'artifacts assess-recovery check-envelope check-review-target checkout git handoff index parse-artifact prepare-review recovery-manifest restore snapshot verify wave-native wave write-brief', '.ts'),
+  ...files('scripts/lib', 'cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform session', '.ts'),
+  ...files('scripts/machines', 'ask change-resolution design-revision design diagnostics execution-config implement-tasks implement-types implement plan review revision root types', '.ts'),
+  ...files('scripts/policy', 'cascade drift hotfix roster rounds', '.ts'),
+  ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
+  ...files('references', 'change-handling diagnostics glossary providers review-rules', '.md'),
+  ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
+  ...files('references/templates', 'design plan review-prompt-code review-prompt-design review-prompt-plan review-prompt walkthrough write-brief-hotfix write-brief-task write-brief', '.md'),
+  ...files('references/templates/schemas', 'report-code report-design report-plan', '.json'),
+  ...files('references/verbs', 'ask design implement plan review', '.md'),
+]);
+
+// SECTION: Field gates
+
+const DASH = '—';
+const VERBS = ['ask', 'design', 'plan', 'review', 'implement'];
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'phases'];
+const ID = /^[A-Za-z0-9_-]{1,48}$/;
+// Host text may name dispatch files and slash commands, never machine, network, or identity locators.
+const PROHIBITED: readonly RegExp[] = [
+  /(?:^|[\s"'`(<[=,;])(?:~|\/[^\s/"'`]+)\/[^\s/"'`]/, // POSIX absolute or home path
+  /\b[A-Za-z]:[\\/]|\\\\[^\s\\]+\\/, // drive letter or UNC share
+  /\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|dev|ai|app|cloud|internal|corp)\b/i, // URL host
+  /[\w.%+-]+@[\w-]+(?:\.[\w-]+)+/, // email
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b[0-9a-f]{32,}\b/i, // UUID-like or long hex id
+];
+
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-const safeInteger = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
-const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
+const list = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
+const locatorFree = (v: string): boolean => !PROHIBITED.some((re) => re.test(v));
+// Every rendered identifier and alias passes the locator gate too: a well-formed id can still be a UUID or a host name.
+const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === 'string' && re.test(v) && locatorFree(v) ? v : undefined;
+const token = match(/^[a-z][a-z0-9-]{0,39}$/);
+const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/);
+const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,95}$/);
+const modelName = (v: unknown): string | undefined => { const name = modelAlias(v); return name && !/^[A-Za-z]:|\/\//.test(name) ? name : undefined; };
+const count = (v: unknown): number | undefined => Number.isSafeInteger(v) && Number(v) >= 0 ? Number(v) : undefined;
+const millis = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
+const opt = <K extends string, V>(key: K, value: V | undefined) => (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 
-/** Unknown free text is withheld rather than attempting to prove it contains no secret. */
-export function shareableText(value: unknown, allowedExcerpts: readonly string[] = []): string {
-  if (typeof value !== 'string' || Buffer.byteLength(value) > DIAGNOSTIC_LIMITS.excerptBytes) return 'evidence withheld';
-  const normalize = (text: string) => text.replace(/(?<![\w])(?:[A-Za-z]:[\\/]|\/)[^\s"'<>]+/g, '<path>').replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, '<identity>').replace(/[a-f0-9]{8}-[a-f0-9-]{27,}/gi, '<identity>').replace(/[`~<>\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
-  const normalized = normalize(value);
-  const error = /^(?:dispatch: )?(quota|timeout|model-not-found|not-found|auth|config|refusal|truncated|empty-output|invalid-event|execution-config-topology|unsupported-journal-protocol)(?::.*)?$/.exec(normalized.trim());
-  if (error) return `dispatch error: ${error[1]}; detail withheld`;
-  if (/^dispatch error: [a-z-]+; detail withheld$/.test(normalized)) return normalized;
-  if (!allowedExcerpts.some((source) => source.includes(value) || normalize(source).includes(normalized))) return 'evidence withheld';
-  return normalized;
+/** One-line host or validator text, or undefined when empty, oversized, or carrying a prohibited locator. */
+function safeText(v: unknown): string | undefined {
+  if (typeof v !== 'string' || !v.trim() || Buffer.byteLength(v) > DIAGNOSTIC_LIMITS.fieldBytes || !locatorFree(v)) return undefined;
+  return v.replace(/\s+/g, ' ').trim();
 }
-const CATEGORIES = ['instruction ambiguity', 'terminology', 'routing/delegation', 'driver protocol', 'review convergence', 'recovery', 'artifact lifecycle', 'verification orchestration', 'handoff'];
-const COMPONENTS = new Set(['core/frame.ts', 'core/interpreter.ts', 'core/diagnostics.ts', 'core/journal.ts', 'core/lock.ts', 'core/progress.ts', 'core/validate.ts', 'machines/root.ts', 'machines/ask.ts', 'machines/plan.ts', 'machines/review.ts', 'machines/implement.ts', 'machines/design.ts', 'machines/revision.ts', 'machines/design-revision.ts', 'machines/diagnostics.ts', 'machines/execution-config.ts', 'domain/diagnostics.ts', 'domain/execution-config.ts', 'effects/wave.ts', 'effects/prepare-review.ts', 'effects/write-brief.ts', 'effects/check-envelope.ts', 'effects/verify.ts', 'effects/handoff.ts', 'providers/runner.ts', 'providers/codex.ts', 'providers/claude.ts', 'providers/opencode.ts', 'providers/copilot.ts', 'providers/agy.ts', 'lib/cli.ts', 'lib/config.ts', 'lib/session.ts', 'lib/diagnostic-usage.ts', 'policy/roster.ts', 'policy/rounds.ts', 'policy/cascade.ts', 'references/diagnostics.md', 'references/review-rules.md', 'references/providers.md', 'references/glossary.md', ...['ask', 'design', 'plan', 'implement', 'review'].map((verb) => `references/verbs/${verb}.md`)]);
-export function observations(value: unknown, excerpts: readonly string[] = []): { values?: Observation[]; rejected: number; malformed: boolean } {
-  if (!record(value) || !Array.isArray(value['observations'])) return { rejected: 0, malformed: value !== undefined };
-  const values: Observation[] = [];
-  let rejected = 0;
-  for (const item of value['observations'].slice(0, DIAGNOSTIC_LIMITS.observations)) {
-    if (!record(item) || item['v'] !== 1 || typeof item['id'] !== 'string' || !/^[A-Za-z0-9_-]{1,48}$/.test(item['id']) || typeof item['component'] !== 'string' || !COMPONENTS.has(item['component']) || !CATEGORIES.includes(String(item['category'])) || !['trigger', 'evidence', 'impact', 'proposedFix', 'confidence'].every((key) => typeof item[key] === 'string') || bytes(item) > DIAGNOSTIC_LIMITS.incidentBytes) { rejected++; continue; }
-    const id = /^d-[a-f0-9]{24}$/.test(item['id']) ? item['id'] : `d-${crypto.createHash('sha256').update(item['id']).digest('hex').slice(0, 24)}`;
-    if (values.some((prior) => prior.id === id)) continue;
-    values.push({ v: 1, id, sourceRole: 'host', component: item['component'], category: String(item['category']), trigger: shareableText(item['trigger'], excerpts), evidence: shareableText(item['evidence'], excerpts), impact: shareableText(item['impact'], excerpts), proposedFix: shareableText(item['proposedFix'], excerpts), confidence: shareableText(item['confidence'], excerpts), ...(item['workaround'] !== undefined ? { workaround: shareableText(item['workaround'], excerpts) } : {}) });
-  }
-  return { values, rejected: rejected + Math.max(0, value['observations'].length - DIAGNOSTIC_LIMITS.observations), malformed: false };
+function componentOf(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const relative = v.replace(/^skills\/dispatch\//, '');
+  return COMPONENTS.has(relative) ? relative : undefined;
 }
-export function extractTransport(value: unknown): { event: unknown; sidecar?: unknown; error?: string } {
-  if (record(value) && ('event' in value || 'v' in value)) {
-    if (value['v'] !== 1 || !record(value['event'])) return { event: null, error: 'event: expected version 1 reply transport and semantic event' };
-    return { event: value['event'], ...(value['diagnostics'] !== undefined ? { sidecar: value['diagnostics'] } : {}) };
-  }
-  return { event: value };
-}
-export function emptyCapture(now: number): Capture {
-  return { v: 1, refresh: now, enabled: false, intervals: [], phases: [], elapsedMs: null, outcome: 'partial', anomalies: 0, invocations: [], totals: { launched: 0, prelaunch: 0, covered: 0, input: 0, output: 0, workMs: 0, failures: 0, omitted: 0 }, watermarks: {}, omittedProducers: 0, notices: 0 };
+function categoryOf(v: unknown): Category | undefined {
+  return Object.entries(CATEGORIES).find(([key, label]) => v === key || v === label)?.[0] as Category | undefined;
 }
 
-/** Project invocation metadata; raw requests, results, paths and provider session IDs never cross this seam. */
-export function invocation(value: Invocation): Invocation {
-  const alias = (v: unknown): string | null => typeof v === 'string' && /^[A-Za-z0-9_.:/-]{1,96}$/.test(v) && !/[\\]|:\/\/|^\/|^[A-Za-z]:/.test(v) ? v : null;
-  const id = (v: string) => /^[a-f0-9]{16,64}$/.test(v) ? v : 'unavailable';
-  const usage = normalizeUsage(value.usage);
-  return { id: id(value.id), producer: id(value.producer), sequence: safeInteger(value.sequence) && value.sequence > 0 ? value.sequence : 1, phase: /^[a-z][a-z0-9_.:/-]{0,95}$/.test(value.phase) ? value.phase : 'unavailable', surface: value.surface === 'native' ? 'native' : 'cli', provider: ['claude', 'codex', 'opencode', 'copilot', 'agy'].includes(value.provider) ? value.provider : 'unavailable', configuredModel: alias(value.configuredModel), mode: ['cli', 'desktop', 'vscode', 'native'].includes(value.mode) ? value.mode : 'unavailable', start: safeInteger(value.start) ? value.start : 0, durationMs: typeof value.durationMs === 'number' && Number.isFinite(value.durationMs) && value.durationMs >= 0 ? value.durationMs : null, outcome: /^[a-z-]{1,40}$/.test(value.outcome) ? value.outcome : 'unavailable', launched: value.launched === true, ...(usage ? { usage } : {}) };
+// SECTION: Rejection reasons
+
+/** Bounded classes for a rejected host event; validator text echoes submitted values and keys, so only the class renders. */
+export const REJECTION_CLASSES = ['malformed-json', 'effect-pending', 'unknown-type', 'wrong-await', 'unexpected-field', 'invalid-value', 'state-check'] as const;
+// Host-event schema field names (core/validate.ts and machine checks); a name missing here only truncates a rendered path.
+const EVENT_FIELDS: ReadonlySet<string> = new Set((
+  'type path slots rulings clusters tasks task attempt signature handle model effort substitution envelopePath kind reason tokens durationMs '
+  + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScope '
+  + 'choice request ruling requestId source baseArtifactHash writerRationale delta proposedArtifactHash affectedTasks affectedIncrements paths '
+  + 'obligations commands finalCommands phaseDuties increments criterionDefinitions id prerequisites acceptance title changes verify command final '
+  + 'preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
+  + 'baselineEvidence phaseObligations writer remainingIncrements design status exit inputFingerprint priority outcome dependencies hash fields '
+  + 'slot sourceKey outputPath mapping configuredModel launcherModel launcherEffort provider clusterId affectedPaths fix dependsOn verification '
+  + 'severity decision selected ids hotfix mode rootCause'
+).split(' '));
+const MAX_SEGMENTS = 8;
+
+/** `event` plus allowlisted names and indexes; the first other segment renders as `*` and ends the path. */
+function fieldPath(head: string): string | undefined {
+  if (!head.startsWith('event')) return undefined;
+  const out = ['event'];
+  const segment = /\.([^.[\]]+)|\[(\d{1,6})\]/y;
+  segment.lastIndex = 'event'.length;
+  while (segment.lastIndex < head.length) {
+    const at = segment.lastIndex, part = segment.exec(head);
+    if (!part || out.length > MAX_SEGMENTS || (part[1] !== undefined && !EVENT_FIELDS.has(part[1]))) {
+      if (at === 'event'.length && head[at] !== '.' && head[at] !== '[') return undefined;
+      out.push('.*');
+      break;
+    }
+    out.push(part[1] === undefined ? `[${part[2]}]` : `.${part[1]}`);
+  }
+  return out.length > 1 ? out.join('') : undefined;
 }
-export function normalizeUsage(value: unknown): Usage | undefined {
-  if (!record(value) || !safeInteger(value['input']) || !safeInteger(value['output']) || !['invocation', 'turn-delta', 'session-cumulative'].includes(String(value['scope'])) || !['includes-cache', 'uncached'].includes(String(value['inputSemantics'])) || !['codex.turn.completed', 'claude.result.usage', 'claude.result.modelUsage'].includes(String(value['provenance']))) return undefined;
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning']) if (value[key] !== undefined && !safeInteger(value[key])) return undefined;
-  const out: Usage = { input: value['input'], output: value['output'], scope: value['scope'] as Usage['scope'], inputSemantics: value['inputSemantics'] as Usage['inputSemantics'], provenance: String(value['provenance']) };
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) if (safeInteger(value[key])) out[key] = value[key];
-  if (Array.isArray(value['actualModels']) && value['actualModels'].length <= 8 && value['actualModels'].every((v) => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,96}$/.test(v))) out.actualModels = value['actualModels'] as string[];
+
+/**
+ * Reduces a validator or machine rejection to `<class>` or `<class> at <field path>`; never echoes a value or an
+ * arbitrary key. Idempotent, so the collector and the renderer may both apply it.
+ */
+export function rejectionReason(v: unknown): string {
+  if (typeof v !== 'string') return 'state-check';
+  const [, prior = '', priorPath] = /^([a-z-]+)(?: at (event\S*))?$/.exec(v) ?? [];
+  if ((REJECTION_CLASSES as readonly string[]).includes(prior)) {
+    const path = priorPath === undefined ? undefined : fieldPath(priorPath);
+    return path ? `${prior} at ${path}` : prior;
+  }
+  const unexpected = v.endsWith(': unexpected field');
+  const cls = /^event: expected JSON object, got malformed JSON$/.test(v) ? 'malformed-json'
+    : /^event: effect \S+ is pending;/.test(v) ? 'effect-pending'
+    : /^event\.type: [A-Z][A-Z0-9_]* is not accepted at await [a-z]+;/.test(v) ? 'wrong-await'
+    : v.startsWith('event.type: expected ') ? 'unknown-type'
+    : unexpected ? 'unexpected-field'
+    : v.includes(': expected ') ? 'invalid-value' : 'state-check';
+  const split = v.indexOf(': ');
+  const path = fieldPath(unexpected ? v.slice(0, -': unexpected field'.length) : split < 0 ? '' : v.slice(0, split));
+  return path ? `${cls} at ${path}` : cls;
+}
+
+// SECTION: Usage
+
+function counters(v: unknown): ModelUsage | undefined {
+  if (!record(v)) return undefined;
+  const input = count(v['input']), output = count(v['output']);
+  if (input === undefined || output === undefined) return undefined;
+  const out: ModelUsage = { input, output };
+  for (const key of ['cacheRead', 'cacheWrite'] as const) {
+    if (v[key] === undefined) continue;
+    const n = count(v[key]);
+    if (n === undefined) return undefined;
+    out[key] = n;
+  }
   return out;
 }
-export function account(capture: Capture, raw: Invocation): boolean {
-  const item = invocation(raw);
-  let watermark = capture.watermarks[item.producer];
-  if (!watermark) {
-    if (Object.keys(capture.watermarks).length >= DIAGNOSTIC_LIMITS.producers) { capture.omittedProducers++; return false; }
-    watermark = { contiguous: 0, sparse: [] }; capture.watermarks[item.producer] = watermark;
-  }
-  if (item.sequence <= watermark.contiguous || watermark.sparse.includes(item.sequence)) return false;
-  if (item.sequence > watermark.contiguous + 1 && watermark.sparse.length >= DIAGNOSTIC_LIMITS.sparse) { capture.notices++; return false; }
-  watermark.sparse.push(item.sequence);
-  while (watermark.sparse.includes(watermark.contiguous + 1)) { watermark.contiguous++; watermark.sparse.splice(watermark.sparse.indexOf(watermark.contiguous), 1); }
-  if (item.surface === 'native') capture.nativeObserved = (capture.nativeObserved ?? 0) + 1;
-  else if (item.launched) capture.totals.launched++; else capture.totals.prelaunch++;
-  if (!['ok', 'captured', 'unavailable'].includes(item.outcome)) capture.totals.failures++;
-  if (item.durationMs !== null) capture.totals.workMs += item.durationMs;
-  if (item.usage) { capture.totals.covered++; capture.totals.input += item.usage.input; capture.totals.output += item.usage.output; }
-  if (item.durationMs !== null && item.durationMs > (capture.longest?.durationMs ?? -1)) capture.longest = item;
-  if (item.usage && item.usage.output > (capture.largest?.usage?.output ?? -1)) capture.largest = item;
-  if (item.surface === 'cli' && item.launched) {
-    capture.byProvider ??= {};
-    const counts = capture.byProvider[item.provider] ?? { input: 0, output: 0, covered: 0, observed: 0, semantics: item.usage?.inputSemantics ?? 'unavailable' };
-    counts.observed++;
-    if (item.usage) { counts.covered++; counts.input += item.usage.input; counts.output += item.usage.output; counts.semantics = item.usage.inputSemantics; }
-    capture.byProvider[item.provider] = counts;
-    capture.byPhase ??= {};
-    if (Object.keys(capture.byPhase).length < DIAGNOSTIC_LIMITS.phases || capture.byPhase[item.phase]) {
-      const phase = capture.byPhase[item.phase] ?? { input: 0, output: 0, covered: 0, observed: 0, workMs: 0 };
-      phase.observed++; phase.workMs += item.durationMs ?? 0;
-      if (item.usage) { phase.covered++; phase.input += item.usage.input; phase.output += item.usage.output; }
-      capture.byPhase[item.phase] = phase;
-    }
-  }
-  if (capture.invocations.length < DIAGNOSTIC_LIMITS.details) capture.invocations.push(item); else capture.totals.omitted++;
-  return true;
+function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
+  const base = counters(v);
+  if (!base || !record(v)) return undefined;
+  const canonical = (u: ModelUsage): ModelUsage => subtractCache ? { ...u, input: Math.max(0, u.input - (u.cacheRead ?? 0)) } : u;
+  const out: Usage = canonical(base);
+  const models = record(v['models']) ? Object.entries(v['models']) : [];
+  const parts = models.map(([name, part]) => [modelName(name), counters(part)] as const);
+  if (parts.length && parts.length <= 8 && parts.every(([name, part]) => name && part)) out.models = Object.fromEntries(parts.map(([name, part]) => [name!, canonical(part!)]));
+  return out;
 }
-export function elapsed(start: number, end: number): number | null { return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null; }
-export function unionDuration(intervals: readonly { start: number; end: number }[]): number {
-  let total = 0, stop = -Infinity;
-  for (const span of [...intervals].filter((v) => elapsed(v.start, v.end) !== null).sort((a, b) => a.start - b.start)) { total += Math.max(0, span.end - Math.max(stop, span.start)); stop = Math.max(stop, span.end); }
-  return total;
+/** Canonical counters: `input` excludes cache reads, so providers that count them inside input (Codex) compare equally. */
+export function normalizeUsage(raw: unknown, inputSemantics: 'includes-cache' | 'uncached'): Usage | undefined {
+  return usageOf(raw, inputSemantics === 'includes-cache');
 }
-export function renderDiagnostics(runs: readonly Capture[], now: number, compact = false, excerpts: readonly string[] = []): string {
-  const lines = ['# Dispatch diagnostics v1', '', `Last refresh: ${now} ms since Unix epoch | capture: partial where marked`, 'Review this file before sharing. Evidence withheld unless matched to dispatch-owned excerpts.', 'Native/orchestrator tokens and diagnostic token overhead: unavailable. Extra diagnostic agent turns: 0.', 'Token figures are covered subtotals; cache/reasoning counters overlap differently by provider.', ''];
+const total = (u: ModelUsage) => u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + u.output;
+const measured = (i: InvocationFacts): Usage | undefined => i.estimated ? undefined : i.usage;
+const estimate = (i: InvocationFacts): number | undefined => !i.estimated ? undefined : i.tokens ?? (i.usage ? total(i.usage) : undefined);
+const sum = (values: readonly (number | undefined)[]): number | undefined => values.some((v) => v !== undefined) ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : undefined;
+type Totals = { input: number; output: number; cacheRead?: number; cacheWrite?: number; all: number };
+function totals(usages: readonly ModelUsage[]): Totals | undefined {
+  if (!usages.length) return undefined;
+  return { input: sum(usages.map((u) => u.input))!, output: sum(usages.map((u) => u.output))!, ...opt('cacheRead', sum(usages.map((u) => u.cacheRead))), ...opt('cacheWrite', sum(usages.map((u) => u.cacheWrite))), all: sum(usages.map(total))! };
+}
+
+// SECTION: Gates
+
+/** Gates host retro items: ≤3, valid id, dispatch-owned component, known category, bounded locator-free text. */
+export function retroObservations(value: unknown): { values: RetroObservation[]; rejected: number } {
+  const items = list(value);
+  const values: RetroObservation[] = [];
+  let rejected = Math.max(0, items.length - DIAGNOSTIC_LIMITS.observations);
+  for (const item of items.slice(0, DIAGNOSTIC_LIMITS.observations)) {
+    const row = record(item) ? item : {};
+    const id = match(ID)(row['id']), component = componentOf(row['component']), category = categoryOf(row['category']);
+    const evidence = safeText(row['evidence']), impact = safeText(row['impact']), proposedFix = safeText(row['proposedFix']);
+    if (!id || values.some((v) => v.id === id) || !component || !category || !evidence || !impact || !proposedFix) { rejected++; continue; }
+    values.push({ id, component, category, evidence, impact, proposedFix });
+  }
+  return { values, rejected };
+}
+
+function configValue(v: unknown, depth: number): unknown {
+  if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) return v;
+  if (typeof v === 'string') return modelName(v) ?? DASH;
+  if (depth >= 6) return DASH;
+  if (Array.isArray(v)) return v.slice(0, 16).map((item) => configValue(item, depth + 1));
+  if (record(v)) return Object.fromEntries(Object.entries(v).filter(([key]) => /^[A-Za-z0-9_-]{1,40}$/.test(key) && locatorFree(key)).slice(0, 32).map(([key, item]) => [key, configValue(item, depth + 1)]));
+  return DASH;
+}
+function invocationOf(v: unknown): InvocationFacts[] {
+  if (!record(v)) return [];
+  const reported = list(v['reportedModels']).map(modelName).filter((m): m is string => !!m).slice(0, 8);
+  return [{
+    phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
+    ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
+    surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
+    outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
+    ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])),
+  }];
+}
+/** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
+export function sanitizeFacts(run: RunFacts): RunFacts {
+  const r: Record<string, unknown> = record(run) ? run : {};
+  // A dispatch content hash, exempt from the long-hex locator rule; only its 12-character prefix renders.
+  const build = typeof r['build'] === 'string' && /^[a-f0-9]{12,64}$/.test(r['build']) ? r['build'] : undefined;
+  const config = record(r['config']) ? Object.fromEntries(CONFIG_KEYS.filter((key) => (r['config'] as Record<string, unknown>)[key] !== undefined).map((key) => [key, configValue((r['config'] as Record<string, unknown>)[key], 0)])) : undefined;
+  const fault = record(r['fault']) ? r['fault'] : undefined;
+  return {
+    ...opt('version', match(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,32})?$/)(r['version'])), ...opt('build', build?.slice(0, 12)),
+    ...opt('os', token(r['os'])), ...opt('host', token(r['host'])),
+    ...opt('verb', VERBS.find((v) => v === r['verb'])), ...opt('level', LEVELS.find((v) => v === r['level'])),
+    ...opt('pins', match(/^[A-Za-z0-9_.,:-]{1,96}$/)(r['pins'])), ...opt('config', config), ...opt('outcome', token(r['outcome'])),
+    ...opt('fault', fault && { ...opt('effectId', match(/^[a-z0-9-]+(?:\.[a-z0-9-]+){0,15}$/)(fault['effectId'])), cls: token(fault['cls']) ?? DASH, ...opt('hostWaitMs', millis(fault['hostWaitMs'])), ...opt('driverMs', millis(fault['driverMs'])) }),
+    phases: list(r['phases']).filter(record).map((p) => ({
+      key: phaseKey(p['key']) ?? '', name: PHASE_NAMES.find((name) => name === p['name']) ?? DASH, ...opt('outcome', token(p['outcome'])),
+      ...opt('wallMs', millis(p['wallMs'])), ...opt('driverMs', millis(p['driverMs'])), ...opt('hostMs', millis(p['hostMs'])), ...opt('userMs', millis(p['userMs'])),
+    })),
+    hostGaps: list(r['hostGaps']).filter(record).flatMap((g) => { const ms = millis(g['ms']); return ms === undefined ? [] : [{ await: token(g['await']) ?? DASH, ms }]; }),
+    invocations: list(r['invocations']).flatMap(invocationOf),
+    reviews: list(r['reviews']).filter(record).flatMap((v): ReviewFacts[] => {
+      const round = count(v['round']);
+      if (!round) return [];
+      const ids = (value: unknown) => list(value).map(match(ID)).filter((id): id is string => !!id);
+      const reraised = ids(v['reraised']), escalation = record(v['escalation']) ? v['escalation'] : undefined;
+      const kind = escalation?.['kind'] === 'regression' || escalation?.['kind'] === 'deadlock' ? escalation['kind'] : undefined;
+      return [{
+        ...opt('phase', phaseKey(v['phase'])), round, accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0,
+        ...opt('reraised', reraised.length ? reraised : undefined), ...opt('escalation', kind && { kind, ids: ids(escalation?.['ids']) }),
+      }];
+    }),
+    rejectedEvents: list(r['rejectedEvents']).filter(record).map((e) => ({ eventType: match(/^[A-Z][A-Z0-9_]{0,47}$/)(e['eventType']) ?? DASH, reason: rejectionReason(e['reason']) })),
+    ...opt('repairs', count(r['repairs'])), ...opt('admissionDefects', count(r['admissionDefects'])), ...opt('orchestratorBytes', count(r['orchestratorBytes'])),
+    ...opt('observations', r['observations']),
+  };
+}
+
+// SECTION: Heuristics
+
+const RANK = Object.keys(CATEGORIES);
+const bySeverity = <T extends { category: Category }>(items: readonly T[]): T[] => [...items].sort((a, b) => RANK.indexOf(a.category) - RANK.indexOf(b.category));
+const pct = (share: number) => `${Math.round(share * 100)}%`;
+const num = (n: number | undefined) => n === undefined ? DASH : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const tally = (values: readonly string[]) => [...new Set(values)].map((v) => `${v} ×${values.filter((x) => x === v).length}`).join(', ');
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const phaseName = (run: RunFacts, key: string | undefined) => run.phases.find((p) => p.key === key)?.name ?? DASH;
+function groups<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const item of items) out.set(key(item), [...(out.get(key(item)) ?? []), item]);
+  return out;
+}
+
+const PREFLIGHT = ['scripts/lib/doctor.ts', 'Detect this condition in the preflight check and skip the provider before launch.'] as const;
+const FAILURE_FIXES: Record<string, readonly [string, string]> = {
+  'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
+  'model-not-loaded': ['scripts/policy/cascade.ts', 'Cascade to the next model on the first load failure instead of relaunching the same model.'],
+  quota: ['scripts/policy/cascade.ts', 'Treat the first quota failure as provider-wide and route the remaining slots to reserves without another launch.'],
+  timeout: ['scripts/providers/runner.ts', 'Scale the launch timeout with level and prompt size, and resume the provider session instead of relaunching.'],
+  'context-overflow': ['scripts/effects/prepare-review.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
+  auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
+};
+const DEFAULT_FIX = ['scripts/providers/runner.ts', 'Classify this failure in the runner and route it through the cascade without a blind retry.'] as const;
+const AWAIT_COMPONENTS: Record<string, string> = {
+  author: 'references/templates/plan.md', native: 'references/providers.md', rule: 'references/review-rules.md', fix: 'references/change-handling.md',
+  write: 'references/templates/write-brief-task.md', evidence: 'references/verbs/implement.md', retro: 'references/diagnostics.md',
+};
+
+/** Deterministic findings (H1–H6, H8, H9) for one run, in severity order. */
+export function heuristics(run: RunFacts): Finding[] {
+  const T = DIAGNOSTIC_THRESHOLDS;
+  const out: Finding[] = [];
+  const add = (source: string, category: Category, component: string, evidence: string, impact: string, proposedFix: string) => out.push({ source, category, component, evidence, impact, proposedFix });
+  const cli = run.invocations.filter((i) => i.surface === 'cli');
+  for (const [cls, items] of groups(cli.filter((i) => i.outcome !== 'ok'), (i) => i.outcome)) {
+    const [component, fix] = FAILURE_FIXES[cls] ?? DEFAULT_FIX;
+    const spent = sum(items.map((i) => i.durationMs));
+    add('H1', 'correctness', component, `\`${cls}\`: ${items.length} of ${plural(cli.length, 'CLI attempt')} failed (${tally(items.map((i) => i.provider))})${spent === undefined ? '' : `, ${formatDuration(spent)} of driver time`}.`, 'Failed attempts delay the wave and trigger retries or cascade launches.', fix);
+  }
+  for (const [key, rows] of groups(run.reviews, (r) => r.phase ?? '')) {
+    const rounds = Math.max(...rows.map((r) => r.round));
+    const reraised = [...new Set(rows.flatMap((r) => r.reraised ?? []))];
+    const escalation = rows.map((r) => r.escalation).filter((e) => e !== undefined).at(-1);
+    if (rounds < T.reviewRounds && !reraised.length && !escalation) continue;
+    const ids = (values: readonly string[]) => values.length ? ` (${values.slice(0, 5).join(', ')})` : '';
+    const detail = [
+      plural(rounds, 'round'),
+      ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
+      ...(escalation ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
+    ];
+    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
+  }
+  for (const r of run.reviews) {
+    const all = r.accepted + r.rejected;
+    if (!all || r.rejected / all <= T.rejectedShare) continue;
+    add('H3', 'review-convergence', 'references/templates/review-prompt.md', `${phaseName(run, r.phase)} round ${r.round}: ${r.rejected} of ${plural(all, 'finding')} rejected (${pct(r.rejected / all)}).`, 'Rejected findings cost reviewer tokens and host ruling time without changing the artifact.', 'Put the governing decisions and out-of-scope items in the review prompt so reviewers do not raise settled points.');
+  }
+  const metered = run.invocations.filter((i) => measured(i));
+  for (const [provider, items] of groups(metered, (i) => i.provider)) {
+    const reporting = items.filter((i) => i.usage!.cacheRead !== undefined);
+    const cacheRead = sum(reporting.map((i) => i.usage!.cacheRead)) ?? 0, input = cacheRead + (sum(reporting.map((i) => i.usage!.input)) ?? 0);
+    if (!reporting.length || !input || cacheRead / input >= T.cacheReadShare) continue;
+    add('H4', 'token-economy', 'scripts/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
+  }
+  if (metered.length >= 2) {
+    const sizes = metered.map((i) => [i, total(i.usage!)] as const);
+    const all = sum(sizes.map(([, n]) => n)) ?? 0;
+    const [top, n] = sizes.reduce((a, b) => b[1] > a[1] ? b : a);
+    if (all && n / all > T.invocationShare) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
+  }
+  const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
+  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time and usually repeat work the driver could do.', `Move deterministic steps of the \`${gap.await}\` turn into the driver, or split it so each frame asks for one bounded action.`);
+  if (run.rejectedEvents.length) {
+    const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
+    add('H8', 'correctness', 'scripts/core/validate.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
+  }
+  if (run.repairs) add('H9', 'correctness', 'references/templates/write-brief-task.md', `${plural(run.repairs, 'implementation repair attempt')}.`, 'Each repair relaunches a writer and repeats verification.', 'Put the failed check and its acceptance rule in the task brief before the first attempt.');
+  if (run.admissionDefects) add('H9', 'correctness', 'scripts/effects/check-envelope.ts', `${plural(run.admissionDefects, 'admission defect')}.`, 'Each defect rejects a writer result and costs another attempt.', 'Check envelope fields deterministically and return the exact failing field so the writer fixes it in one attempt.');
+  return bySeverity(out);
+}
+
+// SECTION: Rendering
+
+/** `1h 4m 12s` | `45s` | `<1s`; unavailable renders `—`. */
+export function formatDuration(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return DASH;
+  if (ms < 1000) return '<1s';
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m ${s % 60}s` : m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+// Only a `<` that could open a tag, comment, or declaration is escaped, so `<1s` stays readable.
+const md = (text: string) => text.replace(/<(?=[A-Za-z/!?])/g, '&lt;');
+const cell = (text: string) => md(text).replace(/\|/g, '\\|');
+const row = (cells: readonly string[]) => `| ${cells.map(cell).join(' | ')} |`;
+const tokenCells = (t: Totals | undefined, prefix = '') => [t?.input, t?.cacheRead, t?.cacheWrite, t?.output].map((n) => n === undefined ? DASH : `${prefix}${num(n)}`);
+const unique = (values: readonly string[]) => [...new Set(values)].join(', ') || DASH;
+const clip = (text: string, max: number) => Array.from(text).length > max ? `${Array.from(text).slice(0, max - 1).join('')}…` : text;
+const sourceOf = (f: Finding) => f.source === 'retro' ? `host retro \`${f.id ?? DASH}\`` : f.source;
+const summaryLine = (f: Finding) => md(`${CATEGORIES[f.category]} · \`${f.component}\` · ${clip(f.evidence, 160)} (${f.source === 'retro' ? 'host retro' : f.source})`);
+function coverage(items: readonly InvocationFacts[]): string {
+  const launched = items.filter((i) => i.surface === 'cli' && i.launched);
+  return launched.length ? `${launched.filter((i) => measured(i)).length}/${launched.length}` : DASH;
+}
+function usageSummary(items: readonly InvocationFacts[]): string {
+  const t = totals(items.flatMap((i) => measured(i) ?? []));
+  return t ? `${num(t.all)} (input ${num(t.input)} · cache read ${num(t.cacheRead)} · cache write ${num(t.cacheWrite)} · output ${num(t.output)})` : DASH;
+}
+
+function overview(runs: readonly RunFacts[]): string[] {
+  const lines = ['## Overview', '', row(['Run', 'Phase', 'Outcome', 'Wall', 'Driver', 'Host', 'User wait', 'Invocations', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage']), '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'];
+  const notes: string[] = [];
   runs.forEach((run, index) => {
-    lines.push(`## Run ${String(index + 1).padStart(3, '0')}: ${run.outcome}`, '', `Dispatch integrity: ${run.identity?.integrity ?? 'unavailable'}; OS: ${run.identity?.osFamily ?? 'unavailable'}; host platform: ${run.identity?.host ?? 'unavailable'}.`, `Elapsed: ${run.elapsedMs ?? 'unavailable'} ms; invocation work: ${run.totals.workMs} ms (sum, not elapsed).`, `Observed tokens: input ${run.totals.covered ? run.totals.input : 'unavailable'}, output ${run.totals.covered ? run.totals.output : 'unavailable'}; ${run.totals.covered}/${run.totals.launched} CLI invocations covered; prelaunch failures ${run.totals.prelaunch}.`, `Failures: ${run.totals.failures}; omitted invocation detail: ${run.totals.omitted}; deferred producer publications: ${run.omittedProducers}; collection/detail notices: ${run.notices}; clock anomalies: ${run.anomalies}.`, `Emitted instruction bytes: ${run.instructionBytes ?? 'unavailable'}; attributable token overhead unavailable.`, `Enabled intervals: ${run.intervals.map((v) => `${v.seq}:${v.enabled ? 'on' : 'off'}`).join(', ') || 'unavailable'}.`, '');
-    if (compact) { lines.push('Phase and incident detail omitted at session report limit.', ''); return; }
-    lines.push(`Execution configuration revisions: ${run.executionRevisions?.join(', ') || 'none'}. Explicit start overrides take precedence.`, '', '| Phase | Outcome | Inclusive elapsed ms | Exclusive elapsed ms | Approval wait ms | Work ms | Observed input/output | Coverage | Other gaps |', '| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |');
-    for (const phase of run.phases) {
-      const end = phase.end ?? run.refresh;
-      const inclusive = elapsed(phase.start, end);
-      const key = phase.id.replace(/:\d+$/, '');
-      const nested = run.phases.filter((p) => p.id.replace(/:\d+$/, '').startsWith(`${key}/`) && p.start >= phase.start && p.start < end).map((p) => ({ start: Math.max(phase.start, p.start), end: Math.min(end, p.end ?? run.refresh) }));
-      const exclusive = inclusive === null ? null : Math.max(0, inclusive - unionDuration(nested));
-      const counts = run.byPhase?.[phase.id];
-      lines.push(`| ${phase.name} | ${phase.outcome} | ${inclusive ?? 'unavailable'} | ${exclusive ?? 'unavailable'} | ${phase.approvalMs} | ${counts?.workMs ?? 'unavailable'} | ${counts?.covered ? `${counts.input}/${counts.output}` : 'unavailable'} | ${counts ? `${counts.covered}/${counts.observed}` : 'unavailable'} | unclassified |`);
+    const label = `${index + 1} · ${run.verb ?? DASH} · ${run.level ?? DASH}`;
+    const line = (phase: string, outcome: string | undefined, timing: readonly (number | undefined)[], items: readonly InvocationFacts[]) =>
+      lines.push(row([label, phase, outcome ?? DASH, ...timing.map(formatDuration), String(items.length), ...tokenCells(totals(items.flatMap((i) => measured(i) ?? []))), coverage(items)]));
+    for (const p of run.phases) line(p.name, p.outcome, [p.wallMs, p.driverMs, p.hostMs, p.userMs], run.invocations.filter((i) => i.phase === p.key));
+    const unmatched = run.invocations.some((i) => !run.phases.some((p) => p.key === i.phase));
+    if (run.phases.length !== 1 || unmatched) line('all phases', run.outcome, (['wallMs', 'driverMs', 'hostMs', 'userMs'] as const).map((k) => sum(run.phases.map((p) => p[k]))), run.invocations);
+    if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; host wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
+  });
+  if (notes.length) lines.push('', ...notes);
+  lines.push('', '### Tokens by provider and model', '', row(['Provider', 'Model', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage']), '| --- | --- | ---: | ---: | ---: | ---: | ---: |');
+  const items = runs.flatMap((run) => run.invocations).filter((i) => measured(i) || (i.surface === 'cli' && i.launched));
+  for (const [provider, rows] of groups(items, (i) => i.provider)) {
+    lines.push(row([provider, 'all models', ...tokenCells(totals(rows.flatMap((i) => measured(i) ?? []))), coverage(rows)]));
+    const models = new Map<string, ModelUsage[]>();
+    const attribute = (model: string, usage: ModelUsage) => models.set(model, [...(models.get(model) ?? []), usage]);
+    for (const i of rows) {
+      const usage = measured(i);
+      if (!usage) continue;
+      // Per-model counters win; a multi-model aggregate cannot be split, so its attribution is unavailable.
+      if (usage.models) for (const [model, part] of Object.entries(usage.models)) attribute(model, part);
+      else attribute((i.reportedModels?.length ?? 0) > 1 ? DASH : `${i.model} (configured)`, usage);
     }
-    const longest = run.phases.map((p) => ({ ...p, duration: elapsed(p.start, p.end ?? run.refresh) })).filter((p) => p.duration !== null).sort((a, b) => Number(b.duration) - Number(a.duration))[0];
-    const invocation = run.longest ?? [...run.invocations].sort((a, b) => Number(b.durationMs) - Number(a.durationMs))[0];
-    lines.push('', `Longest observed phase: ${longest?.name ?? 'unavailable'}; longest measured invocation: ${invocation?.durationMs ?? 'unavailable'} ms.`, `Largest observed output token consumer: ${run.largest?.provider ?? 'unavailable'} (partial coverage).`, `Native captures observed: ${run.nativeObserved ?? 0}; usage unavailable.`, '');
-    for (const [provider, counts] of Object.entries(run.byProvider ?? {})) lines.push(`${provider}: input ${counts.covered ? counts.input : 'unavailable'} (${counts.semantics}), output ${counts.covered ? counts.output : 'unavailable'}; ${counts.covered}/${counts.observed} covered.`);
-    for (const item of run.invocations) lines.push(`Invocation ${item.id}: ${item.provider}/${item.mode}; configured alias ${item.configuredModel ?? 'unavailable'}, reported models ${item.usage?.actualModels?.join(', ') ?? 'unavailable'}; ${item.outcome}.`);
-    for (const phase of run.phases) {
-      lines.push(`### ${phase.name}: dispatch incidents`, phase.observations === undefined ? 'Observations unavailable.' : phase.observations.length ? '' : 'No dispatch friction reported.', `Scope rejections: ${phase.rejected ?? 0}.`);
-      const safe = observations({ observations: phase.observations ?? [] }, ['evidence withheld', ...excerpts]).values ?? [];
-      for (const incident of safe) lines.push('', `Incident: ${incident.id}; source: ${incident.sourceRole}`, `Owner: ${incident.component} | category: ${incident.category}`, '```text', `Trigger: ${incident.trigger}`, `Evidence: ${incident.evidence}`, `Impact: ${incident.impact}`, `Workaround: ${incident.workaround ?? 'unavailable'}`, `Proposed fix (unverified): ${incident.proposedFix}`, `Explanation confidence: ${incident.confidence}`, '```');
+    for (const [model, usages] of models) lines.push(row([provider, model, ...tokenCells(totals(usages)), DASH]));
+  }
+  if (!items.length) lines.push(row(Array<string>(7).fill(DASH)));
+  return [...lines, ''];
+}
+
+function appendix(runs: readonly RunFacts[]): string[] {
+  const lines = ['## Appendix', '', '<details>', '<summary>Invocations and configuration</summary>', '', row(['Run', 'Phase', 'Provider', 'Model', 'Effort', 'Duration', 'Input', 'Cache read', 'Cache write', 'Output', 'Total', 'Outcome']), '| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |'];
+  runs.forEach((run, index) => {
+    for (const i of run.invocations) {
+      const usage = i.usage ? totals([i.usage]) : undefined;
+      const all = i.estimated ? estimate(i) : usage?.all;
+      const provider = i.surface === 'native' ? `${i.provider} (native)` : i.mode && i.mode !== 'cli' ? `${i.provider} (${i.mode})` : i.provider;
+      const model = i.reportedModels?.length ? `${i.model} (reported: ${i.reportedModels.join(', ')})` : i.model;
+      lines.push(row([String(index + 1), phaseName(run, i.phase), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.launched ? i.outcome : `${i.outcome} (not launched)`]));
     }
   });
-  const text = `${lines.join('\n')}\n`;
-  if (Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes) return text;
-  if (!compact) return renderDiagnostics(runs, now, true, excerpts);
-  return `# Dispatch diagnostics v1\n\nSession limit reached; ${runs.length} prior run summaries withheld. Partial report; underlying run records retained.\n`;
+  lines.push('');
+  runs.forEach((run, index) => {
+    lines.push(`Run ${index + 1}: verb ${run.verb ?? DASH}, level ${run.level ?? DASH}, pins ${run.pins ?? DASH}, outcome ${run.outcome ?? DASH}.`, '');
+    if (run.config && Object.keys(run.config).length) lines.push('```json', JSON.stringify(run.config, null, 2), '```', '');
+  });
+  return [...lines, '</details>', ''];
+}
+
+/** Renders the session report from every run's facts; compaction drops the Appendix, then lower-severity findings. */
+export function renderDiagnostics(input: readonly RunFacts[]): { text: string; findings: number; top?: string } {
+  const runs = input.map(sanitizeFacts);
+  const retro = runs.map((run) => run.observations === undefined ? undefined : retroObservations(run.observations));
+  const findings = bySeverity(runs.flatMap((run, index): Finding[] => [
+    ...heuristics(run).map((f) => ({ ...f, run: index + 1 })),
+    ...(retro[index]?.values ?? []).map((o) => ({ source: 'retro', run: index + 1, id: o.id, category: o.category, component: o.component, evidence: o.evidence, impact: o.impact, proposedFix: o.proposedFix })),
+  ]));
+  const invocations = runs.flatMap((run) => run.invocations);
+  const estimated = sum(invocations.map(estimate));
+  const bytes = sum(runs.map((run) => run.orchestratorBytes));
+  const collected = retro.filter((r) => r !== undefined);
+  const head = [
+    '# Dispatch diagnostics', '',
+    'Review before sharing. This report holds dispatch-owned data only: no user source, objective, repository paths, or identities. Proposed fixes are unverified.', '',
+    '`—` marks an unavailable value; `~` marks an estimate excluded from measured totals.', '',
+    '## Summary', '',
+    `- Build: ${unique(runs.map((run) => `dispatch ${run.version ?? DASH} · build ${run.build ?? DASH}`))}`,
+    `- Host: ${unique(runs.map((run) => run.host ?? DASH))} · OS: ${unique(runs.map((run) => run.os ?? DASH))}`,
+    `- Runs: ${runs.length} · wall time: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
+    `- Measured tokens: ${usageSummary(invocations)} · coverage ${coverage(invocations)}`,
+    `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`} · orchestrator ${bytes === undefined ? DASH : `~${num(Math.ceil(bytes / 4))}`}`,
+    `- Host retro: ${collected.length ? `${sum(collected.map((r) => r.values.length))} accepted · ${sum(collected.map((r) => r.rejected))} rejected` : 'not collected'}`,
+    '', 'Top findings:', '',
+    ...(findings.length ? findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`) : ['- none']), '',
+    ...overview(runs),
+  ];
+  const findingLines = (keep: number) => {
+    if (!findings.length) return ['## Findings', '', 'No findings.', ''];
+    const lines = ['## Findings', ''];
+    findings.slice(0, keep).forEach((f, i) => lines.push(`### ${i + 1}. ${CATEGORIES[f.category]} · \`${f.component}\``, '', `- Source: ${sourceOf(f)} · run ${f.run ?? DASH}`, `- Evidence: ${md(f.evidence)}`, `- Impact: ${md(f.impact)}`, `- Proposed fix (unverified): ${md(f.proposedFix)}`, ''));
+    if (keep < findings.length) lines.push(`${plural(findings.length - keep, 'lower-severity finding')} omitted at the report size limit.`, '');
+    return lines;
+  };
+  const tail = appendix(runs);
+  const assemble = (withAppendix: boolean, keep: number) => [...head, ...findingLines(keep), ...(withAppendix ? tail : ['## Appendix', '', 'Omitted at the report size limit.', ''])].join('\n');
+  const fits = (text: string) => Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes;
+  let text = assemble(true, findings.length);
+  if (!fits(text)) text = assemble(false, findings.length);
+  for (let keep = findings.length - 1; !fits(text) && keep >= 0; keep--) text = assemble(false, keep);
+  if (!fits(text)) {
+    const cut = Buffer.from(text).subarray(0, DIAGNOSTIC_LIMITS.reportBytes - 256).toString();
+    text = `${cut.slice(0, cut.lastIndexOf('\n'))}\n\nTruncated at the report size limit.\n`;
+  }
+  return { text, findings: findings.length, ...opt('top', findings[0] && summaryLine(findings[0])) };
 }

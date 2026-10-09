@@ -44,7 +44,7 @@ function setup(script: Script, roster: Record<string, unknown>[], orchestrator: 
       const key = `${provider}:${req.model ?? '-'}:${mode}`;
       calls.push(key);
       requests.push(req);
-      return script[key]?.shift() ?? fail('not-found');
+      return { outcome: script[key]?.shift() ?? fail('not-found'), invocations: [] };
     },
   };
   const context: WaveContext = {
@@ -201,7 +201,7 @@ test('rewrite SC3 start exposes native and early fallback before CLI completes a
 test('rewrite SC4 worker requests preserve injected native config launch selectors', async () => {
   const w = setup({}, [slot('opencode[0]', 'opencode', { model: 'local/qwen' })]);
   let request: DelegateRequest | undefined;
-  const worker: WorkerDeps = { configSelectors: { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }, fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS, modes: () => ['cli'], run: async (_provider, req) => { request = req; return ok(CLEAN); } };
+  const worker: WorkerDeps = { configSelectors: { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }, fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS, modes: () => ['cli'], run: async (_provider, req) => { request = req; return { outcome: ok(CLEAN), invocations: [] }; } };
   w.deps.launchWorker = (dir, id, attempt) => { void runWaveWorker(dir, id, attempt, worker); };
   const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps); await start.attempt; await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(request?.model, 'local/qwen'); assert.deepEqual(request?.configSelectors, { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }); assert.equal(request?.timeoutMs, 60000);

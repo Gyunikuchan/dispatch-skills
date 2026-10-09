@@ -186,3 +186,25 @@ test('review fix runner waits for asynchronous lease release before returning', 
   await flush(); h.finish(ok()); await flush(); assert.equal(releasing, true); assert.equal(settled, false);
   release(); assert.equal((await pending).outcome.status, 'ok');
 });
+
+test('runDelegate records one invocation per launch attempt, including the effort retry, and has no observe port', async () => {
+  const h = harness(posix);
+  assert.equal('observe' in h.ports, false);
+  const spec = { ...claude, parse: (out: ProcessResult, launch: { effort: string | null }) => launch.effort ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true } : claude.parse(out, launch as never) };
+  const run = runDelegate(spec, { ...req, model: 'sonnet', effort: 'high' }, 'cli', h.ports);
+  await flush(); h.finish(ok({ durationMs: 7 }));
+  await flush(); await flush(); h.finish(ok({ durationMs: 9 }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.deepEqual(done.invocations.map(({ usage: _usage, ...rest }) => rest), [
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, outcome: 'config' },
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, outcome: 'ok' },
+  ]);
+});
+
+test('runDelegate attaches attempt records to a launch that throws', async () => {
+  const h = harness(posix);
+  h.ports.process.start = () => { throw new Error('spawn EACCES'); };
+  const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', h.ports).then(() => null, (thrown: unknown) => thrown as { invocations?: unknown });
+  assert.deepEqual(error?.invocations, [{ provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: false, outcome: 'launch-failed' }]);
+});

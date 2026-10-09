@@ -39,8 +39,17 @@ Dispatch does not commit, push, or open a pull request. You decide when and how 
 
 ## Optional session diagnostics
 
-When enabled in configuration, Dispatch writes a `diagnostics.md` report in the session folder. It summarizes measured time and usage counters reported by supported provider CLIs. Some providers, native-agent surfaces, and resumed work do not expose usage, so totals may be partial; unavailable values are not counted as zero.
+Diagnostics produce a retrospective you can pass to the Dispatch maintainers to make Dispatch faster, cheaper, and more reliable. When `diagnostics` is on, each run ends with one extra retro turn: your host agent notes up to three places where Dispatch's instructions, driver, or routing caused friction. Dispatch then writes `diagnostics.md` in the session folder from the recorded history of every run in the session. The report has four sections:
 
-Diagnostics stay in the session folder and are not uploaded automatically. Review the report before sharing it.
+- **Summary:** Dispatch version and build, host platform and OS, run count, total wall time, measured tokens, and the top findings.
+- **Overview:** one row per run phase with its outcome; wall, driver, host, and user-wait time (for example `1h 4m 12s`); invocation count; input, cache-read, cache-write, and output tokens; and usage coverage.
+- **Findings:** issues in severity order, from correctness through token economy, speed, review convergence, instruction clarity, and information access. Each names the Dispatch file involved, the evidence, the impact, and an unverified proposed fix. Findings come from fixed checks on the recorded measurements and from the host agent's retro notes.
+- **Appendix:** a collapsed table of every provider invocation, plus the Dispatch configuration values each run used.
+
+Findings cover only Dispatch's own behavior. Failing tests, slow builds, and defects in your code are out of scope. The final handoff mentions the report, with its top finding, only when the report has findings.
+
+The report holds Dispatch-owned data only: verbs, levels, providers, models, effort, timings, token counts, error classes, and Dispatch file references. It leaves out your source code, the objective, repository paths outside the session, and identities. It stays in the session folder and is not uploaded automatically; review it before sharing.
+
+When `diagnostics` is off, runs have no retro turn and no report is written. Dispatch still records per-invocation timing and token counts in each run's journal, so you can turn diagnostics on later and the next report will include the earlier runs in that session.
 
 See [Troubleshooting](troubleshooting.md) for interrupted runs, failed checks, and incomplete diagnostics.

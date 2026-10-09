@@ -127,6 +127,16 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     assert.ok(rejected.error, JSON.stringify(rejected)); assert.equal(rejected.reply, frame.reply);
     frame = await f.reply(run, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'The value is intentional.' } } });
     for (let round = 0; frame.await === 'rule' && round < 3; round++) frame = await f.reply(run, { type: 'RULINGS', rulings: Object.fromEntries((frame.data['findings'] as { id: string }[]).map((row) => [row.id, { ruling: 'reject', reason: 'The value is intentional.' }])) });
+    let retro: string | undefined;
+    if (diagnostics) {
+      // An enabled run awaits the host retro before done, and the report exists only at the run end.
+      assert.equal(frame.await, 'retro', JSON.stringify(frame));
+      assert.deepEqual(Object.keys(frame.data['diagnostics'] as object), ['instruction']);
+      assert.equal(fs.existsSync(path.join(session, 'diagnostics.md')), false);
+      retro = path.resolve(f.repo, /--event @(\S+)$/.exec(frame.reply)![1]!);
+      frame = await f.reply(run, { type: 'RETRO', observations: [] });
+      assert.match(fs.readFileSync(retro, 'utf8'), /"RETRO"/);
+    }
     assert.equal(frame.await, 'done', JSON.stringify(frame));
     assert.match(fs.readFileSync(named, 'utf8'), /The value is intentional/);
     const entries = (dir: string) => fs.readdirSync(dir, { withFileTypes: true });
@@ -135,9 +145,9 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     assert.deepEqual(names(session, true), ['.state']);
     assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json']);
     const folders = names(run, true);
-    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', 'recovery-deltas', ...(diagnostics ? ['diagnostics'] : [])].sort());
-    assert.deepEqual(fs.readdirSync(path.join(run, 'events')), [path.basename(named)]);
-    for (const folder of folders.filter((name) => !['diagnostics', 'events', 'recovery-deltas'].includes(name))) {
+    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', 'recovery-deltas']);
+    assert.deepEqual(fs.readdirSync(path.join(run, 'events')).sort(), [path.basename(named), ...(retro ? [path.basename(retro)] : [])].sort());
+    for (const folder of folders.filter((name) => !['events', 'recovery-deltas'].includes(name))) {
       assert.deepEqual(names(path.join(run, folder), false).filter((name) => /^(claim|heartbeat|done)(\.a\d+)?\.json$|^launch\.json$/.test(name)), [], folder);
     }
   } finally { f.cleanup(); }

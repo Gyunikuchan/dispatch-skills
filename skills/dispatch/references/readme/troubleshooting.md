@@ -32,8 +32,10 @@ Doctor checks Node, configuration, available executables, resolved targets and w
 
 ## Understand diagnostics coverage
 
-Session diagnostics are optional and only include usage counters exposed by supported provider CLIs. A partial report or missing usage value means that measurement was unavailable, not that usage was zero. Timing can also include gaps that Dispatch could not attribute to a specific operation.
+Token counts are measured only when a provider CLI reports them. In `diagnostics.md`, `—` marks an unavailable value, not zero. `~` marks a token figure that is attested or estimated rather than measured: counts your host agent reported for native subagents and writers, and Dispatch's estimate of host-agent tokens. Measured totals exclude `~` figures. The Coverage column shows how many launched CLI invocations reported usage, for example `3/4`.
 
-Collection problems do not replace workflow results or verification. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, Dispatch rewrites the report whenever a run in the session finishes or faults; until then, a run in progress has no report. If the handoff does not mention the report, it had no findings.
+
+Collection problems print a warning and never change workflow results or verification. Proposed fixes in the report are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
 
 For setup and routing, see [Configure Dispatch](configuration.md). For session files and verification, see [Workspaces and results](concepts.md).

@@ -3,7 +3,7 @@
 
 import type { FailureClass } from '../core/types.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
-import type { DiagnosticBinding, DiagnosticUsage } from '../core/types.ts';
+import type { DiagnosticUsage } from '../core/types.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 
@@ -14,7 +14,6 @@ export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
 export type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
 
 export type DelegateRequest = {
-  diagnostics?: DiagnosticBinding;
   promptPath: string;
   model: string | null;
   effort: string | null;
@@ -65,6 +64,12 @@ export type ProcessResult = {
 export type RunOutcome =
   | { status: 'ok'; text: string; sessionId: string | null; resume: string | null }
   | { status: 'fail'; cls: FailureClass; detail: string; retryWithoutEffort?: boolean };
+
+/** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage };
+
+/** What a wave worker run returns: the provider outcome plus every attempt it took. */
+export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
 
 export type Prelaunch =
   | { kind: 'launch'; env: Readonly<Record<string, string>>; release: () => void | Promise<void> }

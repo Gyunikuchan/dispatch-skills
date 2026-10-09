@@ -13,10 +13,21 @@ test('handoff computes the destination without moving anything', async () => {
   const deps = { tempRoot: path.join(root, 'tmp'), workspaceRoot: path.join(root, 'ws') };
   assert.equal(sessionDirOf(runDir), session);
   const [terminal] = await createHandoff(deps)({ kind: 'handoff', id: 'root.handoff.1', terminal: true }, fakePorts(), { runDir, attempt: 1 });
-  assert.deepEqual(terminal, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: session, warning: null });
+  assert.deepEqual(terminal, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: session, warning: null, diagnostics: false });
   const [back] = await createHandoff(deps)({ kind: 'handoff', id: 'root.handoff.2', terminal: false }, fakePorts(), { runDir, attempt: 1 });
   assert.equal(back?.type === 'HANDOFF_DONE' && back.destination, session);
   assert.ok(fs.existsSync(runDir));
+});
+
+test('handoff journals the live diagnostics toggle, and a throwing toggle means off', async () => {
+  const root = tempDir();
+  const runDir = path.join(root, 'ws', 's', '.state', 'runs', '001-review');
+  const deps = { tempRoot: path.join(root, 'tmp'), workspaceRoot: path.join(root, 'ws') };
+  const effect = { kind: 'handoff' as const, id: 'root.handoff.1', terminal: true };
+  const [on] = await createHandoff(deps)(effect, fakePorts(), { runDir, attempt: 1, diagnosticToggle: () => true });
+  assert.equal(on?.type === 'HANDOFF_DONE' && on.diagnostics, true);
+  const [thrown] = await createHandoff(deps)(effect, fakePorts(), { runDir, attempt: 1, diagnosticToggle: () => { throw new Error('settings unreadable'); } });
+  assert.equal(thrown?.type === 'HANDOFF_DONE' && thrown.diagnostics, false);
 });
 
 test('finalizeHandoff moves after unlock; a failed move warns and leaves the session in the workspace', () => {

@@ -47,10 +47,20 @@ export function checkIntegrity(skillDir: string): IntegrityResult {
   let manifest: unknown;
   try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return { status: 'drift', violations: [MANIFEST_NAME] }; }
   if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return { status: 'drift', violations: [MANIFEST_NAME] };
-  const recorded = manifest as Record<string, unknown>;
+  // `$`-prefixed keys carry build metadata (`$version`), not file hashes.
+  const recorded = Object.fromEntries(Object.entries(manifest).filter(([key]) => !key.startsWith('$')));
   const actual = generateSkillHashes(skillDir);
   const violations = [...new Set([...Object.keys(recorded), ...Object.keys(actual)])].filter((key) => recorded[key] !== actual[key]).sort();
   return violations.length ? { status: 'drift', violations } : { status: 'ok' };
+}
+
+/** The dispatch version recorded in the manifest (`$version`), or undefined when absent or unreadable. */
+export function readVersion(skillDir: string): string | undefined {
+  try {
+    const manifest: unknown = JSON.parse(fs.readFileSync(path.join(skillDir, MANIFEST_NAME), 'utf8'));
+    const version = typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>)['$version'] : undefined;
+    return typeof version === 'string' ? version : undefined;
+  } catch { return undefined; }
 }
 
 /** One-line INTEGRITY_VIOLATION diagnostic, or null when clean. */

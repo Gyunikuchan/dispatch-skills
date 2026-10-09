@@ -2,7 +2,7 @@
 
 // SECTION: Closed unions
 
-export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
+export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'retro' | 'done';
 
 export const JOURNAL_PROTOCOL_REVISION = 7 as const;
 
@@ -198,16 +198,25 @@ export type LifecycleEvent =
   | ExecutionConfigUpdated
   | RunStartedEvent
   | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
-  | { type: 'LOCK_BROKEN'; stalePid: number };
+  | { type: 'LOCK_BROKEN'; stalePid: number }
+  | DiagnosticNote;
+
+/** Diagnostics-only journal line: never folded and never a reply boundary, so seq, reply paths, and replay are unchanged. */
+export type DiagnosticNote =
+  | { type: 'DIAGNOSTIC_NOTE'; kind: 'event-rejected'; eventType: string; reason: string }
+  | { type: 'DIAGNOSTIC_NOTE'; kind: 'fault'; effectId?: string; cls: string; sendStartedAt: number; failedAt: number };
+
+/** Optional host-attested figures on native slots and task write receipts; best effort, never measured totals. */
+export type Attestation = { tokens?: number; durationMs?: number };
 
 export type WriteLaunchedTask = { task: string; attempt: number; signature: string; handle: string; model: string; effort?: string; substitution?: string };
 export type WriteEnvelopeEvent =
-  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task: string; attempt: number; signature: string; handle: string }
-  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task?: never; attempt?: never; signature?: never; handle?: never };
+  | ({ type: 'WRITE_ENVELOPE'; envelopePath: string; task: string; attempt: number; signature: string; handle: string } & Attestation)
+  | ({ type: 'WRITE_ENVELOPE'; envelopePath: string; task?: never; attempt?: never; signature?: never; handle?: never } & Attestation);
 export type WriteFailureEvent =
-  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task: string; attempt: number; signature: string; handle: string }
-  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: never; attempt?: never; signature?: never; handle?: never };
-export type WriteCancelledEvent = { type: 'WRITE_CANCELLED'; task: string; attempt: number; signature: string; handle: string; reason: string };
+  | ({ type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task: string; attempt: number; signature: string; handle: string } & Attestation)
+  | ({ type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: never; attempt?: never; signature?: never; handle?: never } & Attestation);
+export type WriteCancelledEvent = { type: 'WRITE_CANCELLED'; task: string; attempt: number; signature: string; handle: string; reason: string } & Attestation;
 
 export type HostEvent =
   | { type: 'AUTHORED'; path: string }
@@ -220,7 +229,8 @@ export type HostEvent =
   | WriteCancelledEvent
   | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence>; waiver?: { by: 'user'; quote: string } }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
-  | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
+  | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string }
+  | { type: 'RETRO'; observations: unknown[] };
 
 export type ResultEvent =
   | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
@@ -235,7 +245,7 @@ export type ResultEvent =
   | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
   | { type: 'RECOVERY_ASSESSED'; effectId: string; purpose: 'drift' | 'hotfix'; beforeHash: string; afterHash: string; notice: ChangeNotice; judgement?: { violations: readonly string[]; violationCount?: number; withdrawn: boolean; files: number; lines: number } }
   | { type: 'RESTORED'; effectId: string; paths: string[]; patchPath: string }
-  | { type: 'HANDOFF_DONE'; effectId: string; destination: string; warning: string | null }
+  | { type: 'HANDOFF_DONE'; effectId: string; destination: string; warning: string | null; diagnostics?: boolean }
   | { type: 'CHECKOUT_DONE'; effectId: string; op: CheckoutOp; result: Payload }
   | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string; conflict?: { kind: 'newer-content'; paths: readonly string[]; binding: string } };
 
@@ -311,9 +321,10 @@ export interface Machine<S> {
   ownedArtifacts?(state: S, runDir: string): readonly string[];
 }
 
-export type DiagnosticBinding = { runDir: string; phase: string; boundary: number; producer?: string };
-export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[] };
-export interface HandlerContext { runDir: string; attempt: number; diagnostics?: DiagnosticBinding; ownedArtifacts?: readonly string[] }
+export type DiagnosticModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage> };
+/** `diagnosticToggle` reads the live diagnostics setting; a throw means disabled. */
+export interface HandlerContext { runDir: string; attempt: number; diagnosticToggle?: () => boolean; ownedArtifacts?: readonly string[] }
 
 /** Returns zero or more non-terminal results followed by exactly one terminal result. */
 export type Handler<E extends Effect = Effect> = (effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>;

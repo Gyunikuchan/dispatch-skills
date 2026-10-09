@@ -7,7 +7,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { designRevision, dispatchMachine, executionTopology, findDesignDelivery, findSettledPlan, previewReceipt, send, start } from './core/interpreter.ts';
 import { faultFrame } from './core/frame.ts';
 import { readJournal } from './core/journal.ts';
-import { diagnosticWarning, invocationObserver } from './core/diagnostics.ts';
 import { nodePorts } from './core/ports.ts';
 import { STALL_HINT_MS } from './core/progress.ts';
 import type { Frame, Level, RunStartedEvent } from './core/types.ts';
@@ -19,7 +18,7 @@ import { listWorkerClaims, readClaim, runWaveWorker, type WorkerDeps, type WaveD
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
 import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.ts';
-import { checkIntegrity, hashFile, integrityDiagnostic } from './lib/integrity.ts';
+import { checkIntegrity, hashFile, integrityDiagnostic, readVersion } from './lib/integrity.ts';
 import { nodeLinkFs } from './lib/node-fs-ext.ts';
 import { currentPlatform, detectOrchestrator } from './lib/platform.ts';
 import { createRun, findRepoRoot, initializeSession, platformSessionId, reactivateSession, readManifest, runPaths } from './lib/session.ts';
@@ -36,8 +35,11 @@ const SKILL_ROOT = path.resolve(path.dirname(ENTRY), '..');
 const diagnosticOptions = {
   configSource: () => loadConfig(SKILL_ROOT).config,
   diagnosticToggle: () => loadDiagnosticToggle(SKILL_ROOT),
-  diagnosticInstruction: () => fs.readFileSync(path.join(SKILL_ROOT, 'references/diagnostics.md'), 'utf8'),
-  diagnosticIdentity: () => ({ integrity: hashFile(path.join(SKILL_ROOT, 'skill-hashes.json')), osFamily: process.platform, host: detectOrchestrator((name) => process.env[name])?.platform ?? 'codex' }),
+  diagnosticRetroInstruction: () => fs.readFileSync(path.join(SKILL_ROOT, 'references/diagnostics.md'), 'utf8'),
+  diagnosticBuild: () => {
+    const version = readVersion(SKILL_ROOT);
+    return { ...(version ? { version } : {}), build: hashFile(path.join(SKILL_ROOT, 'skill-hashes.json')).slice(0, 12), os: process.platform };
+  },
 };
 const policy = { levels: LEVELS, pins: (text: string) => {
   const pins = parsePins(text);
@@ -62,18 +64,15 @@ function runtime() {
 }
 function workerDeps(): WorkerDeps {
   const { ports, platform, discovery } = runtime();
-  const warn = diagnosticWarning(ports);
   return {
     fs: nodeLinkFs, proc: ports.proc, clock: ports.clock, specs: SPECS,
     configSelectors: Object.fromEntries(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'].flatMap((key) => { const value = ports.env.get(key); return typeof value === 'string' ? [[key, value]] : []; })),
     modes: (provider) => SPECS[provider].modes.filter((mode) => discovery.resolve(provider, mode.id).status === 'path').map((mode) => mode.id),
     async run(provider, request, mode) {
-      const binding = request.diagnostics;
-      const observe = binding ? invocationObserver(ports, binding, provider, request.model, mode, warn) : undefined;
-      const failedLaunch = (cls: 'not-found' | 'config', detail: string) => {
-        observe?.({ attempt: 1, start: ports.clock.now(), durationMs: null, launched: false, outcome: cls });
-        return { status: 'fail' as const, cls, detail };
-      };
+      const failedLaunch = (cls: 'not-found' | 'config', detail: string) => ({
+        outcome: { status: 'fail' as const, cls, detail },
+        invocations: [{ provider, model: request.model, mode, effort: request.effort, launched: false, outcome: cls }],
+      });
       const binary = discovery.resolve(provider, mode).path;
       if (!binary) return failedLaunch('not-found', `${provider}: missing ${mode}`);
       const deadline = Date.now() + request.timeoutMs;
@@ -84,7 +83,8 @@ function workerDeps(): WorkerDeps {
         if (resolved.readOnlyBestEffort) ports.proc.stderr('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
       }
       resolved = { ...resolved, timeoutMs: Math.max(1, deadline - Date.now()) };
-      return (await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(observe ? { observe } : {}), ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) })).outcome;
+      const run = await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) });
+      return { outcome: run.outcome, invocations: run.invocations };
     },
   };
 }

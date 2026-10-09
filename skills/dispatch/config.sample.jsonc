@@ -12,7 +12,8 @@
  * - codex: https://developers.openai.com/codex/models
  */
 {
-  // Optional session diagnostics; changes take effect at the next mutating send.
+  // Optional; true adds one retro turn per run and writes the session diagnostics.md
+  // retrospective; false adds nothing. Changes take effect at the next mutating send.
   "diagnostics": false,
   // Optional; maximum concurrent implementation task writers (default 1).
   "write-concurrency": 2,

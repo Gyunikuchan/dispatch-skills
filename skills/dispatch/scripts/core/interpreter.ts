@@ -15,14 +15,14 @@ import { HEARTBEAT_MS, milestone, writeProgress } from './progress.ts';
 import { JOURNAL_PROTOCOL_REVISION } from './types.ts';
 import type {
   Effect, Event, ExitCode, Frame, Handler, Handlers, HostEvent, JournalLine, Machine, Ports, ResultEvent,
-  ResultEventType, RunStartedEvent, TerminalResultMap, ExecutionConfigUpdated,
+  ResultEventType, RunStartedEvent, TerminalResultMap, ExecutionConfigUpdated, DiagnosticNote,
 } from './types.ts';
-import { validateHostEvent, validateExecutionUpdate } from './validate.ts';
+import { HOST_EVENT_SHAPES, validateHostEvent, validateExecutionUpdate } from './validate.ts';
 import { applyExecutionConfig, executionDelta } from '../domain/execution-config.ts';
 import { validateConfig } from '../lib/config.ts';
 import { diagnosticPhases } from '../machines/diagnostics.ts';
-import { DIAGNOSTIC_LIMITS, extractTransport, type Capture } from '../domain/diagnostics.ts';
-import { diagnosticFrame, diagnosticWarning, diagnosticId, publishInvocation, publishBoundary, publishReport, resolveDiagnosticToggle, type TimelineEntry } from './diagnostics.ts';
+import { DIAGNOSTIC_LIMITS, rejectionReason } from '../domain/diagnostics.ts';
+import { diagnosticFrame, diagnosticWarning, renderSessionDiagnostics, USER_DECIDE_KINDS, type BuildIdentity, type DiagnosticReport, type FoldRun, type TimelineStep } from './diagnostics.ts';
 export { rootMachine as dispatchMachine } from '../machines/root.ts';
 export { executionTopology } from '../domain/execution-config.ts';
 export const designRevision = (source: string): string => `sha256:${crypto.createHash('sha256').update(governedDesignText(source)).digest('hex')}`;
@@ -151,6 +151,8 @@ export function fold<S>(machine: Machine<S>, lines: Iterable<JournalLine>, sessi
   for (const line of lines) {
     if (first && line.type !== 'RUN_STARTED') throw new EngineFault('journal must start with RUN_STARTED');
     first = false;
+    // Diagnostics notes never reach the machine, so replay is identical with or without them.
+    if (line.type === 'DIAGNOSTIC_NOTE') continue;
     if (line.type === 'RUN_STARTED') {
       if (typeof line.data['protocolRevision'] === 'number' && line.data['protocolRevision'] < JOURNAL_PROTOCOL_REVISION) throw new LayoutUnsupported();
       if (line.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
@@ -194,9 +196,11 @@ export interface SendOptions<S> {
   preview?: (state: S, event: HostEvent) => Promise<string | null>;
   refreshConfig?: boolean;
   configSource?: () => Readonly<Record<string, unknown>>;
+  /** Live diagnostics toggle, read once per mutating send; a throw falls back to the run's start config. */
   diagnosticToggle?: () => boolean;
-  diagnosticInstruction?: () => string;
-  diagnosticIdentity?: () => Capture['identity'];
+  /** The retro instruction, attached only to frames that await `retro`. */
+  diagnosticRetroInstruction?: () => string;
+  diagnosticBuild?: () => BuildIdentity;
 }
 
 export interface SendResult {
@@ -211,22 +215,82 @@ function parseRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; err
   try { return { ok: true, value: JSON.parse(raw) as unknown }; } catch { return { ok: false, error: 'event: expected JSON object, got malformed JSON' }; }
 }
 
-function hostEventError<S>(machine: Machine<S>, folder: Folder<S>, raw: unknown, sessionRoot?: string): { event: HostEvent; sidecar?: unknown } | { error: string } {
+function hostEventError<S>(machine: Machine<S>, folder: Folder<S>, raw: unknown, sessionRoot?: string): { event: HostEvent } | { error: string } {
   const head = folder.queue[0];
   if (head) return { error: `event: effect ${head.id} is pending; send without --event to resume it` };
   const parsed = parseRaw(raw);
   if (!parsed.ok) return { error: parsed.error };
-  const transport = extractTransport(parsed.value);
-  if (transport.error) return { error: transport.error };
   const state = folder.state;
   const check = machine.validate ? (event: HostEvent) => machine.validate?.(state, event) ?? null : undefined;
-  const value = sessionRoot ? restoreJournalPaths(storeSessionPaths(transport.event, sessionRoot), sessionRoot) : transport.event;
+  const value = sessionRoot ? restoreJournalPaths(storeSessionPaths(parsed.value, sessionRoot), sessionRoot) : parsed.value;
   const result = validateHostEvent(machine.awaitOf(state) ?? 'done', value, check);
-  return result.ok ? { event: result.value, ...(transport.sidecar !== undefined ? { sidecar: transport.sidecar } : {}) } : { error: oneLine(result.error) };
+  return result.ok ? { event: result.value } : { error: oneLine(result.error) };
+}
+
+/** The host's declared event type for a rejection note when it is an event-type token; free text or an untyped reply records `UNKNOWN`. */
+function eventTypeOf(raw: unknown): string {
+  const parsed = parseRaw(raw);
+  const type = parsed.ok && parsed.value && typeof parsed.value === 'object' ? (parsed.value as Record<string, unknown>)['type'] : undefined;
+  return typeof type === 'string' && /^[A-Z][A-Z0-9_]{0,47}$/.test(type) ? type : 'UNKNOWN';
 }
 
 function message(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+// SECTION: Diagnostics wiring
+
+/** Recent lines kept for the reply boundary and execution status. */
+const RECENT_LINES = 48;
+const HOST_TYPES: ReadonlySet<string> = new Set(Object.keys(HOST_EVENT_SHAPES));
+type NoteData = { [K in DiagnosticNote['kind']]: Omit<Extract<DiagnosticNote, { kind: K }>, 'type'> }[DiagnosticNote['kind']];
+
+/** The live toggle when readable; the run's start config otherwise, so a broken settings read never flips a run. */
+function diagnosticsEnabled(toggle: (() => boolean) | undefined, started: JournalLine | undefined, warn: () => void): boolean {
+  const config = started?.data['config'];
+  const fallback = !!config && typeof config === 'object' && (config as Record<string, unknown>)['diagnostics'] === true;
+  if (!toggle) return fallback;
+  try { return toggle() === true; } catch { warn(); return fallback; }
+}
+
+/** The error class as a token (`EngineFault` -> `engine-fault`); the message never reaches diagnostics. */
+function faultClass(error: unknown): string {
+  const name = error instanceof Error ? error.name : 'unknown';
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase().replace(/[^a-z0-9-]/g, '') || 'unknown';
+}
+
+/** Adds frame diagnostics; the retro instruction loads only for a `retro` frame, and oversize text warns and is dropped. */
+function withDiagnostics<S>(options: SendOptions<S>, frame: Frame, enabled: boolean, report: DiagnosticReport | null, warn: () => void): Frame {
+  let instruction = '';
+  if (frame.await === 'retro' && options.diagnosticRetroInstruction) {
+    try { instruction = options.diagnosticRetroInstruction(); } catch { warn(); }
+    if (Buffer.byteLength(instruction) > DIAGNOSTIC_LIMITS.instructionBytes) { instruction = ''; warn(); }
+  }
+  return diagnosticFrame(frame, enabled, report, instruction);
+}
+
+/** The collector's fold adapter; phases come from the root machine only, so other machines report none. */
+function timelineFold<S>(machine: Machine<S>, sessionRoot: string | undefined): FoldRun {
+  const root = machine === rootMachine as unknown as Machine<S>;
+  const bytes = (state: S): number => Buffer.byteLength(JSON.stringify(machine.project(state)));
+  return (lines) => {
+    const steps: TimelineStep[] = [];
+    let orchestratorBytes = 0, signature = '';
+    let prior = undefined as { state: S } | undefined;
+    const folder = fold(machine, lines, sessionRoot, (state, line) => {
+      // The host replied to the frame projected from the prior state.
+      if (prior && HOST_TYPES.has(line.type)) orchestratorBytes += bytes(prior.state);
+      prior = { state };
+      const data = machine.project(state).data, awaiting = machine.awaitOf(state);
+      // A user-backed decide marks the wait as a person's even when a failed send rolls back the reply.
+      const user = awaiting === 'decide' && USER_DECIDE_KINDS.has(String(data['kind']));
+      const step: TimelineStep = { seq: line.seq, phases: root ? diagnosticPhases(state as RootState) : [], awaiting, user, ...(awaiting === 'done' ? { outcome: String(data['outcome'] ?? 'partial') } : {}) };
+      const next = JSON.stringify([step.phases, step.awaiting, step.user, step.outcome]);
+      if (next !== signature) { steps.push(step); signature = next; }
+    });
+    if (prior && machine.awaitOf(prior.state) !== null && folder.queue.length === 0) orchestratorBytes += bytes(prior.state);
+    return { steps, orchestratorBytes };
+  };
 }
 
 export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
@@ -236,32 +300,17 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
   if (options.dryRun) return dryRun(options, runRel);
 
   const file = journalPath(runDir);
-  let locked = false;
-  let baseline: { existed: boolean; bytes: number } | null = null;
+  const sendStartedAt = ports.clock.now();
+  const sessionRoot = runSession(runDir);
   const warn = diagnosticWarning(ports);
-  let diagnosticEnabled = false;
-  let diagnosticBinding = { seq: 0, at: ports.clock.now() };
-  let instruction = '';
-  let identity: Capture['identity'];
-  const timeline: TimelineEntry[] = [];
-  const sidecars: Array<{ seq: number; phase: string; value?: unknown }> = [];
-  const activePhaseId = () => {
-    const key = timeline.at(-1)?.phases.filter((phase) => !phase.outcome).at(-1)?.key ?? timeline.at(-1)?.phases.at(-1)?.key ?? 'unavailable';
-    let entry = timeline.at(-1)?.seq ?? 0;
-    for (let index = timeline.length - 1; index >= 0; index--) { const item = timeline[index]!; if (!item.phases.some((phase) => phase.key === key)) break; entry = item.seq; }
-    return `${key}:${entry}`;
-  };
-  let diagnosticLines: JournalLine[] = [];
-  const collectState = (state: S, line: JournalLine) => {
-    if (!diagnosticEnabled || machine !== rootMachine as unknown as Machine<S>) return;
-    try {
-      const phases = diagnosticPhases(state as RootState), data = machine.project(state).data;
-      const awaiting = data['kind'] === 'approval' ? 'approval' : machine.awaitOf(state);
-      const signature = (entry: { phases: unknown; awaiting: unknown }) => JSON.stringify([entry.phases, entry.awaiting]);
-      if (timeline.length > 1 && signature(timeline.at(-1)!) === signature({ phases, awaiting }) && signature(timeline.at(-2)!) === signature({ phases, awaiting })) timeline.pop();
-      if (timeline.length >= DIAGNOSTIC_LIMITS.phases) timeline.splice(1, 1);
-      timeline.push({ seq: line.seq, at: Date.parse(line.at), phases, awaiting, ...(machine.awaitOf(state) === 'done' ? { outcome: String(data['outcome'] ?? 'partial') } : {}) });
-    } catch { warn(); }
+  let locked = false;
+  let baseline: { existed: boolean; bytes: number; count: number } | null = null;
+  let enabled = false;
+  let currentEffect: string | undefined;
+  const render = (): DiagnosticReport | null => {
+    let build: BuildIdentity = {};
+    try { build = options.diagnosticBuild?.() ?? {}; } catch { warn(); }
+    return renderSessionDiagnostics(ports, runDir, build, timelineFold(machine, sessionRoot), warn);
   };
   try {
     let broken: number | null;
@@ -273,53 +322,41 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     }
     locked = true;
     const read: JournalRead = readJournal(ports, runDir, true);
-    const sessionRoot = runSession(runDir);
-    const folder = fold(machine, read.records, sessionRoot, (state, line) => {
-      if (line.type === 'RUN_STARTED') diagnosticEnabled = resolveDiagnosticToggle(ports, runDir, (line.data['config'] as Record<string, unknown>)?.['diagnostics'] === true, options.diagnosticToggle, warn);
-      collectState(state, line);
-    });
+    const folder = fold(machine, read.records, sessionRoot);
     if (read.tornTail) ports.fs.truncate(file, read.goodBytes);
-    baseline = { existed: ports.fs.exists(file), bytes: read.goodBytes };
-    diagnosticLines = read.recent;
-    diagnosticBinding = { seq: read.count, at: ports.clock.now() };
-    if (diagnosticEnabled) {
-      try {
-        instruction = options.diagnosticInstruction?.() ?? '';
-        if (Buffer.byteLength(instruction) > DIAGNOSTIC_LIMITS.instructionBytes) { instruction = ''; warn(); }
-        identity = options.diagnosticIdentity?.();
-        if (identity) identity = { ...identity, host: String(read.started?.data['orchestrator'] ?? 'unavailable') };
-      } catch { warn(); }
-    }
+    baseline = { existed: ports.fs.exists(file), bytes: read.goodBytes, count: read.count };
+    enabled = diagnosticsEnabled(options.diagnosticToggle, read.started, warn);
+    const wasDone = machine.awaitOf(folder.state) === 'done';
+    let recentLines: JournalLine[] = read.recent;
     let seq = read.count + 1;
     const record = (event: Event): void => {
       const { type, ...data } = event;
       const stored = sessionRoot ? storeSessionPaths(data, sessionRoot) : data;
       const line = appendEvent(ports, runDir, type, stored, seq++);
-      const boundary = event.type === 'LOCK_BROKEN' ? diagnosticLines.filter((prior) => prior.type !== 'LOCK_BROKEN').at(-1) : undefined;
-      diagnosticLines = [...diagnosticLines.filter((prior) => prior.type === 'RUN_STARTED' || prior.type === 'EXECUTION_CONFIG_UPDATED' || prior === boundary), line].slice(-DIAGNOSTIC_LIMITS.phases);
+      const boundary = event.type === 'LOCK_BROKEN' ? recentLines.filter((prior) => prior.type !== 'LOCK_BROKEN').at(-1) : undefined;
+      recentLines = [...recentLines.filter((prior) => prior.type === 'RUN_STARTED' || prior.type === 'EXECUTION_CONFIG_UPDATED' || prior === boundary), line].slice(-RECENT_LINES);
       folder.apply(sessionRoot ? restoreJournalPaths({ ...stored, type } as Event, sessionRoot) : event);
       machine.render?.(folder.state, ports, runDir);
-      collectState(folder.state, line);
+    };
+    // A note skips apply and render and never joins recentLines, so the reply boundary stays on the prior operational line.
+    const recordNote = (note: NoteData): void => {
+      try { appendEvent(ports, runDir, 'DIAGNOSTIC_NOTE', note, seq); seq++; } catch { warn(); }
     };
 
     let refreshStatus: Record<string, unknown> | undefined;
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, read);
-      if ('error' in refresh) return { frame: boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(diagnosticLines))), exitCode: 0 };
+      if ('error' in refresh) return { frame: withDiagnostics(options, boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(recentLines))), enabled, null, warn), exitCode: 0 };
       refreshStatus = refresh.status;
       if (refresh.event) record(refresh.event);
     }
     if (broken !== null) record({ type: 'LOCK_BROKEN', stalePid: broken });
     if (options.rawEvent !== undefined) {
       const checked = hostEventError(machine, folder, options.rawEvent, sessionRoot);
-      if ('error' in checked) return { frame: boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, checked.error, hostBoundary(diagnosticLines))), exitCode: 0 };
-      if (diagnosticEnabled) {
-        sidecars.push({ seq, phase: activePhaseId().replace(/:\d+$/, ''), ...(checked.sidecar !== undefined ? { value: checked.sidecar } : {}) });
-        if (checked.event.type === 'NATIVE_RESULTS') for (const slot of checked.event.slots) {
-          const source = String(slot['sourceKey'] ?? slot['slot']);
-          const producer = diagnosticId(`${source}:${activePhaseId()}:${seq}`);
-          publishInvocation(ports, runDir, { id: producer, producer, sequence: 1, phase: activePhaseId(), surface: 'native', provider: String(read.started?.data['orchestrator'] ?? 'unavailable'), configuredModel: null, mode: 'native', start: ports.clock.now(), durationMs: null, outcome: 'captured', launched: true }, warn);
-        }
+      if ('error' in checked) {
+        // Validator text echoes submitted values and keys; the note keeps only the reduced class and allowlisted path.
+        recordNote({ kind: 'event-rejected', eventType: eventTypeOf(options.rawEvent), reason: rejectionReason(checked.error) });
+        return { frame: withDiagnostics(options, boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, checked.error, hostBoundary(recentLines))), enabled, null, warn), exitCode: 0 };
       }
       record(checked.event);
     }
@@ -328,33 +365,44 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
       if (steps > MAX_STEPS) throw new EngineFault(`MAX_STEPS (${MAX_STEPS}) exceeded in one send; a machine keeps emitting effects`);
       const effect = folder.queue[0] as Effect;
       const attempt = (folder.attempts.get(effect.id) ?? 0) + 1;
+      currentEffect = effect.id;
       record({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt });
-      const results = await runEffect(effect, attempt, handlers, ports, runDir, diagnosticEnabled ? { runDir, phase: activePhaseId(), boundary: seq - 1 } : undefined, machine.ownedArtifacts?.(folder.state, runDir));
+      const results = await runEffect(effect, attempt, handlers, ports, runDir, () => enabled, machine.ownedArtifacts?.(folder.state, runDir));
       for (const result of results) record(result);
+      currentEffect = undefined;
     }
     if (machine.awaitOf(folder.state) === null) throw new EngineFault('machine neither awaits nor emits effects');
     machine.render?.(folder.state, ports, runDir);
-    publishBoundary(ports, runDir, diagnosticEnabled, diagnosticLines, timeline, sidecars, instruction.split(/\r?\n/).filter(Boolean), warn, identity, machine.awaitOf(folder.state) === 'done' ? 0 : Buffer.byteLength(instruction), diagnosticBinding);
-    if (machine.awaitOf(folder.state) === 'done') pruneWorkerFiles(ports, runDir);
+    const done = machine.awaitOf(folder.state) === 'done';
+    // Rendered under this run's lock before release; a concurrent run's later render replaces it (last writer wins).
+    const report = done && !wasDone && enabled ? render() : null;
+    if (done) pruneWorkerFiles(ports, runDir);
     releaseLock(ports, runDir); locked = false;
-    publishReport(ports, runDir, diagnosticEnabled, warn, instruction.split(/\r?\n/).filter(Boolean));
-    const status = refreshStatus?.['status'] === 'unchanged' ? refreshStatus : executionStatus(diagnosticLines, machine.awaitOf(folder.state), machine.executionDeferred?.(folder.state));
-    return { frame: diagnosticFrame(executionFrame(boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, undefined, hostBoundary(diagnosticLines))), status), ports, runDir, diagnosticEnabled, instruction), exitCode: 0 };
+    const status = refreshStatus?.['status'] === 'unchanged' ? refreshStatus : executionStatus(recentLines, machine.awaitOf(folder.state), machine.executionDeferred?.(folder.state));
+    return { frame: withDiagnostics(options, executionFrame(boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, undefined, hostBoundary(recentLines))), status), enabled, report, warn), exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
-    if (baseline) restoreJournal(ports, file, baseline);
+    let report: DiagnosticReport | null = null;
+    if (baseline) {
+      restoreJournal(ports, file, baseline);
+      // Appended after the rollback, so the fault adds only timing evidence and never replays a partial send.
+      if (locked && baseline.existed) {
+        const note: NoteData = { kind: 'fault', ...(currentEffect ? { effectId: currentEffect } : {}), cls: faultClass(error), sendStartedAt, failedAt: ports.clock.now() };
+        try { appendEvent(ports, runDir, 'DIAGNOSTIC_NOTE', note, baseline.count + 1); } catch { warn(); }
+        if (enabled) report = render();
+      }
+    }
     if (locked) { releaseLock(ports, runDir); locked = false; }
-    publishReport(ports, runDir, diagnosticEnabled, warn, instruction.split(/\r?\n/).filter(Boolean));
-    return { frame: diagnosticFrame(faultFrame(runRel, message(error)), ports, runDir, diagnosticEnabled, instruction), exitCode: 2 };
+    return { frame: withDiagnostics(options, faultFrame(runRel, message(error)), enabled, report, warn), exitCode: 2 };
   } finally {
     if (locked) releaseLock(ports, runDir);
   }
 }
 
-/** Event files are named by the last host-visible journal seq; lock recovery lines are skipped, so a stale-lock break keeps the reply path. */
+/** Event files are named by the last host-visible journal seq; lock recovery and diagnostics notes are skipped, so neither moves the reply path. */
 function hostBoundary(lines: Iterable<JournalLine>): number {
   let seq = 0;
-  for (const line of lines) if (line.type !== 'LOCK_BROKEN') seq = line.seq;
+  for (const line of lines) if (line.type !== 'LOCK_BROKEN' && line.type !== 'DIAGNOSTIC_NOTE') seq = line.seq;
   return seq;
 }
 
@@ -383,7 +431,7 @@ function restoreJournal(ports: Ports, file: string, baseline: { existed: boolean
   else if (ports.fs.size(file) !== baseline.bytes) ports.fs.truncate(file, baseline.bytes);
 }
 
-async function runEffect(effect: Effect, attempt: number, handlers: Handlers, ports: Ports, runDir: string, diagnostics?: import('./types.ts').DiagnosticBinding, ownedArtifacts?: readonly string[]): Promise<readonly ResultEvent[]> {
+async function runEffect(effect: Effect, attempt: number, handlers: Handlers, ports: Ports, runDir: string, diagnosticToggle?: () => boolean, ownedArtifacts?: readonly string[]): Promise<readonly ResultEvent[]> {
   const handler = handlers[effect.kind] as Handler | undefined;
   if (!handler) throw new EngineFault(`no handler for effect kind ${effect.kind}`);
   const startedAt = new Date(ports.clock.now()).toISOString();
@@ -393,7 +441,7 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
   const stop = ports.clock.every(HEARTBEAT_MS, () => writeProgress(ports, runDir, snapshot()));
   let results: readonly ResultEvent[];
   try {
-    results = await handler(effect, ports, { runDir, attempt, ...(diagnostics ? { diagnostics } : {}), ...(ownedArtifacts ? { ownedArtifacts } : {}) });
+    results = await handler(effect, ports, { runDir, attempt, ...(diagnosticToggle ? { diagnosticToggle } : {}), ...(ownedArtifacts ? { ownedArtifacts } : {}) });
   } finally {
     stop();
   }
@@ -410,17 +458,20 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
 
 async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendResult> {
   const { machine, ports, runDir } = options;
+  const warn = diagnosticWarning(ports);
   try {
     const read = readJournal(ports, runDir, true), lines = read.records;
     const folder = fold(machine, lines, runSession(runDir));
+    const enabled = diagnosticsEnabled(options.diagnosticToggle, read.started, warn);
+    const hint = (frame: Frame): Frame => withDiagnostics(options, frame, enabled, null, warn);
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, read);
-      return { frame: 'error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(read.recent)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), refresh.status), exitCode: 0 };
+      return { frame: hint('error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(read.recent)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), refresh.status)), exitCode: 0 };
     }
-    if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), exitCode: 0 };
+    if (options.rawEvent === undefined) return { frame: hint(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent))), exitCode: 0 };
     const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
     const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
-    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(read.recent)), exitCode: 0 };
+    return { frame: hint(projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(read.recent))), exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };
@@ -579,8 +630,8 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;
   if (options.configSource !== undefined) sendOptions.configSource = options.configSource;
   if (options.diagnosticToggle !== undefined) sendOptions.diagnosticToggle = options.diagnosticToggle;
-  if (options.diagnosticInstruction !== undefined) sendOptions.diagnosticInstruction = options.diagnosticInstruction;
-  if (options.diagnosticIdentity !== undefined) sendOptions.diagnosticIdentity = options.diagnosticIdentity;
+  if (options.diagnosticRetroInstruction !== undefined) sendOptions.diagnosticRetroInstruction = options.diagnosticRetroInstruction;
+  if (options.diagnosticBuild !== undefined) sendOptions.diagnosticBuild = options.diagnosticBuild;
   return send(sendOptions);
 }
 

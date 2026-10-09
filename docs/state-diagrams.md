@@ -13,8 +13,9 @@ stateDiagram-v2
   state "handoff" as S4
   state "implement" as S5
   state "plan" as S6
-  state "review" as S7
-  state "revision" as S8
+  state "retro" as S7
+  state "review" as S8
+  state "revision" as S9
   S0 --> S4: EFFECT_FAILED
   S0 --> S4: WAVE_DONE
   S1 --> S0: RUN_STARTED
@@ -22,33 +23,35 @@ stateDiagram-v2
   S1 --> S4: RUN_STARTED
   S1 --> S5: RUN_STARTED
   S1 --> S6: RUN_STARTED
-  S1 --> S7: RUN_STARTED
+  S1 --> S8: RUN_STARTED
   S2 --> S4: DECISION
   S2 --> S4: EFFECT_FAILED
   S4 --> S3: EFFECT_FAILED
   S4 --> S3: HANDOFF_DONE
+  S4 --> S7: HANDOFF_DONE
   S5 --> S4: EFFECT_FAILED
   S5 --> S4: RECOVERY_ASSESSED
   S5 --> S4: SNAPSHOT
   S5 --> S4: VERIFY_DONE
-  S5 --> S8: RECOVERY_ASSESSED
-  S5 --> S8: SNAPSHOT
+  S5 --> S9: RECOVERY_ASSESSED
+  S5 --> S9: SNAPSHOT
   S6 --> S4: ARTIFACT_PARSED
   S6 --> S4: DECISION
   S6 --> S4: EFFECT_FAILED
   S6 --> S4: RULINGS
   S6 --> S4: WAVE_DONE
-  S7 --> S4: ARTIFACT_PARSED
-  S7 --> S4: DECISION
-  S7 --> S4: EFFECT_FAILED
-  S7 --> S4: REVIEW_PREPARED
-  S7 --> S4: RULINGS
-  S7 --> S4: VERIFY_DONE
-  S7 --> S4: WAVE_DONE
-  S8 --> S4: SNAPSHOT
-  S8 --> S5: ARTIFACT_PARSED
-  S8 --> S5: DECISION
-  S8 --> S5: SNAPSHOT
+  S7 --> S3: RETRO
+  S8 --> S4: ARTIFACT_PARSED
+  S8 --> S4: DECISION
+  S8 --> S4: EFFECT_FAILED
+  S8 --> S4: REVIEW_PREPARED
+  S8 --> S4: RULINGS
+  S8 --> S4: VERIFY_DONE
+  S8 --> S4: WAVE_DONE
+  S9 --> S4: SNAPSHOT
+  S9 --> S5: ARTIFACT_PARSED
+  S9 --> S5: DECISION
+  S9 --> S5: SNAPSHOT
 ```
 
 ## design

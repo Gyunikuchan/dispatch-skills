@@ -10,7 +10,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 
 | Setting | Needed for | What it controls |
 |---|---|---|
-| `diagnostics` | Optional | Session timing and supported provider-usage summaries |
+| `diagnostics` | Optional | Retrospective `diagnostics.md` report for Dispatch maintainers; adds one retro turn per run |
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
@@ -88,7 +88,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 ## Optional settings
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
-- Set `"diagnostics": true` to create a shareable `diagnostics.md` with timing and supported usage summaries. It is not uploaded automatically; review it before sharing. Coverage is partial when a provider or execution surface does not report usage.
+- Set `"diagnostics": true` to add one retro turn at the end of each run and write a shareable `diagnostics.md` retrospective: per-phase time and token tables plus findings about Dispatch itself. A change takes effect at the next mutating send. The report is not uploaded automatically; review it before sharing. Token coverage is partial when a provider or execution surface does not report usage. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
 ## Older sessions and provider-specific settings
 

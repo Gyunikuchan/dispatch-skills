@@ -4,7 +4,7 @@ import { runPaths } from '../lib/session.ts';
 import { validateHostEvent } from './validate.ts';
 import type { Await, Frame, HostEvent, Machine } from './types.ts';
 
-/** With a boundary seq, names `events/<seq>-<await>.json`; a rejected event keeps the seq, so its rewrite reuses the path. */
+/** With a boundary seq, names `events/<seq>-<await>.json`; a rejected event and diagnostics notes keep the seq, so a rewrite reuses the path. */
 export function replyTemplate(runRel: string, boundary?: { seq: number; awaiting: string }): string {
   const file = boundary ? runPaths(runRel).event(boundary.seq, boundary.awaiting).replace(/\\/g, '/') : '<event-file>';
   // NOTE: `@<file>` sidesteps JSON quoting differences across bash, zsh, and PowerShell.
@@ -15,7 +15,7 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   const { at, data } = machine.project(state);
   const awaiting = machine.awaitOf(state) ?? 'done';
   const frame: Frame = { v: 1, run: runRel, at, await: awaiting, data, reply: replyTemplate(runRel, seq !== undefined && awaiting !== 'done' ? { seq, awaiting } : undefined) };
-  const events = awaitEnvelopes(frame.await, data).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
+  const events = (awaitEnvelopes(frame.await, data) ?? []).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
   if (events.length) frame.events = events;
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };
   if (error !== undefined) frame.error = error;
@@ -75,6 +75,7 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       if (data['stopAllowed'] === true && kind !== 'run-stop') examples.push({ type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: '<actual user quote>' } });
       return kind === 'approval' ? [{ type: 'DECISION', kind, answer: { by: 'user', quote: '<actual user quote>', ...(typeof data['hash'] === 'string' ? { hash: data['hash'] } : {}) } }, { type: 'DECISION', kind, answer: 'stop' }] : examples;
     }
+    case 'retro': return [{ type: 'RETRO', observations: [] }];
     case 'done': return [];
   }
 }

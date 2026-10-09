@@ -111,7 +111,7 @@ Without a range, code review covers uncommitted changes. Reviews report findings
 
 | Setting | Controls |
 |---|---|
-| `diagnostics` | Optional session timing and supported usage summaries |
+| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; adds one retro turn per run when on |
 | `write-concurrency` | Maximum number of implementation task writers running at once |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { checkIntegrity, generateSkillHashes, integrityDiagnostic, MANIFEST_NAME } from '../../../skills/dispatch/scripts/lib/integrity.ts';
+import { checkIntegrity, generateSkillHashes, integrityDiagnostic, MANIFEST_NAME, readVersion } from '../../../skills/dispatch/scripts/lib/integrity.ts';
 
 test('delegates-integrity-check: hash drift is reported before dispatch', () => {
   const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
@@ -19,4 +19,13 @@ test('delegates-integrity-check: hash drift is reported before dispatch', () => 
   const drift = checkIntegrity(skill);
   assert.deepEqual(drift, { status: 'drift', violations: ['scripts/a.ts'] });
   assert.match(integrityDiagnostic(drift) ?? '', /^INTEGRITY_VIOLATION: .*scripts\/a\.ts/);
+});
+
+test('integrity ignores the $version key and readVersion returns it', () => {
+  const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
+  assert.equal(readVersion(skill), undefined);
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify({ $version: '1.2.3', ...generateSkillHashes(skill) }));
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+  assert.equal(readVersion(skill), '1.2.3');
 });

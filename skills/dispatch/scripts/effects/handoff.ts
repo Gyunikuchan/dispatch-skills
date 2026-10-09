@@ -20,7 +20,12 @@ export function handoffDestination(runDir: string, _terminal: boolean, deps: Han
 }
 
 export function createHandoff(deps: HandoffDeps): Handler<HandoffEffect> {
-  return async (effect, _ports, ctx) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: handoffDestination(ctx.runDir, effect.terminal, deps), warning: null }];
+  return async (effect, _ports, ctx) => {
+    // The journaled toggle decides the retro await, so replay never rereads live settings; a failed read means off.
+    let diagnostics = false;
+    try { diagnostics = ctx.diagnosticToggle?.() ?? false; } catch { diagnostics = false; }
+    return [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: handoffDestination(ctx.runDir, effect.terminal, deps), warning: null, diagnostics }];
+  };
 }
 
 export type FinalizeDeps = { rename(from: string, to: string): void; exists(file: string): boolean };

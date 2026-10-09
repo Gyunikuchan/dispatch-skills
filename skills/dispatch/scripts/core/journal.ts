@@ -95,7 +95,8 @@ export function readJournal(ports: Ports, runDir: string, defer = false): Journa
       if (line.type === 'AUTHORED') metadata.authored = line;
       if (line.type === 'ARTIFACT_PARSED' && line.data['kind'] === 'plan') metadata.parsedPlan = line;
       if (line.type === 'EXECUTION_CONFIG_UPDATED') { latestConfig = line; if (metadata.execution) { const event = { type: line.type, ...line.data } as ExecutionConfigUpdated; metadata.execution = { config: applyExecutionConfig(metadata.execution.config, event.delta), revision: event.revision }; } }
-      if (line.type !== 'LOCK_BROKEN') boundary = line;
+      // Lock recovery and diagnostics notes are not reply boundaries, so they never move the host's reply path.
+      if (line.type !== 'LOCK_BROKEN' && line.type !== 'DIAGNOSTIC_NOTE') boundary = line;
       yield line;
     }
     metadata.recent = [...new Map([metadata.started, latestConfig, boundary].filter((line): line is JournalLine => !!line).map((line) => [line.seq, line])).values()].sort((a,b) => a.seq-b.seq);

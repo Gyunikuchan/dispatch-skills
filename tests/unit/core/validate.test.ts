@@ -35,10 +35,32 @@ test('shape guards cover every accepted host event', () => {
     ['evidence', { type: 'EVIDENCE', criteria: { SC1: {} } }],
     ['decide', { type: 'DECISION', kind: 'approval', answer: { by: 'u', quote: 'yes' } }],
     ['decide', { type: 'REVISE', artifact: 'plan', reason: 'r', evidence: 'e' }],
+    ['retro', { type: 'RETRO', observations: [] }],
   ] as const;
   for (const [current, event] of samples) assert.deepEqual(validateHostEvent(current, event), { ok: true, value: event });
   assert.deepEqual(validateHostEvent('decide', { type: 'DECISION', kind: 'maybe', answer: 1 }).ok, false);
-  assert.deepEqual(Object.keys(AWAIT_ACCEPTS).sort(), ['author', 'decide', 'done', 'evidence', 'fix', 'native', 'rule', 'write']);
+  assert.deepEqual(Object.keys(AWAIT_ACCEPTS).sort(), ['author', 'decide', 'done', 'evidence', 'fix', 'native', 'retro', 'rule', 'write']);
+});
+
+test('RETRO requires an observations array and leaves item gating to the report', () => {
+  assert.equal(validateHostEvent('retro', { type: 'RETRO', observations: [{ anything: 1 }, 'text'] }).ok, true);
+  assert.equal(validateHostEvent('retro', { type: 'RETRO' }).ok, false);
+  assert.equal(validateHostEvent('retro', { type: 'RETRO', observations: {} }).ok, false);
+});
+
+test('native slots and task write receipts accept attested tokens and durationMs as non-negative integers', () => {
+  const receipt = { envelopePath: 'e.json', task: 'T1', attempt: 1, signature: 's', handle: 'h' };
+  for (const [current, event] of [
+    ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', tokens: 1200, durationMs: 0 }] }],
+    ['write', { type: 'WRITE_ENVELOPE', ...receipt, tokens: 10, durationMs: 20 }],
+    ['write', { type: 'WRITE_FAILED', model: 'm', kind: 'quota', reason: 'r', tokens: 3 }],
+    ['write', { type: 'WRITE_CANCELLED', task: 'T1', attempt: 1, signature: 's', handle: 'h', reason: 'r', durationMs: 5 }],
+  ] as const) assert.deepEqual(validateHostEvent(current, event), { ok: true, value: event });
+  for (const [current, event] of [
+    ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', tokens: -1 }] }],
+    ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', durationMs: 1.5 }] }],
+    ['write', { type: 'WRITE_ENVELOPE', ...receipt, tokens: '10' }],
+  ] as const) assert.equal(validateHostEvent(current, event).ok, false, JSON.stringify(event));
 });
 
 test('level-journal: strict schemas enforce bounded rationale, attribution, and closed decision shapes', () => {

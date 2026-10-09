@@ -5,4 +5,6 @@ Extracted from existing dispatch review logs recorded on 2026-10-01. No new prov
 - Codex 0.156.1: final `turn.completed.usage` counters. Input includes cache-read tokens; reasoning is a subset of output. Only one completed turn is supported. Repeated identical summaries are deduplicated; distinct multi-turn scopes are unavailable.
 - Claude Code 2.1.268: a failed model launch with a recorded auxiliary Haiku call. `usage` is zero for the main loop; `modelUsage` records whole-tree usage by model. Input/cache fields are disjoint. Whole-tree counters take precedence and are never added to main-loop counters. Resumed calls are unavailable because counters may include prior spend.
 
+The parsed counters are journaled as `usage` on each CLI launch attempt in a slot's `invocations` record (`WAVE_DONE`), whether or not diagnostics is on, and `diagnostics.md` renders its token tables from those records. Claude `modelUsage` also yields per-model counters (`usage.models`), so the report attributes tokens to the model that actually ran.
+
 The [Claude usage contract](https://code.claude.com/docs/en/agent-sdk/cost-tracking) describes main-loop versus whole-tree scope and cumulative resumed results. Fixtures preserve failures deliberately: a failed requested model is not evidence of zero token consumption.

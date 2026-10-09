@@ -43,7 +43,7 @@ test('a valid host event is appended and the loop runs to the next await', async
   assert.deepEqual(types(ports, runDir).slice(3), ['AUTHORED', 'EFFECT_STARTED', 'VERIFY_DONE']);
 });
 
-test('a bad event re-emits the same frame with a one-line error and appends nothing', async () => {
+test('a bad event re-emits the same frame with a one-line error and appends only an event-rejected note', async () => {
   const ports = fakePorts();
   const { runDir, result: before } = await startAwaiting(ports);
   const journal = bytes(runDir);
@@ -55,7 +55,14 @@ test('a bad event re-emits the same frame with a one-line error and appends noth
     assert.match(error ?? '', /^event[.:]/);
     assert.doesNotMatch(error ?? '', /\n/);
   }
-  assert.deepEqual(bytes(runDir), journal);
+  // Notes keep the operational prefix and never move the reply boundary, so every frame above matched the first.
+  const after = bytes(runDir);
+  assert.deepEqual(after.subarray(0, journal.length), journal);
+  const notes = after.subarray(journal.length).toString('utf8').trim().split('\n').map((line) => JSON.parse(line) as { seq: number; type: string; data: Record<string, unknown> });
+  assert.deepEqual(notes.map((note) => [note.seq, note.type, note.data['kind'], note.data['eventType']]), [
+    [4, 'DIAGNOSTIC_NOTE', 'event-rejected', 'RULINGS'], [5, 'DIAGNOSTIC_NOTE', 'event-rejected', 'AUTHORED'],
+    [6, 'DIAGNOSTIC_NOTE', 'event-rejected', 'AUTHORED'], [7, 'DIAGNOSTIC_NOTE', 'event-rejected', 'UNKNOWN'],
+  ]);
 });
 
 test('dry-run validates and appends nothing', async () => {

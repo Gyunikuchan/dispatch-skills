@@ -76,7 +76,7 @@ export function reconfigureRoot(state: RootState, event: ExecutionConfigUpdated,
     case 'implement': return { ...state, child: implement(state.child, event) };
     case 'design': return { ...state, child: design(state.child, event) };
     case 'revision': return { ...state, child: revision(state.child, event) };
-    case 'ask': case 'booting': case 'done': case 'handoff': return state;
+    case 'ask': case 'booting': case 'done': case 'handoff': case 'retro': return state;
   }
 }
 
@@ -105,6 +105,6 @@ export function executionBindingDeferred(state: RootState): boolean {
     case 'implement': return implementing(state.child);
     case 'revision': return revising(state.child);
     case 'design': return designing(state.child);
-    case 'booting': case 'handoff': case 'done': return false;
+    case 'booting': case 'handoff': case 'retro': case 'done': return false;
   }
 }

@@ -15,16 +15,16 @@ test('SC6: enabled concurrent runs preserve both histories and current session r
     const session = await f.initialize();
     const frames = await Promise.all([f.begin('ask', session, 'first'), f.begin('ask', session, 'second')]);
     const report = path.join(session, 'diagnostics.md');
-    // A contended render retries only at the next normal send boundary.
-    const resumed = await f.cli(['send', '--run', frames[0]!.run]);
-    const text = fs.readFileSync(report, 'utf8');
-    assert.match(text, /Run 001/); assert.match(text, /Run 002/);
-    assert.equal(f.launches().length, 2);
-    assert.equal((resumed.data['diagnostics'] as { path: string }).path, report.replaceAll('\\', '/'));
+    for (const frame of frames) { assert.equal(frame.await, 'retro', JSON.stringify(frame)); assert.deepEqual(Object.keys(frame.data['diagnostics'] as object), ['instruction']); }
+    assert.equal(fs.existsSync(report), false, 'the report waits for a run end');
+    // Each run end renders every session journal under its own run lock, so the later render holds both runs.
     for (const frame of frames) {
-      const link = frame.data['diagnostics'] as { path?: string; unavailable?: boolean };
-      assert.ok(link.unavailable || link.path === report.replaceAll('\\', '/'));
+      const done = await f.reply(frame.run, { type: 'RETRO', observations: [] });
+      assert.equal(done.await, 'done', JSON.stringify(done)); assert.equal(done.data['diagnostics'], undefined, 'a clean run with RETRO [] has no findings');
     }
+    const text = fs.readFileSync(report, 'utf8');
+    assert.match(text, /- Runs: 2 · /); assert.match(text, /\| 1 · ask · low \|/); assert.match(text, /\| 2 · ask · low \|/);
+    assert.equal(f.launches().length, 2);
     await f.cli(['session', 'reactivate', '--session-dir', session]);
     assert.equal(fs.existsSync(report), true);
   } finally { f.cleanup(); }
@@ -35,12 +35,14 @@ test('SC6: status and dry-run preserve report bytes and resumed invocation total
   try {
     fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
     const session = await f.initialize(), frame = await f.begin('ask', session, 'fixture');
-    const report = path.join(session, 'diagnostics.md'), before = fs.readFileSync(report);
-    await f.cli(['status', '--run', frame.run]);
-    await f.cli(['send', '--run', frame.run, '--dry-run']);
-    assert.deepEqual(fs.readFileSync(report), before);
-    await f.cli(['send', '--run', frame.run]);
-    assert.match(fs.readFileSync(report, 'utf8'), /0\/1 CLI invocations covered/);
+    const report = path.join(session, 'diagnostics.md');
+    assert.equal(frame.await, 'retro', JSON.stringify(frame));
+    for (const read of [await f.cli(['status', '--run', frame.run]), await f.cli(['send', '--run', frame.run, '--dry-run'])]) {
+      assert.equal(read.await, 'retro'); assert.deepEqual(Object.keys(read.data['diagnostics'] as object), ['instruction']);
+    }
+    assert.equal(fs.existsSync(report), false, 'status and dry-run keep the retro await and write no report');
+    assert.equal((await f.reply(frame.run, { type: 'RETRO', observations: [] })).await, 'done');
+    assert.match(fs.readFileSync(report, 'utf8'), /\| opencode \| all models \| — \| — \| — \| — \| 0\/1 \|/);
     assert.equal(f.launches().length, 1);
   } finally { f.cleanup(); }
 });
@@ -142,13 +144,17 @@ test('public CLI preserves usage/rejection/fault/lock exits, fallback session id
     const active = await f.cli(['session', 'reactivate', '--session-dir', same.sessionDir]); assert.equal(active.sessionDir, same.sessionDir); assert.ok(fs.existsSync(active.sessionDir));
     const frame = await f.begin('plan', active.sessionDir, 'Normalize values'), run = f.absoluteRun(frame.run), journal = path.join(run, 'events.jsonl');
     assert.equal(frame.await, 'author'); const before = fs.readFileSync(journal, 'utf8');
-    const rejected = await f.reply(run, { type: 'ARTIFACT_READY', path: 'bad' }); assert.match(rejected.error ?? '', /AUTHORED/); assert.equal(fs.readFileSync(journal, 'utf8'), before);
+    const rejected = await f.reply(run, { type: 'ARTIFACT_READY', path: 'bad' }); assert.match(rejected.error ?? '', /AUTHORED/); assert.equal(rejected.reply, frame.reply);
+    // A rejection keeps the operational prefix and appends one diagnostics note, which never moves the reply boundary.
+    const after = fs.readFileSync(journal, 'utf8'); assert.ok(after.startsWith(before));
+    const notes = after.slice(before.length).trim().split('\n').map((line) => JSON.parse(line) as { type: string; data: Record<string, unknown> });
+    assert.deepEqual(notes.map((note) => [note.type, note.data['kind'], note.data['eventType']]), [['DIAGNOSTIC_NOTE', 'event-rejected', 'ARTIFACT_READY']]);
     fs.writeFileSync(path.join(run, 'lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: new Date().toISOString() }));
-    await f.cli(['send', '--run', run, '--dry-run']); assert.equal(fs.readFileSync(journal, 'utf8'), before);
+    await f.cli(['send', '--run', run, '--dry-run']); assert.equal(fs.readFileSync(journal, 'utf8'), after);
     const locked = await f.launch(['send', '--run', run]).done; assert.equal(locked.exit, 3); assert.equal(locked.stdout, ''); assert.match(locked.stderr, /live pid/);
     fs.unlinkSync(path.join(run, 'lock'));
     const usage = await f.launch(['start', 'plan', '--session-dir', active.sessionDir, '--orchestrator', 'codex']).done; assert.equal(usage.exit, 1); assert.equal(usage.stdout, '');
-    fs.appendFileSync(journal, '{"seq":2,"v":9,"at":"now","type":"AUTHORED","data":{"path":"x"}}\n');
+    fs.appendFileSync(journal, '{"seq":3,"v":9,"at":"now","type":"AUTHORED","data":{"path":"x"}}\n');
     const fault = await f.launch(['status', '--run', run]).done; assert.equal(fault.exit, 2); assert.equal(fault.stdout.trim().split('\n').length, 1); assert.equal(JSON.parse(fault.stdout).data.outcome, 'fault');
   } finally { f.cleanup(); }
 });

@@ -38,3 +38,15 @@ test('SC4: Claude whole-tree thinking counters remain separate and reject unsafe
   event.modelUsage.second.thinkingTokens = Number.MAX_SAFE_INTEGER;
   assert.equal(claude.usage!(JSON.stringify(event)), undefined);
 });
+
+test('SC4: Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
+  const event = JSON.parse(fixture('claude').stdout);
+  event.modelUsage['claude-opus-4-1'] = { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 30, cacheCreationInputTokens: 40 };
+  const result = claude.usage!(JSON.stringify(event));
+  assert.deepEqual(result?.models, {
+    'claude-haiku-4-5-20251001': { input: 2759, output: 16, cacheRead: 0, cacheWrite: 0 },
+    'claude-opus-4-1': { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 },
+  });
+  assert.equal(result?.input, 2769);
+  assert.equal(codex.usage!(fixture('codex').stdout)?.models, undefined);
+});

@@ -264,6 +264,8 @@ test('root transitions table matches step', () => {
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot,
       { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check report' }, { type: 'AUTHORED', path: '/session/revision-1.plan.md' }, implementParsed()],
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
+    // An enabled handoff enters retro, and RETRO completes the run.
+    [run('ask'), prepared, wave([]), (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null, diagnostics: true }), { type: 'RETRO', observations: [] }],
     [run('implement'), failed], [run('implement', { argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } }, config: implementRun().config }), implementSnapshot, implementBadParsed, implementSnapshot, { type: 'DECISION', kind: 'failure', answer: 'stop' }],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
     implementsToTerminal(false), implementsToTerminal(true), [run('design'), { type: 'AUTHORED', path: 'dispatch.design.md' }, failed],

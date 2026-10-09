@@ -18,7 +18,7 @@ test('walkthrough-reference: template links to findings rules without a removed 
 });
 test('four contracts carry exact alias mappings and named dependency guards', () => {
   const contract = read(`skills/dispatch/${contractName}`);
-  for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
+  for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'retro', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
   assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /unrelated dirty or ignored files stay intact/i);
   for (const [name, mapping] of Object.entries(ALIASES)) {
     const text = read(`skills/${name}/${contractName}`); assert.doesNotMatch(text, /disable-model-invocation/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));

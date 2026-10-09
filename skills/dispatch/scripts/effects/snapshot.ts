@@ -14,7 +14,7 @@ export function runOwnedPaths(ports: Ports, root: string, runDir: string, artifa
   const owned = artifacts.map((file) => path.relative(root, file).replaceAll('\\', '/')).filter((file) => file && !file.startsWith('../') && !path.isAbsolute(file));
   const relative = path.relative(root, runDir).replaceAll('\\', '/');
   if (relative.startsWith('../') || path.isAbsolute(relative)) return owned;
-  return [...owned, ...ports.fs.listFiles(runDir).filter((file) => /^(?:diagnostics\/|events\/|recovery-(?:manifests|contents|deltas)\/|wt\/|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/)/.test(file)
+  return [...owned, ...ports.fs.listFiles(runDir).filter((file) => /^(?:events\/|recovery-(?:manifests|contents|deltas)\/|wt\/|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/)/.test(file)
     || ['events.jsonl', 'lock', 'progress.json', 'owner.json'].includes(file)).map((file) => relative ? `${relative}/${file}` : file)];
 }
 

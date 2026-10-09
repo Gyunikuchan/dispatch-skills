@@ -16,10 +16,18 @@ async function startAwaiting(ports: FakePorts) {
 }
 
 const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
+/** A fault rolls the journal back to its baseline, then appends exactly one fault note at the next seq. */
+function assertFaultNote(runDir: string, journal: Buffer): void {
+  const after = bytes(runDir);
+  assert.deepEqual(after.subarray(0, journal.length), journal);
+  const added = after.subarray(journal.length).toString('utf8').trim().split('\n').map((line) => JSON.parse(line) as { seq: number; type: string; data: Record<string, unknown> });
+  const count = journal.toString('utf8').trim().split('\n').length;
+  assert.deepEqual(added.map((line) => [line.seq, line.type, line.data['kind']]), [[count + 1, 'DIAGNOSTIC_NOTE', 'fault']]);
+}
 
 // Split from interpreter.test.ts to stay under the 1 s per-file budget: replay, recovery, and engine faults.
 
-test('a never-awaiting machine faults at MAX_STEPS with exit 2, a byte-identical journal, and no lock', async () => {
+test('a never-awaiting machine faults at MAX_STEPS with exit 2, the baseline journal plus one fault note, and no lock', async () => {
   const ports = fakePorts();
   const runDir = tempDir();
   appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
@@ -29,12 +37,12 @@ test('a never-awaiting machine faults at MAX_STEPS with exit 2, a byte-identical
   assert.equal(result.frame?.await, 'done');
   assert.deepEqual(result.frame?.data, { outcome: 'fault' });
   assert.match(result.frame?.error ?? '', new RegExp(`MAX_STEPS \\(${MAX_STEPS}\\)`));
-  assert.deepEqual(bytes(runDir), journal);
+  assertFaultNote(runDir, journal);
   assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
   assert.equal(ports.timers, 0);
 });
 
-test('a handler exception faults with a byte-identical journal and no lock', async () => {
+test('a handler exception faults with the baseline journal plus one fault note and no lock', async () => {
   const ports = fakePorts();
   const { runDir } = await startAwaiting(ports);
   const journal = bytes(runDir);
@@ -42,7 +50,7 @@ test('a handler exception faults with a byte-identical journal and no lock', asy
   const result = await send({ runDir, machine: awaitingMachine, handlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
   assert.equal(result.exitCode, 2);
   assert.match(result.frame?.error ?? '', /boom/);
-  assert.deepEqual(bytes(runDir), journal);
+  assertFaultNote(runDir, journal);
   assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
 });
 

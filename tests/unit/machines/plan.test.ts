@@ -33,7 +33,9 @@ test('plan: author → parse → defects re-enter author → review → done com
 });
 
 test('plan: review skipped (rounds 0) → done complete with the skip summary', () => {
+  // HANDOFF_DONE without `diagnostics` (journals written before the retro await) still reaches done.
   const frame = play(rootMachine, [started(0), authored, { ...parsed(1, []) }, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/t', warning: null }]).at(-1);
+  assert.equal(frame?.await, 'done');
   assert.deepEqual(frame?.data, { outcome: 'complete', summary: 'plan review skipped (rounds 0)', handoff: '/t' });
 });
 

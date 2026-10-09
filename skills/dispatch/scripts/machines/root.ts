@@ -28,6 +28,7 @@ export type RootState =
   | { tag: 'review'; run: RunInfo; child: ReviewState }
   | { tag: 'implement'; run: RunInfo; child: ImplementState }
   | { tag: 'handoff'; run: RunInfo; last: Child | null; counters: Counters; effectId: string; done: DoneData }
+  | { tag: 'retro'; run: RunInfo; last: Child | null; counters: Counters; done: DoneData; handoff: string | null; warning: string | null }
   | { tag: 'done'; run: RunInfo; last: Child | null; counters: Counters; done: DoneData; handoff: string | null; warning: string | null };
 
 export type Child = { verb: 'design'; state: DesignState } | { verb: 'ask'; state: AskState } | { verb: 'plan'; state: PlanState } | { verb: 'review'; state: ReviewState } | { verb: 'implement'; state: ImplementState };
@@ -56,7 +57,7 @@ function childOf(state: RootState): Child | null {
     case 'review': return { verb: 'review', state: state.child };
     case 'implement': return { verb: 'implement', state: state.child };
     case 'revision': return { verb: 'implement', state: state.child.r.parent };
-    case 'handoff': case 'done': return state.last;
+    case 'handoff': case 'retro': case 'done': return state.last;
     case 'booting': return null;
     default: return never(state, 'root state');
   }
@@ -192,9 +193,14 @@ export function stepRoot(state: RootState, event: Event): S {
     }
     case 'handoff': {
       const base = { run: state.run, last: state.last, counters: state.counters, done: state.done };
-      if (event.type === 'HANDOFF_DONE' && answers(event, state.effectId)) return stay({ tag: 'done', ...base, handoff: event.destination, warning: event.warning });
+      // The journaled diagnostics decision governs the rest of the run, so replay never consults live settings.
+      if (event.type === 'HANDOFF_DONE' && answers(event, state.effectId)) return stay({ tag: event.diagnostics === true ? 'retro' : 'done', ...base, handoff: event.destination, warning: event.warning });
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'done', ...base, handoff: null, warning: `handoff failed: ${event.cls}: ${event.detail}` });
       return stay(state);
+    }
+    case 'retro': {
+      const { tag: _tag, ...rest } = state;
+      return event.type === 'RETRO' ? stay({ tag: 'done', ...rest }) : stay(state);
     }
     case 'done': return stay(state);
     default: return never(state, 'root state');
@@ -209,6 +215,7 @@ function awaitOf(state: RootState): Await | null {
     case 'review': return reviewAwait(state.child);
     case 'implement': return implementAwait(state.child);
     case 'revision': return revisionAwait(state.child);
+    case 'retro': return 'retro';
     case 'done': return 'done';
     case 'booting': case 'handoff': return null;
     default: return never(state, 'root state');
@@ -224,6 +231,7 @@ function project(state: RootState): { at: string; data: Readonly<Record<string, 
     case 'review': return { at: `review › ${state.child.tag}`, data: reviewData(state.child) };
     case 'implement': return { at: `implement › ${state.child.tag}${state.child.tag === 'plan-review' || state.child.tag === 'code-review' ? ` › ${state.child.review.tag}` : ''}`, data: implementData(state.child) };
     case 'revision': return { at: `implement › revision › ${state.child.tag}`, data: revisionData(state.child) };
+    case 'retro': return { at: `${state.run.verb} › retro`, data: { kind: 'retro' } };
     case 'done': {
       const data: Record<string, unknown> = { ...state.done, handoff: state.handoff };
       if (state.warning !== null) data['warning'] = state.warning;
@@ -241,7 +249,7 @@ function validate(state: RootState, event: HostEvent): string | null {
     case 'review': return validateReview(state.child, event);
     case 'implement': return validateImplement(state.child, event);
     case 'revision': return validateRevision(state.child, event);
-    case 'booting': case 'handoff': case 'done': return null;
+    case 'booting': case 'handoff': case 'retro': case 'done': return null;
     default: return never(state, 'root state');
   }
 }
@@ -377,7 +385,9 @@ export const rootTransitions = [
   { from: 'implement', on: 'SNAPSHOT', to: 'handoff' },
   { from: 'implement', on: 'VERIFY_DONE', to: 'handoff' },
   { from: 'handoff', on: 'HANDOFF_DONE', to: 'done' },
+  { from: 'handoff', on: 'HANDOFF_DONE', to: 'retro' },
   { from: 'handoff', on: 'EFFECT_FAILED', to: 'done' },
+  { from: 'retro', on: 'RETRO', to: 'done' },
 ] as const;
 
 export const rootMachine: Machine<RootState> = {
