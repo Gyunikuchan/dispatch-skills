@@ -20,6 +20,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 <<slot:purpose>>
 
 ### Verification and editing
+- Put agent-created helpers, captured logs, intermediate data, and backups in `<run>/scratch/<envelope-dir-name>/`. Derive `<run>` from `<Expected Envelope Path>` (`<run>/<envelope-dir-name>/outcome.json`); copy its parent directory name exactly, without reconstructing an effect id. Create working directories only when needed. Classify backups by purpose even when named like deliverables. Keep the outcome envelope and driver-owned evidence at supplied paths and production edits within the brief's scoped repository paths.
 - Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on the paths you edit. Report a conflict between them and this brief under concerns.
 - Verify with your mapped `commands` only; after each change, rerun just the commands it affects. Never run an aggregate suite such as `npm test`: the driver runs every gate after you return.
 - Edit with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.

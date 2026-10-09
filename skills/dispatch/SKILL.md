@@ -9,12 +9,12 @@ description: Multi-agent planning, review, and implementation. Use only when exp
 
 Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, and `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Retain an explicit level unless that assessment recommends higher; then recommend the change and wait for the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, and `(all)` select providers, count, or all configured targets. `-m` and `-e` map to `--model` and `--effort`. Report-only review is default; map an explicit request to apply fixes to `--fix`.
 
-Use `design` for multiple increments, `plan` for one coherent unit, and `implement` for delivery. If mismatched, recommend a fit and wait for user choice; never switch silently.
+Use `design` for multiple increments, `plan` for one coherent unit, and `implement` for delivery. For mismatches, recommend and await user choice; never switch silently.
 
 ## Run loop
 
-1. Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir` and `sessionId`; use `--session-id` as a fallback identity. Retain the folder with `session reactivate --session-dir <dir>`.
-2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit JSON; doctor emits a table or `--json` diagnostics.
+1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir`/`sessionId`; fallback identity: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
+2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON; doctor emits tables or `--json`.
 3. Run `send --run <dir> [--event @<reply-path>]` in the background; keep its handle until done or blocked; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
 
 Read the [verb guide](references/verbs/), [review rules](references/review-rules.md), and [providers](references/providers.md).
@@ -41,7 +41,7 @@ Launch native writers for each `launch` slot using its model, verified brief, en
 
 ## Await evidence
 
-Inspect command summaries and logs; do not rerun emitted gates. Verify each criterion and reply `EVIDENCE` with id-keyed `outcome:"pass"` results and concrete evidence.
+Inspect summaries/logs; do not rerun emitted gates. Verify criteria; reply `EVIDENCE` with id-keyed `outcome:"pass"` and concrete evidence.
 
 ## Await decide
 
@@ -55,4 +55,6 @@ Report outcome, behavior, verification, concerns, rulings, and artifact links. C
 
 The driver owns journals and generated artifacts; writers follow frame permissions, provider CLIs stay read-only, and unrelated dirty or ignored files stay intact.
 
-The journal is authoritative. After interruption, inspect `status --run <dir>`, then run `send --run <dir>` to replay and reattach. `send --dry-run` validates events; correct rejected events. Exit 1 is usage, 2 an engine fault, 3 a lock holder. Wait on live locks; break only dead-process locks.
+Session-root files: `manifest.json`, deliverable specs/designs/plans/walkthroughs/reports, optional `diagnostics.md`. Agent-created helpers/logs/intermediates/backups go in `.state/runs/NNN-<kind>/scratch/`; pre-run/shared work in `.state/scratch/`. Classify backups by purpose. Preserve supplied driver/scoped production paths.
+
+The journal is authoritative. After interruption, inspect `status --run <dir>`, then `send --run <dir>` to replay/reattach. Validate events with `send --dry-run`; correct rejections. Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break only dead-process locks.

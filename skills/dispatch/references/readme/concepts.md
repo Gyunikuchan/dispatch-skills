@@ -25,7 +25,9 @@ After a task finishes, the host agent checks its submitted changes before integr
 
 ## Session folder
 
-Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and the deliverables: plans, designs, walkthroughs, the review report, and `diagnostics.md` when enabled. Run internals such as prompts, logs, and journals live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
+Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and human deliverables: specs, designs, plans, walkthroughs, reports, and optional `diagnostics.md`. Run internals such as prompts, logs, and journals live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
+
+Agents put run-specific helper scripts, manually captured logs, intermediate data, and backups in `.state/runs/NNN-<kind>/scratch/`. Pre-run and shared working files go in `.state/scratch/`. Purpose determines placement: a backup named `before-rewrite.plan.md` goes in scratch, while the plan being delivered stays at the root. Native writers use a subdirectory of run scratch named from their supplied envelope's parent directory to separate concurrent actions. Driver-owned outputs retain their supplied paths, and production files stay in their scoped repository paths.
 
 Keep the folder while work is active or may resume. The handoff provides its path so you can inspect the saved artifacts.
 

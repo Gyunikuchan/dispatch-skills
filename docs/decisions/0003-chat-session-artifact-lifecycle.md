@@ -33,19 +33,26 @@ parallel, so names must stay unique without relying on randomness.
 <session>/
 ├── manifest.json
 ├── <slug>.<type>.md          deliverables
+├── diagnostics.md           optional diagnostics deliverable
 └── .state/                   machine state
     ├── deliverables.json
+    ├── scratch/              pre-run and shared working files
     └── runs/NNN-<kind>/      one folder per run, flat inside
         ├── events.jsonl      the run journal: sole authority for run state
         ├── progress.json     live progress of the in-flight effect
         ├── lock              held while a `send` runs
-        └── scratch/          orchestrator-authored helpers
+        └── scratch/          run-specific agent working files
 ```
 
 - The root holds only the manifest and human deliverables. Deliverable types are `spec`,
-  `design`, `plan`, `walkthrough`, and `report`. The run journals and every other machine file live under
+  `design`, `plan`, `walkthrough`, and `report`; optional `diagnostics.md` is also a human deliverable with its fixed filename. The run journals and every other machine file live under
   `.state/`: hidden, because people rarely need it; named `.state` because the parent already says
   dispatch.
+- Agent-created helpers, manually captured logs, intermediate data, and backups use run scratch;
+  pre-run and shared work uses `.state/scratch/`. Purpose determines placement: a backup such as
+  `before-rewrite.plan.md` is a working file. Native writers isolate concurrent actions under
+  `<run>/scratch/<envelope-dir-name>/`, copying the supplied envelope's parent directory name exactly.
+  Working directories are created only when needed; existing sessions and evidence remain intact.
 - There is no handoff file. The handoff is the chat reply; walkthroughs are the durable per-slug
   record, so a file would duplicate both and cost tokens to read or restate.
 - A run is one `start` and its journal, which may span many `send` invocations, rounds, and phases. Its folder is
@@ -89,7 +96,8 @@ parallel, so names must stay unique without relying on randomness.
   `brainstorming`, runs, and standalone reviews use them.
 - Host decisions reach the driver as journaled events. For file outputs (native captures, write
   envelopes, authored plans and designs) the driver names every path it expects and reads only
-  those paths. Orchestrator-authored helpers go to the run's `scratch/`. Write
+  those paths. Agent working-file placement follows the layout above; driver-owned outputs retain
+  their emitted paths and production files retain their scoped repository paths. Write
   subagents return their outcome to the path the driver names.
 
 ### Movement and handoff
