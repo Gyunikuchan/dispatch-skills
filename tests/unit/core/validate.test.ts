@@ -87,3 +87,10 @@ test('the machine check hook runs after shape and acceptance', () => {
   assert.deepEqual(validateHostEvent('author', { type: 'AUTHORED', path: 'x' }, () => 'event.path: expected a known path'),
     { ok: false, error: 'event.path: expected a known path' });
 });
+
+test('drift decision missing evidenceIds names evidenceIds', () => {
+  const answer = { by: 'orchestrator', noticeId: 'n1', afterHash: 'sha256:abc', action: 'preserve', rationale: 'Unrelated edit.' };
+  assert.deepEqual(validateHostEvent('decide', { type: 'DECISION', kind: 'drift', answer }),
+    { ok: false, error: 'event.answer.evidenceIds: expected array, got nothing' });
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'drift', answer: { ...answer, evidenceIds: [] } }).ok, true);
+});

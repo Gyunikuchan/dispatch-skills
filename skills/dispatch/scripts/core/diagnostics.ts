@@ -94,6 +94,8 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
   };
   const phases = new Map<string, Accumulator>();
   const convergence = new Map<string, Pick<ReviewFacts, 'reraised' | 'escalation'>>();
+  // Kept apart from convergence: every review step carries the cap, which must not erase an earlier escalation.
+  const caps = new Map<string, number>();
   for (const step of steps) for (const phase of step.phases) {
     const entry = phases.get(phase.key) ?? { key: phase.key, name: phase.name, wallMs: 0, driverMs: 0, hostMs: 0, userMs: 0 };
     entry.name = phase.name;
@@ -101,6 +103,8 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
     phases.set(phase.key, entry);
     // Review history is cumulative, so the latest step that carries a result holds the whole review's.
     if (phase.reraised || phase.escalation) convergence.set(phase.key, { ...opt('reraised', phase.reraised), ...opt('escalation', phase.escalation) });
+    // The latest cap wins, so a config refresh that changes it governs the rest of the review.
+    if (phase.cap !== undefined) caps.set(phase.key, phase.cap);
   }
   const orphan = { driverMs: 0, hostMs: 0, userMs: 0 };
   const add = (key: string | undefined, part: 'driverMs' | 'hostMs' | 'userMs', ms: number) => {
@@ -128,12 +132,13 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
         const hostWaitMs = cursor && started !== undefined ? Math.max(0, started - cursor.at) : undefined;
         const driverMs = started !== undefined && failed !== undefined ? Math.max(0, failed - started) : undefined;
         // The rolled-back reply is gone, so only the boundary step can mark the wait as a person's.
-        if (hostWaitMs !== undefined && boundary?.user) add(activeKey(boundary), 'userMs', hostWaitMs);
+        const waitBy = hostWaitMs === undefined ? undefined : boundary?.user ? 'user' as const : 'host' as const;
+        if (hostWaitMs !== undefined && waitBy === 'user') add(activeKey(boundary), 'userMs', hostWaitMs);
         else if (hostWaitMs !== undefined) { add(activeKey(boundary), 'hostMs', hostWaitMs); facts.hostGaps.push({ await: boundary?.awaiting ?? '—', ms: hostWaitMs }); }
         if (driverMs !== undefined) add(activeKey(boundary), 'driverMs', driverMs);
         // The failed send's appends were rolled back, so the next interval starts where it failed.
         if (cursor && failed !== undefined) cursor = { at: failed, seq: cursor.seq };
-        facts.fault = { ...opt('effectId', text(line.data['effectId'])), cls: String(line.data['cls'] ?? '—'), ...opt('hostWaitMs', hostWaitMs), ...opt('driverMs', driverMs) };
+        facts.fault = { ...opt('effectId', text(line.data['effectId'])), cls: String(line.data['cls'] ?? '—'), ...opt('hostWaitMs', hostWaitMs), ...opt('waitBy', waitBy), ...opt('driverMs', driverMs) };
       }
       continue;
     }
@@ -205,6 +210,10 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
   for (const [key, result] of convergence) {
     const review = facts.reviews.filter((item) => item.phase === key).at(-1);
     if (review) Object.assign(review, result);
+  }
+  for (const review of facts.reviews) {
+    const cap = review.phase === undefined ? undefined : caps.get(review.phase);
+    if (cap !== undefined) review.cap = cap;
   }
   if (repairs) facts.repairs = repairs;
   if (admissionDefects) facts.admissionDefects = admissionDefects;

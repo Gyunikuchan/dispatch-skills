@@ -33,7 +33,7 @@ Verify findings against code and outcome. Reply `RULINGS` with finding-id `rulin
 
 ## Await fix
 
-Apply accepted clusters within `affectedPaths`, run bounded verification, and reply `FIXES_APPLIED`. Adjacent changes require opt-in.
+Apply accepted clusters within `affectedPaths` via frame `writer`, verify, and reply `FIXES_APPLIED`. Adjacent changes require opt-in.
 
 ## Await write
 
@@ -61,4 +61,4 @@ The driver owns journals and generated artifacts; writers follow frame permissio
 
 Session-root files: `manifest.json`, deliverable specs/designs/plans/walkthroughs/reports, optional `diagnostics.md`. Agent-created helpers/logs/intermediates/backups go in `.state/runs/NNN-<kind>/scratch/`; pre-run/shared work in `.state/scratch/`. Classify backups by purpose. Preserve supplied driver/scoped production paths.
 
-The journal is authoritative. After interruption, inspect `status --run <dir>`, then `send --run <dir>` to replay/reattach. Validate events with `send --dry-run`. Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break only dead-process locks.
+The journal is authoritative. After interruption, inspect `status --run <dir>`, then `send --run <dir>` to replay/reattach. `send --dry-run --event` validates (exit 1: invalid). Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break only dead-process locks.

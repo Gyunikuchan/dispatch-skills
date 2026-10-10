@@ -37,6 +37,16 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 - **Verify:** Run plan Verify commands and `npm test` before completing an edit task. Record evidence for each criterion after the last change; failed or unrun required checks remain open.
 - **Handoff:** Use the task-appropriate format below.
 
+### Implementing plans in this repository
+
+When `/dispatch-implement` (or `dispatch implement`) runs in this checkout, do not start the driver: a driver run that edits its own scripts mid-run is self-referential, so its journal, frames, and hashes become unreliable. Follow the dispatch flow by hand instead:
+
+1. Read the plan; map task dependencies (`Requires`).
+2. Launch one native writer subagent per independent task, in parallel, with a brief that names the task, its in-scope paths, criteria, and Verify commands. Run dependent tasks after their prerequisites finish. Writers never run git write commands.
+3. Check each writer's result against the plan; run each criterion's Verify command, then `npm run hashes` when hash-tracked files changed, then `npm test`.
+4. Run a standalone `/dispatch-code-review --fix` on the working tree after the implementation is complete. Rerun `npm test` after its fixes.
+5. Hand off per [Long-Running Work and Handoff](#long-running-work-and-handoff), with evidence for each criterion.
+
 ## Product Architecture and Key Areas
 
 `dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. The three companion skills are compatibility aliases that run only when invoked by name:

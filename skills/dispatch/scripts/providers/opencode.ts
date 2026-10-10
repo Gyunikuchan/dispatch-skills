@@ -1,5 +1,5 @@
-// OpenCode (spec §6.1): v2-only argv `run --auto [--agent] [-m model[#effort]]
-// [--format json] -- <prompt>`; `Variant unavailable` asks the runner to rerun once without effort. A loopback
+// OpenCode (spec §6.1): v2-only argv `run --auto [--agent] [-m model[#effort]] -- <prompt>`;
+// `Variant unavailable` asks the runner to rerun once without effort. A loopback
 // endpoint gets a `/models` preflight, the GPU lock, and a WAN proxy trap; a remote endpoint skips all three.
 // Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
 

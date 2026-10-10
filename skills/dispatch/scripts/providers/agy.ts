@@ -1,6 +1,7 @@
 // Antigravity (spec §6.1): headless plan mode; token, subscription, and execution
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
+import { agyUsage } from '../lib/diagnostic-usage.ts';
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { ModeId, PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
 
@@ -38,6 +39,7 @@ export const agy: ProviderSpec = {
   // token/subscription → quota or auth; execution → not-found (mode unreachable or crashed).
   modeCascadeOn: ['quota', 'auth', 'not-found'],
   resumeCommand: (id) => `conversation://${id}`,
+  usage: agyUsage,
   argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));
     const argv = [req.binary, '--print', req.prompt, '--output-format', 'json', `--print-timeout=${seconds}s`];

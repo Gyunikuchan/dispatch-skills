@@ -47,3 +47,9 @@ export function claudeUsage(raw: string): DiagnosticUsage | undefined {
   }
   return counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, 'claude.result.usage', 'uncached');
 }
+export function agyUsage(raw: string): DiagnosticUsage | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  // agy reports cache reads beside input_tokens, so input is uncached; agy has no cache-write counter.
+  return counters(row(parsed)?.['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_tokens', reasoning: 'thinking_tokens' }, 'agy.usage', 'uncached');
+}

@@ -14,7 +14,7 @@ function review(state: ReviewState, key: string, integration = false): Phase[] {
   const escalation = state.tag === 'decide-escalation' || state.tag === 'escalated' ? state.escalation : undefined;
   return [{
     key, name: integration ? 'integration review' : state.c.spec.kind === 'code' ? 'code review' : state.c.spec.kind === 'design' ? 'design review' : 'plan review',
-    ...(terminal(state.tag) ? { outcome: terminal(state.tag)! } : {}), ...(reraised.length ? { reraised } : {}), ...(escalation ? { escalation: { kind: escalation.kind, ids: [...escalation.ids] } } : {}),
+    cap: state.c.spec.cap, ...(terminal(state.tag) ? { outcome: terminal(state.tag)! } : {}), ...(reraised.length ? { reraised } : {}), ...(escalation ? { escalation: { kind: escalation.kind, ids: [...escalation.ids] } } : {}),
   }];
 }
 function plan(state: PlanState, key: string): Phase[] {

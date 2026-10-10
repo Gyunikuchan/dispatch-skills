@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { beginReview, stepReview, validateReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
-import type { ChangeNotice } from '../../../skills/dispatch/scripts/core/types.ts';
+import { beginReview, reviewMachine, stepReview, validateReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import type { ChangeNotice, Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { stepRoot, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginPlan } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { beginRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
@@ -95,4 +95,77 @@ for (const family of ['plan', 'implementation-plan', 'implementation-code', 'pla
   assert.equal(rootMachine.awaitOf(next.state), 'decide');
   assert.deepEqual(rootMachine.project(next.state).data['notice'], notice);
   assert.equal(rootMachine.project(next.state).data['kind'], 'drift');
+});
+
+// SECTION: Refresh after a fix
+
+const FIX_CONFIG = {
+  'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
+  phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } },
+};
+const fixRun = (kind: 'code' | 'plan'): Event => ({
+  type: 'RUN_STARTED', verb: 'review', argument: kind === 'plan' ? 'x.plan.md' : '', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+  orchestrator: 'claude', orchestratorModel: null, overrides: { kind }, config: FIX_CONFIG, repo: {},
+});
+const refreshAnswer = { by: 'orchestrator', noticeId: notice.id, afterHash: notice.afterHash, action: 'refresh', rationale: 'Regenerated output belongs to the fix', evidenceIds: [] };
+type Driven = { state: ReviewState; effects: readonly Effect[] };
+/** Steps one event and answers each issued target check unchanged unless `changed` is set. */
+function stepChecked(from: Driven, event: Event, changed = false): Driven {
+  const next = reviewMachine.step(from.state, event);
+  const check = next.effects.find((effect) => effect.kind === 'check-review-target');
+  if (!check || changed) return next;
+  return reviewMachine.step(next.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'check.json', result: 'unchanged' });
+}
+function toFix(kind: 'code' | 'plan'): Driven {
+  let driven: Driven = { state: reviewMachine.initial(), effects: [] };
+  driven = stepChecked(driven, fixRun(kind));
+  driven = stepChecked(driven, { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { manifestPath: 'm1.json' }, promptPaths: { 'codex[0]': 'p0' } });
+  const locus = kind === 'code' ? 'src/a.ts:L3' : '§ Scope';
+  const finding = { id: 'R1-F001', severity: 'MUST', category: 'correctness', locus, defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in' };
+  driven = stepChecked(driven, { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding] as never });
+  driven = stepChecked(driven, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', fix: { affectedPaths: [kind === 'code' ? 'src/a.ts' : 'x.plan.md'], dependsOn: [], verification: ['npm test'] } } } });
+  assert.equal(driven.state.tag, 'fix');
+  return driven;
+}
+/** Answers the pending target check `changed`, resolves the drift with refresh, and answers the bound recheck `changed` again. */
+function refresh(from: Driven): Driven {
+  const check = from.effects.find((effect) => effect.kind === 'check-review-target')!;
+  const changed = reviewMachine.step(from.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'changed.json', result: 'changed', notice });
+  assert.equal(changed.state.tag, 'change-resolution');
+  const recheck = reviewMachine.step(changed.state, { type: 'DECISION', kind: 'drift', answer: refreshAnswer });
+  return reviewMachine.step(recheck.state, { type: 'REVIEW_TARGET_CHECKED', effectId: recheck.effects[0]!.id, manifestPath: 'refreshed.json', result: 'changed', notice });
+}
+const statusOfFinding = (state: ReviewState) => ('c' in state ? state.c.findings.find((row) => row.id === 'R1-F001')?.status : undefined);
+const verifyResult = (kind: 'code' | 'plan', effectId: string): Event => kind === 'code'
+  ? { type: 'VERIFY_DONE', effectId, purpose: 'fix-verify', results: [{ command: 'npm test', exit: 0, logPath: 'l.log' }], fingerprint: {} }
+  : { type: 'ARTIFACT_PARSED', effectId, kind: 'plan', hash: 'h', parsed: {}, defects: [] };
+
+for (const kind of ['code', 'plan'] as const) test(`refresh after a fix keeps fixed findings (${kind})`, () => {
+  const fix = toFix(kind);
+  const parked = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] }, true);
+  const refreshed = refresh(parked);
+  assert.equal(refreshed.state.tag, 'fix-verify');
+  assert.equal(statusOfFinding(refreshed.state), 'accepted');
+  const verification = refreshed.effects.find((effect) => effect.kind === (kind === 'code' ? 'verify' : 'parse-artifact'));
+  assert.ok(verification, 'fix-verify effect issued after the refresh');
+  const done = stepChecked(refreshed, verifyResult(kind, verification.id));
+  assert.equal(statusOfFinding(done.state), 'fixed');
+  assert.ok('c' in done.state && done.state.c.fixes.some((row) => row.id === 'R1-F001'));
+});
+
+for (const kind of ['code', 'plan'] as const) test(`refresh after a fix reruns verification (${kind})`, () => {
+  const fix = toFix(kind);
+  const verifying = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+  assert.equal(verifying.state.tag, 'fix-verify');
+  const first = verifying.effects.find((effect) => effect.kind === 'verify' || effect.kind === 'parse-artifact')!;
+  const parked = stepChecked(verifying, verifyResult(kind, first.id), true);
+  assert.equal(parked.state.tag, 'target-check');
+  const refreshed = refresh(parked);
+  assert.equal(refreshed.state.tag, 'fix-verify');
+  assert.equal(statusOfFinding(refreshed.state), 'accepted');
+  const rerun = refreshed.effects.find((effect) => effect.kind === first.kind);
+  assert.ok(rerun, 'verification reissued');
+  assert.notEqual(rerun.id, first.id);
+  assert.equal(statusOfFinding(stepChecked(refreshed, verifyResult(kind, first.id)).state), 'accepted', 'stale result ignored');
+  assert.equal(statusOfFinding(stepChecked(refreshed, verifyResult(kind, rerun.id)).state), 'fixed');
 });

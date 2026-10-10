@@ -20,6 +20,7 @@ export function statusLabel(status: ResolutionStatus): string {
     case 'needs-user': return 'Needs User';
     case 'closed-by-reviewer': return 'Rejected — Closed by Reviewer';
     case 'closed-by-orchestrator': return 'Rejected — Closed by Orchestrator';
+    case 'superseded': return 'Superseded';
     case 'duplicate': return 'Duplicate';
     case 'deferred': return 'Deferred';
     default: return unreachable(status);
@@ -177,7 +178,7 @@ function requiredAction(rounds: readonly ResolutionRound[]): string {
         case 'needs-user': actions.push(`round ${round.round} ${entry.id}: user decision required`); break;
         case 'deferred': actions.push(`round ${round.round} ${entry.id}: deferred follow-up`); break;
         case 'fixed': case 'rejected': case 'downgraded': case 'closed-by-reviewer':
-        case 'closed-by-orchestrator': case 'duplicate': break;
+        case 'closed-by-orchestrator': case 'superseded': case 'duplicate': break;
         default: unreachable(entry.status);
       }
     }

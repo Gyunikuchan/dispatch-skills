@@ -306,8 +306,8 @@ test('SC4 note keeps dry-run and status reply boundary', async () => {
   const bytes = fs.readFileSync(journalPath(runDir));
   const status = await send({ ...base, dryRun: true });
   const preview = await send({ ...base, dryRun: true, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
-  assert.deepEqual([status.frame?.reply, preview.frame?.reply], [begun.frame?.reply, begun.frame?.reply]);
-  assert.equal(preview.frame?.error, undefined);
+  assert.equal(status.frame?.reply, begun.frame?.reply);
+  assert.deepEqual(preview.verdict, { valid: true });
   assert.deepEqual(fs.readFileSync(journalPath(runDir)), bytes);
 });
 

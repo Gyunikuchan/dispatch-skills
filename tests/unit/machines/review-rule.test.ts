@@ -41,7 +41,7 @@ function drive(events: readonly Event[], from: ReviewState = reviewMachine.initi
 test('review-intent-needs-user: an intent finding ruled anything but needs-user fails validate with one line', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   const error = reviewMachine.validate?.(state, rulings({ 'R1-F001': { ruling: 'accept' } }));
-  assert.equal(error, 'event.rulings.R1-F001: intent finding must be ruled needs-user, got accept');
+  assert.equal(error, "event.rulings.R1-F001.ruling: expected needs-user, or accept|reject with the user's quote, for an intent finding");
   assert.doesNotMatch(error ?? '', /\n/);
   assert.equal(reviewMachine.validate?.(state, rulings({ 'R1-F001': { ruling: 'needs-user' } })), null);
   assert.match(reviewMachine.validate?.(state, rulings({})) ?? '', /missing ruling for R1-F001/);
@@ -134,4 +134,27 @@ test('SC5 resolution entries keep original tag', () => {
   const entries = resolutionRounds(state.c)[0]?.entries ?? [];
   assert.deepEqual(entries.map((entry) => [entry.id, entry.originalTag ?? null]), [['R1-F001', 'robustness'], ['R1-F002', null]]);
   assert.ok(!('originalTag' in (entries[1] ?? {})));
+});
+
+test('intent finding ruled with a user quote', () => {
+  const ruled = (fix: boolean) => drive([started({ fix }), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
+  const report = ruled(false);
+  for (const quote of [undefined, '', '  ']) {
+    const event = rulings({ 'R1-F001': { ruling: 'reject', reason: 'user declined', quote } });
+    assert.match(reviewMachine.validate?.(report, event) ?? '', /^event\.rulings\.R1-F001\.ruling: expected /);
+    assert.deepEqual(reviewMachine.step(report, event).state, report);
+  }
+  const downgrade = rulings({ 'R1-F001': { ruling: 'downgrade', reason: 'minor', severity: 'CONSIDER', quote: 'minor' } });
+  assert.match(reviewMachine.validate?.(report, downgrade) ?? '', /expected /);
+  const reject = rulings({ 'R1-F001': { ruling: 'reject', quote: 'keep the current API' } });
+  assert.equal(reviewMachine.validate?.(report, reject), null);
+  const settled = drive([reject], report);
+  assert.equal(settled.tag, 'settled');
+  const rejected = 'c' in settled ? settled.c.findings[0] : undefined;
+  assert.deepEqual([rejected?.status, rejected?.resolution], ['rejected', 'user: keep the current API']);
+  const accept = rulings({ 'R1-F001': { ruling: 'accept', quote: 'yes, rename it', fix: { affectedPaths: ['src/a.ts'], dependsOn: [], verification: [] } } });
+  const fix = drive([accept], ruled(true));
+  assert.equal(fix.tag, 'fix');
+  assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
+  assert.equal('c' in fix && fix.c.findings[0]?.resolution, 'user: yes, rename it');
 });

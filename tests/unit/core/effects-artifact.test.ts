@@ -57,6 +57,31 @@ test('effect folder: prepare-review writes one prompt per slot, carried rejectio
   assert.deepEqual(empty.type === 'REVIEW_PREPARED' && [empty.scope['empty'], empty.promptPaths], [true, {}]);
 });
 
+test('settled section lists prior rulings', async () => {
+  const roster = [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }];
+  const review = { kind: 'code', mode: 'report', target: 'main..HEAD', cap: 3, breadth: 1, context: 'check the lock', roster, timeoutMs: 1000 };
+  const carried = [{ id: 'R1-F003', slot: null, locus: 'src/b.ts:L9', defect: 'race', reason: 'single writer' }];
+  const settled = [
+    { id: 'R1-F001', locus: 'src/a.ts:L3', defect: 'null deref', ruling: 'fixed', reason: 'guard added' },
+    { id: 'R1-F002', locus: 'Scope', defect: 'x'.repeat(300), ruling: 'rejected', reason: 'user: keep .md only' },
+  ];
+  const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: '/repo', git: gitWith('src/a.ts\n') });
+  const prompt = async (round: number, scope: Record<string, unknown>) => {
+    const result = only(await handler({ kind: 'prepare-review', id: `review.prepare-review.${round}`, review, round, scope: { scope: 'full', carried, ...scope } }, fakePorts(), { runDir: tempDir(), attempt: 1 }));
+    return result.type === 'REVIEW_PREPARED' ? fs.readFileSync(result.promptPaths['codex[0]'] ?? '', 'utf8') : JSON.stringify(result);
+  };
+  const second = await prompt(2, { settled });
+  assert.match(second, /### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed\.\n/);
+  assert.match(second, /^- R1-F001 src\/a\.ts:L3: null deref — fixed: guard added$/m);
+  const long = /^- R1-F002 Scope: (x+…?) — rejected: user: keep \.md only$/m.exec(second);
+  assert.ok(long && long[1]!.length <= 200, 'defect is capped at 200 characters');
+  assert.ok(second.indexOf('### Settled in earlier rounds') < second.indexOf('### Pending rejections'), 'settled precedes pending rejections');
+  // Round 1 never carries settled rows, so its prompt stays byte-identical to the prompt without them.
+  const first = await prompt(1, {});
+  assert.equal(await prompt(1, { settled }), first);
+  assert.doesNotMatch(first, /Settled in earlier rounds/);
+});
+
 test('prepare-review: ask builds a bounded inline prompt', async () => {
   const runDir = tempDir();
   const review = { kind: 'ask', target: 'Where is the lock released?', breadth: 1, context: '', roster: [{ slot: 'codex[0]' }], timeoutMs: 1 };

@@ -6,7 +6,7 @@ import { collectRunFacts, type FoldRun, type TimelineStep } from '../../../skill
 import { dispatchMachine, fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Effect, Handlers, Machine, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { heuristics, type Phase } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
+import { heuristics, renderDiagnostics, type Phase } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
 import { createHandoff } from '../../../skills/dispatch/scripts/effects/handoff.ts';
 import { FIXED_NOW, fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, RUN_STARTED, snapshotResult, type AwaitingState } from './fixtures/machines.ts';
@@ -158,7 +158,7 @@ test('SC10 needs-user wait then failing send counts the wait as user time', asyn
   advance(5_000);
   assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
   const report = review.report();
-  assert.ok(report.includes('- Run 1 fault: `port-timeout` in `root.handoff.1`; host wait 2h 0m 0s; driver <1s.'), report);
+  assert.ok(report.includes('- Run 1 fault: `port-timeout` in `root.handoff.1`; user wait 2h 0m 0s; driver <1s.'), report);
   assert.match(report, /\| code review \| [a-z-]+ \| 2h 2m 5s \| <1s \| 1m 5s \| 2h 1m 0s \|/, 'both the rolled-back wait and the retry wait are user time');
   assert.doesNotMatch(report, /H6/, 'no host gap holds the user wait');
 });
@@ -199,7 +199,7 @@ test('SC10 long host wait then short failing effect splits host and driver time'
   failing = false;
   assert.equal((await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } })).frame?.await, 'done');
   const facts = collectRunFacts(ports, runDir, {}, testFold(awaitingMachine, askPhases));
-  assert.deepEqual(facts.fault, { effectId: 'fixture.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, driverMs: 500 });
+  assert.deepEqual(facts.fault, { effectId: 'fixture.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, waitBy: 'host', driverMs: 500 });
   assert.deepEqual(facts.hostGaps, [{ await: 'author', ms: 7_200_000 }, { await: 'author', ms: 60_000 }], 'the retry wait starts at the failure, so the long wait counts once');
   assert.deepEqual(facts.phases, [{ key: 'plan', name: 'plan', outcome: 'complete', wallMs: 7_263_500, driverMs: 3_500, hostMs: 7_260_000, userMs: 0 }]);
   assert.equal(facts.outcome, 'complete');
@@ -219,10 +219,25 @@ test('SC10 long approval wait then failing send counts the wait as user time', a
   failing = false;
   assert.equal((await send({ ...base, rawEvent: approval })).frame?.await, 'done');
   const facts = collectRunFacts(ports, runDir, {}, testFold(gateMachine, (state) => [state.tag === 'done' ? closed(IMPL) : IMPL], (state) => state.tag === 'approve'));
-  assert.deepEqual(facts.fault, { effectId: 'gate.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, driverMs: 500 });
+  assert.deepEqual(facts.fault, { effectId: 'gate.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, waitBy: 'user', driverMs: 500 });
   assert.deepEqual(facts.phases, [{ key: 'impl', name: 'implementation', outcome: 'complete', wallMs: 7_260_500, driverMs: 500, hostMs: 0, userMs: 7_260_000 }]);
   assert.deepEqual(facts.hostGaps, [], 'a user wait is never a host gap');
   assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H6'), []);
+});
+
+test('fault after a user wait renders user wait', async () => {
+  const { ports, advance } = steppedPorts();
+  const runDir = path.join(tempDir(), '.state/runs/001-gate');
+  const handlers: Handlers = { verify: async () => { advance(500); throw portTimeout(); } };
+  const base = { ports, runDir, machine: gateMachine, handlers };
+  await start({ ...base, runStarted: RUN_STARTED });
+  advance(7_200_000);
+  assert.equal((await send({ ...base, rawEvent: { type: 'DECISION', kind: 'approval', answer: { approved: true } } })).exitCode, 2);
+  const facts = collectRunFacts(ports, runDir, {}, testFold(gateMachine, () => [IMPL], (state) => state.tag === 'approve'));
+  assert.equal(facts.fault?.waitBy, 'user');
+  const report = renderDiagnostics([facts]).text;
+  assert.ok(report.includes('- Run 1 fault: `port-timeout` in `gate.verify.1`; user wait 2h 0m 0s; driver <1s.'), report);
+  assert.doesNotMatch(report, /host wait/, 'the approval wait belongs to the user, not the host');
 });
 
 test('SC10 toggle change applies at next send', async () => {

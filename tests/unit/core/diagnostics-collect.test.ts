@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { collectRunFacts, type FoldRun, type TimelineStep } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
+import { collectRunFacts, renderSessionDiagnostics, type FoldRun, type TimelineStep } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
 import { dispatchMachine, fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
+import { appendEvent, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Await, Effect, Event, Handlers, Machine, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { renderDiagnostics, type Phase } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
+import { heuristics, renderDiagnostics, type Phase } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
 import { createHandoff } from '../../../skills/dispatch/scripts/effects/handoff.ts';
+import { diagnosticPhases } from '../../../skills/dispatch/scripts/machines/diagnostics.ts';
+import type { RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { validateNativeResults } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { FIXED_NOW, fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
 import { RUN_STARTED, snapshotResult } from './fixtures/machines.ts';
@@ -154,6 +156,7 @@ function codeReview(finding: (round: number) => Record<string, unknown>, rounds:
     config: { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'code-review': { rounds: { low: rounds }, targets: { low: 1 } } } },
   };
   return {
+    ports, runDir,
     report: () => read(path.join(session, 'diagnostics.md')),
     begin: async () => (await start({ ...base, runStarted })).frame?.await,
     /** The next await, or the frame error for a rejected event or a fault. */
@@ -273,6 +276,70 @@ test('SC10 collector imports no machines', () => {
   const imports = [...source.matchAll(/^import [^;]* from '([^']+)';$/gm)].map((match) => match[1] ?? '');
   assert.ok(imports.length > 0);
   assert.deepEqual(imports.filter((specifier) => /machines\/|interpreter/.test(specifier)), []);
+});
+
+// SECTION: Heuristic precision
+
+type RoundsState = { tag: 'new' | 'waving' | 'rule' | 'done'; round: number };
+const waveRound = (round: number) => ({ state: { tag: 'waving' as const, round }, effects: [{ kind: 'wave' as const, id: `rounds.wave.${round}`, round, roster: [], timeoutMs: 60_000 }] });
+/** A review that runs three wave rounds, each followed by a rule await. */
+const roundsMachine: Machine<RoundsState> = {
+  initial: () => ({ tag: 'new', round: 0 }),
+  step(state, event) {
+    if (event.type === 'RUN_STARTED' && state.tag === 'new') return waveRound(1);
+    if (event.type === 'WAVE_DONE' && state.tag === 'waving') return { state: { tag: 'rule', round: state.round }, effects: [] };
+    if (event.type === 'RULINGS' && state.tag === 'rule') return state.round < 3 ? waveRound(state.round + 1) : { state: { tag: 'done', round: state.round }, effects: [] };
+    return { state, effects: [] };
+  },
+  awaitOf: (state) => state.tag === 'rule' ? 'rule' : state.tag === 'done' ? 'done' : null,
+  project: (state) => ({ at: `rounds › ${state.tag}`, data: state.tag === 'done' ? { outcome: 'complete' } : { round: state.round } }),
+  transitions: [{ from: 'new', on: 'RUN_STARTED', to: 'waving' }, { from: 'waving', on: 'WAVE_DONE', to: 'rule' }, { from: 'rule', on: 'RULINGS', to: 'waving' }, { from: 'rule', on: 'RULINGS', to: 'done' }],
+};
+
+test('heuristic precision collector carries review cap', async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-review');
+  const handlers: Handlers = { wave: async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [], findings: [] }] };
+  const base = { ports, runDir, machine: roundsMachine, handlers };
+  await start({ ...base, runStarted: RUN_STARTED });
+  for (let round = 1; round <= 3; round++) await send({ ...base, rawEvent: { type: 'RULINGS', rulings: {} } });
+  const review: Phase = { key: 'review', name: 'code review' };
+  const phases = (cap?: number) => (state: RoundsState): Phase[] => [{ ...review, ...(cap === undefined ? {} : { cap }), ...(state.tag === 'done' ? { outcome: 'complete' } : {}) }];
+  const capped = collectRunFacts(ports, runDir, {}, testFold(roundsMachine, phases(3)));
+  assert.deepEqual(capped.reviews, [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 0, rejected: 0, cap: 3 })));
+  assert.deepEqual(heuristics(capped).filter((finding) => finding.source === 'H2'), [], 'three rounds within cap 3 is normal convergence');
+  const uncapped = collectRunFacts(ports, runDir, {}, testFold(roundsMachine, phases()));
+  assert.equal(heuristics(uncapped).filter((finding) => finding.source === 'H2').length, 1, 'without a cap the fallback threshold still fires');
+});
+
+test('heuristic precision production phases carry review cap', async () => {
+  // Distinct findings per round, so no round re-raises a carried rejection and only the round count can trip H2.
+  const finding = (round: number) => ({ ...reviewFinding(round), locus: `src/file-${round}.ts:L3` });
+  const review = codeReview(finding, 3);
+  assert.equal(await review.begin(), 'rule');
+  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule');
+  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R2-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule');
+  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R3-F001': { ruling: 'accept' } } }), 'retro');
+  assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
+  const facts = collectRunFacts(review.ports, review.runDir, {}, testFold(dispatchMachine, (state) => diagnosticPhases(state as RootState)));
+  assert.deepEqual(facts.reviews.map((row) => [row.round, row.cap]), [[1, 3], [2, 3], [3, 3]], 'the root machine phases carry the resolved cap on every round');
+  const report = review.report();
+  assert.doesNotMatch(report, /\bH2\b|code review: 3 rounds/, 'three rounds within cap 3 is normal convergence');
+});
+
+test('heuristic precision omits a run whose journal fails to fold', async () => {
+  const session = tempDir(), ports = fakePorts();
+  const runDir = (id: string) => path.join(session, '.state/runs', id);
+  const base = (id: string) => ({ ports, runDir: runDir(id), machine: hostMachine, handlers: {} });
+  await start({ ...base('001-host'), runStarted: RUN_STARTED });
+  await send({ ...base('001-host'), rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
+  await start({ ...base('002-host'), runStarted: RUN_STARTED });
+  // An effect start the machine never queued faults the fold, as a journal from an older driver can.
+  appendEvent(ports, runDir('002-host'), 'EFFECT_STARTED', { effectId: 'ghost.verify.1', kind: 'verify', attempt: 1 });
+  let warnings = 0;
+  const result = renderSessionDiagnostics(ports, runDir('001-host'), {}, testFold(hostMachine, () => [IMPL]), () => { warnings++; });
+  assert.ok(result, 'the report still renders');
+  assert.equal(warnings, 1, 'the unfoldable run warns once');
+  assert.match(read(path.join(session, 'diagnostics.md')), /^- Runs: 1 · /m, 'only the foldable run is counted');
 });
 
 // SECTION: SC3 — rejection redaction

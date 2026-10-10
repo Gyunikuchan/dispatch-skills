@@ -3,7 +3,9 @@
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
-import { isRecord } from './types.ts';
+import { isRecord, type WriterConfig } from './types.ts';
+
+export type { WriterConfig };
 
 export type EvidenceClass = 'red' | 'verify' | 'review';
 export type ImplementStage = 'task';
@@ -19,7 +21,6 @@ export type DesignBinding = {
 export type ImplementOutcome = 'complete' | 'failed' | 'stopped';
 export type VerificationStatus = 'pass' | 'known-red — unchanged' | 'regression' | 'red' | 'quality-error';
 
-export type WriterConfig = { models: readonly string[]; effort: string | null };
 export type Criterion = PlanCriterion & { evidence: EvidenceClass };
 export type CommandMapping = { command: string; criteria: readonly string[]; paths: readonly string[]; final: boolean };
 export type VerifyRecord = {

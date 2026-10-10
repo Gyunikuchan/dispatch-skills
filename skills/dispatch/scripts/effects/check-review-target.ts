@@ -6,7 +6,7 @@ import type { Effect, Handler } from '../core/types.ts';
 import { withoutSections } from '../domain/plan.ts';
 import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
-import { runOwnedPaths } from './snapshot.ts';
+import { dispatchWorkspaceOf, runOwnedPaths } from './snapshot.ts';
 const bindingHash = (value: unknown): string => crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 
 /** Matches the existing review-delta exclusions without collapsing repeated headings. */
@@ -31,6 +31,9 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
           || (prior['governedPaths'] !== undefined && (!Array.isArray(prior['governedPaths']) || !prior['governedPaths'].every((file) => typeof file === 'string')))) throw new Error('code binding evidence unavailable');
         const root = await deps.git.toplevel(deps.cwd);
         const driverOwned = new Set(runOwnedPaths(ports, root, ctx.runDir, ctx.ownedArtifacts));
+        // Session files stay out of code review scope, matching prepare-review.
+        const workspace = dispatchWorkspaceOf(root, effect.review['sessionDir']);
+        const inScope = (file: string) => !(workspace && file.startsWith(workspace));
         const allowed = new Set(effect.allowedPaths.map((file) => path.relative(root, path.resolve(root, file)).replaceAll('\\', '/')));
         let changes: string[] | undefined;
         if (prior['changeSet'] !== undefined) {
@@ -39,8 +42,8 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
             if (!isCommitHash(prior['changeBaseline']) || !deps.git.baselineDiff) throw new Error('integration baseline binding evidence unavailable');
             changes = await deps.git.baselineDiff(deps.cwd, prior['changeBaseline']);
           } else changes = await deps.git.diffNames(deps.cwd, target);
-          changes = changes.filter((file) => !driverOwned.has(file));
-          const priorChanges = new Set(prior['changeSet'] as string[]), currentChanges = new Set(changes);
+          changes = changes.filter((file) => !driverOwned.has(file) && inScope(file));
+          const priorChanges = new Set((prior['changeSet'] as string[]).filter(inScope)), currentChanges = new Set(changes);
           const outside = [...new Set([...priorChanges, ...currentChanges])].filter((file) => priorChanges.has(file) !== currentChanges.has(file) && !allowed.has(file));
           pathsChanged.push(...outside); unexpected.push(...outside);
         }
@@ -48,8 +51,9 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
         const snapshot = await deps.git.reviewSnapshot(deps.cwd, target, paths, { fullIndex: true });
         const delta = await deps.git.reviewDelta(deps.cwd, prior as ReviewSnapshot, snapshot);
         identityChanged = snapshot.head !== prior['head'] || snapshot.comparison !== prior['comparison'];
-        pathsChanged.push(...delta.paths);
-        const outside = delta.paths.filter((file) => !allowed.has(file));
+        const deltaPaths = delta.paths.filter(inScope);
+        pathsChanged.push(...deltaPaths);
+        const outside = deltaPaths.filter((file) => !allowed.has(file));
         pathsChanged.push(...outside); unexpected.push(...outside);
         current = { ...snapshot, ...(prior['governedPaths'] ? { governedPaths: prior['governedPaths'] } : {}), ...(changes ? { changeSet: changes } : {}), ...(prior['changeBaseline'] !== undefined ? { changeBaseline: prior['changeBaseline'] } : {}) };
       } else {

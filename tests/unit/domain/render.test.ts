@@ -181,3 +181,12 @@ test('SC6 entry without original tag has no reviewer tag line', () => {
   assert.ok(!section.includes('Reviewer tag'));
   assert.match(section, /- Category: correctness\n- Finding:/);
 });
+
+test('superseded finding renders Superseded', () => {
+  const entry = { ...rounds[0]!.entries[0]!, status: 'superseded' as const };
+  const round = { ...rounds[0]!, entries: [entry], failed: [] };
+  const output = renderResolutionSection([round]);
+  assert.ok(output.includes('**[Superseded]**'));
+  assert.ok(!output.includes('Rejected'));
+  assert.match(renderReport({ title: 'Review', summary: 'done', kind: 'code', target: 'main..HEAD', rounds: [round] }), /Required action: No action recorded/);
+});

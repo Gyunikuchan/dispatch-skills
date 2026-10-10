@@ -7,6 +7,8 @@ import path from 'node:path';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
+import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
+import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
 
 test('change receipt: drift envelope preserves actor notice hash and evidence bindings through transport', () => {
   const [event] = awaitEnvelopes('decide', { kind: 'drift', notice: { id: 'n', afterHash: 'after', affectedEvidence: ['SC1'] } });
@@ -114,4 +116,18 @@ test('level-journal: projectFrame launches only unlaunched task slots when write
   const launches = frame.events?.find((event) => event.type === 'WRITE_LAUNCHED');
   assert.ok(launches?.type === 'WRITE_LAUNCHED');
   assert.deepEqual(launches.tasks.map((task) => task.task), ['T2']);
+});
+
+test('plan review rule example uses the plan path', () => {
+  const config = { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } };
+  const events: Event[] = [
+    { type: 'RUN_STARTED', verb: 'review', argument: 'docs/x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: true, orchestrator: 'claude', orchestratorModel: null, overrides: { kind: 'plan' }, config, repo: {} },
+    { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0' } },
+    { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [{ id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: '§ Proposed Changes', defect: 'gap', requiredChange: 'fill', sources: ['codex[0]'], scope: 'in' }] as never },
+  ];
+  const state = events.reduce((current, event) => reviewMachine.step(current, event).state, reviewMachine.initial());
+  const frame = projectFrame(reviewMachine, state, 'run');
+  assert.equal(frame.await, 'rule');
+  const example = frame.events?.find((event) => event.type === 'RULINGS');
+  assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['R1-F001'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, ['docs/x.plan.md']);
 });

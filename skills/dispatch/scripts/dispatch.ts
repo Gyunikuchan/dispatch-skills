@@ -242,7 +242,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       const at = typeof progress === 'object' && progress !== null ? (progress as Record<string, unknown>)['at'] : null;
       const stalled = typeof at === 'string' && Date.now() - Date.parse(at) > STALL_HINT_MS;
       emit({ ...result.frame, progress: { snapshot: progress, workers: claims, ...(stalled ? { hint: 'No recent progress; inspect worker claims and command logs before resuming.' } : {}) } });
-    } else if (result.frame) emit(command.flags['dry-run'] ? result.frame : finish(result.frame, runDir));
+    } else if (result.verdict) emit({ v: 1, ...result.verdict });
+    else if (result.frame) emit(command.flags['dry-run'] ? result.frame : finish(result.frame, runDir));
     if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
   } catch (error) {
     if (error instanceof UsageError) { process.stderr.write(`${error.message}\n`); return 1; }

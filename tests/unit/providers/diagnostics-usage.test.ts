@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 const fixture = (provider: string) => JSON.parse(fs.readFileSync(new URL(`./fixtures/diagnostics-${provider}.json`, import.meta.url), 'utf8')) as { cliVersion: string; stdout: string };
 test('SC4: recorded Codex 0.156.1 completed turn retains cache overlap semantics', () => {
   const f = fixture('codex'), result = codex.usage!(f.stdout), event = JSON.parse(f.stdout);
@@ -49,4 +50,11 @@ test('SC4: Claude modelUsage keeps per-model counters beside the aggregate; Code
   });
   assert.equal(result?.input, 2769);
   assert.equal(codex.usage!(fixture('codex').stdout)?.models, undefined);
+});
+
+test('SC8: agy usage maps the print JSON usage block to uncached counters', () => {
+  // Shape of a recorded agy `--output-format json` envelope; counts are synthetic.
+  const stdout = JSON.stringify({ conversation_id: 'c1', status: 'success', response: 'ok', duration_seconds: 12, num_turns: 3, usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824, total_tokens: 409 } });
+  assert.deepEqual(agy.usage?.(stdout), { input: 364, output: 45, cacheRead: 7824, reasoning: 39, scope: 'invocation', provenance: 'agy.usage', inputSemantics: 'uncached' });
+  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}']) assert.equal(agy.usage?.(raw), undefined);
 });

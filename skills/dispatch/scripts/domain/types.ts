@@ -135,7 +135,7 @@ export type RosterSlot = {
 
 export type ResolutionStatus =
   | 'accepted' | 'fixed' | 'rejected' | 'pending-rejection' | 'downgraded' | 'needs-user'
-  | 'closed-by-reviewer' | 'closed-by-orchestrator' | 'duplicate' | 'deferred';
+  | 'closed-by-reviewer' | 'closed-by-orchestrator' | 'superseded' | 'duplicate' | 'deferred';
 
 export type ResolutionEntry = {
   id: FindingId;

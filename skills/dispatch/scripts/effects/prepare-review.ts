@@ -1,7 +1,8 @@
 // `prepare-review`: resolve the review scope and write one prompt per roster slot to `<run>/<effectId>.<slot>.prompt.md`.
 // Code scope comes from `effects/git.ts` (an empty diff → `{ empty: true }`, no prompts); plan/design prompts name
-// the artifact. Carried pending rejections are appended to their affinity slot's prompt (or every prompt when
-// unassigned). `ask` has no template, so its bounded prompt is built inline.
+// the artifact. Later rounds list settled prior rulings; carried pending rejections are appended to their affinity
+// slot's prompt (or every prompt when unassigned). Code scope excludes the dispatch workspace (session files).
+// `ask` has no template, so its bounded prompt is built inline.
 
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -14,7 +15,7 @@ import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import { reviewArtifactText } from './check-review-target.ts';
 import type { IntegrationScope } from '../core/types.ts';
-import { runOwnedPaths } from './snapshot.ts';
+import { dispatchWorkspaceOf, runOwnedPaths } from './snapshot.ts';
 
 const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -92,6 +93,21 @@ export function carriedSection(carried: readonly Carried[], slot: string): strin
   if (!mine.length) return '';
   const rows = mine.map((entry) => `- ${entry.id} ${entry.locus}: ${entry.defect} — orchestrator rejection: ${entry.reason || 'no reason recorded'}; responsible source: ${entry.slot ?? 'unavailable'}`);
   return `\n\n### Pending rejections\nRe-raise a finding below only with new evidence; omitting it accepts the rejection.\n${rows.join('\n')}\n`;
+}
+
+type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string };
+
+function settledOf(scope: Row): Settled[] {
+  const list = Array.isArray(scope['settled']) ? scope['settled'] : [];
+  return list.filter(isRecord).map((entry) => ({ id: text(entry['id']), locus: text(entry['locus']), defect: text(entry['defect']), ruling: text(entry['ruling']), reason: text(entry['reason']) }));
+}
+
+/** Prior-round rulings, so reviewers do not re-argue settled points without new evidence. */
+export function settledSection(settled: readonly Settled[]): string {
+  if (!settled.length) return '';
+  const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;
+  const rows = settled.map((entry) => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}`);
+  return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${rows.join('\n')}\n`;
 }
 
 export function askPrompt(question: string, context: string): string {
@@ -175,6 +191,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     const roster = (Array.isArray(spec['roster']) ? spec['roster'] : []).filter(isRecord).filter((slot) => typeof slot['slot'] === 'string');
     const scope = effect.scope;
     const carried = carriedOf(scope);
+    // Round 1 has no prior rulings; skipping it keeps first-round prompts byte-identical.
+    const settled = effect.round > 1 ? settledSection(settledOf(scope)) : '';
     const results: ResultEvent[] = [];
     let changed: string[] = [];
     let manifestPath: string | undefined;
@@ -191,7 +209,11 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
       } else {
         let scopeText: string;
         if (kind === 'code') {
-          const driverOwned = new Set(runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), ctx.runDir, ctx.ownedArtifacts));
+          const root = await deps.git.toplevel(deps.cwd);
+          const driverOwned = new Set(runOwnedPaths(ports, root, ctx.runDir, ctx.ownedArtifacts));
+          // Session deliverables are reviewed through plan/design kinds, never as code changes.
+          const workspace = dispatchWorkspaceOf(root, spec['sessionDir']);
+          const inScope = (file: string) => !driverOwned.has(file) && !(workspace && file.startsWith(workspace));
           let integration: unknown = scope['integration'];
           if (integration === undefined && text(spec['context']).startsWith('{')) {
             let context: unknown;
@@ -206,8 +228,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             changed = (await deps.git.baselineDiff(deps.cwd, bound.baseline)).filter((p) => owned.has(p));
             if (!changed.length) throw new Error('Integration has an empty intersection with journal-owned paths.');
           } else changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
-          changed = changed.filter((file) => !driverOwned.has(file));
-          bindingChanges = (integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed]).filter((file) => !driverOwned.has(file));
+          changed = changed.filter(inScope);
+          bindingChanges = (integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed]).filter(inScope);
           let prior: ReviewSnapshot | undefined;
           if (typeof scope['priorManifest'] === 'string') {
             const raw = ports.fs.readText(scope['priorManifest']);
@@ -273,7 +295,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           ...(await kindValues(kind, spec, scopeText, deps, ports)),
         };
         const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
-        body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;
+        body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${settled}${carriedSection(carried, slot)}`;
       }
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];

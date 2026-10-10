@@ -41,10 +41,13 @@ export type ReviewMode = 'fix' | 'report';
 export type CriterionOutcome = 'pass' | 'waived';
 export type CriterionProvenance = { outcome: CriterionOutcome; waiver?: { by: 'user'; quote: string }; redProvenance: 'observed' | 'waived' | 'not-required' };
 
+/** Write-subagent models (one alias cascade) and effort for the current orchestrator and level. */
+export type WriterConfig = { models: readonly string[]; effort: string | null };
+
 /** Spec §5.5 input; `breadth` is the roster target count and `roster` the resolved targets then reserves. */
 export type ReviewSpec = {
   kind: ReviewKind; mode: ReviewMode; target: string; cap: number; breadth: number | 'all'; context: string | null;
-  roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string;
+  roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string; writer?: WriterConfig | null;
   governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
 };
 
@@ -52,13 +55,15 @@ export type ReviewSpec = {
 export type AskSpec = { kind: 'ask'; target: string; breadth: number | 'all'; context: string; roster: readonly RosterSlot[]; timeoutMs: number };
 
 export type CarriedRejection = { id: FindingId; slot: SlotId | null; locus: string; defect: string; reason: string };
-export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; sinceHash?: string; priorManifest?: string };
+/** A prior-round finding whose ruling stands; `ruling` is the rendered status label. */
+export type SettledRow = { id: FindingId; locus: string; defect: string; ruling: string; reason: string };
+export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; settled?: readonly SettledRow[]; sinceHash?: string; priorManifest?: string };
 
 // SECTION: Rulings and findings
 
 export const RULING_KINDS = ['accept', 'reject', 'downgrade', 'needs-user'] as const;
 export type RulingKind = (typeof RULING_KINDS)[number];
-export type Ruling = { ruling: RulingKind; severity?: Severity; reason?: string; fix?: NonNullable<Finding['fix']> };
+export type Ruling = { ruling: RulingKind; severity?: Severity; reason?: string; quote?: string; fix?: NonNullable<Finding['fix']> };
 
 export function asRuling(value: unknown): Ruling | null {
   if (!isRecord(value) || !RULING_KINDS.includes(value['ruling'] as RulingKind)) return null;
@@ -66,6 +71,7 @@ export function asRuling(value: unknown): Ruling | null {
   const severity = value['severity'];
   if (severity === 'MUST' || severity === 'SHOULD' || severity === 'CONSIDER') out.severity = severity;
   if (typeof value['reason'] === 'string') out.reason = value['reason'];
+  if (typeof value['quote'] === 'string' && value['quote'].trim()) out.quote = value['quote'].trim();
   // NOTE: the host ruling owns fix scope and verification (reports carry none).
   const fix = value['fix'];
   if (isRecord(fix)) {

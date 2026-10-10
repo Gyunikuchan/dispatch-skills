@@ -6,8 +6,8 @@
 const PHASE_NAMES = ['plan', 'plan review', 'implementation', 'code review', 'design', 'design review', 'integration review', 'ask'] as const;
 /** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
-/** Review phases carry the review machine's convergence result: findings re-raised across rounds, and any escalation. */
-export type Phase = { key: string; name: typeof PHASE_NAMES[number]; outcome?: string; reraised?: readonly string[]; escalation?: Escalation };
+/** Review phases carry the review machine's convergence result (findings re-raised across rounds, any escalation) and the resolved round `cap`. */
+export type Phase = { key: string; name: typeof PHASE_NAMES[number]; outcome?: string; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
 /** Key order is severity order. Hosts send the keys; the report renders the labels. */
 export const CATEGORIES = {
@@ -32,12 +32,16 @@ export type InvocationFacts = {
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[];
   estimated?: boolean; tokens?: number;
 };
-/** `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation. */
-export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation };
+/**
+ * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
+ * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
+ */
+export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 export type RunFacts = {
   version?: string; build?: string; os?: string; host?: string; verb?: string; level?: string; pins?: string;
   config?: Record<string, unknown>; outcome?: string;
-  fault?: { effectId?: string; cls: string; hostWaitMs?: number; driverMs?: number };
+  /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
+  fault?: { effectId?: string; cls: string; hostWaitMs?: number; waitBy?: 'user' | 'host'; driverMs?: number };
   phases: PhaseFacts[];
   hostGaps: { await: string; ms: number }[];
   invocations: InvocationFacts[];
@@ -51,7 +55,8 @@ export type RetroObservation = { id: string; component: string; category: Catego
 /** `source` is a heuristic id (`H1`…) or `retro`. */
 export type Finding = { source: string; run?: number; id?: string; category: Category; component: string; evidence: string; impact: string; proposedFix: string };
 
-export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, hostGapMs: 600_000 } as const;
+// Share heuristics need `minSamples`, so one or two data points never read as a pattern.
+export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, hostGapMs: 600_000 } as const;
 export const DIAGNOSTIC_LIMITS = { observations: 3, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
@@ -261,7 +266,10 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
     ...opt('os', token(r['os'])), ...opt('host', token(r['host'])),
     ...opt('verb', VERBS.find((v) => v === r['verb'])), ...opt('level', LEVELS.find((v) => v === r['level'])),
     ...opt('pins', match(/^[A-Za-z0-9_.,:-]{1,96}$/)(r['pins'])), ...opt('config', config), ...opt('outcome', token(r['outcome'])),
-    ...opt('fault', fault && { ...opt('effectId', match(/^[a-z0-9-]+(?:\.[a-z0-9-]+){0,15}$/)(fault['effectId'])), cls: token(fault['cls']) ?? DASH, ...opt('hostWaitMs', millis(fault['hostWaitMs'])), ...opt('driverMs', millis(fault['driverMs'])) }),
+    ...opt('fault', fault && {
+      ...opt('effectId', match(/^[a-z0-9-]+(?:\.[a-z0-9-]+){0,15}$/)(fault['effectId'])), cls: token(fault['cls']) ?? DASH, ...opt('hostWaitMs', millis(fault['hostWaitMs'])),
+      ...opt('waitBy', (['user', 'host'] as const).find((by) => by === fault['waitBy'])), ...opt('driverMs', millis(fault['driverMs'])),
+    }),
     phases: list(r['phases']).filter(record).map((p) => ({
       key: phaseKey(p['key']) ?? '', name: PHASE_NAMES.find((name) => name === p['name']) ?? DASH, ...opt('outcome', token(p['outcome'])),
       ...opt('wallMs', millis(p['wallMs'])), ...opt('driverMs', millis(p['driverMs'])), ...opt('hostMs', millis(p['hostMs'])), ...opt('userMs', millis(p['userMs'])),
@@ -269,7 +277,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
     hostGaps: list(r['hostGaps']).filter(record).flatMap((g) => { const ms = millis(g['ms']); return ms === undefined ? [] : [{ await: token(g['await']) ?? DASH, ms }]; }),
     invocations: list(r['invocations']).flatMap(invocationOf),
     reviews: list(r['reviews']).filter(record).flatMap((v): ReviewFacts[] => {
-      const round = count(v['round']);
+      const round = count(v['round']), cap = count(v['cap']);
       if (!round) return [];
       const ids = (value: unknown) => list(value).map(match(ID)).filter((id): id is string => !!id);
       const reraised = ids(v['reraised']), escalation = record(v['escalation']) ? v['escalation'] : undefined;
@@ -277,6 +285,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       return [{
         ...opt('phase', phaseKey(v['phase'])), round, accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0,
         ...opt('reraised', reraised.length ? reraised : undefined), ...opt('escalation', kind && { kind, ids: ids(escalation?.['ids']) }),
+        ...opt('cap', cap !== undefined && cap <= DIAGNOSTIC_THRESHOLDS.maxRoundCap ? cap : undefined),
       }];
     }),
     rejectedEvents: list(r['rejectedEvents']).filter(record).map((e) => ({ eventType: match(/^[A-Z][A-Z0-9_]{0,47}$/)(e['eventType']) ?? DASH, reason: rejectionReason(e['reason']) })),
@@ -330,7 +339,10 @@ export function heuristics(run: RunFacts): Finding[] {
     const rounds = Math.max(...rows.map((r) => r.round));
     const reraised = [...new Set(rows.flatMap((r) => r.reraised ?? []))];
     const escalation = rows.map((r) => r.escalation).filter((e) => e !== undefined).at(-1);
-    if (rounds < T.reviewRounds && !reraised.length && !escalation) continue;
+    // Rounds within the resolved cap are normal convergence; only a run without a recorded cap uses the fixed threshold.
+    const cap = rows.map((r) => r.cap).filter((c) => c !== undefined).at(-1);
+    const overCap = cap === undefined ? rounds >= T.reviewRounds : rounds > cap;
+    if (!overCap && !reraised.length && !escalation) continue;
     const ids = (values: readonly string[]) => values.length ? ` (${values.slice(0, 5).join(', ')})` : '';
     const detail = [
       plural(rounds, 'round'),
@@ -341,7 +353,7 @@ export function heuristics(run: RunFacts): Finding[] {
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;
-    if (!all || r.rejected / all <= T.rejectedShare) continue;
+    if (all < T.minSamples || r.rejected / all <= T.rejectedShare) continue;
     add('H3', 'review-convergence', 'references/templates/review-prompt.md', `${phaseName(run, r.phase)} round ${r.round}: ${r.rejected} of ${plural(all, 'finding')} rejected (${pct(r.rejected / all)}).`, 'Rejected findings cost reviewer tokens and host ruling time without changing the artifact.', 'Put the governing decisions and out-of-scope items in the review prompt so reviewers do not raise settled points.');
   }
   const metered = run.invocations.filter((i) => measured(i));
@@ -351,14 +363,15 @@ export function heuristics(run: RunFacts): Finding[] {
     if (!reporting.length || !input || cacheRead / input >= T.cacheReadShare) continue;
     add('H4', 'token-economy', 'scripts/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
   }
-  if (metered.length >= 2) {
+  if (metered.length >= T.minSamples) {
     const sizes = metered.map((i) => [i, total(i.usage!)] as const);
     const all = sum(sizes.map(([, n]) => n)) ?? 0;
     const [top, n] = sizes.reduce((a, b) => b[1] > a[1] ? b : a);
-    if (all && n / all > T.invocationShare) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
+    // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
+    if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
   const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
-  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time and usually repeat work the driver could do.', `Move deterministic steps of the \`${gap.await}\` turn into the driver, or split it so each frame asks for one bounded action.`);
+  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time.', `Split the \`${gap.await}\` turn's work and record its sub-steps so the cost can be attributed.`);
   if (run.rejectedEvents.length) {
     const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
     add('H8', 'correctness', 'scripts/core/validate.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
@@ -405,7 +418,7 @@ function overview(runs: readonly RunFacts[]): string[] {
     for (const p of run.phases) line(p.name, p.outcome, [p.wallMs, p.driverMs, p.hostMs, p.userMs], run.invocations.filter((i) => i.phase === p.key));
     const unmatched = run.invocations.some((i) => !run.phases.some((p) => p.key === i.phase));
     if (run.phases.length !== 1 || unmatched) line('all phases', run.outcome, (['wallMs', 'driverMs', 'hostMs', 'userMs'] as const).map((k) => sum(run.phases.map((p) => p[k]))), run.invocations);
-    if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; host wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
+    if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; ${run.fault.waitBy === 'user' ? 'user' : 'host'} wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
   });
   if (notes.length) lines.push('', ...notes);
   lines.push('', '### Tokens by provider and model', '', row(['Provider', 'Model', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage']), '| --- | --- | ---: | ---: | ---: | ---: | ---: |');

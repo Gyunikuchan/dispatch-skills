@@ -71,8 +71,25 @@ test('dry-run validates and appends nothing', async () => {
   const journal = bytes(runDir);
   const good = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' }, dryRun: true });
   const bad = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 1 }, dryRun: true });
-  assert.equal(good.frame?.error, undefined);
-  assert.match(bad.frame?.error ?? '', /event\.path: expected non-empty string/);
+  const replay = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, dryRun: true });
+  assert.deepEqual(good.verdict, { valid: true });
+  assert.match(bad.verdict?.error ?? '', /event\.path: expected non-empty string/);
+  assert.equal(replay.frame?.await, 'author');
+  assert.equal(replay.verdict, undefined);
+  assert.deepEqual(bytes(runDir), journal);
+});
+
+test('dry-run verdict reports validity with exit 0 for a valid event and 1 for an invalid one', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  const journal = bytes(runDir);
+  const options = { runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, dryRun: true };
+  assert.deepEqual(await send({ ...options, rawEvent: { type: 'AUTHORED', path: 'p.md' } }), { frame: null, verdict: { valid: true }, exitCode: 0 });
+  const malformed = await send({ ...options, rawEvent: '{nope' });
+  assert.deepEqual([malformed.frame, malformed.verdict?.valid, malformed.exitCode], [null, false, 1]);
+  assert.match(malformed.verdict?.error ?? '', /^event[.:]/);
+  const bad = await send({ ...options, rawEvent: { type: 'AUTHORED', path: 1 } });
+  assert.deepEqual(bad, { frame: null, verdict: { valid: false, error: 'event.path: expected non-empty string, got number' }, exitCode: 1 });
   assert.deepEqual(bytes(runDir), journal);
 });
 

@@ -18,6 +18,15 @@ export function runOwnedPaths(ports: Ports, root: string, runDir: string, artifa
     || ['events.jsonl', 'lock', 'progress.json', 'owner.json'].includes(file)).map((file) => relative ? `${relative}/${file}` : file)];
 }
 
+/** Repository-relative dispatch workspace root (the parent of `sessionDir`) with a trailing `/`; null outside the repository or at its root. */
+export function dispatchWorkspaceOf(root: string, sessionDir: unknown): string | null {
+  if (typeof sessionDir !== 'string' || !sessionDir) return null;
+  const relative = path.relative(root, path.dirname(path.resolve(root, sessionDir))).replaceAll('\\', '/');
+  // An empty prefix would exclude the whole repository from code review.
+  if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return null;
+  return `${relative}/`;
+}
+
 const hash = (base64: string) => crypto.createHash('sha256').update(Buffer.from(base64, 'base64')).digest('hex');
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const safe = (f: string) => !!f && !f.includes('\\') && !f.startsWith('/') && !/^[A-Za-z]:/.test(f) && !f.split('/').some((p) => !p || p === '.' || p === '..' || p.includes(':'));

@@ -134,3 +134,22 @@ test('reviewer-metadata-preservation: model and effort are preserved from wave a
   const rendered = renderResolutionSection(rounds);
   assert.match(rendered, /- Reviewers: codex\[0\] gpt-5 \(high\)/);
 });
+
+test('round two scope carries settled rulings', () => {
+  const events = [started({ fix: true }), prepared(1), waveDone(1, [
+    finding('R1-F001'), finding('R1-F002', { severity: 'CONSIDER', locus: 'src/b.ts:L1' }), finding('R1-F003', { severity: 'CONSIDER', locus: 'src/c.ts:L9' }),
+  ]), { type: 'RULINGS', rulings: {
+    'R1-F001': { ruling: 'reject', reason: 'by design' },
+    'R1-F002': { ruling: 'reject', reason: 'out of scope for this change' },
+    'R1-F003': { ruling: 'accept', reason: 'valid gap; report only' },
+  } } as Event];
+  const { state, effects } = drive(events);
+  assert.equal(state.tag, 'prepare');
+  const next = effects[0];
+  const scope = next?.kind === 'prepare-review' ? next.scope as Record<string, unknown> : {};
+  assert.deepEqual((scope['carried'] as { id: string }[]).map((row) => row.id), ['R1-F001']);
+  assert.deepEqual(scope['settled'], [
+    { id: 'R1-F002', locus: 'src/b.ts:L1', defect: 'defect R1-F002', ruling: 'Rejected', reason: 'out of scope for this change' },
+    { id: 'R1-F003', locus: 'src/c.ts:L9', defect: 'defect R1-F003', ruling: 'Accepted', reason: 'valid gap; report only' },
+  ]);
+});

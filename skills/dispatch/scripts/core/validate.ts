@@ -99,14 +99,19 @@ export function obj(shape: Readonly<Record<string, Validator<unknown>>>): Valida
   };
 }
 
+/** Path segments before the error's `: `; deeper means the alternative matched further. */
+const errorDepth = (error: string): number => error.slice(0, error.indexOf(': ')).split(/[.[]/).length;
+
+/** Reports the alternative that failed deepest, so a known discriminator with a bad field names that field; ties keep the last. */
 export function oneOf<T>(...options: readonly Validator<T>[]): Validator<T> {
   return (value, at) => {
-    let last: Result<T> = fail(at, 'a matching alternative', value);
+    let best: Result<T> = fail(at, 'a matching alternative', value);
     for (const option of options) {
-      last = option(value, at);
-      if (last.ok) return last;
+      const result = option(value, at);
+      if (result.ok) return result;
+      if (best.ok || errorDepth(result.error) >= errorDepth(best.error)) best = result;
     }
-    return last;
+    return best;
   };
 }
 

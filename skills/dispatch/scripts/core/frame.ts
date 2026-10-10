@@ -39,7 +39,11 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
   switch (current) {
     case 'author': return typeof data['path'] === 'string' && data['path'].trim() ? [{ type: 'AUTHORED', path: data['path'] }] : [];
     case 'native': return [{ type: 'NATIVE_RESULTS', slots: rows(data['slots']).map((slot) => ({ slot: String(slot['substitutesFor'] ?? slot['sourceKey']), sourceKey: slot['sourceKey'], outputPath: slot['outputPath'], mapping: { configuredModel: slot['model'], launcherModel: slot['model'] ?? '<actual launched model>', ...(slot['reasoningEffort'] ? { launcherEffort: slot['reasoningEffort'] } : {}), provider: '<host provider>' } })) }];
-    case 'rule': return [{ type: 'RULINGS', rulings: Object.fromEntries(rows(data['findings']).map((finding) => [String(finding['id']), { ruling: finding['category'] === 'intent' ? 'needs-user' : 'accept', fix: { affectedPaths: [String(finding['locus']).replace(/:L\d+.*$/, '')], dependsOn: [], verification: [] } }])) }];
+    case 'rule': {
+      // NOTE: artifact loci are section headings, so artifact reviews name the reviewed file instead.
+      const fixTarget = typeof data['fixTarget'] === 'string' && data['fixTarget'] ? data['fixTarget'] : null;
+      return [{ type: 'RULINGS', rulings: Object.fromEntries(rows(data['findings']).map((finding) => [String(finding['id']), { ruling: finding['category'] === 'intent' ? 'needs-user' : 'accept', fix: { affectedPaths: [fixTarget ?? String(finding['locus']).replace(/:L\d+.*$/, '')], dependsOn: [], verification: [] } }])) }];
+    }
     case 'fix': return [{ type: 'FIXES_APPLIED', clusters: rows(data['clusters']).map((cluster) => ({ clusterId: cluster['clusterId'], status: 'applied', affectedPaths: cluster['affectedPaths'] })) }];
     case 'write': {
       const candidates = rows(data['tasks']).filter((task) => typeof task['task'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0 && typeof task['signature'] === 'string' && typeof task['handle'] === 'string' && task['handle']);

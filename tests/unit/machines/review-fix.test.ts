@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { executionDelta } from '../../../skills/dispatch/scripts/domain/execution-config.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -201,4 +203,27 @@ test('code fix-verify runs the verification carried on the host ruling; a failed
   assert.match(String((reviewMachine.project(failed.state).data['defects'] as string[])[0]), /failed to apply/);
   const verify = drive([applied(failed.state)], failed.state);
   assert.deepEqual(verify.effects.map((effect) => effect.kind === 'verify' && effect.commands), [[{ command: 'npm run check' }]]);
+});
+
+// SECTION: Writer briefing
+
+const writers = (low: string, effort: string) => ({ ...CONFIG, 'write-subagents': { claude: { low: { model: low, effort }, high: { model: 'writer-high', effort: 'max' } } } });
+
+test('fix frame carries writer effort', () => {
+  const fix = drive([started({ config: writers('writer-low', 'medium') }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]).state;
+  assert.equal(fix.tag, 'fix');
+  assert.deepEqual(reviewMachine.project(fix).data['writer'], { models: ['writer-low'], effort: 'medium' });
+});
+
+test('fix frame writer follows a config refresh', () => {
+  const before = started({ config: writers('writer-low', 'medium') });
+  const after = started({ config: writers('writer-refreshed', 'high') });
+  const fix = drive([before, prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]).state;
+  const root: RootState = { tag: 'review', run: { verb: 'review', argument: '', slug: 'x', defaults: before }, child: fix };
+  const refreshed = rootMachine.reconfigure?.(root, { type: 'EXECUTION_CONFIG_UPDATED', revision: 1, boundarySeq: 1, delta: executionDelta(before.config, after.config) });
+  if (!refreshed || refreshed.tag !== 'review') return assert.fail('expected review root');
+  assert.deepEqual(reviewMachine.project(refreshed.child).data['writer'], { models: ['writer-low'], effort: 'medium' }, 'bound until the next prepare');
+  const next = drive([applied(refreshed.child), verified(1), prepared(2), waveDone(2, [finding('R2-F001', { locus: 'src/other.ts:L1' })]), accept('R2-F001')], refreshed.child).state;
+  assert.equal(next.tag, 'fix');
+  assert.deepEqual(reviewMachine.project(next).data['writer'], { models: ['writer-refreshed'], effort: 'high' });
 });

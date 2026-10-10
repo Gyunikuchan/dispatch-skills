@@ -204,10 +204,12 @@ export interface SendOptions<S> {
 }
 
 export interface SendResult {
-  /** Null only when the lock is held (exit 3); `message` then names the holder. */
+  /** Null when the lock is held (exit 3; `message` names the holder) or when `verdict` answers an event dry-run. */
   frame: Frame | null;
   exitCode: ExitCode;
   message?: string;
+  /** Event dry-run only: whether the event would be accepted, with the one-line refusal. */
+  verdict?: { valid: boolean; error?: string };
 }
 
 function parseRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
@@ -471,7 +473,7 @@ async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendR
     if (options.rawEvent === undefined) return { frame: hint(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent))), exitCode: 0 };
     const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
     const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
-    return { frame: hint(projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(read.recent))), exitCode: 0 };
+    return error ? { frame: null, verdict: { valid: false, error }, exitCode: 1 } : { frame: null, verdict: { valid: true }, exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };

@@ -5,6 +5,7 @@ import type { ChangeNotice, DriftResolution, Effect, Event, FindingId, HostEvent
 import { resolution } from './change-resolution.ts';
 import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
+import { statusLabel } from '../domain/render.ts';
 import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, ReviewerView, RosterSlot } from '../domain/types.ts';
 import { resolveRoster, type PhasePolicy, type Pins, type ReadDelegate } from '../policy/roster.ts';
 import {
@@ -13,8 +14,9 @@ import {
 } from '../policy/rounds.ts';
 import {
   answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, stay,
-  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Ruling, type Step,
+  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Ruling, type SettledRow, type Step,
 } from './types.ts';
+import { writerConfig } from './implement-types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 600_000;
 
@@ -67,7 +69,8 @@ export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, mode: 
   const context = isString(run.overrides['context']) ? run.overrides['context'] : (run.verb === 'review' && kind === 'code' ? null : run.argument);
   const sessionDir = isString(run.overrides['sessionDir']) ? run.overrides['sessionDir'] : undefined;
   const governing = isRecord(run.overrides['governing']) ? run.overrides['governing'] as ReviewSpec['governing'] : undefined;
-  return { ok: true, spec: { kind, mode, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
+  const writer = writerConfig(run.config, run.orchestrator, run.level);
+  return { ok: true, spec: { kind, mode, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, writer: writer.ok ? writer.value : null, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
 }
 
 // SECTION: Waves (shared with ask)
@@ -197,10 +200,20 @@ export function beginReview(spec: ReviewSpec, path: string, counters: Counters):
   return prepare(c, 1, 'full', []);
 }
 
+/** Statuses whose ruling stands; pending, superseded, and duplicate findings are not settled decisions. */
+const SETTLED: readonly ReviewFinding['status'][] = ['accepted', 'downgraded', 'fixed', 'rejected', 'closed-by-reviewer', 'closed-by-orchestrator'];
+
+/** Prior-round rulings that reviewers re-raise only with new evidence. */
+function settledRows(findings: readonly ReviewFinding[], round: number): SettledRow[] {
+  return findings.filter((finding) => finding.round < round && SETTLED.includes(finding.status))
+    .map((finding) => ({ id: finding.id, locus: finding.locus, defect: finding.defect, ruling: statusLabel(statusOf(finding)), reason: finding.resolution ?? '' }));
+}
+
 function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[]): S {
   const { pendingSpec, ...bound } = c0;
   const base = { ...bound, spec: pendingSpec ?? c0.spec, round, scope, carried, rows: [], drafts: [], promptPaths: {} };
-  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, affectedPaths: [...new Set(base.findings.flatMap((finding) => finding.fix?.paths ?? []))], ...(base.priorManifest ? { priorManifest: base.priorManifest } : {}) } }));
+  const settled = settledRows(base.findings, round);
+  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, ...(settled.length ? { settled } : {}), affectedPaths: [...new Set(base.findings.flatMap((finding) => finding.fix?.paths ?? []))], ...(base.priorManifest ? { priorManifest: base.priorManifest } : {}) } }));
   return { state: { tag: 'prepare', c }, effects: [effect] };
 }
 
@@ -299,6 +312,8 @@ function afterWave(c0: ReviewCtx): S {
 // SECTION: Rulings
 
 const roundOpen = (c: ReviewCtx) => c.findings.filter((finding) => finding.round === c.round && finding.status === 'open');
+/** A known user answer settles an intent finding directly, with the needs-user decision semantics. */
+const userRuled = (ruling: Ruling): ruling is Ruling & { quote: string } => (ruling.ruling === 'accept' || ruling.ruling === 'reject') && ruling.quote !== undefined;
 
 export function validateRulings(c: ReviewCtx, rulings: Readonly<Record<string, unknown>>): string | null {
   const open = roundOpen(c);
@@ -308,7 +323,10 @@ export function validateRulings(c: ReviewCtx, rulings: Readonly<Record<string, u
     if (raw === undefined) return `event.rulings: missing ruling for ${finding.id}; every finding must be ruled`;
     const ruling = asRuling(raw);
     if (!ruling) return `event.rulings.${finding.id}.ruling: expected accept|reject|downgrade|needs-user`;
-    if (finding.category === 'intent' && ruling.ruling !== 'needs-user') return `event.rulings.${finding.id}: intent finding must be ruled needs-user, got ${ruling.ruling}`;
+    if (finding.category === 'intent' && ruling.ruling !== 'needs-user') {
+      if (!userRuled(ruling)) return `event.rulings.${finding.id}.ruling: expected needs-user, or accept|reject with the user's quote, for an intent finding`;
+      continue; // NOTE: the user's quote is the recorded reason.
+    }
     if ((ruling.ruling === 'reject' || ruling.ruling === 'downgrade') && !ruling.reason?.trim()) return `event.rulings.${finding.id}.reason: expected a nonblank reason for ${ruling.ruling}`;
   }
   return null;
@@ -320,6 +338,10 @@ function onRulings(c0: ReviewCtx, rulings: Readonly<Record<string, unknown>>): S
     if (finding.round !== c0.round || finding.status !== 'open') return finding;
     const ruling = asRuling(rulings[finding.id]);
     if (!ruling) return finding;
+    if (finding.category === 'intent' && userRuled(ruling)) {
+      const ruled = { ...finding, resolution: `user: ${ruling.quote}`, ...(ruling.fix ? { fix: ruling.fix } : {}) };
+      return { ...ruled, status: ruling.ruling === 'accept' ? 'accepted' : 'rejected' };
+    }
     const resolution = { ...(ruling.reason === undefined ? {} : { resolution: ruling.reason }), ...(ruling.fix ? { fix: ruling.fix } : {}) };
     switch (ruling.ruling) {
       case 'accept': return { ...finding, ...resolution, status: 'accepted' };
@@ -392,10 +414,14 @@ function onFixesApplied(state: Extract<ReviewState, { tag: 'fix' }>, results: re
   const defects = failed.map((cluster) => `cluster ${cluster.clusterId} failed to apply`);
   const applied = state.clusters.filter((cluster) => !failedIds.has(cluster.clusterId));
   if (!applied.length) return resumeFix(state.c, retry.clusters, retry.exhausted, state.pass, defects);
-  const c0 = state.c;
-  const recovery = { clusters: applied, pass: state.pass, pendingClusters: retry.clusters, exhausted: retry.exhausted };
+  return issueFixVerify(state.c, { clusters: applied, pass: state.pass, pendingClusters: retry.clusters, exhausted: retry.exhausted });
+}
+
+type FixRecovery = Omit<Extract<ReviewState, { tag: 'fix-verify' }>, 'tag' | 'c'>;
+
+function issueFixVerify(c0: ReviewCtx, recovery: FixRecovery): S {
   if (c0.spec.kind === 'code') {
-    const commands = [...new Set(applied.flatMap((cluster) => cluster.verification))].map((command) => ({ command }));
+    const commands = [...new Set(recovery.clusters.flatMap((cluster) => cluster.verification))].map((command) => ({ command }));
     const { c, effect } = withEffect(c0, 'verify', (id) => ({ kind: 'verify', id, purpose: 'fix-verify', commands }));
     return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
   }
@@ -491,8 +517,8 @@ export function selectedIds(answer: unknown): string[] | null {
 
 function userRuling(value: unknown): (Ruling & { quote: string }) | null {
   const ruling = asRuling(value);
-  if (!ruling || ruling.ruling === 'needs-user' || !isRecord(value) || !isString(value['quote']) || !value['quote'].trim()) return null;
-  return { ...ruling, quote: value['quote'].trim() };
+  if (!ruling || ruling.ruling === 'needs-user' || ruling.quote === undefined) return null;
+  return { ...ruling, quote: ruling.quote };
 }
 
 function onDecision(state: ReviewState, answer: unknown): S {
@@ -572,6 +598,7 @@ export function stepReview(state: ReviewState, event: Event): S {
       if (!event.notice) return stay({ tag: 'failed', c: state.c, detail: 'Changed target lacks binding evidence.' });
       if (!state.resolution || state.resolution.afterHash !== event.notice.afterHash) return stay({ tag: 'change-resolution', c: state.c, check: state, notice: event.notice });
       if (state.resolution.action === 'refresh') {
+        if (state.before.tag === 'fix' || state.before.tag === 'fix-verify') return refreshFix(state, state.before, event.manifestPath, event.notice.afterHash);
         const c = { ...state.c, targetManifest: event.manifestPath, priorManifest: event.manifestPath, reviewedRevision: event.notice.afterHash,
           findings: state.c.findings.map((row): ReviewFinding => ['open', 'accepted', 'pending-rejection', 'needs-user'].includes(row.status) ? { ...row, status: 'superseded' } : row), carried: [] };
         delete c.fixCandidate;
@@ -608,6 +635,19 @@ export function stepReview(state: ReviewState, event: Event): S {
     return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, allowedPaths }] };
   }
   return stepReviewUnchecked(state, event);
+}
+
+/**
+ * Refresh after applied fixes keeps finding statuses: a parked receipt proceeds to fix-verify, and a parked verification
+ * result is discarded and reissued, so findings become `fixed` only after the refreshed content passes.
+ */
+function refreshFix(state: Extract<ReviewState, { tag: 'target-check' }>, before: Extract<ReviewState, { tag: 'fix' | 'fix-verify' }>, manifestPath: string, afterHash: string): S {
+  // NOTE: `priorManifest` stays on the reviewed content so the next round still sees the fix as a delta.
+  const c: ReviewCtx = { ...before.c, counters: state.c.counters, targetManifest: manifestPath, reviewedRevision: afterHash };
+  delete c.fixCandidate;
+  if (before.tag === 'fix') return stepReviewUnchecked({ ...before, c }, state.pending);
+  const { tag: _tag, c: _c, ...recovery } = before;
+  return issueFixVerify(c, recovery);
 }
 
 function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' | 'change-resolution' }>, event: Event): S {
@@ -690,11 +730,13 @@ export function reviewData(state: ReviewState): Readonly<Record<string, unknown>
         round: c.round, cap: c.spec.cap, threshold: threshold(c.round, c.spec.cap), findings: roundOpen(c),
         pending: c.findings.filter((finding) => finding.status === 'pending-rejection').map((finding) => ({ id: finding.id, severity: finding.severity, status: finding.status })),
         reportPaths: [],
+        ...(c.spec.kind === 'code' ? {} : { fixTarget: c.spec.target }),
       };
     }
     case 'fix': return {
       round: state.c.round,
       clusters: state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, findingIds: cluster.findingIds, affectedPaths: cluster.paths, verification: cluster.verification })),
+      ...(state.c.spec.writer ? { writer: state.c.spec.writer } : {}),
       ...(state.defects.length ? { defects: state.defects } : {}),
     };
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return decide(state);
@@ -718,7 +760,8 @@ function statusOf(finding: ReviewFinding): ResolutionStatus {
     case 'rejected': return 'rejected';
     case 'pending-rejection': return 'pending-rejection';
     case 'needs-user': return 'needs-user';
-    case 'closed-by-reviewer': case 'superseded': return 'closed-by-reviewer';
+    case 'closed-by-reviewer': return 'closed-by-reviewer';
+    case 'superseded': return 'superseded';
     case 'closed-by-orchestrator': return 'closed-by-orchestrator';
     case 'duplicate': return 'duplicate';
     default: return never(finding.status, 'finding status');

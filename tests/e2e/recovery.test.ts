@@ -158,3 +158,23 @@ test('public CLI preserves usage/rejection/fault/lock exits, fallback session id
     const fault = await f.launch(['status', '--run', run]).done; assert.equal(fault.exit, 2); assert.equal(fault.stdout.trim().split('\n').length, 1); assert.equal(JSON.parse(fault.stdout).data.outcome, 'fault');
   } finally { f.cleanup(); }
 });
+
+test('dry-run verdict: CLI prints one verdict line, exits 0 or 1, and leaves the journal unchanged', async () => {
+  const f = fixture();
+  try {
+    const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
+    assert.equal(frame.await, 'author', JSON.stringify(frame));
+    const journal = path.join(run, 'events.jsonl'), before = fs.readFileSync(journal);
+    const check = async (event: unknown) => {
+      const file = path.join(f.dir, 'dry-run.event.json'); fs.writeFileSync(file, JSON.stringify(event));
+      return f.launch(['send', '--run', run, '--event', `@${file}`, '--dry-run']).done;
+    };
+    const valid = await check({ type: 'AUTHORED', path: frame.data['path'] });
+    assert.deepEqual([valid.exit, valid.stdout], [0, '{"v":1,"valid":true}\n'], valid.stderr);
+    const invalid = await check({ type: 'AUTHORED' });
+    assert.equal(invalid.exit, 1, invalid.stderr);
+    assert.deepEqual(JSON.parse(invalid.stdout), { v: 1, valid: false, error: 'event.path: expected non-empty string, got nothing' });
+    assert.equal(invalid.stdout.trim().split('\n').length, 1);
+    assert.deepEqual(fs.readFileSync(journal), before);
+  } finally { f.cleanup(); }
+});

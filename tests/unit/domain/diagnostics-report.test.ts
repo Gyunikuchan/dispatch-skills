@@ -119,8 +119,8 @@ test('SC2 heuristic H2 fires', () => {
     { phase: 'review', round: 2, accepted: 0, rejected: 0, escalation: { kind: 'regression', ids: ['R1-F001'] } },
   ] })), 'H2');
   assert.match(assertShape(escalated[0], 'review-convergence').evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
-  const rounds = only(heuristics(facts({ reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0 })) })), 'H2');
-  assert.match(assertShape(rounds[0], 'review-convergence').evidence, /code review: 3 rounds\./);
+  const rounds = only(heuristics(facts({ reviews: [1, 2, 3, 4].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3 })) })), 'H2');
+  assert.match(assertShape(rounds[0], 'review-convergence').evidence, /code review: 4 rounds\./);
 });
 
 test('SC2 heuristic H3 fires', () => {
@@ -134,8 +134,8 @@ test('SC2 heuristic H4 fires', () => {
 });
 
 test('SC2 heuristic H5 fires', () => {
-  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 2000, cacheRead: 2000, output: 100 } }), invocation()] })), 'H5')[0], 'token-economy');
-  assert.match(finding.evidence, /codex gpt-6-sol in code review: 4,100 of 7,440 measured tokens \(55%\)/);
+  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } }), invocation(), invocation()] })), 'H5')[0], 'token-economy');
+  assert.match(finding.evidence, /codex gpt-6-sol in code review: 18,100 of 24,780 measured tokens \(73%\)/);
 });
 
 test('SC2 heuristic H6 fires', () => {
@@ -169,7 +169,7 @@ test('SC2 heuristic boundaries stay silent', () => {
 test('SC2 orders findings by severity', () => {
   const run = facts({
     invocations: [invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
-    reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0 })),
+    reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
     hostGaps: [{ await: 'write', ms: 900_000 }],
     observations: [observation()],
   });
@@ -178,6 +178,44 @@ test('SC2 orders findings by severity', () => {
   assert.deepEqual([...categories].sort((a, b) => a - b), categories);
   const headings = [...render([run]).matchAll(/^### \d+\. ([^·]+) ·/gm)].map((m) => m[1]!.trim());
   assert.deepEqual([...new Set(headings)], ['Correctness / protocol', 'Token economy', 'Speed', 'Review convergence', 'Instruction clarity']);
+});
+
+test('heuristic precision H2 stays silent for rounds within the cap', () => {
+  const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
+  assert.deepEqual(only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'), [], 'three rounds within cap 3 is normal convergence');
+  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2')[0], 'review-convergence').evidence, /code review: 4 rounds\./);
+  const reraised = [...rounds(2, { cap: 3 }), { phase: 'review', round: 3, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] }];
+  assert.equal(only(heuristics(facts({ reviews: reraised })), 'H2').length, 1, 'a re-raise fires within the cap');
+  const escalated = [{ phase: 'review', round: 1, accepted: 1, rejected: 0, cap: 3, escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } }];
+  assert.equal(only(heuristics(facts({ reviews: escalated })), 'H2').length, 1, 'an escalation fires within the cap');
+  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
+});
+
+test('heuristic precision screens the review cap as a bounded integer', () => {
+  const capOf = (cap: unknown) => sanitizeFacts(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap } as never] })).reviews[0]?.cap;
+  assert.equal(capOf(3), 3);
+  for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
+});
+
+test('heuristic precision H3 needs three findings', () => {
+  assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 2 }] })), 'H3'), [], 'two findings are too few to judge a rejection share');
+  assert.equal(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3').length, 1);
+});
+
+test('heuristic precision H5 needs three metered invocations and a share above two over n', () => {
+  const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
+  assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation()] })), 'H5'), [], 'with two invocations one always holds at least half');
+  // 13,360 of 20,040 tokens is exactly 2/3, the bound for three invocations.
+  const even = invocation({ usage: { input: 4000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
+  assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
+  assert.equal(only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5').length, 1);
+});
+
+test('heuristic precision H6 makes no driver-repeat claim', () => {
+  const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
+  assert.equal(finding.impact, 'Long host turns dominate wall time.');
+  assert.equal(finding.proposedFix, "Split the `rule` turn's work and record its sub-steps so the cost can be attributed.");
+  assert.doesNotMatch(`${finding.impact} ${finding.proposedFix}`, /driver/);
 });
 
 test('SC2 equivalent codex and claude usage yield equal totals and heuristics', () => {

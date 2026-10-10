@@ -23,7 +23,9 @@ function specDefaults(spec: ReviewSpec, run: RunStartedEvent, event: ExecutionCo
     const effort = typeof run.overrides['effort'] === 'string' ? run.overrides['effort'] : level.effort;
     return { ...base, model, ...(effort !== undefined ? { effort } : {}) };
   });
-  return { ...spec, roster };
+  // NOTE: `run` is already refreshed; the recomputed writer binds through `pendingSpec` at the next prepare, like the roster.
+  const writer = writerConfig(run.config, run.orchestrator, run.level);
+  return { ...spec, roster, writer: writer.ok ? writer.value : null };
 }
 function review(state: ReviewState, run: RunStartedEvent, event: ExecutionConfigUpdated): ReviewState {
   if (state.tag === 'booting' || ['settled', 'skipped', 'failed', 'empty', 'escalated'].includes(state.tag)) return state;

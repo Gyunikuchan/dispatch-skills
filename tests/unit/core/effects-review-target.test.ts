@@ -93,6 +93,31 @@ test('review-target bounds content capture and detects new paths and clean-file 
   const drift = (await check())[0]; assert.ok(drift?.type === 'REVIEW_TARGET_CHECKED' && drift.notice?.paths.includes('unrelated.bin'));
 });
 
+test('session files stay out of code review scope', async () => {
+  const root = tempDir(), sessionDir = path.join(root, '.scratch', 'ws', 'session-a');
+  const git = createGit({ run: async (args) => (args[0] === 'rev-parse' ? `${root}\n` : args[0] === 'diff' && !args.includes('--diff-filter=D') ? 'src/a.ts\0.scratch/ws/session-a/x.plan.md\0.scratch/ws/session-b/y.spec.md\0' : '') });
+  const review = { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], sessionDir };
+  const result = (await createPrepareReview({ cwd: root, git, skillRoot: path.resolve('skills/dispatch') })({ kind: 'prepare-review', id: 'review.prepare-review.1', review, round: 1, scope: { scope: 'full' } }, fakePorts(), { runDir: path.join(sessionDir, '.state', 'runs', '001-review'), attempt: 1 }))[0];
+  assert.ok(result?.type === 'REVIEW_PREPARED', JSON.stringify(result));
+  assert.deepEqual(result.scope['paths'], ['src/a.ts']);
+  assert.doesNotMatch(fs.readFileSync(result.promptPaths['codex[0]'] ?? '', 'utf8'), /\.scratch\/ws\//);
+  const binding = JSON.parse(fs.readFileSync(String(result.scope['bindingPath']), 'utf8')) as { changeSet: string[] };
+  assert.deepEqual(binding.changeSet, ['src/a.ts']);
+});
+
+test('session files stay out of target checks', async () => {
+  const root = tempDir(), sessionDir = path.join(root, '.scratch', 'ws', 'session-a'), manifestPath = path.join(root, 'prior.json');
+  const prior: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: {}, working: { 'src/a.ts': 'same' }, untracked: {}, governedPaths: ['src/a.ts'] };
+  fs.writeFileSync(manifestPath, JSON.stringify({ ...prior, changeSet: ['src/a.ts'] }));
+  const notes = '.scratch/ws/session-a/notes.md';
+  const git = { toplevel: async () => root, diffNames: async () => ['src/a.ts', notes],
+    reviewSnapshot: async () => ({ ...prior, untracked: { [notes]: 'new' } }),
+    reviewDelta: async () => ({ paths: [notes], staged: [], unstaged: [], untracked: [notes], deleted: [] }) } as unknown as Git;
+  const effect: Extract<Effect, { kind: 'check-review-target' }> = { kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '', sessionDir }, manifestPath, allowedPaths: [] };
+  const result = (await createCheckReviewTarget({ cwd: root, git })(effect, fakePorts(), { runDir: path.join(sessionDir, '.state', 'runs', '001-review'), attempt: 1 }))[0];
+  assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'unchanged', JSON.stringify(result));
+});
+
 test('review-target accepts absolute fix paths when invoked in a repository subdirectory', async () => {
   const root = tempDir(), cwd = path.join(root, 'sub'), ports = fakePorts(), manifestPath = path.join(root, 'prior.json');
   const prior: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: {}, working: { 'src/a.ts': 'before' }, untracked: {} };
