@@ -102,6 +102,22 @@ test('fix receipt: a withdrawn finding stays rejected through a failed verificat
   assert.ok('c' in state && !state.c.fixes.some((row) => row.id === 'R1-F002'));
 });
 
+test('fix receipt: a withdrawn finding re-raised next round is a settled rejection, not a regression', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002')]), accept('R1-F001', 'R1-F002')]).state;
+  if (fix.tag !== 'fix') return assert.fail('fix');
+  assert.equal(fix.clusters.length, 1);
+  const clusterId = fix.clusters[0]!.clusterId;
+  const round1 = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, status: 'applied', withdrawn: [{ findingId: 'R1-F002', quote: 'Keep current behaviour' }] }] }, verified(1)], fix);
+  assert.equal(round1.state.tag, 'prepare');
+  const prepare = round1.effects.find((effect) => effect.kind === 'prepare-review') as { scope: { settled?: { id: string; ruling: string; reason: string }[] } } | undefined;
+  const settled = prepare?.scope.settled?.find((row) => row.id === 'R1-F002');
+  assert.ok(settled, 'round-2 scope carries R1-F002 as settled');
+  assert.equal(settled.ruling, 'Rejected');
+  assert.equal(settled.reason, 'user: Keep current behaviour');
+  const state = drive([prepared(2), waveDone(2, [finding('R2-F001', { locus: 'src/R1-F002.ts:L3', defect: 'defect R1-F002 again' })])], round1.state).state;
+  assert.ok(state.tag !== 'decide-escalation' && state.tag !== 'escalated', `unexpected ${state.tag}`);
+});
+
 test('bounded-recovery: duplicate and unknown-status receipts are rejected', () => {
   const state = freshFix();
   const receipt = applied(state) as Extract<Event, { type: 'FIXES_APPLIED' }>;

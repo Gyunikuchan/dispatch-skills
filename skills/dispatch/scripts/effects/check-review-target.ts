@@ -6,7 +6,7 @@ import type { Effect, Handler } from '../core/types.ts';
 import { withoutSections } from '../domain/plan.ts';
 import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
-import { dispatchWorkspaceOf, runOwnedPaths } from './snapshot.ts';
+import { dispatchWorkspaceOf, runOwnedPaths, verifiedManifests } from './snapshot.ts';
 const bindingHash = (value: unknown): string => crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 
 /** Matches the existing review-delta exclusions without collapsing repeated headings. */
@@ -35,7 +35,10 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
         const workspace = dispatchWorkspaceOf(root, effect.review['sessionDir']);
         const inScope = (file: string) => !(workspace && file.startsWith(workspace));
         const allowed = new Set(effect.allowedPaths.map((file) => path.relative(root, path.resolve(root, file)).replaceAll('\\', '/')));
-        let changes: string[] | undefined;
+        const governs = (dir: string, file: string) => { const rel = !dir ? file : file.startsWith(`${dir}/`) ? file.slice(dir.length + 1) : ''; return rel === 'SKILL.md' || /^scripts\/.+\.(?:mjs|ts)$/.test(rel) || /^references\/.+\.(?:md|json)$/.test(rel); };
+        const manifestDir = (file: string) => path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file);
+        const isManifest = (file: string) => path.posix.basename(file) === 'skill-hashes.json';
+        let changes: string[] | undefined, changeDrift: string[] = [];
         if (prior['changeSet'] !== undefined) {
           if (!Array.isArray(prior['changeSet']) || !prior['changeSet'].every((file) => typeof file === 'string')) throw new Error('changed-path binding evidence unavailable');
           if (prior['changeBaseline'] !== undefined) {
@@ -44,16 +47,22 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
           } else changes = await deps.git.diffNames(deps.cwd, target);
           changes = changes.filter((file) => !driverOwned.has(file) && inScope(file));
           const priorChanges = new Set((prior['changeSet'] as string[]).filter(inScope)), currentChanges = new Set(changes);
-          const outside = [...new Set([...priorChanges, ...currentChanges])].filter((file) => priorChanges.has(file) !== currentChanges.has(file) && !allowed.has(file));
-          pathsChanged.push(...outside); unexpected.push(...outside);
+          changeDrift = [...new Set([...priorChanges, ...currentChanges])].filter((file) => priorChanges.has(file) !== currentChanges.has(file));
         }
         const paths = Array.isArray(prior['governedPaths']) ? [...new Set([...(prior['governedPaths'] as string[]), ...Object.keys(prior['working'] as object), ...Object.keys(prior['untracked'] as object), ...(changes ?? [])])] : undefined;
         const snapshot = await deps.git.reviewSnapshot(deps.cwd, target, paths, { fullIndex: true });
         const delta = await deps.git.reviewDelta(deps.cwd, prior as ReviewSnapshot, snapshot);
         identityChanged = snapshot.head !== prior['head'] || snapshot.comparison !== prior['comparison'];
+        // A regenerated hash manifest that verifies and governs a ruled path is fix output, not drift; verification reads working-tree bytes, so index changes and deletions never qualify.
+        const unverifiable = new Set([...delta.staged, ...delta.deleted]);
+        const outsideOf = (files: string[]) => {
+          const rest = files.filter((file) => !allowed.has(file));
+          const verified = new Set(verifiedManifests(root, rest.filter((file) => isManifest(file) && !unverifiable.has(file) && [...allowed].some((entry) => governs(manifestDir(file), entry))), ports));
+          return rest.filter((file) => !(isManifest(file) && verified.has(manifestDir(file))));
+        };
         const deltaPaths = delta.paths.filter(inScope);
         pathsChanged.push(...deltaPaths);
-        const outside = deltaPaths.filter((file) => !allowed.has(file));
+        const outside = outsideOf([...changeDrift, ...deltaPaths]);
         pathsChanged.push(...outside); unexpected.push(...outside);
         current = { ...snapshot, ...(prior['governedPaths'] ? { governedPaths: prior['governedPaths'] } : {}), ...(changes ? { changeSet: changes } : {}), ...(prior['changeBaseline'] !== undefined ? { changeBaseline: prior['changeBaseline'] } : {}) };
       } else {
