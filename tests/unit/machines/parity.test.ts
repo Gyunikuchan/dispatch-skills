@@ -224,6 +224,7 @@ test('review-target transitions table matches step', () => {
   ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }],
     [checking.state, changed], [resolving.state, { type: 'DECISION', kind: 'drift', answer }],
     [rechecking.state, { ...changed, effectId: rechecking.state.effectId }],
+    [{ ...rechecking.state, c: { ...rechecking.state.c, findings: [{ id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: 'a', defect: 'd', requiredChange: 'r', sources: ['codex[0]'], scope: 'in', round: 1, status: 'pending-rejection', resolution: 'no' }] } }, { ...changed, effectId: rechecking.state.effectId }],
     [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
 });
 

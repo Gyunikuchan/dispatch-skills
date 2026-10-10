@@ -212,9 +212,21 @@ export interface SendResult {
   verdict?: { valid: boolean; error?: string };
 }
 
-function parseRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
-  if (typeof raw !== 'string') return { ok: true, value: raw };
-  try { return { ok: true, value: JSON.parse(raw) as unknown }; } catch { return { ok: false, error: 'event: expected JSON object, got malformed JSON' }; }
+/** Frames list suggested events as an array, so a one-element array sent verbatim unwraps; any other array is a usage error. */
+function parseRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; error: string; usage?: true } {
+  let value = raw;
+  if (typeof raw === 'string') {
+    try { value = JSON.parse(raw) as unknown; } catch { return { ok: false, error: 'event: expected JSON object, got malformed JSON' }; }
+  }
+  if (!Array.isArray(value)) return { ok: true, value };
+  return value.length === 1 ? { ok: true, value: value[0] } : { ok: false, error: `event: expected one object, got array of ${value.length}`, usage: true };
+}
+
+/** A usage-class event error exits 1 before the lock, so it records no rejection note. */
+function eventUsageError(raw: unknown): string | null {
+  if (raw === undefined) return null;
+  const parsed = parseRaw(raw);
+  return !parsed.ok && parsed.usage ? parsed.error : null;
 }
 
 function hostEventError<S>(machine: Machine<S>, folder: Folder<S>, raw: unknown, sessionRoot?: string): { event: HostEvent } | { error: string } {
@@ -299,6 +311,8 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
   const { runDir, machine, handlers, ports } = options;
   const runRel = options.runRel ?? runDir.replace(/\\/g, '/');
   if (options.refreshConfig && options.rawEvent !== undefined) return { frame: null, exitCode: 1, message: '--refresh-config cannot be combined with --event' };
+  const usage = eventUsageError(options.rawEvent);
+  if (usage) return { frame: null, exitCode: 1, message: usage };
   if (options.dryRun) return dryRun(options, runRel);
 
   const file = journalPath(runDir);

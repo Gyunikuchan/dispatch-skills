@@ -17,9 +17,19 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   const frame: Frame = { v: 1, run: runRel, at, await: awaiting, data, reply: replyTemplate(runRel, seq !== undefined && awaiting !== 'done' ? { seq, awaiting } : undefined) };
   const events = (awaitEnvelopes(frame.await, data) ?? []).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
   if (events.length) frame.events = events;
+  // NOTE: the RULINGS example defaults intent findings to `needs-user`; the hint names the user-backed alternative shape.
+  if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: '{ ruling: accept|reject, quote: <user words> }' };
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };
   if (error !== undefined) frame.error = error;
   return frame;
+}
+
+const placeholder = (value: unknown): boolean => typeof value === 'string' ? /^<.*>$/.test(value)
+  : Array.isArray(value) ? value.some(placeholder) : !!value && typeof value === 'object' && Object.values(value).some(placeholder);
+
+/** The sole suggested event when it needs no host edit; several alternatives or any `<...>` placeholder leave the reply to the host. */
+export function replyEvent(events: readonly HostEvent[] | undefined): HostEvent | undefined {
+  return events?.length === 1 && !placeholder(events[0]) ? events[0] : undefined;
 }
 
 export function faultFrame(runRel: string, error: string): Frame {

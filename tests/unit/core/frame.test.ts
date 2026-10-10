@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { faultFrame, projectFrame, replyTemplate, awaitEnvelopes } from '../../../skills/dispatch/scripts/core/frame.ts';
+import { faultFrame, projectFrame, replyTemplate, replyEvent, awaitEnvelopes } from '../../../skills/dispatch/scripts/core/frame.ts';
 import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -130,4 +130,23 @@ test('plan review rule example uses the plan path', () => {
   assert.equal(frame.await, 'rule');
   const example = frame.events?.find((event) => event.type === 'RULINGS');
   assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['R1-F001'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, ['docs/x.plan.md']);
+});
+
+test('rule frame intent shape hint names the quoted accept/reject ruling', () => {
+  const machine = (category: string) => ({ ...awaitingMachine, awaitOf: () => 'rule' as const, project: () => ({ at: 'review › rule', data: { findings: [{ id: 'R1-F001', category, locus: 'src/a.ts:L1' }] } }) });
+  const intent = projectFrame(machine('intent'), awaitingMachine.initial(), 'run');
+  assert.equal(intent.data['intentRuling'], '{ ruling: accept|reject, quote: <user words> }');
+  const example = intent.events?.find((event) => event.type === 'RULINGS');
+  assert.equal(example?.type === 'RULINGS' && (example.rulings['R1-F001'] as { ruling: string }).ruling, 'needs-user');
+  assert.equal(projectFrame(machine('correctness'), awaitingMachine.initial(), 'run').data['intentRuling'], undefined);
+});
+
+test('replyEvent selects only a placeholder-free single event', () => {
+  const authored = { type: 'AUTHORED', path: 'plan.md' } as const;
+  assert.deepEqual(replyEvent([authored]), authored);
+  assert.equal(replyEvent(undefined), undefined);
+  assert.equal(replyEvent([]), undefined);
+  assert.equal(replyEvent([authored, authored]), undefined);
+  assert.equal(replyEvent(awaitEnvelopes('evidence', { criteria: [{ id: 'SC1' }] })), undefined, 'a nested placeholder needs host evidence');
+  assert.equal(replyEvent([{ type: 'AUTHORED', path: '<path>' }]), undefined);
 });

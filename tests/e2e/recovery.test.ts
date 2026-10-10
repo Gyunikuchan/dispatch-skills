@@ -178,3 +178,72 @@ test('dry-run verdict: CLI prints one verdict line, exits 0 or 1, and leaves the
     assert.deepEqual(fs.readFileSync(journal), before);
   } finally { f.cleanup(); }
 });
+
+test('missing event file exits 1 with a usage error naming the path', async () => {
+  const f = fixture();
+  try {
+    const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
+    const journal = path.join(run, 'events.jsonl'), before = fs.readFileSync(journal), missing = path.join(f.dir, 'missing.json');
+    const result = await f.launch(['send', '--run', run, '--event', `@${missing}`]).done;
+    assert.deepEqual([result.exit, result.stdout], [1, ''], result.stderr);
+    assert.ok(result.stderr.includes(missing), result.stderr); assert.match(result.stderr, /copy one object from frame events/);
+    assert.deepEqual(fs.readFileSync(journal), before);
+  } finally { f.cleanup(); }
+});
+
+const authorFrame = async (f: ReturnType<typeof fixture>) => {
+  const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
+  assert.equal(frame.await, 'author', JSON.stringify(frame));
+  return { frame, run, file: path.join(f.dir, 'array.event.json'), event: { type: 'AUTHORED', path: frame.data['path'] } };
+};
+
+test('event array of one is accepted', async () => {
+  const f = fixture();
+  try {
+    const { run, file, event } = await authorFrame(f);
+    fs.writeFileSync(file, JSON.stringify([event]));
+    const one = await f.cli(['send', '--run', run, '--event', `@${file}`]);
+    assert.equal(one.error, undefined, JSON.stringify(one)); assert.notEqual(one.await, 'author');
+  } finally { f.cleanup(); }
+});
+
+test('event array of two exits 1 and records nothing', async () => {
+  const f = fixture();
+  try {
+    const { run, file, event } = await authorFrame(f);
+    const journal = path.join(run, 'events.jsonl'), before = fs.readFileSync(journal);
+    fs.writeFileSync(file, JSON.stringify([event, event]));
+    const two = await f.launch(['send', '--run', run, '--event', `@${file}`]).done;
+    assert.deepEqual([two.exit, two.stdout], [1, ''], two.stderr); assert.match(two.stderr, /event: expected one object, got array of 2/);
+    assert.deepEqual(fs.readFileSync(journal), before);
+  } finally { f.cleanup(); }
+});
+
+test('author reply file is written and sends unchanged', async () => {
+  const f = fixture();
+  try {
+    const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
+    assert.equal(frame.await, 'author', JSON.stringify(frame));
+    const named = path.resolve(f.repo, /--event @(\S+)$/.exec(frame.reply)![1]!);
+    assert.deepEqual(JSON.parse(fs.readFileSync(named, 'utf8')), frame.events![0]);
+    // A resend replays the same frame and keeps a host-edited reply.
+    fs.writeFileSync(named, JSON.stringify({ type: 'AUTHORED', path: frame.data['path'] }) + ' ');
+    assert.equal((await f.cli(['send', '--run', run])).reply, frame.reply);
+    assert.match(fs.readFileSync(named, 'utf8'), / $/);
+    const sent = await f.cli(['send', '--run', run, '--event', `@${named}`]);
+    assert.equal(sent.error, undefined, JSON.stringify(sent)); assert.notEqual(sent.await, 'author');
+  } finally { f.cleanup(); }
+});
+
+test('placeholder frame writes no reply file', async () => {
+  const f = fixture();
+  try {
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-stub', effort: 'low' } }] } } }));
+    const session = await f.initialize(); fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'prepared');
+    const frame = await f.begin('review', session, '', ['--kind', 'code']);
+    assert.equal(frame.await, 'native', JSON.stringify(frame));
+    assert.match(JSON.stringify(frame.events), /<host provider>/);
+    const named = path.resolve(f.repo, /--event @(\S+)$/.exec(frame.reply)![1]!);
+    assert.equal(fs.existsSync(path.dirname(named)), true); assert.equal(fs.existsSync(named), false);
+  } finally { f.cleanup(); }
+});

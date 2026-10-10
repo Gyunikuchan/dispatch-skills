@@ -360,18 +360,37 @@ function onRulings(c0: ReviewCtx, rulings: Readonly<Record<string, unknown>>): S
   return afterRulings(c);
 }
 
+const fixable = (finding: ReviewFinding): boolean => finding.scope === 'in' && isAccepted(finding) && (finding.severity !== 'CONSIDER' || (finding.fix?.paths.length ?? 0) > 0);
+
 function afterRulings(c: ReviewCtx): S {
   if (c.spec.mode === 'fix') {
-    const fixable = c.findings.filter((finding) => finding.round === c.round && finding.scope === 'in' && isAccepted(finding)
-      && (finding.severity !== 'CONSIDER' || (finding.fix?.paths.length ?? 0) > 0));
-    if (fixable.length) return enterFix(c, fixable, 'main');
+    const batch = c.findings.filter((finding) => finding.round === c.round && fixable(finding));
+    if (batch.length) return enterFix(c, batch, 'main');
   }
   return decideNext(c);
+}
+
+/**
+ * A target change met while consuming `RULINGS` is the fix in progress, not drift, when every ruling accepts and every
+ * changed path lies in the fix paths those rulings admit (the reviewed file for artifact reviews).
+ */
+function preRulingFix(c: ReviewCtx, rulings: Readonly<Record<string, unknown>>, notice: ChangeNotice): boolean {
+  // NOTE: a HEAD/comparison-identity change invalidates the reviewed baseline, so it always needs a drift decision.
+  if (c.spec.mode !== 'fix' || notice.reason === 'Comparison identity changed.' || !notice.paths.length || notice.pathCount !== notice.paths.length) return false;
+  const ruled = roundOpen(c).map((finding) => ({ finding, ruling: asRuling(rulings[finding.id]) }));
+  if (!ruled.length || ruled.some(({ ruling }) => ruling?.ruling !== 'accept')) return false;
+  const batch = ruled.map(({ finding, ruling }): ReviewFinding => ({ ...finding, status: 'accepted', ...(ruling?.fix ? { fix: ruling.fix } : {}) })).filter(fixable);
+  // NOTE: notices carry repo-relative forward-slash paths; rulings may spell them with `./` or backslashes.
+  const relative = (file: string) => file.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '');
+  const allowed = new Set(batch.flatMap((finding) => fixPaths(c, finding)).map(relative));
+  return notice.paths.every((file) => allowed.has(relative(file)));
 }
 
 // SECTION: Fix
 
 const locusPath = (c: ReviewCtx, locus: string): string => (c.spec.kind === 'code' ? locus.replace(/:L\d+.*$/, '') : c.spec.target);
+/** Paths a fix may touch: the ruled fix paths for code (else the locus file); the reviewed file for artifacts. */
+const fixPaths = (c: ReviewCtx, finding: ReviewFinding): string[] => (c.spec.kind === 'code' ? (finding.fix?.paths.length ? [...finding.fix.paths] : [locusPath(c, finding.locus)]) : [c.spec.target]);
 
 function enterFix(c: ReviewCtx, findings: readonly ReviewFinding[], pass: Pass): S {
   const ids = new Set(findings.map((finding) => finding.id));
@@ -620,13 +639,21 @@ export function stepReview(state: ReviewState, event: Event): S {
     if (event.type !== 'REVIEW_TARGET_CHECKED' || !answers(event, state.effectId)) return stay(state);
     if (event.result === 'changed') {
       if (!event.notice) return stay({ tag: 'failed', c: state.c, detail: 'Changed target lacks binding evidence.' });
+      if (!state.resolution && state.before.tag === 'rule' && state.pending.type === 'RULINGS' && preRulingFix(state.before.c, state.pending.rulings, event.notice)) {
+        // NOTE: the reviewed baseline stays bound, so the FIXES_APPLIED check re-admits these edits through the fix clusters' allowed paths.
+        return stepReviewUnchecked({ ...state.before, c: { ...state.before.c, counters: state.c.counters, reviewedRevision: event.notice.afterHash } }, state.pending);
+      }
       if (!state.resolution || state.resolution.afterHash !== event.notice.afterHash) return stay({ tag: 'change-resolution', c: state.c, check: state, notice: event.notice });
       if (state.resolution.action === 'refresh') {
         if (state.before.tag === 'fix' || state.before.tag === 'fix-verify') return refreshFix(state, state.before, event.manifestPath, event.notice.afterHash);
+        const round = state.before.tag === 'prepare' ? state.c.round : state.c.round + 1;
+        // NOTE: at the cap no later round reviews the refreshed content, so accepted findings stand and cap-round fixes exit as fixedUnreviewed; unruled or disputed findings escalate.
+        const settles = round > state.c.spec.cap && !state.c.findings.some((row) => row.status === 'open' || row.status === 'pending-rejection' || row.status === 'needs-user');
+        const superseded = ['open', 'accepted', 'pending-rejection', 'needs-user'].filter((status) => !settles || status !== 'accepted');
         const c = { ...state.c, targetManifest: event.manifestPath, priorManifest: event.manifestPath, reviewedRevision: event.notice.afterHash,
-          findings: state.c.findings.map((row): ReviewFinding => ['open', 'accepted', 'pending-rejection', 'needs-user'].includes(row.status) ? { ...row, status: 'superseded' } : row), carried: [] };
+          findings: state.c.findings.map((row): ReviewFinding => superseded.includes(row.status) ? { ...row, status: 'superseded' } : row), carried: [] };
         delete c.fixCandidate;
-        const round = state.before.tag === 'prepare' ? c.round : c.round + 1;
+        if (settles) return settleOrOptIn(c);
         if (round > c.spec.cap) return stay({ tag: 'escalated', c, escalation: { kind: 'deadlock', ids: c.findings.map((row) => row.id) } });
         return prepare(c, round, 'full', c.carried);
       }

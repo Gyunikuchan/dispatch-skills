@@ -6,6 +6,7 @@ import { stepRoot, rootMachine, type RootState } from '../../../skills/dispatch/
 import { beginPlan } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { beginRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { beginDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
+import type { ReviewFinding } from '../../../skills/dispatch/scripts/machines/types.ts';
 import { approvalState, RUN } from './fixtures/implement-recovery.ts';
 import { approval as designApproval } from './fixtures/design.ts';
 import { integration } from './fixtures/design-integration.ts';
@@ -47,12 +48,32 @@ for (const mode of ['report', 'fix'] as const) test(`review branch: ${mode} seco
   assert.equal(raced.state.tag, 'change-resolution');
   assert.deepEqual(stepReview(raced.state, { type: 'DECISION', kind: 'drift', answer }).state, raced.state);
 });
+const reviewFinding = (id: string, status: ReviewFinding['status'], extra: Partial<ReviewFinding> = {}): ReviewFinding => ({ id, severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L1', defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in', round: 1, status, ...extra });
+/** Answers a parked `RULINGS` target check `changed` after a bound refresh decision. */
+function capRefresh(c: ReturnType<typeof context>) {
+  const state: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check', resolution: { by: 'orchestrator', noticeId: notice.id, afterHash: notice.afterHash, action: 'refresh', rationale: 'Review changed content', evidenceIds: [] } };
+  return stepReview(state, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'refreshed.json', result: 'changed', notice });
+}
 for (const cap of [1, 3]) test(`review branch: refresh respects remaining rounds at cap ${cap}`, () => {
-  const c = context('plan', 'report', cap), before: ReviewState = { tag: 'rule', c };
-  const state: ReviewState = { tag: 'target-check', c, before, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check', resolution: { by: 'orchestrator', noticeId: notice.id, afterHash: notice.afterHash, action: 'refresh', rationale: 'Review changed content', evidenceIds: [] } };
-  const next = stepReview(state, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'refreshed.json', result: 'changed', notice });
-  assert.equal(next.state.tag, cap === 1 ? 'escalated' : 'prepare');
+  const next = capRefresh(context('plan', 'report', cap));
+  assert.equal(next.state.tag, cap === 1 ? 'settled' : 'prepare');
   if ('c' in next.state) assert.equal(next.state.c.spec.cap, cap);
+});
+test('review branch: refresh at the cap with a pending rejection escalates', () => {
+  const next = capRefresh({ ...context('plan', 'report', 1), findings: [reviewFinding('R1-F001', 'pending-rejection', { resolution: 'not a defect' })] });
+  assert.equal(next.state.tag, 'escalated');
+});
+test('review branch: cap refresh with unruled open findings escalates', () => {
+  const next = capRefresh({ ...context('code', 'fix', 1), findings: [reviewFinding('R1-F001', 'open')] });
+  assert.equal(next.state.tag, 'escalated');
+});
+test('review branch: cap refresh with only accepted findings settles', () => {
+  const c = { ...context('code', 'fix', 1), findings: [reviewFinding('R1-F001', 'fixed'), reviewFinding('R1-F002', 'accepted', { severity: 'CONSIDER', scope: 'adjacent' })], fixes: [{ id: 'R1-F001', round: 1 }] };
+  assert.equal(capRefresh(c).state.tag, 'decide-opt-in');
+  const next = capRefresh({ ...c, optInAsked: true });
+  assert.equal(next.state.tag, 'settled'); if (next.state.tag !== 'settled') return;
+  assert.deepEqual(next.state.exit.fixedUnreviewed, [{ id: 'R1-F001', round: 1 }]);
+  assert.deepEqual(next.state.c.findings.map((row) => row.status), ['fixed', 'accepted']);
 });
 test('review branch: bound empty preparation checks identity before terminal routing', () => {
   const c = context(), state: ReviewState = { tag: 'prepare', c: { ...c, effectId: 'prepare' } };
@@ -116,14 +137,21 @@ function stepChecked(from: Driven, event: Event, changed = false): Driven {
   if (!check || changed) return next;
   return reviewMachine.step(next.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'check.json', result: 'unchanged' });
 }
-function toFix(kind: 'code' | 'plan'): Driven {
+const fixPath = (kind: 'code' | 'plan') => (kind === 'code' ? 'src/a.ts' : 'x.plan.md');
+const acceptFix = (path: string) => ({ ruling: 'accept', fix: { affectedPaths: [path], dependsOn: [], verification: ['npm test'] } });
+/** Drives a fix review to `rule` with one open MUST finding per id. */
+function toRule(kind: 'code' | 'plan', ids: readonly string[] = ['R1-F001']): Driven {
   let driven: Driven = { state: reviewMachine.initial(), effects: [] };
   driven = stepChecked(driven, fixRun(kind));
   driven = stepChecked(driven, { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { manifestPath: 'm1.json' }, promptPaths: { 'codex[0]': 'p0' } });
   const locus = kind === 'code' ? 'src/a.ts:L3' : '§ Scope';
-  const finding = { id: 'R1-F001', severity: 'MUST', category: 'correctness', locus, defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in' };
-  driven = stepChecked(driven, { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding] as never });
-  driven = stepChecked(driven, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', fix: { affectedPaths: [kind === 'code' ? 'src/a.ts' : 'x.plan.md'], dependsOn: [], verification: ['npm test'] } } } });
+  const findings = ids.map((id) => ({ id, severity: 'MUST', category: 'correctness', locus, defect: `defect ${id}`, requiredChange: 'fix', sources: ['codex[0]'], scope: 'in' }));
+  driven = stepChecked(driven, { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: findings as never });
+  assert.equal(driven.state.tag, 'rule');
+  return driven;
+}
+function toFix(kind: 'code' | 'plan'): Driven {
+  const driven = stepChecked(toRule(kind), { type: 'RULINGS', rulings: { 'R1-F001': acceptFix(fixPath(kind)) } });
   assert.equal(driven.state.tag, 'fix');
   return driven;
 }
@@ -168,4 +196,40 @@ for (const kind of ['code', 'plan'] as const) test(`refresh after a fix reruns v
   assert.notEqual(rerun.id, first.id);
   assert.equal(statusOfFinding(stepChecked(refreshed, verifyResult(kind, first.id)).state), 'accepted', 'stale result ignored');
   assert.equal(statusOfFinding(stepChecked(refreshed, verifyResult(kind, rerun.id)).state), 'fixed');
+});
+
+// SECTION: Edits before RULINGS
+
+/** Sends `RULINGS` and answers its target check `changed` on `paths`. */
+function preRuling(kind: 'code' | 'plan', rulings: Readonly<Record<string, Readonly<Record<string, unknown>>>>, paths: readonly string[], reason = notice.reason): Driven {
+  const parked = stepChecked(toRule(kind, Object.keys(rulings)), { type: 'RULINGS', rulings }, true);
+  const check = parked.effects.find((effect) => effect.kind === 'check-review-target')!;
+  return reviewMachine.step(parked.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'edited.json', result: 'changed', notice: { ...notice, reason, paths: [...paths], pathCount: paths.length } });
+}
+
+for (const kind of ['code', 'plan'] as const) test(`pre-ruling edit inside accepted paths enters fix (${kind})`, () => {
+  const target = fixPath(kind);
+  const fix = preRuling(kind, { 'R1-F001': acceptFix(target) }, [target]);
+  assert.equal(fix.state.tag, 'fix');
+  assert.equal(reviewMachine.awaitOf(fix.state), 'fix');
+  assert.equal(statusOfFinding(fix.state), 'accepted');
+  const applied = reviewMachine.step(fix.state, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+  const check = applied.effects.find((effect) => effect.kind === 'check-review-target');
+  assert.ok(check?.kind === 'check-review-target');
+  assert.notEqual(check.manifestPath, 'edited.json', 'reviewed baseline stays bound');
+  const verifying = reviewMachine.step(applied.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'fixed.json', result: 'expected', notice: { ...notice, paths: [target], pathCount: 1, relevance: 'expected' } });
+  assert.equal(verifying.state.tag, 'fix-verify');
+});
+
+test('pre-ruling edit outside accepted paths needs a drift decision', () => {
+  assert.equal(preRuling('code', { 'R1-F001': acceptFix('src/a.ts') }, ['src/a.ts', 'src/b.ts']).state.tag, 'change-resolution');
+});
+
+test('pre-ruling edit with a comparison identity change needs a drift decision', () => {
+  assert.equal(preRuling('code', { 'R1-F001': acceptFix('src/a.ts') }, ['src/a.ts'], 'Comparison identity changed.').state.tag, 'change-resolution');
+});
+
+test('pre-ruling edit with a rejected ruling needs a drift decision', () => {
+  const rulings = { 'R1-F001': acceptFix('src/a.ts'), 'R1-F002': { ruling: 'reject', reason: 'Not a defect' } };
+  assert.equal(preRuling('code', rulings, ['src/a.ts']).state.tag, 'change-resolution');
 });

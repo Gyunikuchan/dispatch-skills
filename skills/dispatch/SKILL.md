@@ -14,10 +14,10 @@ Use `design` for multiple increments, `plan` for one coherent unit, `implement` 
 ## Run loop
 
 1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir`/`sessionId`; fallback identity: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
-2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON.
-3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as separate background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
+2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON.
+3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as separate background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Send one frame `events` object per `await` until `done`; eventless send resumes automation.
 
-Read the [verb guide](references/verbs/), [review rules](references/review-rules.md), and [providers](references/providers.md).
+Read [verb guide](references/verbs/), [review rules](references/review-rules.md), [providers](references/providers.md).
 
 ## Await author
 
@@ -25,11 +25,11 @@ Author at `data.path` with `data.template`; resolve defects against the governin
 
 ## Await native
 
-Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply once with `NATIVE_RESULTS` and attested slot fields ([fields](references/providers.md)).
+Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply with `NATIVE_RESULTS` and attested slot fields ([fields](references/providers.md)).
 
 ## Await rule
 
-Verify findings against code and outcome. Reply `RULINGS` with finding-id `ruling` and scoped `fix`; explain rejection/downgrade and follow [review rules](references/review-rules.md).
+Verify findings against code and outcome. Before editing targets, reply `RULINGS` with finding-id `ruling` (intent: `needs-user`, or `accept`/`reject` with user `quote`) and scoped `fix`; explain rejection/downgrade and follow [review rules](references/review-rules.md).
 
 ## Await fix
 
@@ -37,7 +37,7 @@ Apply accepted clusters within `affectedPaths` via frame `writer`, verify, and r
 
 ## Await write
 
-Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, host-assigned handle, and attested `model`/`effort`; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal and inform the user before resuming under the settled level; ask the user only when the orchestrator disagrees. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
+Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, host-assigned handle, and attested `model`/`effort`; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal, inform the user, then resume under the settled level. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
 
 ## Await evidence
 

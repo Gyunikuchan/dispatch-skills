@@ -120,7 +120,7 @@ test('SC2 heuristic H2 fires', () => {
   ] })), 'H2');
   assert.match(assertShape(escalated[0], 'review-convergence').evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
   const rounds = only(heuristics(facts({ reviews: [1, 2, 3, 4].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3 })) })), 'H2');
-  assert.match(assertShape(rounds[0], 'review-convergence').evidence, /code review: 4 rounds\./);
+  assert.match(assertShape(rounds[0], 'review-convergence').evidence, /code review: 4 rounds; cap reached \(3\)\./);
 });
 
 test('SC2 heuristic H3 fires', () => {
@@ -183,12 +183,29 @@ test('SC2 orders findings by severity', () => {
 test('heuristic precision H2 stays silent for rounds within the cap', () => {
   const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
   assert.deepEqual(only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'), [], 'three rounds within cap 3 is normal convergence');
-  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2')[0], 'review-convergence').evidence, /code review: 4 rounds\./);
+  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2')[0], 'review-convergence').evidence, /code review: 4 rounds; cap reached \(3\)\./);
   const reraised = [...rounds(2, { cap: 3 }), { phase: 'review', round: 3, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] }];
   assert.equal(only(heuristics(facts({ reviews: reraised })), 'H2').length, 1, 'a re-raise fires within the cap');
   const escalated = [{ phase: 'review', round: 1, accepted: 1, rejected: 0, cap: 3, escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } }];
   assert.equal(only(heuristics(facts({ reviews: escalated })), 'H2').length, 1, 'an escalation fires within the cap');
   assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
+});
+
+test('H2 cap reached wording', () => {
+  const capEnded = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
+    ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}) }));
+  const finding = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
+  assert.match(finding.evidence, /cap reached/);
+  assert.doesNotMatch(finding.evidence, /deadlock/);
+  assert.equal(finding.proposedFix, 'Raise the round cap or narrow scope.');
+});
+
+test('H2 keeps deadlock wording for a re-raise deadlock at the cap', () => {
+  const deadlocked = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
+    ...(round === 3 ? { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } } : {}) }));
+  const finding = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
+  assert.match(finding.evidence, /deadlock escalation \(R1-F001\)/);
+  assert.doesNotMatch(finding.evidence, /cap reached/);
 });
 
 test('heuristic precision screens the review cap as a bounded integer', () => {

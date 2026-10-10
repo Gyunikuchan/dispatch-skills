@@ -344,12 +344,15 @@ export function heuristics(run: RunFacts): Finding[] {
     const overCap = cap === undefined ? rounds >= T.reviewRounds : rounds > cap;
     if (!overCap && !reraised.length && !escalation) continue;
     const ids = (values: readonly string[]) => values.length ? ` (${values.slice(0, 5).join(', ')})` : '';
+    // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label, so it reports as the cap; a regression is always real.
+    const capReached = cap !== undefined && (escalation?.kind === 'deadlock' ? rounds >= cap && !reraised.length : !escalation && rounds > cap);
     const detail = [
       plural(rounds, 'round'),
+      ...(capReached ? [`cap reached (${cap})`] : []),
       ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
-      ...(escalation ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
+      ...(escalation && !capReached ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
     ];
-    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
+    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', capReached && !reraised.length ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;

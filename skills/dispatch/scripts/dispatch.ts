@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { designRevision, dispatchMachine, executionTopology, findDesignDelivery, findSettledPlan, previewReceipt, send, start } from './core/interpreter.ts';
-import { faultFrame } from './core/frame.ts';
+import { faultFrame, replyEvent } from './core/frame.ts';
 import { readJournal } from './core/journal.ts';
 import { nodePorts } from './core/ports.ts';
 import { STALL_HINT_MS } from './core/progress.ts';
@@ -115,6 +115,13 @@ function handlers(repo: string, orchestrator: ProviderId) {
     selfCheckCommand: (runDir, eventPath) => `node "${ENTRY}" send --run "${runDir}" --event "@${eventPath}" --dry-run`,
     checkpointCommand: (root, out, paths) => `node "${ENTRY}" checkpoint --root "${root}" --out "${out}" -- ${paths.map((file) => `"${file}"`).join(' ')}` });
 }
+/** Pre-writes a reply the host can send unchanged; the `wx` flag never overwrites a host-edited reply on replay or resend. */
+function writeReply(frame: Frame, runDir: string): void {
+  const event = replyEvent(frame.events), named = /--event @(.+)$/.exec(frame.reply)?.[1];
+  if (!event || !named || named === '<event-file>') return;
+  try { fs.writeFileSync(path.join(runDir, 'events', path.basename(named)), `${JSON.stringify(event)}\n`, { mode: 0o600, flag: 'wx' }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+}
 function emit(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
 function activate(dir: string, repo: string): string {
   try {
@@ -127,6 +134,7 @@ function publish(dir: string, repo: string): string {
   return activate(dir, repo);
 }
 function finish(frame: Frame, runDir: string): Frame {
+  writeReply(frame, runDir);
   if (frame.await !== 'done' || !frame.data['handoff']) return frame;
   const source = sessionDirOf(runDir);
   return { ...frame, run: path.join(source, '.state/runs', path.basename(runDir)).replaceAll('\\', '/'), data: { ...frame.data, handoff: source } };
@@ -219,7 +227,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     const repoData = started.data['repo'] as Record<string, unknown>, repo = String(repoData['root'] ?? findRepoRoot(process.cwd()) ?? process.cwd());
     const orchestrator = String(started.data['orchestrator']) as ProviderId;
     let rawEvent: string | undefined = textFlag(command, 'event');
-    if (rawEvent?.startsWith('@')) rawEvent = fs.readFileSync(path.resolve(rawEvent.slice(1)), 'utf8');
+    if (rawEvent?.startsWith('@')) {
+      const file = path.resolve(rawEvent.slice(1));
+      if (!fs.existsSync(file)) throw new UsageError(`event file not found: ${file}; copy one object from frame events into it`);
+      rawEvent = fs.readFileSync(file, 'utf8');
+    }
     const effectHandlers = handlers(repo, orchestrator);
     const result = await send({ runDir, machine: dispatchMachine, handlers: effectHandlers, ports, runRel: path.relative(repo, runDir).replaceAll('\\', '/'), ...(rawEvent !== undefined ? { rawEvent } : {}), dryRun: command.command === 'status' || command.flags['dry-run'] === true, refreshConfig: command.flags['refresh-config'] === true, ...diagnosticOptions,
       configSource: () => {
