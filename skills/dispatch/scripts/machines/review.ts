@@ -397,6 +397,8 @@ export function validateFixes(clusters: readonly FixCluster[], results: readonly
     if (seen.has(value['clusterId'])) return `event.clusters[${index}].clusterId: duplicate cluster ${value['clusterId']}`;
     seen.add(value['clusterId']);
     if (value['status'] !== undefined && value['status'] !== 'applied' && value['status'] !== 'failed') return `event.clusters[${index}].status: expected applied|failed`;
+    const withdrawError = validateWithdrawn(clusters.find((cluster) => cluster.clusterId === value['clusterId'])!, value, index);
+    if (withdrawError) return withdrawError;
   }
   const missing = clusters.find((cluster) => !results.some((value) => isRecord(value) && value['clusterId'] === cluster.clusterId));
   if (missing) return `event.clusters: missing result for ${missing.clusterId}`;
@@ -407,7 +409,29 @@ export function validateFixes(clusters: readonly FixCluster[], results: readonly
   return invalid ? `event.clusters: ${invalid.clusterId} cannot be applied while a prerequisite failed` : null;
 }
 
-function onFixesApplied(state: Extract<ReviewState, { tag: 'fix' }>, results: readonly unknown[]): S {
+/** A user reversal after acceptance withdraws a finding from an applied cluster; it is recorded as a user rejection, not a fix. */
+function validateWithdrawn(cluster: FixCluster, value: Row, index: number): string | null {
+  const withdrawn = value['withdrawn'];
+  if (withdrawn === undefined) return null;
+  if (!Array.isArray(withdrawn)) return `event.clusters[${index}].withdrawn: expected [{ findingId, quote }]`;
+  if (value['status'] === 'failed') return `event.clusters[${index}].withdrawn: expected status applied`;
+  for (const [entry, row] of withdrawn.entries()) {
+    if (!isRecord(row) || !isString(row['findingId']) || !cluster.findingIds.includes(row['findingId'])) return `event.clusters[${index}].withdrawn[${entry}].findingId: expected a finding of ${cluster.clusterId}`;
+    if (!isString(row['quote']) || !row['quote'].trim()) return `event.clusters[${index}].withdrawn[${entry}].quote: expected the user's words`;
+  }
+  return null;
+}
+
+function withdrawnQuotes(results: readonly unknown[]): Map<string, string> {
+  return new Map(results.flatMap((value) => isRecord(value) && Array.isArray(value['withdrawn']) ? value['withdrawn'].filter(isRecord).map((row) => [String(row['findingId']), String(row['quote'])] as const) : []));
+}
+
+function onFixesApplied(state0: Extract<ReviewState, { tag: 'fix' }>, results: readonly unknown[]): S {
+  const quotes = withdrawnQuotes(results);
+  const state = quotes.size ? { ...state0,
+    c: { ...state0.c, findings: state0.c.findings.map((finding): ReviewFinding => quotes.has(finding.id) ? { ...finding, status: 'rejected', resolution: `user: ${quotes.get(finding.id)}` } : finding) },
+    clusters: state0.clusters.map((cluster) => ({ ...cluster, findingIds: cluster.findingIds.filter((id) => !quotes.has(id)),
+      members: cluster.members.filter((member) => !quotes.has(member.id)).map((member) => ({ ...member, dependencies: member.dependencies.filter((id) => !quotes.has(id)) })) })) } : state0;
   const failedIds = new Set(results.filter((value) => isRecord(value) && value['status'] === 'failed').map((value) => (value as Row)['clusterId']));
   const failed = state.clusters.filter((cluster) => failedIds.has(cluster.clusterId));
   const retry = retryFailed(state.c, failed);

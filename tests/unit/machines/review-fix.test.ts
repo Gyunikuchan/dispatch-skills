@@ -72,6 +72,36 @@ test('bounded-recovery: mixed receipts verify successes once and retry only fail
   assert.deepEqual(drive(history, fix).state, state);
 });
 
+test('fix receipt: a withdrawn finding is recorded as a user rejection and its cluster sibling as fixed', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002')]), accept('R1-F001', 'R1-F002')]).state;
+  assert.equal(fix.tag === 'fix' && fix.clusters.length, 1);
+  if (fix.tag !== 'fix') return;
+  const clusterId = fix.clusters[0]!.clusterId;
+  const bad = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, status: 'failed', withdrawn: [{ findingId: 'R1-F002', quote: 'keep it' }] }] }], fix).state;
+  assert.deepEqual(bad, fix, 'withdrawal requires an applied cluster');
+  assert.deepEqual(drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, withdrawn: [{ findingId: 'R1-F009', quote: 'x' }] }] }], fix).state, fix);
+  assert.deepEqual(drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, withdrawn: [{ findingId: 'R1-F002', quote: ' ' }] }] }], fix).state, fix);
+  const state = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, status: 'applied', withdrawn: [{ findingId: 'R1-F002', quote: 'Go with recommended instead' }] }] }, verified(1)], fix).state;
+  const byId = Object.fromEntries('c' in state ? state.c.findings.map((row) => [row.id, row]) : []);
+  assert.equal(byId['R1-F001']?.status, 'fixed');
+  assert.equal(byId['R1-F002']?.status, 'rejected');
+  assert.equal(byId['R1-F002']?.resolution, 'user: Go with recommended instead');
+  assert.ok('c' in state && !state.c.fixes.some((row) => row.id === 'R1-F002'));
+});
+
+test('fix receipt: a withdrawn finding stays rejected through a failed verification and retry', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002')]), accept('R1-F001', 'R1-F002')]).state;
+  if (fix.tag !== 'fix') return assert.fail('fix');
+  const clusterId = fix.clusters[0]!.clusterId;
+  let state = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, withdrawn: [{ findingId: 'R1-F002', quote: 'Drop it' }] }] }, verified(1, 1)], fix).state;
+  assert.deepEqual(state.tag === 'fix' && state.clusters.flatMap((c) => c.members.map((m) => m.id)), ['R1-F001']);
+  state = drive([applied(state), verified(2)], state).state;
+  const byId = Object.fromEntries('c' in state ? state.c.findings.map((row) => [row.id, row]) : []);
+  assert.equal(byId['R1-F001']?.status, 'fixed');
+  assert.equal(byId['R1-F002']?.status, 'rejected');
+  assert.ok('c' in state && !state.c.fixes.some((row) => row.id === 'R1-F002'));
+});
+
 test('bounded-recovery: duplicate and unknown-status receipts are rejected', () => {
   const state = freshFix();
   const receipt = applied(state) as Extract<Event, { type: 'FIXES_APPLIED' }>;
