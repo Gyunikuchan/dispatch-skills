@@ -128,11 +128,11 @@ test('review-target accepts absolute fix paths when invoked in a repository subd
   assert.equal(result?.type, 'REVIEW_TARGET_CHECKED', JSON.stringify(result));
 });
 
-function regeneratedManifest(valid: boolean, index: { staged?: string[]; deleted?: string[] } = {}) {
+function regeneratedManifest(valid: boolean, index: { staged?: string[]; deleted?: string[] } = {}, metadata: Record<string, string> = {}) {
   const root = tempDir(), manifestPath = path.join(root, 'prior.json'), script = 'skill/scripts/a.ts', manifest = 'skill/skill-hashes.json';
   fs.mkdirSync(path.join(root, 'skill', 'scripts'), { recursive: true }); fs.writeFileSync(path.join(root, 'skill', 'SKILL.md'), 'skill'); fs.writeFileSync(path.join(root, script), 'fixed');
   const sha = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
-  fs.writeFileSync(path.join(root, manifest), JSON.stringify({ 'SKILL.md': sha('skill'), 'scripts/a.ts': sha(valid ? 'fixed' : 'before') }));
+  fs.writeFileSync(path.join(root, manifest), JSON.stringify({ ...metadata, 'SKILL.md': sha('skill'), 'scripts/a.ts': sha(valid ? 'fixed' : 'before') }));
   const prior: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: {}, working: { [script]: 'before', [manifest]: 'old' }, untracked: {} };
   fs.writeFileSync(manifestPath, JSON.stringify(prior));
   const git = { toplevel: async () => root, reviewSnapshot: async () => ({ ...prior, working: { [script]: 'fixed', [manifest]: 'new' } }), reviewDelta: async () => ({ paths: [script, manifest], staged: index.staged ?? [], unstaged: [script, manifest], untracked: [], deleted: index.deleted ?? [] }) } as unknown as Git;
@@ -141,6 +141,11 @@ function regeneratedManifest(valid: boolean, index: { staged?: string[]; deleted
 
 test('review-target admits a verified regenerated hash manifest for a ruled skill path', async () => {
   const result = (await regeneratedManifest(true))[0];
+  assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'expected', JSON.stringify(result));
+});
+
+test('review-target admits a verified hash manifest carrying $version metadata', async () => {
+  const result = (await regeneratedManifest(true, {}, { $version: '0.7.0' }))[0];
   assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'expected', JSON.stringify(result));
 });
 

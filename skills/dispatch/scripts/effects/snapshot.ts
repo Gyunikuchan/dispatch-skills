@@ -64,8 +64,10 @@ export function verifiedManifests(cwd: string, files: readonly string[], ports: 
       if (!safeFile(cwd, file, ports)) continue;
       const dir = path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file);
       const manifest: unknown = JSON.parse(ports.fs.readText(path.resolve(cwd, file)));
-      if (!record(manifest) || !Object.keys(manifest).length) continue;
-      const entries = Object.entries(manifest);
+      if (!record(manifest)) continue;
+      // `$`-prefixed keys carry build metadata (`$version`), not file hashes, matching integrity.ts.
+      const entries = Object.entries(manifest).filter(([key]) => !key.startsWith('$'));
+      if (!entries.length) continue;
       if (!entries.every(([relative, expected]) => safe(relative) && safeFile(cwd, dir ? `${dir}/${relative}` : relative, ports) && typeof expected === 'string' && /^[a-f0-9]{64}$/.test(expected)
         && ports.fs.hashFile(path.resolve(cwd, dir, relative)) === expected)) continue;
       const governed = [...(ports.fs.inspectPath(path.resolve(cwd, dir, 'SKILL.md'))?.kind === 'file' ? ['SKILL.md'] : []),
