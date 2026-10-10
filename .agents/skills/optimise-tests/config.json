@@ -1,0 +1,18 @@
+{
+  "units": [
+    "tests/unit/core",
+    "tests/unit/policy",
+    "tests/unit/domain",
+    "tests/unit/providers",
+    "tests/unit/lib",
+    "tests/unit/machines",
+    "tests/integration",
+    "tests/tooling",
+    "tests/e2e"
+  ],
+  "packetLineBudget": 2500,
+  "slowTestMs": 100,
+  "maxParallelWriters": 4,
+  "coverageInclude": ["skills/**/*.ts", "scripts/**/*.ts", ".agents/skills/**/scripts/**"],
+  "excludeFromWriters": ["tests/helpers/**", "tests/fixtures/**", "tests/unit/*/fixtures/**"]
+}
