@@ -2,13 +2,13 @@
 
 > **TL;DR:** The thin-driver plan run lost 10 m to a fixed review timeout, needed user quotes for minor intent findings, reported a false "raise the cap" diagnostic, and sent rule frames too large to read. Scale the timeout by level, let the orchestrator rule settled intent findings, stop H2 from flagging designed MUST continuation, and move rule-frame finding bodies into a file.
 >
-> **Parent:** `diagnostics-fixes.spec.md` · sha256:ed08f58e7ff0378203236632b20f7512e4b63677bc888110bd021553b3319f06
+> **Parent:** `diagnostics-fixes.spec.md` · sha256:93b8723a52f2b64079caa779727d1f2ce564490f4f23fcc3dffeb5e0d6e15241
 >
 > **Decide:** none
 >
 > **Risk:** low — four local changes in review machine, frame emission, diagnostics, and contract prose; no protocol type removed.
 >
-> **Scope:** `skills/dispatch/scripts/machines/review.ts`, `skills/dispatch/scripts/machines/types.ts`, `skills/dispatch/scripts/core/frame.ts`, `skills/dispatch/scripts/core/interpreter.ts`, `skills/dispatch/scripts/lib/session.ts`, `skills/dispatch/scripts/core/diagnostics.ts`, `skills/dispatch/scripts/domain/diagnostics.ts`, `skills/dispatch/references/review-rules.md`, `skills/dispatch/SKILL.md`, tests.
+> **Scope:** `skills/dispatch/scripts/machines/review.ts`, `skills/dispatch/scripts/machines/types.ts`, `skills/dispatch/scripts/core/frame.ts`, `skills/dispatch/scripts/core/interpreter.ts`, `skills/dispatch/scripts/lib/session.ts`, `skills/dispatch/scripts/domain/diagnostics.ts`, `skills/dispatch/references/review-rules.md`, `skills/dispatch/SKILL.md`, tests.
 
 ## Background
 
@@ -20,9 +20,9 @@
 ## Key Decisions & Context
 
 - **Orchestrator decides minor intent calls (user).** User: "if it's not a major decision that needs me, I'd prefer if the orchestrator can make the call". An intent finding may be ruled `accept`/`reject` with `by: "orchestrator"` and a nonblank `reason` that cites the settled decision. The user gate (`needs-user` or user `quote`) stays for changed intent, a new external dependency or runtime prerequisite, or discarded work. The driver cannot classify these triggers; the contract states them and the reason is journaled. Rejected: keeping the quote-only rule (one user round trip per minor finding).
-- **Timeout by level, not prompt size.** Defaults: `low` and `medium` 600 s, `high` 900 s, `xhigh` and `max` 1200 s. A positive run override `timeout` still wins. Rejected: provider session resume on timeout (larger change across providers; no evidence it finishes sooner); prompt-size scaling (no measured correlation).
-- **H2 treats MUST continuation as designed.** Rounds past the cap whose scope is `delta`, with no re-raised findings and no escalation, are normal convergence. Rejected: raising the cap (adds rounds).
-- **Findings file instead of inline bodies.** The driver writes the round's full open findings to `<run>/rule-<round>.findings.json` and the `rule` frame carries `findingsPath` plus `{id, severity, category, locus}` summaries. The suggested `RULINGS` event stays (ids only, no bodies). Rejected: truncation markers (loses findings silently).
+- **Timeout by level, not prompt size.** Defaults: `low` and `medium` 600 s, `high` 1200 s, `xhigh` and `max` 1800 s (user). A positive run override `timeout` still wins. Rejected: provider session resume on timeout (larger change across providers; no evidence it finishes sooner); prompt-size scaling (no measured correlation).
+- **H2 treats MUST continuation as designed (user: the extra round for an un-downgraded MUST stays; only the report changes).** Rounds past the cap whose scope is `delta`, with no re-raised findings and no escalation, are normal convergence. Rejected: raising the cap (adds rounds).
+- **Findings file instead of inline bodies.** The driver writes the round's full open findings to one per-run `<run>/rule.findings.json`, overwritten each round (user: fewest files; journal and Review Findings keep earlier rounds) and the `rule` frame carries `findingsPath` plus `{id, severity, category, locus}` summaries. The suggested `RULINGS` event stays (ids only, no bodies). Rejected: truncation markers (loses findings silently).
 - **Verify-filter finding (F4) is already planned** in the thin-driver plan T5; not repeated here.
 
 ## User Review Required
@@ -41,7 +41,7 @@ None.
 - Criteria: SC1, SC2
 
 - #### [MODIFY] skills/dispatch/scripts/machines/review.ts
-  - Changes: Replace the single `DEFAULT_TIMEOUT_MS` use at L50 with `defaultTimeoutMs(level)` returning 600_000 (`low`, `medium`), 900_000 (`high`), 1_200_000 (`xhigh`, `max`); keep `DEFAULT_TIMEOUT_MS` (600_000) for the L901 report-only spec. In `validateRulings`, accept an intent `accept`/`reject` when `quote` is present (user) or when `by === 'orchestrator'` and `reason` is nonblank; otherwise return `event.rulings.<id>.ruling: expected needs-user, accept|reject with the user's quote, or accept|reject by orchestrator with a reason, for an intent finding`. In `onRulings`, record `resolution: orchestrator: <reason>` for the orchestrator path.
+  - Changes: Replace the single `DEFAULT_TIMEOUT_MS` use at L50 with `defaultTimeoutMs(level)` returning 600_000 (`low`, `medium`), 1_200_000 (`high`), 1_800_000 (`xhigh`, `max`); keep `DEFAULT_TIMEOUT_MS` (600_000) for the L901 report-only spec. In `validateRulings`, accept an intent `accept`/`reject` when `quote` is present (user) or when `by === 'orchestrator'` and `reason` is nonblank; otherwise return `event.rulings.<id>.ruling: expected needs-user, accept|reject with the user's quote, or accept|reject by orchestrator with a reason, for an intent finding`. In `onRulings`, record `resolution: orchestrator: <reason>` for the orchestrator path.
   - Invariants: user-quote and `needs-user` paths unchanged; non-intent rulings unchanged; positive run override `timeout` wins.
 - #### [MODIFY] skills/dispatch/scripts/machines/types.ts
   - Changes: Add optional `by?: 'orchestrator'` to `Ruling`.
@@ -54,13 +54,13 @@ None.
 - Outcome: Hosts read a short rule frame and open one file for finding bodies; no finding is lost to a truncated line read.
 - Prerequisites: T1
 - Criteria: SC3
-- Constraints: T1 edits `machines/review.ts` first; this task does not edit it.
+- Constraints: `reviewMachine.project` keeps projecting full findings (pure machine tests unchanged); the interpreter alone rewrites the emitted frame. `projectFrame` reads `category` before the rewrite, so the intent hint is unaffected.
 
 - #### [MODIFY] skills/dispatch/scripts/lib/session.ts
-  - Changes: Add `runPaths(runDir).ruleFindings(round)` → `<runDir>/rule-<round>.findings.json`.
+  - Changes: Add `runPaths(runDir).ruleFindings()` → `<runDir>/rule.findings.json`.
 - #### [MODIFY] skills/dispatch/scripts/core/interpreter.ts
-  - Changes: Add `withRuleFindings(ports, runDir, runRel, frame)`: when `frame.await === 'rule'`, write `data.findings` (full) to `ruleFindings(data.round)` atomically, then replace `data.findings` with `{id, severity, category, locus}` rows and add `data.findingsPath` (run-relative, forward slashes). Apply it to every frame return path at L365, L375, L398, L485, L487, and L634.
-  - Invariants: journal and state unchanged; replay rewrites the same file content; non-rule frames unchanged.
+  - Changes: Add `withRuleFindings(ports, runDir, runRel, frame)`: when `frame.await === 'rule'`, write `data.findings` (full) to `ruleFindings()` atomically, overwriting the prior round, then replace `data.findings` with `{id, severity, category, locus}` rows and add `data.findingsPath` (run-relative, forward slashes). Apply it to every live frame return path at L365, L375, L398, L485, and L634. Dry-run (L487 and `--dry-run`) writes nothing: it summarizes rows and sets `findingsPath` only when the file already exists.
+  - Invariants: journal and state unchanged; replay rewrites the same file content; non-rule frames unchanged; dry-run appends and writes nothing.
 - #### [MODIFY] skills/dispatch/scripts/core/frame.ts
   - Changes: The intent hint at L21 names both shapes: `{ ruling: accept|reject, quote: <user words> }` and `{ ruling: accept|reject, by: orchestrator, reason: <settled decision> }`. The `RULINGS` example at L55 reads only `id`, `category`, `locus` (works on summaries).
 - #### [MODIFY] tests/unit/core/frame.test.ts
@@ -73,10 +73,8 @@ None.
 - Prerequisites: none
 - Criteria: SC4
 
-- #### [MODIFY] skills/dispatch/scripts/core/diagnostics.ts
-  - Changes: Record each review round's `scope` (`full` | `delta` | `disputes-only`) on `ReviewFacts` from the round's prepare/wave journal data; omit when absent.
 - #### [MODIFY] skills/dispatch/scripts/domain/diagnostics.ts
-  - Changes: Add optional `scope` to `ReviewFacts` and parse it in the report reader (L279-289). In H2, when every round past the cap has `scope: 'delta'`, no re-raised findings and no escalation, skip the phase. Otherwise keep current output.
+  - Changes: In H2, skip a phase whose rounds exceed the cap when it has no re-raised findings and no escalation: `policy/rounds.ts:51` makes every round past the cap `delta` or `disputes-only`, so such rounds are the designed MUST continuation and need no journaled scope.
   - Invariants: existing H2 cases (no cap, re-raise, regression, deadlock) unchanged.
 - #### [MODIFY] tests/unit/domain/diagnostics-report.test.ts
   - Changes: Test `h2 skips must continuation delta rounds past cap`.
@@ -92,10 +90,10 @@ None.
   - Changes: "Await rule": read bodies from `data.findingsPath`; intent: `needs-user`, user `quote`, or `by:"orchestrator"` with settled-decision reason; user gate for changed intent, new dependency, or discarded work. Keep the section within one more line.
 - #### [GENERATED] skills/dispatch/skill-hashes.json
   - Command: `npm run hashes`
-  - Inputs: skills/dispatch/SKILL.md, skills/dispatch/references/review-rules.md, skills/dispatch/scripts/machines/review.ts, skills/dispatch/scripts/machines/types.ts, skills/dispatch/scripts/core/frame.ts, skills/dispatch/scripts/core/interpreter.ts, skills/dispatch/scripts/lib/session.ts, skills/dispatch/scripts/core/diagnostics.ts, skills/dispatch/scripts/domain/diagnostics.ts
+  - Inputs: skills/dispatch/SKILL.md, skills/dispatch/references/review-rules.md, skills/dispatch/scripts/machines/review.ts, skills/dispatch/scripts/machines/types.ts, skills/dispatch/scripts/core/frame.ts, skills/dispatch/scripts/core/interpreter.ts, skills/dispatch/scripts/lib/session.ts, skills/dispatch/scripts/domain/diagnostics.ts
 
 ## Success Criteria
-- [SC1] Review roster `timeoutMs` defaults by level (600/600/900/1200/1200 s); positive run override wins.
+- [SC1] Review roster `timeoutMs` defaults by level (600/600/1200/1800/1800 s); positive run override wins.
   - Changes: skills/dispatch/scripts/machines/review.ts, tests/unit/machines/review-rounds.test.ts
   - Verify: `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-name-pattern="scales default review timeout by level" tests/unit/machines/review-rounds.test.ts`
   - Evidence: red
@@ -111,7 +109,7 @@ None.
   - Evidence: red
   - Test rationale: Checks the emitted frame and file through the interpreter; fails today because bodies stay inline.
 - [SC4] H2 emits no finding for MUST-continuation delta rounds past the cap; existing H2 tests pass.
-  - Changes: skills/dispatch/scripts/core/diagnostics.ts, skills/dispatch/scripts/domain/diagnostics.ts, tests/unit/domain/diagnostics-report.test.ts
+  - Changes: skills/dispatch/scripts/domain/diagnostics.ts, tests/unit/domain/diagnostics-report.test.ts
   - Verify: `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-name-pattern="h2" tests/unit/domain/diagnostics-report.test.ts`
   - Evidence: red
   - Test rationale: Feeds a capped run with a delta round past the cap into the report; fails today because H2 reports cap reached.
@@ -130,10 +128,10 @@ None.
 ### Automated Tests
 - None: each criterion Verify covers it.
 ### Manual Verification
-- Run `dispatch.ts send --dry-run` against a review run at `rule` and confirm the frame line is short and `findingsPath` opens.
+- Reach `rule` in a live review run; confirm the frame line is short and `findingsPath` opens. Rerun `send --dry-run`; confirm no file changes.
 
 ## Out of Scope
-- Verify-filter rule for plan-named tests (thin-driver plan T5).
+- Verify-filter rule for plan-named tests: deferred (user); thin-driver plan T5 covers it.
 - Provider session resume after timeout.
 - Merging the 16 internal event types (thin-driver follow-up).
 - Re-review of thin-driver plan round-4 `fixedUnreviewed` fixes.
@@ -146,6 +144,59 @@ Hosts that parse `data.findings` bodies on `rule` frames must read `findingsPath
 ### Review 20261011T0818Z-fix-verified-dispatch-diagnostics-findin/001-plan/plan.review
 
 #### Round 1 — full
+
+- Reviewers: agy[0] gemini-3.8-flash (low)
+- No findings.
+
+### Review 20261011T0818Z-fix-verified-dispatch-diagnostics-findin/002-plan-review/review
+
+#### Round 1 — full
+
+- Reviewers: agy[0] gemini-3.8-flash (low)
+
+##### R1-F001
+
+- Status: **[Accepted]**
+- Severity: MUST
+- Sources: agy[0]
+- Location: § T2 — Rule frame: findings file and summaries
+- Category: dependency-graph
+- Finding: T2 specifies in its task header 'Constraints: T1 edits machines/review.ts first; this task does not edit it.' However, T2 requires the rule frame data to contain summaries {id, severity, category, locus} and findingsPath instead of full finding bodies (skills/dispatch/scripts/machines/review.ts:781), while projectFrame in skills/dispatch/scripts/core/frame.ts:21 inspects rows(data['findings']) to emit intentRuling. If machines/review.ts is not modified to retain full finding bodies for interpreter serialization, or if machines/review.ts continues projecting full finding bodies without T2 touching it, machines/review.ts and core/interpreter.ts have conflicting ownership of data.findings: either machines/review.ts emits full bodies and core/interpreter.ts mutates the projected frame data in-flight (leaving projectFrame in core/frame.ts still seeing full bodies before interpreter projection, but breaking pure machine tests that check reviewMachine.project(state)), or machines/review.ts must be changed in T2/T1 to coordinate who produces the summary rows and who writes rule.findings.json.
+- Required change: Clarify interface ownership between reviewMachine.project(state) and interpreter.withRuleFindings: if machines/review.ts is modified, remove the artificial 'this task does not edit it' constraint or merge the review machine contract change into T1/T2; if interpreter.ts adapts the frame at interpreter boundary, document that reviewMachine.project continues producing full findings while withRuleFindings replaces them on the emitted frame.
+
+##### R1-F002
+
+- Status: **[Accepted]**
+- Severity: SHOULD
+- Sources: agy[0]
+- Location: § T2 — Rule frame: findings file and summaries
+- Category: edge-case
+- Finding: In skills/dispatch/scripts/core/interpreter.ts:487, dry-run send with rawEvent === undefined executes hint(projectFrame(...)) and returns without running effects or writes. T2 specifies that withRuleFindings writes data.findings to ruleFindings() atomically on every frame return path (citing L365, L375, L398, L485, L487, L634). If dryRun executes withRuleFindings and writes <runDir>/rule.findings.json, dry-run violates its core contract ('dry-run validates and appends nothing' / read-only property tested in tests/unit/core/interpreter.test.ts:68-94). If dry-run skips writing the file, findingsPath in dry-run frames will point to a non-existent file unless handled explicitly.
+- Required change: Specify dry-run behavior for withRuleFindings: either write rule.findings.json only during live sends under the run lock and omit writing during dry-run (while still summarizing frame rows or referencing the existing file), or explicitly define dry-run semantics for findingsPath.
+
+##### R1-F003
+
+- Status: **[Accepted]**
+- Severity: SHOULD
+- Sources: agy[0]
+- Location: § T3 — Diagnostics: H2 ignores designed MUST continuation
+- Category: state-machine
+- Finding: In skills/dispatch/scripts/core/diagnostics.ts:165-171, facts.reviews.push({ phase, round, accepted: 0, rejected: 0 }) is triggered by WAVE_DONE. In skills/dispatch/scripts/machines/review.ts:216, round scope is emitted only on the prepare-review effect, but the journal does not log effect payloads—only EFFECT_STARTED and REVIEW_PREPARED (skills/dispatch/scripts/machines/review.ts:19 / tests/unit/machines/review-rounds.test.ts:19). Neither WAVE_DONE nor REVIEW_PREPARED currently journals scope. T3 states 'Record each review round's scope from the round's prepare/wave journal data' without planning a modification to review.ts to include scope in REVIEW_PREPARED or WAVE_DONE payloads.
+- Required change: Update T1 or T3 to add scope to REVIEW_PREPARED (or WAVE_DONE) in skills/dispatch/scripts/machines/review.ts, or record scope during review convergence/settle facts in core/diagnostics.ts.
+
+##### R1-F004
+
+- Status: **[Rejected — Closed by Reviewer]**
+- Severity: SHOULD
+- Sources: agy[0]
+- Location: § SC3
+- Category: verification
+- Finding: SC3 verify command is node --test ... --test-name-pattern="rule frame" tests/unit/core/frame.test.ts tests/unit/core/interpreter.test.ts. Because node's test runner matches --test-name-pattern in each specified file, this command requires both test files to contain a test whose name matches /rule frame/. Currently tests/unit/core/interpreter.test.ts has no test matching rule frame, and when new tests are added, any slight name discrepancy between the two files will cause the runner to fail or skip tests in one of the files.
+- Required change: Ensure SC3 specifies matching test names in both test files (e.g. rule frame ...) or separates verification into two distinct commands/criteria.
+- Ruling:
+  Both planned tests already match: frame.test.ts 'rule frame intent hint names orchestrator ruling' and interpreter.test.ts 'rule frame moves finding bodies to findings file'; each file has a match.  
+
+#### Round 2 — disputes-only
 
 - Reviewers: agy[0] gemini-3.8-flash (low)
 - No findings.
