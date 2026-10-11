@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-11
+
+- Runs recover more reliably after interruptions or file drift, keeping applied fixes and settled review rulings.
+- Opt-in diagnostics now produce a readable retrospective of each run.
+- Plans, deliverables, and review history are easier to read, with complete inline reviews.
+- Fixed Codex runs outside Git repositories, broken skill symlinks, and runs that could not finish after user waivers.
+
 ## [0.7.0] - 2026-10-06
 
 - Rebuilt `dispatch` on a state-machine driver, so runs recover from interruptions more reliably and fix or revise plans without starting over.
