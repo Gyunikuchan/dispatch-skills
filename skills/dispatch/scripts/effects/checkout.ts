@@ -1,5 +1,5 @@
 // `checkout`: driver-owned private Git worktrees under `<runDir>/wt/`. Every op is idempotent on retry; only
-// `deliver` writes the caller checkout, and it refuses paths the caller changed since the captured baseline.
+// `deliver` and `trim` write the caller checkout, and both refuse paths the caller changed since the driver bound them.
 
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -19,6 +19,9 @@ export type CheckoutDeps = {
 const COMMIT = ['-c', 'user.name=dispatch', '-c', 'user.email=dispatch@localhost', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=.dispatch-no-hooks'];
 export const BASELINE_TRAILER = 'Dispatch-Baseline:';
 export const CANDIDATE_TRAILER = 'Dispatch-Candidate:';
+export const RESOLVES_TRAILER = 'Dispatch-Resolves:';
+// NOTE: only whole-line start/end markers count; a bare `=======` line is valid Markdown and test-fixture content.
+const CONFLICT_MARKER = /^(?:<{7}|>{7})(?: |$)/m;
 
 const text = (value: unknown): string => typeof value === 'string' ? value : '';
 const bindingHash = (value: unknown): string => crypto.createHash('sha256').update(stableValue(value)).digest('hex');
@@ -81,9 +84,24 @@ function prepare(deps: CheckoutDeps, ports: Ports, root: string, input: Row): vo
 }
 
 /** Discards uncommitted leftovers (verification output, an interrupted cherry-pick) at the recorded head. */
+// NOTE: `reset --hard` also removes CHERRY_PICK_HEAD, so a discard aborts an in-progress cherry-pick.
 async function discard(ports: Ports, root: string, revision: string): Promise<void> {
   await ports.git.run(['reset', '-q', '--hard', revision], root);
   await ports.git.run(['clean', '-q', '-fd'], root);
+}
+
+async function pickHead(ports: Ports, root: string): Promise<string> {
+  return (await ports.git.run(['rev-parse', '-q', '--verify', 'CHERRY_PICK_HEAD'], root).catch(() => '')).trim();
+}
+async function unmerged(ports: Ports, root: string): Promise<string[]> {
+  return [...new Set(split(await ports.git.run(['diff', '--name-only', '--diff-filter=U', '-z'], root).catch(() => '')))].sort();
+}
+
+/** True when the path or an ancestor is not a plain file/directory inside the caller checkout (a link would redirect a write or delete). */
+function redirected(deps: CheckoutDeps, ports: Ports, callerRoot: string, file: string): boolean {
+  const info = ports.fs.inspectPath(path.join(deps.cwd, file)), parts = file.split('/');
+  const ancestors = parts.slice(0, -1).map((_, index) => ports.fs.inspectPath(path.join(deps.cwd, ...parts.slice(0, index + 1))));
+  return (!!info && info.kind !== 'file') || ancestors.some((item) => item && (item.kind !== 'directory' || !item.realPath || path.relative(callerRoot, item.realPath).startsWith('..') || path.isAbsolute(path.relative(callerRoot, item.realPath))));
 }
 
 // SECTION: Ops
@@ -172,16 +190,85 @@ async function integrate(ports: Ports, root: string, input: Row): Promise<Row> {
     if (log.includes(`${CANDIDATE_TRAILER} ${candidate}`)) return { revision: current, conflict: false, reused: true };
     throw new Error(`Integration head ${current} moved from the recorded revision ${expected}.`);
   }
+  // NOTE: a kept conflict for this candidate holds the orchestrator's in-progress resolution; never reset it on retry.
+  if (await pickHead(ports, root) === candidate) return { revision: expected, conflict: true, paths: await unmerged(ports, root), reused: true };
   await discard(ports, root, expected);
   try {
     await ports.git.run([...COMMIT, 'cherry-pick', '--no-commit', candidate], root);
   } catch (error) {
-    const conflicts = split(await ports.git.run(['diff', '--name-only', '--diff-filter=U', '-z'], root).catch(() => ''));
-    await discard(ports, root, expected);
-    return { revision: expected, conflict: true, paths: conflicts, detail: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+    const detail = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    const conflicts = await unmerged(ports, root);
+    if (!conflicts.length) { await discard(ports, root, expected); throw new Error(`Cherry-pick of ${candidate} failed without conflicts: ${detail}`); }
+    // NOTE: `cherry-pick --no-commit` records no CHERRY_PICK_HEAD; record it so a retry or crash recovery finds this conflict.
+    await ports.git.run(['update-ref', 'CHERRY_PICK_HEAD', candidate], root);
+    return { revision: expected, conflict: true, paths: conflicts, detail };
   }
   const revision = await commit(ports, root, `dispatch integrate ${text(input['task'])}\n\n${CANDIDATE_TRAILER} ${candidate}`);
   return { revision, conflict: false };
+}
+
+/**
+ * Commits the orchestrator's conflict resolution in the integration worktree. Attempt 1 starts at the pre-pick head with
+ * the candidate's cherry-pick in progress; a repair attempt starts at the prior resolution. Refusals leave the tree as is.
+ */
+async function resolve(ports: Ports, root: string, input: Row): Promise<Row> {
+  const candidate = text(input['candidate']), expected = text(input['expected']), attempt = input['attempt'];
+  // NOTE: `base` is the pre-pick head; scope covers the whole retained delta from it, not only this attempt's.
+  const base = text(input['base']) || expected;
+  const tasks = strings(input['tasks']), permitted = new Set(strings(input['permitted']));
+  if (!candidate || !expected || !Number.isSafeInteger(attempt) || Number(attempt) < 1 || !tasks.length || tasks.some((task) => !task.trim() || /[\s,]/.test(task)) || [...permitted].some((file) => !safe(file))) {
+    throw new Error('resolve requires a candidate, an expected head, a positive attempt, task ids, and repository-relative permitted paths');
+  }
+  const resolves = `${RESOLVES_TRAILER} ${tasks.join(',')} attempt ${Number(attempt)}`;
+  const carries = (message: string, trailer: string) => message.split(/\r?\n/).some((line) => line.trim() === trailer);
+  const current = await head(ports, root);
+  if (current !== expected) {
+    // Replay of a completed attempt: the head is this attempt's commit directly on `expected` and nothing changed since.
+    const message = await ports.git.run(['log', '-1', '--format=%B', current], root);
+    const parent = (await ports.git.run(['rev-parse', `${current}^`], root).catch(() => '')).trim();
+    if (parent === expected && carries(message, resolves) && carries(message, `${CANDIDATE_TRAILER} ${candidate}`) && await clean(ports, root)) {
+      const paths = split(await ports.git.run(['diff', '--name-only', '-z', expected, current, '--'], root)).sort();
+      // NOTE: a replay must not accept a commit made under a wider permitted set than this input carries.
+      const retained = split(await ports.git.run(['diff', '--name-only', '-z', base, current, '--'], root)).sort();
+      const outside = [...new Set([...paths, ...retained])].filter((file) => !safe(file) || !permitted.has(file));
+      if (outside.length) throw new Error(`Recovered resolution ${current} changes paths outside the permitted set: ${outside.join(', ')}.`);
+      return { revision: current, paths, retained, reused: true };
+    }
+    throw new Error(`Integration head ${current} moved from the resolution input ${expected}.`);
+  }
+  if (Number(attempt) === 1) {
+    if (await pickHead(ports, root) !== candidate) throw new Error(`No cherry-pick of ${candidate} is in progress at ${expected}.`);
+  } else if (!carries(await ports.git.run(['log', '-1', '--format=%B', expected], root), `${CANDIDATE_TRAILER} ${candidate}`)) {
+    throw new Error(`Repair input ${expected} is not a resolution of ${candidate}.`);
+  }
+  const refuse = (refused: string, paths: readonly string[], detail: string): Row => ({ revision: expected, refused, paths: [...paths].sort(), detail });
+  const conflicted = await unmerged(ports, root);
+  // NOTE: include staged changes: a staged blob whose working file was restored would otherwise reach the commit unscanned.
+  const tracked = split(await ports.git.run(['diff', '--name-only', '-z', expected, '--'], root));
+  const staged = split(await ports.git.run(['diff', '--cached', '--name-only', '-z', expected, '--'], root));
+  const untracked = split(await ports.git.run(['ls-files', '--others', '--exclude-standard', '-z'], root));
+  const changed = [...new Set([...tracked, ...staged, ...untracked, ...conflicted])].sort();
+  // NOTE: scan every changed file, not only unmerged entries: repair attempts have none, and staging drops a file from them.
+  const marked = changed.filter((file) => {
+    if (!safe(file)) return false;
+    const absolute = path.join(root, file);
+    return ports.fs.inspectPath(absolute)?.kind === 'file' && CONFLICT_MARKER.test(ports.fs.readText(absolute));
+  });
+  if (marked.length) return refuse('markers', marked, 'conflict markers remain in resolution files');
+  const prior = base === expected ? [] : split(await ports.git.run(['diff', '--name-only', '-z', base, expected, '--'], root));
+  const outside = [...new Set([...changed, ...prior])].filter((file) => !safe(file) || !permitted.has(file));
+  // NOTE: `retained` names out-of-scope paths earlier attempts already committed; only those need a discard, working-tree paths stay repairable.
+  if (outside.length) return { ...refuse('out-of-scope', outside, 'resolution retains paths outside the permitted set'), retained: prior.filter((file) => outside.includes(file)).sort() };
+  if (!changed.length) return refuse('empty', [], 'resolution has no changes against the expected head');
+  // NOTE: stage working content for every inspected path so the commit equals the scanned, verified working tree.
+  await ports.git.run(['add', '-A', '--', ...changed], root);
+  const remaining = await unmerged(ports, root);
+  if (remaining.length) return refuse('unmerged', remaining, 'unmerged index entries remain after staging the resolution');
+  if (!split(await ports.git.run(['diff', '--cached', '--name-only', '-z', expected, '--'], root)).length) return refuse('empty', [], 'resolution has no changes against the expected head');
+  await ports.git.run([...COMMIT, 'commit', '-q', '--no-verify', '-m', `dispatch resolve ${tasks.join(',')}\n\n${CANDIDATE_TRAILER} ${candidate}\n${resolves}`], root);
+  const revision = await head(ports, root);
+  const paths = split(await ports.git.run(['diff', '--name-only', '-z', expected, revision, '--'], root)).sort();
+  return { revision, paths, retained: split(await ports.git.run(['diff', '--name-only', '-z', base, revision, '--'], root)).sort() };
 }
 
 async function entry(ports: Ports, cwd: string, revision: string, file: string): Promise<{ mode: string; blob: string } | null> {
@@ -198,17 +285,18 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
   const callerRoot = ports.fs.inspectPath(deps.cwd)?.realPath ?? path.resolve(deps.cwd);
   const fileModes = (await ports.git.run(['config', '--bool', '--default=true', 'core.filemode'], deps.cwd)).trim() === 'true';
   const plan: { file: string; action: 'write' | 'delete' | 'already' }[] = [], conflicts: string[] = [];
+  // Delivered blob ids bind a later transient trim to the exact content the driver verified.
+  const blobs: Record<string, string> = {};
   for (const file of files) {
     if (!safe(file)) throw new Error(`Unsafe delivery path: ${file}`);
-    const absolute = path.join(deps.cwd, file), info = ports.fs.inspectPath(absolute);
+    const info = ports.fs.inspectPath(path.join(deps.cwd, file));
     // NOTE: a linked or replaced ancestor would redirect the write outside the caller checkout.
-    const parts = file.split('/');
-    const ancestors = parts.slice(0, -1).map((_, index) => ports.fs.inspectPath(path.join(deps.cwd, ...parts.slice(0, index + 1))));
-    if ((info && info.kind !== 'file') || ancestors.some((item) => item && (item.kind !== 'directory' || !item.realPath || path.relative(callerRoot, item.realPath).startsWith('..') || path.isAbsolute(path.relative(callerRoot, item.realPath))))) { conflicts.push(file); continue; }
+    if (redirected(deps, ports, callerRoot, file)) { conflicts.push(file); continue; }
     const caller = info ? (await ports.git.run(['hash-object', '--', file], deps.cwd)).trim() : null;
     const before = await entry(ports, root, base, file), after = await entry(ports, root, revision, file);
     const mode = info && fileModes ? info.mode & 0o111 ? '100755' : '100644' : null;
     const matches = (entry: { mode: string; blob: string } | null) => caller === (entry?.blob ?? null) && (!fileModes || (entry?.mode ?? null) === mode);
+    if (after) blobs[file] = after.blob;
     if (matches(after)) plan.push({ file, action: 'already' });
     else if (matches(before)) plan.push({ file, action: after === null ? 'delete' : 'write' });
     else conflicts.push(file);
@@ -219,7 +307,45 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
     if (item.action === 'write') copy(ports, path.join(root, item.file), target);
     else if (item.action === 'delete') ports.fs.remove(target);
   }
-  return { conflicts: [], transferred: plan.filter((item) => item.action !== 'already').map((item) => item.file), already: plan.filter((item) => item.action === 'already').map((item) => item.file) };
+  return { conflicts: [], transferred: plan.filter((item) => item.action !== 'already').map((item) => item.file), already: plan.filter((item) => item.action === 'already').map((item) => item.file), blobs };
+}
+
+/**
+ * Deletes bound transient test files from the caller checkout. `hash` is the Git blob id (`git hash-object`) the driver
+ * bound; every file is checked before any deletion, and an absent file counts as already trimmed. With `observe` it only
+ * reports each listed caller file's blob id (null when absent), so the driver can bind trim and durable files at the review boundary.
+ */
+async function trim(deps: CheckoutDeps, ports: Ports, input: Row): Promise<Row> {
+  if (input['observe'] !== undefined) {
+    const files = strings(input['observe']);
+    if (!files.length || files.some((file) => !safe(file))) throw new Error('trim observe requires repository-relative paths');
+    const callerRoot = ports.fs.inspectPath(deps.cwd)?.realPath ?? path.resolve(deps.cwd);
+    const observed: Record<string, string | null> = {};
+    for (const file of files) {
+      if (redirected(deps, ports, callerRoot, file)) throw new Error(`Observed path is redirected: ${file}`);
+      observed[file] = ports.fs.inspectPath(path.join(deps.cwd, file))?.kind === 'file' ? (await ports.git.run(['hash-object', '--', file], deps.cwd)).trim() : null;
+    }
+    return { observed };
+  }
+  const allowed = new Set(strings(input['allowed']));
+  const files = (Array.isArray(input['files']) ? input['files'] : []).map((item) => {
+    const row = typeof item === 'object' && item !== null ? item as Row : {};
+    return { file: text(row['path']), hash: text(row['hash']) };
+  });
+  if (!files.length || files.some((item) => !item.file || !item.hash)) throw new Error('trim requires files as { path, hash } entries');
+  const callerRoot = ports.fs.inspectPath(deps.cwd)?.realPath ?? path.resolve(deps.cwd);
+  const refused: { path: string; reason: string }[] = [], remove: string[] = [], already: string[] = [];
+  for (const { file, hash } of files) {
+    if (!allowed.has(file)) { refused.push({ path: file, reason: 'not-allowed' }); continue; }
+    if (!safe(file)) { refused.push({ path: file, reason: 'unsafe' }); continue; }
+    if (redirected(deps, ports, callerRoot, file)) { refused.push({ path: file, reason: 'redirected' }); continue; }
+    if (!ports.fs.inspectPath(path.join(deps.cwd, file))) { already.push(file); continue; }
+    if ((await ports.git.run(['hash-object', '--', file], deps.cwd)).trim() !== hash) { refused.push({ path: file, reason: 'changed' }); continue; }
+    remove.push(file);
+  }
+  if (refused.length) return { trimmed: [], already: [], refused };
+  for (const file of remove) ports.fs.remove(path.join(deps.cwd, file));
+  return { trimmed: remove.sort(), already: already.sort(), refused: [] };
 }
 
 /** Replays a parked in-scope draft onto a new prerequisite base without modifying its original worktree. */
@@ -320,7 +446,10 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         case 'commit': return done('commit', await submit(ports, worktreePath(ctx.runDir, text(input['name'])), text(input['base']), text(input['message']) || 'dispatch task'));
         case 'red': return done('red', await red(deps, ports, worktreePath(ctx.runDir, text(input['name'])), input));
         case 'integrate': return done('integrate', await integrate(ports, worktreePath(ctx.runDir, 'integration'), input));
+        case 'resolve': return done('resolve', await resolve(ports, worktreePath(ctx.runDir, 'integration'), input));
+        case 'trim': return done('trim', await trim(deps, ports, input));
         case 'reset': {
+          // NOTE: the hard reset also aborts a kept integration conflict (it removes CHERRY_PICK_HEAD and unmerged entries).
           const root = worktreePath(ctx.runDir, text(input['name']));
           await worktree(deps, ports, root, text(input['revision']), true);
           return done('reset', { path: root, revision: await head(ports, root) });

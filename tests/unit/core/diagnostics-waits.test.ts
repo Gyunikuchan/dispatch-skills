@@ -95,12 +95,12 @@ const hostMachine: Machine<HostState> = {
     if (event.type === 'RUN_STARTED') return { state: { tag: 'author' }, effects: [] };
     if (event.type === 'AUTHORED' && state.tag === 'author') return { state: { tag: 'native' }, effects: [] };
     if (event.type === 'NATIVE_RESULTS' && state.tag === 'native') return { state: { tag: 'write' }, effects: [] };
-    if (event.type === 'WRITE_ENVELOPE' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
+    if (event.type === 'WRITE_RECEIPT' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
     return { state, effects: [] };
   },
   awaitOf: (state) => state.tag === 'booting' ? null : state.tag,
   project: (state) => ({ at: `host › ${state.tag}`, data: state.tag === 'done' ? { outcome: 'complete' } : { kind: state.tag, path: 'plan.md' } }),
-  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_ENVELOPE', to: 'done' }],
+  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 
 const verifyDone = (effect: Extract<Effect, { kind: 'verify' }>) => [{ type: 'VERIFY_DONE' as const, effectId: effect.id, purpose: effect.purpose, results: [], fingerprint: {} }];
@@ -254,7 +254,7 @@ test('SC10 toggle change applies at next send', async () => {
   assert.deepEqual(await hint(send({ ...base, dryRun: true })), { attest: ['tokens', 'durationMs'] });
   toggle.on = false;
   assert.equal(await hint(send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [] } })), undefined);
-  await send({ ...base, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: 'e.json' } });
+  await send({ ...base, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' } });
   assert.equal(fs.existsSync(path.join(session, 'diagnostics.md')), false, 'off at the done send: no report');
 
   const later = tempDir(), laterDir = path.join(later, '.state/runs/001-host'), laterBase = { ...base, ports: fakePorts(), runDir: laterDir };
@@ -262,7 +262,7 @@ test('SC10 toggle change applies at next send', async () => {
   await send({ ...laterBase, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
   await send({ ...laterBase, rawEvent: { type: 'NATIVE_RESULTS', slots: [] } });
   toggle.on = true;
-  await send({ ...laterBase, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: 'e.json' } });
+  await send({ ...laterBase, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' } });
   assert.match(read(path.join(later, 'diagnostics.md')), /^# Dispatch diagnostics/, 'on at the done send: the report covers the whole journal');
 });
 

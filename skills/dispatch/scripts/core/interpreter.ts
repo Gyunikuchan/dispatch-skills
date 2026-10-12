@@ -28,22 +28,13 @@ export { executionTopology } from '../domain/execution-config.ts';
 export const designRevision = (source: string): string => `sha256:${crypto.createHash('sha256').update(governedDesignText(source)).digest('hex')}`;
 /** Read-only receipt preview shares the emitted checker and the writer's captured baseline. */
 export async function previewReceipt(state: RootState, event: HostEvent, handlers: Handlers, ports: Ports, runDir: string): Promise<string | null> {
-  if (event.type !== 'WRITE_ENVELOPE' || state.tag !== 'implement') return null;
+  if (event.type !== 'WRITE_RECEIPT' || event.status !== 'submitted' || state.tag !== 'implement') return null;
   const child = state.child;
   let effect: Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
   if (child.tag === 'tasks') {
     const record = event.task ? child.c.tasks[event.task] : undefined;
     const task = effectivePlan(child.c).tasks.find((item) => item.id === event.task);
-    if (!record?.worktree || !task || !record.baseline || !('attempt' in event) || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
-  } else if (child.tag === 'scope-draining') {
-    const record = event.task ? child.c.tasks[event.task] : undefined;
-    const adjustmentId = child.adjustment?.proposal.requestId;
-    const priorScope = adjustmentId
-      ? { ...child.c, scopeAdjustments: child.c.scopeAdjustments.filter((item) => item.proposal.requestId !== adjustmentId) }
-      : child.c;
-    const task = event.task ? effectivePlan(priorScope).tasks.find((item) => item.id === event.task) : undefined;
-    if (!event.task || !('attempt' in event) || !child.active.includes(event.task) || !record?.worktree || !task || !record.baseline || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle || record.brief?.envelopePath !== event.envelopePath) return 'Receipt names no original active task attempt';
+    if (!record?.worktree || !task || !record.baseline || event.task === undefined || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
   } else if (child.tag === 'hotfix-write') {
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...effectivePlan(child.c).changes.map((change) => change.path)])], since: child.before };

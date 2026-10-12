@@ -1,5 +1,4 @@
 import type { Event, HostEvent, RevisionScopeProposal, ScopeAdjustment, ScopeDelta } from '../core/types.ts';
-import { stableValue } from '../domain/stable-value.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, sharedDesignSections } from '../domain/design.ts';
 import { beginReview, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
@@ -81,16 +80,17 @@ function decision(state: Extract<DesignRevisionState, { tag: 'scope-adjudication
   if (event.type !== 'DECISION') return stay(state);
   if (event.kind === 'run-stop') return stay({ tag: 'stopped', c: state.c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, summary: `User stopped during design-revision scope adjudication: ${(event.answer as { quote: string }).quote}` });
   if (state.tag === 'scope-adjudication') {
-    if (event.kind !== 'scope-deviation') return stay(state);
-    const answer = event.answer as { by: 'orchestrator'; request: RevisionScopeProposal; ruling: 'approve' | 'disagree'; rationale: string };
-    if (answer.by !== 'orchestrator' || stableValue(answer.request) !== stableValue(state.request) || !answer.rationale.trim()) return stay(state);
-    if (answer.ruling === 'disagree') return stay({ ...state, tag: 'scope-user-decision', orchestratorRationale: answer.rationale });
-    if (answer.ruling !== 'approve') return stay(state);
+    if (event.kind !== 'request') return stay(state);
+    const answer = event.answer as { by: 'orchestrator'; action: 'approve' | 'decline' | 'escalate'; rationale: string };
+    if (answer.by !== 'orchestrator' || !answer.rationale.trim()) return stay(state);
+    if (answer.action === 'escalate') return stay({ ...state, tag: 'scope-user-decision', orchestratorRationale: answer.rationale });
+    if (answer.action === 'decline') return stay({ tag: 'refused', c: state.c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, error: `Orchestrator declined design-revision scope expansion: ${answer.rationale}` });
+    if (answer.action !== 'approve') return stay(state);
     const adjustment: ScopeAdjustment = { proposal: state.request, approvedBy: 'orchestrator', rationale: answer.rationale };
     const c = { ...state.c, scopeAdjustments: [...state.c.scopeAdjustments, adjustment], scopeNotice: { requestId: state.request.requestId, approvedBy: adjustment.approvedBy, rationale: adjustment.rationale } };
     return stay({ tag: 'resume', c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, design: state.design, hash: state.hash, delta: state.delta, scopeAdjudicated: true });
   }
-  if (event.kind !== 'scope-deviation-user') return stay(state);
+  if (event.kind !== 'request-user') return stay(state);
   const answer = event.answer as { by: 'user'; requestId: string; choice: 'accept' | 'decline'; quote: string };
   if (answer.by !== 'user' || answer.requestId !== state.request.requestId || !answer.quote.trim()) return stay(state);
   if (answer.choice === 'decline') return stay({ tag: 'refused', c: state.c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, error: `User declined design-revision scope expansion: ${answer.quote}` });
@@ -148,8 +148,8 @@ export function designRevisionAwait(state: DesignRevisionState) {
 export const designRevisionData = (state: DesignRevisionState): Readonly<Record<string, unknown>> => {
   if (state.tag === 'author') return { artifact: 'design', path: state.workingPath, reason: state.reason, template: 'references/templates/design.md', defects: state.defects };
   if (state.tag === 'review') return reviewData(state.review);
-  if (state.tag === 'scope-adjudication') return { kind: 'scope-deviation', pendingProposal: state.request, choices: ['approve', 'disagree', 'stop'], stopAllowed: true };
-  if (state.tag === 'scope-user-decision') return { kind: 'scope-deviation-user', pendingProposal: state.request, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };
+  if (state.tag === 'scope-adjudication') return { kind: 'request', request: state.request, requestId: state.request.requestId, choices: ['approve', 'decline', 'escalate', 'stop'], stopAllowed: true };
+  if (state.tag === 'scope-user-decision') return { kind: 'request-user', request: state.request, requestId: state.request.requestId, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };
   if (state.tag === 'stopped') return { outcome: 'stopped', summary: state.summary };
   return { artifact: 'design', path: state.workingPath, reason: state.reason, ...('error' in state ? { error: state.error } : {}) };
 };
@@ -159,12 +159,12 @@ export const validateDesignRevision = (state: DesignRevisionState, event: HostEv
   if (state.tag === 'author' && event.type === 'AUTHORED' && event.path !== state.workingPath) return 'event.path: expected design revision working copy.';
   if (state.tag === 'scope-adjudication') {
     if (event.type === 'DECISION' && event.kind === 'run-stop') return typeof (event.answer as Record<string, unknown>)['quote'] === 'string' && !!String((event.answer as Record<string, unknown>)['quote']).trim() ? null : 'event.answer.quote: run stop requires the user quote.';
-    const answer = event.type === 'DECISION' && event.kind === 'scope-deviation' ? event.answer as Record<string, unknown> : null;
-    return answer && answer['by'] === 'orchestrator' && stableValue(answer['request']) === stableValue(state.request) && ['approve', 'disagree'].includes(String(answer['ruling'])) && typeof answer['rationale'] === 'string' && String(answer['rationale']).trim() ? null : 'event.answer: adjudication must bind the pending design proposal and include a rationale, or stop with a user quote.';
+    const answer = event.type === 'DECISION' && event.kind === 'request' ? event.answer as Record<string, unknown> : null;
+    return answer && answer['by'] === 'orchestrator' && ['approve', 'decline', 'escalate'].includes(String(answer['action'])) && typeof answer['rationale'] === 'string' && String(answer['rationale']).trim() ? null : 'event.answer: rule on the pending design request with approve, decline, or escalate and a rationale, or stop with a user quote.';
   }
   if (state.tag === 'scope-user-decision') {
     if (event.type === 'DECISION' && event.kind === 'run-stop') return typeof (event.answer as Record<string, unknown>)['quote'] === 'string' && !!String((event.answer as Record<string, unknown>)['quote']).trim() ? null : 'event.answer.quote: run stop requires the user quote.';
-    const answer = event.type === 'DECISION' && event.kind === 'scope-deviation-user' ? event.answer as Record<string, unknown> : null;
+    const answer = event.type === 'DECISION' && event.kind === 'request-user' ? event.answer as Record<string, unknown> : null;
     return answer && answer['by'] === 'user' && answer['requestId'] === state.request.requestId && ['accept', 'decline'].includes(String(answer['choice'])) && typeof answer['quote'] === 'string' && String(answer['quote']).trim() ? null : 'event.answer: user choice must bind the pending design request and include a quote, or stop with a user quote.';
   }
   return null;
@@ -173,6 +173,6 @@ export const transitions = [
   { from: 'author', on: 'AUTHORED', to: 'parse' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'author' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'review' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'scope-adjudication' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'resume' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'refused' }, { from: 'parse', on: 'EFFECT_FAILED', to: 'refused' },
   ...['WAVE_DONE', 'RULINGS', 'DECISION', 'ARTIFACT_PARSED'].map((on) => ({ from: 'review', on, to: 'parse' })),
   ...['REVIEW_PREPARED', 'DECISION', 'EFFECT_FAILED'].map((on) => ({ from: 'review', on, to: 'refused' })),
-  { from: 'scope-adjudication', on: 'DECISION', to: 'scope-user-decision' }, { from: 'scope-adjudication', on: 'DECISION', to: 'resume' }, { from: 'scope-adjudication', on: 'DECISION', to: 'stopped' },
+  { from: 'scope-adjudication', on: 'DECISION', to: 'scope-user-decision' }, { from: 'scope-adjudication', on: 'DECISION', to: 'resume' }, { from: 'scope-adjudication', on: 'DECISION', to: 'stopped' }, { from: 'scope-adjudication', on: 'DECISION', to: 'refused' },
   { from: 'scope-user-decision', on: 'DECISION', to: 'resume' }, { from: 'scope-user-decision', on: 'DECISION', to: 'refused' }, { from: 'scope-user-decision', on: 'DECISION', to: 'stopped' },
 ];

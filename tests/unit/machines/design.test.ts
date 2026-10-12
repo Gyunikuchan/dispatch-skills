@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LevelGateScope, RunStartedEvent, ScopeProposal } from '../../../skills/dispatch/scripts/core/types.ts';
 import { beginDesign, stepDesign, validateDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
-import type { ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { launch, record, start } from './fixtures/implement-tasks.ts';
 import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { asParsedDesign, designScopeGrew } from '../../../skills/dispatch/scripts/domain/design.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
@@ -43,29 +44,16 @@ test('level-journal: design parent delegates nested implementation event validat
     },
   } as unknown as ImplementState;
   const state: DesignState = { tag: 'increment', c: approval('implement').c, increment: 'I01', child: nested };
-  const stale = { type: 'WRITE_LAUNCHED' as const, tasks: [{ task: 'T1', attempt: 1, signature: 'old-signature', handle: 'old-handle', model: 'writer' }] };
-  assert.match(validateDesign(state, stale) ?? '', /projected attempt and signature/);
+  const stale = { type: 'WRITE_RECEIPT' as const, status: 'launched' as const, task: 'T1', attempt: 1, signature: 'old-signature', handle: 'old-handle', model: 'writer' };
+  assert.match(validateDesign(state, stale) ?? '', /projected attempt, signature/);
 });
-test('REVISE design waits for nested gates and drains writers before a stop', () => {
+test('REVISE design waits for nested level gates', () => {
   const parent = approval('implement');
   if (parent.tag !== 'approval') throw new Error('design approval');
   const c = approvalState().c;
   const runInfo = { verb: 'design' as const, argument: 'x.design.md', slug: 'x' };
-  const rootFor = (child: ImplementState): RootState => ({
-    tag: 'design', run: runInfo, child: { tag: 'increment', c: parent.c, increment: 'I01', child },
-  });
-  const request: ScopeProposal = {
-    requestId: 'design-scope', source: 'task', task: 'T1', baseArtifactHash: hash,
-    writerRationale: 'The required behavior needs a companion module.',
-    delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] },
-  };
-  const adjudication: ImplementState = { tag: 'scope-adjudication', c, request, task: 'T1', active: ['T2'], hotfixResume: null };
-  const userDecision: ImplementState = { tag: 'scope-user-decision', c, request, task: 'T1', active: ['T2'], orchestratorRationale: 'I disagree with the expansion.', hotfixResume: null };
-  const scopeRevisions = [adjudication, userDecision];
+  const rootFor = (child: ImplementState): RootState => ({ tag: 'design', run: runInfo, child: { tag: 'increment', c: parent.c, increment: 'I01', child } });
   const designRevision = { type: 'REVISE' as const, artifact: 'design' as const, reason: 'design-invalidates-increment', evidence: 'The accepted design scope must be reconsidered.' };
-  for (const child of scopeRevisions) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /Drain every active writer/);
-  assert.equal(rootMachine.validate!(rootFor({ ...adjudication, active: [] }), designRevision), null);
-
   const gateScope: LevelGateScope = {
     planHash: hash, objective: 'Deliver feature', invariants: [], criteria: [], approvedPaths: [],
     commandMappings: [], baselineEvidence: [], phaseObligations: { writer: [], review: [] }, remainingIncrements: [], design: null,
@@ -75,20 +63,42 @@ test('REVISE design waits for nested gates and drains writers before a stop', ()
     tag: 'level-recommendation', c, assessment: { evaluatedLevel: 'high', rationale: 'Cross-cutting scope.', gateScope }, resume: { kind: 'tasks' },
   };
   for (const child of [classification, recommendation]) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /pending level gate/);
-
-  const runStop = { type: 'DECISION' as const, kind: 'run-stop' as const, answer: { by: 'user' as const, quote: 'Stop this run.' } };
-  const scopedRoot = rootFor(adjudication);
-  assert.equal(rootMachine.validate!(scopedRoot, runStop), null);
-  const parked = stepRoot(scopedRoot, runStop);
-  assert.equal(parked.state.tag, 'design');
-  if (parked.state.tag !== 'design' || parked.state.child.tag !== 'increment' || parked.state.child.child.tag !== 'checking-host-event') throw new Error('expected the stop to be journaled before draining');
-  const snapshot = parked.effects[0];
-  assert.ok(snapshot?.kind === 'snapshot');
-  if (snapshot?.kind !== 'snapshot') return;
-  const drained = stepRoot(parked.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
-  assert.equal(drained.state.tag, 'design');
-  if (drained.state.tag !== 'design' || drained.state.child.tag !== 'increment') throw new Error('expected the design increment to remain active while writers drain');
-  assert.equal(drained.state.child.child.tag, 'scope-draining');
+});
+test('design child request keeps siblings running', () => {
+  const sim = {}, trace = { effects: [], events: [] };
+  const writing = launch(start(2, sim).result, sim, trace);
+  assert.equal(writing.state.tag, 'tasks');
+  const sibling = record(writing, 'T2');
+  assert.equal(sibling?.status, 'running');
+  const parent = approval('implement');
+  let state: DesignState = { tag: 'increment', c: parent.c, increment: 'I01', child: writing.state };
+  const request = { type: 'REQUEST' as const, task: 'T1', attempt: 1, need: 'A companion fixture.', paths: ['tests/fixture.ts'], rationale: 'The test needs shared setup.' };
+  assert.equal(validateDesign(state, request), null);
+  state = stepDesign(state, request).state;
+  if (state.tag !== 'increment') throw new Error('increment');
+  assert.equal(state.child.tag, 'request-decision');
+  const tasksOf = (child: ImplementState) => 'c' in child && child.c ? child.c.tasks : {};
+  assert.deepEqual(tasksOf(state.child)['T2'], sibling, 'the sibling writer keeps its handle and attempt while the request is open');
+  assert.equal(implementData(state.child)['kind'], 'request');
+  const decline = { type: 'DECISION' as const, kind: 'request' as const, answer: { by: 'orchestrator' as const, action: 'decline', rationale: 'Use the existing helper.' } };
+  assert.equal(validateDesign(state, decline), null);
+  const ruled = stepDesign(state, decline).state;
+  if (ruled.tag !== 'increment') throw new Error('increment');
+  assert.equal(ruled.child.tag, 'tasks');
+  assert.deepEqual(tasksOf(ruled.child)['T2'], sibling);
+});
+test('REVISE design refused while sibling writer is live', () => {
+  const sim = {}, trace = { effects: [], events: [] };
+  const writing = launch(start(2, sim).result, sim, trace);
+  const parent = approval('implement');
+  const increment: DesignState = { tag: 'increment', c: parent.c, increment: 'I01', child: writing.state };
+  const request = { type: 'REQUEST' as const, task: 'T1', attempt: 1, need: 'A companion fixture.', paths: ['tests/fixture.ts'], rationale: 'The test needs shared setup.' };
+  const deciding = stepDesign(increment, request).state;
+  assert.ok(deciding.tag === 'increment' && deciding.child.tag === 'request-decision');
+  const revise = { type: 'REVISE' as const, artifact: 'design' as const, reason: 'design-invalidates-increment', evidence: 'The accepted design scope must be reconsidered.' };
+  assert.match(validateDesign(deciding, revise) ?? '', /live writers T1, T2/);
+  const nested: DesignState = { tag: 'approval', c: parent.c, parent: { tag: 'approval', c: parent.c, parent: deciding } };
+  assert.match(validateDesign(nested, revise) ?? '', /live writers T1, T2/);
 });
 test('post-review hash changes require approval of the reparsed hash', () => {
   const parsing = stepDesign(beginDesign(run()).state, { type: 'AUTHORED', path: 'x.design.md' });

@@ -106,7 +106,7 @@ test('prewrite-level: design growth before the first child gate remains in the r
   assert.equal(reviewed.state.tag, 'resume');
   assert.deepEqual(reviewed.effects, []);
 });
-test('prewrite-level: design revision exposes acceptance delta for adjudication', () => {
+test('design revision request approved by orchestrator', () => {
   const base = approval('implement').c;
   const before = { ...design, governedText: '# Delivery\n\n## Goals & Requirements\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership\n\n## Final Integration\nRun the governed suite' };
   const c = { ...base, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
@@ -126,8 +126,8 @@ test('prewrite-level: design revision exposes acceptance delta for adjudication'
   assert.ok(proposal.state.request.delta.obligations.some((obligation) => obligation.includes('## Final Integration updated') && obligation.includes('cross-increment compatibility')));
   assert.deepEqual(proposal.effects, []);
 
-  const reorderedRequest = Object.fromEntries(Object.entries(proposal.state.request).reverse());
-  const decision = { type: 'DECISION' as const, kind: 'scope-deviation' as const, answer: { by: 'orchestrator' as const, request: reorderedRequest as typeof proposal.state.request, ruling: 'approve' as const, rationale: 'This verification is required for the revised shared contract.' } };
+  assert.equal(designRevisionData(proposal.state)['kind'], 'request');
+  const decision = { type: 'DECISION' as const, kind: 'request' as const, answer: { by: 'orchestrator' as const, action: 'approve', rationale: 'This verification is required for the revised shared contract.' } };
   assert.equal(validateDesignRevision(proposal.state, decision), null);
   const resumed = stepDesignRevision(proposal.state, decision);
   assert.equal(resumed.state.tag, 'resume');
@@ -138,7 +138,7 @@ test('prewrite-level: design revision exposes acceptance delta for adjudication'
   }
 });
 
-test('level-journal: design revision rulings bind orchestrator and user decisions to the pending proposal', () => {
+test('design revision request escalates to user', () => {
   const before = { ...design, governedText: '# Delivery\n\n## Goals & Requirements\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
   const c = { ...approval('implement').c, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
   const working = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'add required module', evidence: 'The accepted behavior needs a companion path.' });
@@ -150,11 +150,13 @@ test('level-journal: design revision rulings bind orchestrator and user decision
   const request = proposal.state.request;
   assert.deepEqual(request.delta.criteria, []);
   assert.deepEqual(request.delta.increments.map((increment) => increment.id), ['I01']);
-  assert.match(validateDesignRevision(proposal.state, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: { ...request, baseArtifactHash: `sha256:${'c'.repeat(64)}` }, ruling: 'approve', rationale: 'Approve.' } }) ?? '', /pending design proposal/);
-  const disagreement = stepDesignRevision(proposal.state, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request, ruling: 'disagree', rationale: 'The added path needs user review.' } });
-  if (disagreement.state.tag !== 'scope-user-decision') throw new Error('disagreement should request the user choice');
-  assert.match(validateDesignRevision(disagreement.state, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: 'stale', choice: 'accept', quote: 'Accept.' } }) ?? '', /pending design request/);
-  const accepted = stepDesignRevision(disagreement.state, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: request.requestId, choice: 'accept', quote: 'Accept the companion path.' } });
+  assert.match(validateDesignRevision(proposal.state, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: ' ' } }) ?? '', /approve, decline, or escalate/);
+  const disagreement = stepDesignRevision(proposal.state, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'escalate', rationale: 'The added path needs user review.' } });
+  if (disagreement.state.tag !== 'scope-user-decision') throw new Error('escalation should request the user choice');
+  assert.equal(designRevisionData(disagreement.state)['kind'], 'request-user');
+  assert.match(validateDesignRevision(disagreement.state, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: 'stale', choice: 'accept', quote: 'Accept.' } }) ?? '', /pending design request/);
+  assert.match(validateDesignRevision(disagreement.state, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: request.requestId, choice: 'accept', quote: '' } }) ?? '', /quote/);
+  const accepted = stepDesignRevision(disagreement.state, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: request.requestId, choice: 'accept', quote: 'Accept the companion path.' } });
   assert.equal(accepted.state.tag, 'resume');
   if (accepted.state.tag === 'resume') {
     assert.equal(accepted.state.scopeAdjudicated, true);
@@ -172,7 +174,7 @@ test('level-journal: design revision retains accepted scope and adjudicates only
   if (firstAuthored.state.tag !== 'parse') throw new Error('first parse');
   const firstParse = stepDesignRevision({ ...firstAuthored.state, afterReview: true }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: firstAuthored.state.effectId, hash: firstHash, parsed: firstDesign, defects: [] });
   if (firstParse.state.tag !== 'scope-adjudication') throw new Error('first expansion should be adjudicated');
-  const adoptedFirst = stepDesign({ tag: 'revision', c: base, child: firstParse.state }, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: firstParse.state.request, ruling: 'approve', rationale: 'The companion path is needed.' } });
+  const adoptedFirst = stepDesign({ tag: 'revision', c: base, child: firstParse.state }, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The companion path is needed.' } });
   assert.notEqual(adoptedFirst.state.tag, 'approval');
   assert.equal(adoptedFirst.state.c?.scopeNotice?.requestId, firstParse.state.request.requestId);
   assert.equal(adoptedFirst.state.c?.approval?.hash, firstHash);
@@ -189,7 +191,7 @@ test('level-journal: design revision retains accepted scope and adjudicates only
   if (secondProposal.state.request.source !== 'design-revision') throw new Error('design revision proposal');
   assert.deepEqual(secondProposal.state.request.affectedIncrements, ['I01', 'I02']);
   const acceptedSecond: DesignState = { tag: 'revision', c: adoptedContext, child: secondProposal.state };
-  const adoptedSecond = stepDesign(acceptedSecond, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: secondProposal.state.request, ruling: 'approve', rationale: 'The additional path is required.' } });
+  const adoptedSecond = stepDesign(acceptedSecond, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The additional path is required.' } });
   assert.notEqual(adoptedSecond.state.tag, 'approval');
   assert.equal(adoptedSecond.state.c?.scopeNotice?.requestId, secondProposal.state.request.requestId);
   assert.equal(adoptedSecond.state.c?.approval?.hash, secondHash);

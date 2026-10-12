@@ -42,7 +42,7 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 When `/dispatch-implement` (or `dispatch implement`) runs in this checkout, do not start the driver: a driver run that edits its own scripts mid-run is self-referential, so its journal, frames, and hashes become unreliable. Follow the dispatch flow by hand instead:
 
 1. Read the plan; map task dependencies (`Requires`).
-2. Launch one native writer subagent per independent task, in parallel, with a brief that names the task, its in-scope paths, criteria, and Verify commands. Run dependent tasks after their prerequisites finish. Writers never run git write commands.
+2. Launch one native writer subagent per independent task, in parallel, with a brief that names the task, its in-scope paths, criteria, and Verify commands. Resolve each writer's model and effort from the active dispatch config's `write-subagents` entry for this platform at the run's level, and pass both explicitly per the native launch rule in `skills/dispatch/references/providers.md`. Run dependent tasks after their prerequisites finish. Writers never run git write commands.
 3. Check each writer's result against the plan; run each criterion's Verify command, then `npm run hashes` when hash-tracked files changed, then `npm test`.
 4. Run a standalone `/dispatch-code-review --fix` on the working tree after the implementation is complete. Rerun `npm test` after its fixes.
 5. Hand off per [Long-Running Work and Handoff](#long-running-work-and-handoff), with evidence for each criterion.

@@ -10,7 +10,6 @@ import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { implementData, implementMachine, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import { beginRevision, stepRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { approvalState } from './fixtures/implement-recovery.ts';
 import { started } from './fixtures/design-delivery.ts';
 import { integration } from './fixtures/design-integration.ts';
@@ -60,10 +59,10 @@ const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(),
 const IMPLEMENT_HASH = `sha256:${'a'.repeat(64)}`;
 const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
-  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
+  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable' as const, coveredBy: null }] : [],
   changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
-  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
-  tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [] }] : [],
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example', seams: [], warnings: [],
+  tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [], overlaps: [] }] : [],
 });
 const implementRun = (): RunStartedEvent => run('implement', {
   argument: 'x.plan.md', overrides: { path: 'x.plan.md', sessionDir: '/session', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
@@ -88,13 +87,14 @@ const implementLaunched: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };
   const current = raw.tag === 'implement' && raw.child ? raw.child : state as ImplementState;
   const task = (current as Extract<ImplementState, { tag: 'tasks' }>).c.tasks['T1']!;
-  return { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: task.attempt, signature: task.signature, handle: 'agent-1', model: (current as Extract<ImplementState, { tag: 'tasks' }>).c.writer!.models[task.modelIndex]! }] };
+  return { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: task.attempt, signature: task.signature, handle: 'agent-1', model: (current as Extract<ImplementState, { tag: 'tasks' }>).c.writer!.models[task.modelIndex]! };
 };
 const implementEnvelope: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };
   const current = raw.tag === 'implement' && raw.child ? raw.child : state as ImplementState;
   const task = (current as Extract<ImplementState, { tag: 'tasks' }>).c.tasks['T1']!;
-  return { type: 'WRITE_ENVELOPE', envelopePath: 'run/outcome.json', task: 'T1', attempt: task.attempt, signature: task.signature, handle: task.handle! };
+  const model = (current as Extract<ImplementState, { tag: 'tasks' }>).c.writer!.models[task.modelIndex]!;
+  return { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'run/outcome.json', briefHash: task.brief!.sha256, task: 'T1', attempt: task.attempt, signature: task.signature, handle: task.handle!, model };
 };
 const implementChecked: Step = (effect) => ({ type: 'ENVELOPE_CHECKED', effectId: id(effect), envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented', evidence: ['CRITERION SC1 | src/a.ts | delivered behavior'] }, defects: [], diff: { paths: ['src/a.ts'] } });
 const implementApprovalStop: Step = { type: 'DECISION', kind: 'approval', answer: 'stop' };
@@ -248,22 +248,12 @@ test('plan transitions table matches step', () => {
 });
 
 test('root transitions table matches step', () => {
-  const revisionStart = beginRevision(approvalState(), { type: 'REVISE', artifact: 'plan', reason: 'parity', evidence: 'fixture' }).state;
-  const r = revisionStart.r;
   const runInfo = { verb: 'implement' as const, argument: 'x.plan.md', slug: 'x' };
-  const settled: RevisionState = { tag: 'resume', r: { ...r, plan: r.original, hash: r.originalHash, changed: [], removed: [], grew: false } };
-  const stopped: RevisionState = { tag: 'stopped', r, summary: 'Stopped after scope adjudication.' };
-  const refused: RevisionState = { tag: 'refused', r, error: 'Revision refused.' };
   const terminalRevisionEvents: readonly (readonly [RootState, Event])[] = [
-    [{ tag: 'revision', run: runInfo, child: settled }, { type: 'SNAPSHOT', effectId: 'revision.snapshot', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } }],
-    [{ tag: 'revision', run: runInfo, child: stopped }, { type: 'SNAPSHOT', effectId: 'revision.snapshot', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } }],
-    [{ tag: 'revision', run: runInfo, child: refused }, { type: 'DECISION', kind: 'scope-deviation', answer: {} }],
-    ...(['reconcile', 'escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
+    ...(['escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
   ];
   parity(rootMachine, [
     [run('ask', badPins)],
-    [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot,
-      { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check report' }, { type: 'AUTHORED', path: '/session/revision-1.plan.md' }, implementParsed()],
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
     // An enabled handoff enters retro, and RETRO completes the run.
     [run('ask'), prepared, wave([]), (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null, diagnostics: true }), { type: 'RETRO', observations: [] }],
@@ -295,10 +285,10 @@ test('implementation transition declarations include every observed reducer boun
   assert.ok(declared.has('approval --DECISION--> stopped'));
   assert.ok(declared.has('approval --DECISION--> checking-host-event'));
   assert.ok(declared.has('task-checkout --CHECKOUT_DONE--> task-brief'));
-  assert.ok(declared.has('tasks --WRITE_ENVELOPE--> task-envelope'));
+  assert.ok(declared.has('tasks --WRITE_RECEIPT--> task-envelope'));
 });
 
-test('level-journal: machine parity includes classification, scope-adjudication, scope-user-decision and scope-draining states', () => {
+test('level-journal: machine parity includes classification, integration-conflict and request-decision states', () => {
   const declared = new Set(implementMachine.transitions.map((row) => `${row.from} --${row.on}--> ${row.to}`));
   for (const edge of [
     'baseline-decision --DECISION--> level-classification',
@@ -306,16 +296,14 @@ test('level-journal: machine parity includes classification, scope-adjudication,
     'level-classification --DECISION--> checking-host-event',
     'level-recommendation --DECISION--> checking-host-event',
     'checking-host-event --SNAPSHOT--> baseline-decision',
-    'checking-host-event --SNAPSHOT--> scope-adjudication',
-    'task-envelope --ENVELOPE_CHECKED--> scope-adjudication',
-    'scope-adjudication --DECISION--> scope-user-decision',
-    'scope-user-decision --DECISION--> scope-draining',
-    'scope-draining --WRITE_ENVELOPE--> scope-drain-envelope',
-    'scope-drain-envelope --ENVELOPE_CHECKED--> scope-draining',
-    'scope-adjudication --DECISION--> stopped',
-    'scope-user-decision --DECISION--> stopped',
-    'scope-draining --WRITE_CANCELLED--> stopped',
+    'tasks --REQUEST--> request-decision',
+    'request-decision --DECISION--> tasks',
+    'request-decision --AMEND--> tasks',
+    'task-checkout --CHECKOUT_DONE--> integration-conflict',
+    'integration-conflict --AMEND--> tasks',
   ]) assert.ok(declared.has(edge), `missing declared edge: ${edge}`);
+  const tags = new Set(implementMachine.transitions.flatMap((row) => [row.from, row.to]));
+  for (const removed of ['scope-adjudication', 'scope-user-decision', 'scope-draining', 'scope-drain-envelope', 'revision-request']) assert.equal(tags.has(removed), false, `removed state still declared: ${removed}`);
 });
 
 test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a second review round', () => {
@@ -353,7 +341,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   const unchangedDesign: Event = { ...revisionParsed, hash: c.hash!, parsed: design };
   const scopeState = stepDesignRevision({ ...parse, afterReview: true }, revisionParsed).state;
   if (scopeState.tag !== 'scope-adjudication') throw new Error('scope adjudication');
-  const disagree: Event = { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: scopeState.request, ruling: 'disagree', rationale: 'The requested change exceeds the design intent.' } };
+  const disagree: Event = { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'escalate', rationale: 'The requested change exceeds the design intent.' } };
   const userScopeState = stepDesignRevision(scopeState, disagree).state;
   if (userScopeState.tag !== 'scope-user-decision') throw new Error('scope user decision');
   const begun = beginReview({ kind: 'design', mode: 'fix', target: author.workingPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.revision.review', c.counters).state;
@@ -374,10 +362,10 @@ test('every design and design revision transition row has a reducer fixture', ()
     [review({ tag: 'prepare', c: rc }), { type: 'REVIEW_PREPARED', effectId: 'review-result', scope: { empty: true }, promptPaths: {} }],
     [review({ tag: 'decide-escalation', c: rc, escalation: { kind: 'regression', ids: [] } }), { type: 'DECISION', kind: 'escalation', answer: 'stop' }],
     [review({ tag: 'prepare', c: rc }), { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }],
-    [scopeState, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: scopeState.request, ruling: 'approve', rationale: 'The proposed increment change is necessary.' } }],
-    [scopeState, disagree], [scopeState, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop here.' } }],
-    [userScopeState, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: scopeState.request.requestId, choice: 'accept', quote: 'Accept the additional increment.' } }],
-    [userScopeState, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: scopeState.request.requestId, choice: 'decline', quote: 'Keep the current design.' } }],
+    [scopeState, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The proposed increment change is necessary.' } }],
+    [scopeState, disagree], [scopeState, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'decline', rationale: 'Keep the current design.' } }], [scopeState, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop here.' } }],
+    [userScopeState, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: scopeState.request.requestId, choice: 'accept', quote: 'Accept the additional increment.' } }],
+    [userScopeState, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: scopeState.request.requestId, choice: 'decline', quote: 'Keep the current design.' } }],
     [userScopeState, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop here.' } }],
   ];
   const seen = revisions.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesignRevision(state, event).state.tag}`);
@@ -405,34 +393,10 @@ test('every design and design revision transition row has a reducer fixture', ()
   const boundPlan = { ...implementPlan(), traceability: { Design: binding.path, Revision: binding.revision, Increment: binding.increment, ...binding.contract } };
   const context = { ...active.child.c, levelGatePassed: true, plan: boundPlan, planHash: IMPLEMENT_HASH, lastFingerprint: fingerprint, startFingerprint: fingerprint };
   const activeParent: DesignState = { ...active, child: { tag: 'author', c: context, defects: [] } };
-  for (const action of ['reconcile', 'escalate'] as const) { const [child, event] = materialResolution(activeParent.child, action); extra.push([{ ...active, child }, event]); }
-  const planRevision = stepDesign(activeParent, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' });
-  extra.push([planRevision.state, { type: 'SNAPSHOT', effectId: planRevision.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
-  const stop = stepDesign({ ...active, child: { tag: 'failure', c: context, reason: 'Stop', changedPaths: [] } }, { type: 'DECISION', kind: 'failure', answer: { action: 'stop' } });
+  for (const action of ['escalate'] as const) { const [child, event] = materialResolution(activeParent.child, action); extra.push([{ ...active, child }, event]); }
+  const stop = stepDesign({ ...active, child: { tag: 'failure', c: context, reason: 'Stop', changedPaths: [] } }, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'stop', rationale: 'Stop requested.' } });
   extra.push([stop.state, { type: 'SNAPSHOT', effectId: stop.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
   extra.push([{ ...active, c: { ...active.c, completed: ['I02'], ownership: { I02: ['src/b.ts'] } }, child: { tag: 'final-verify', c: { ...context, changedPaths: ['src/a.ts'] }, effectId: 'final', before: fingerprint } }, { type: 'VERIFY_DONE', effectId: 'final', purpose: 'final', results: [], fingerprint }]);
-  const revision = beginRevision({ tag: 'author', c: context, defects: [] }, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' }).state;
-  if (!('r' in revision)) throw new Error('revision context');
-  const planParent: DesignState = { tag: 'plan-revision', c: active.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'plan-result', afterReview: true } };
-  extra.push([planParent, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: 'plan-result', hash: IMPLEMENT_HASH, parsed: boundPlan, defects: [] }]);
-  const expandedPlan = { ...boundPlan, keyDecisions: ['Preserve compatibility for the added behavior.'] };
-  const expandedPlanEvent: Event = { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: 'plan-result', hash: `sha256:${'b'.repeat(64)}`, parsed: expandedPlan, defects: [] };
-  const planScopeChild = stepRevision(planParent.child, expandedPlanEvent);
-  if (planScopeChild.state.tag !== 'scope-adjudication') throw new Error(`plan scope adjudication: ${planScopeChild.state.tag}`);
-  extra.push([planParent, expandedPlanEvent]);
-  const planScopeParent: DesignState = { ...planParent, child: planScopeChild.state };
-  const planDisagreement = stepRevision(planScopeChild.state, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'disagree', rationale: 'Needs user intent decision' } });
-  if (planDisagreement.state.tag !== 'checking-host-event') throw new Error('scope observation');
-  const planDisagreed = stepRevision(planDisagreement.state, { type: 'SNAPSHOT', effectId: planDisagreement.effects[0]!.id, fingerprint, diff: { paths: [] } }).state;
-  if (planDisagreed.tag !== 'scope-user-decision') throw new Error('scope user decision');
-  const declined = stepDesign({ ...planParent, child: planDisagreed }, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: planScopeChild.state.request.requestId, choice: 'decline', quote: 'Keep approved scope.' } });
-  extra.push([declined.state, { type: 'SNAPSHOT', effectId: declined.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
-  extra.push([planScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'approve', rationale: 'The added path is required by the settled outcome.' } }]);
-  extra.push([planScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: planScopeChild.state.request, ruling: 'disagree', rationale: 'The added path is not needed for this outcome.' } }]);
-  extra.push([planScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop the revision.' } }]);
-  const stoppingPlanRevision = stepDesign(planScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop the revision.' } });
-  extra.push([stoppingPlanRevision.state, { type: 'SNAPSHOT', effectId: stoppingPlanRevision.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
-  extra.push([{ ...planParent, child: { tag: 'drift', r: revision.r, parent: revision, parked: { type: 'AUTHORED', path: revision.r.workingPath }, paths: ['caller.ts'], fingerprint, notice: { id: 'n', phase: 'revision', pendingId: 'AUTHORED', beforeHash: 'before', afterHash: 'after', rawDeltaRef: { version: 1, sha256: 'b'.repeat(64), bytes: 10, path: 'recovery-deltas/b.json' }, paths: ['caller.ts'], pathCount: 1, relevance: 'unknown', reason: 'dependency coverage', affectedEvidence: [] } } }, { type: 'DECISION', kind: 'drift', answer: { 'caller.ts': 'stop' } }]);
 
   const integrated = integration();
   if (integrated.tag !== 'integration' || !('c' in integrated.review)) throw new Error('integration');
@@ -472,20 +436,20 @@ test('every design and design revision transition row has a reducer fixture', ()
   if (designScopeChild.tag !== 'scope-adjudication') throw new Error('design scope adjudication');
   extra.push([{ tag: 'revision', c: settledDesign, child: { ...rParsed.state, c: settledDesign, afterReview: true } }, designScopeEvent]);
   const designScopeParent: DesignState = { tag: 'revision', c: settledDesign, child: designScopeChild };
-  const designDisagree: Event = { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: designScopeChild.request, ruling: 'disagree', rationale: 'The path addition is not required.' } };
+  const designDisagree: Event = { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'escalate', rationale: 'The path addition is not required.' } };
   const designUserScopeChild = stepDesignRevision(designScopeChild, designDisagree).state;
   if (designUserScopeChild.tag !== 'scope-user-decision') throw new Error('design scope user decision');
   const designUserScopeParent: DesignState = { tag: 'revision', c: settledDesign, child: designUserScopeChild };
-  extra.push([designScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: designScopeChild.request, ruling: 'approve', rationale: 'The accepted outcome requires the added path.' } }]);
+  extra.push([designScopeParent, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The accepted outcome requires the added path.' } }]);
   extra.push([designScopeParent, designDisagree]);
   extra.push([designScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop design revision.' } }]);
-  extra.push([designUserScopeParent, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: designScopeChild.request.requestId, choice: 'accept', quote: 'Accept the required path.' } }]);
-  extra.push([designUserScopeParent, { type: 'DECISION', kind: 'scope-deviation-user', answer: { by: 'user', requestId: designScopeChild.request.requestId, choice: 'decline', quote: 'Keep the current scope.' } }]);
+  extra.push([designUserScopeParent, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: designScopeChild.request.requestId, choice: 'accept', quote: 'Accept the required path.' } }]);
+  extra.push([designUserScopeParent, { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: designScopeChild.request.requestId, choice: 'decline', quote: 'Keep the current scope.' } }]);
   extra.push([designUserScopeParent, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop design revision.' } }]);
   const withinScopeChild = stepDesignRevision({ ...rParsed.state, c: settledDesign, afterReview: true }, revisionParsed).state;
   if (withinScopeChild.tag !== 'scope-adjudication') throw new Error('within-scope design adjudication');
   const withinScopeParent: DesignState = { tag: 'revision', c: settledDesign, child: withinScopeChild, parent: active };
-  extra.push([withinScopeParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: withinScopeChild.request, ruling: 'approve', rationale: 'The acceptance detail is required within this increment.' } }]);
+  extra.push([withinScopeParent, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The acceptance detail is required within this increment.' } }]);
   const settledIntegration = { ...integrated.c, levelGatePassed: true };
   const integrationRevision = beginDesignRevision(settledIntegration, { type: 'REVISE', artifact: 'design', reason: 'repair integration', evidence: 'Update acceptance detail' }).state;
   const integrationParse = stepDesignRevision(integrationRevision, { type: 'AUTHORED', path: integrationRevision.workingPath }).state;
@@ -494,7 +458,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   const integrationScopeChild = stepDesignRevision({ ...integrationParse, afterReview: true }, integrationRevisionParsed).state;
   if (integrationScopeChild.tag !== 'scope-adjudication') throw new Error('integration revision adjudication');
   const integrationRevisionParent: DesignState = { tag: 'revision', c: settledIntegration, child: integrationScopeChild, parent: { ...integrated, c: settledIntegration } };
-  extra.push([integrationRevisionParent, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: integrationScopeChild.request, ruling: 'approve', rationale: 'The revised acceptance detail resolves the integration concern.' } }]);
+  extra.push([integrationRevisionParent, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The revised acceptance detail resolves the integration concern.' } }]);
   const all = [...observed, ...extra.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesign(state, event).state.tag}`)];
   assert.deepEqual(new Set(all), new Set(designTransitions.map((row) => `${row.from} --${row.on}--> ${row.to}`)));
 });

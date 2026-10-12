@@ -14,10 +14,13 @@ executing the plan as written delivers the requirement.
 ### Review against
 - The requirement: every part traced to a proposed change, and nothing added beyond it.
 - The plan's summary box and detailed `## Success Criteria` entries: each criterion observable and paired with a named test or exact
-  verification step whose command runs only that criterion's tests and matches existing test names.
+  verification step whose command runs only that criterion's tests and matches existing test names or
+  titles the plan names; each criterion verifies through a plan `Seams:` entry, and each
+  `Retain: transient` criterion names a valid durable `Covered by:` criterion or `FINAL`.
 - The task graph: each prerequisite, ownership boundary, and claimed independence checked against
   producer/consumer interfaces; a task that consumes another's output without depending on it, or
-  contends for a shared file, port, cache, or output, is a defect.
+  contends for a shared port, cache, or output, is a defect. A write path shared by tasks is a defect
+  only when no `Requires` path orders them and no `Overlap:` line justifies it.
 - An attached "Approved technical-design context" section: the increment's inherited contract and
   acceptance criteria. Treat the governed design as settled; raise a design-changing proposal as an
   out-of-scope remark for the orchestrator's amendment path.
@@ -40,19 +43,19 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 ### Tags
 - intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
-- decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; overlapping ownership or shared resources; fragmented or oversized tasks
+- decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; unjustified overlap or shared resources; fragmented or oversized tasks
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
 - trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal
 - compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback
 - robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs
-- verification: `verification`, `testability`, `spec-gap` — a named test or concrete step per criterion; pass/fail definitions; edge expectations; broad or slow commands lacking `[FINAL]`, narrow feedback commands marked `[FINAL]`
+- verification: `verification`, `testability`, `spec-gap`, `test-leak` — planned tests coupled to internals or duplicating seam coverage; a named test or concrete step per criterion; pass/fail definitions; edge expectations; broad or slow commands lacking `[FINAL]`, narrow feedback commands marked `[FINAL]`
 - simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
-If unspecified, target `8 + 2 × proposed-change entries`; on re-review count changed entries only.
+If unspecified, target `8 + proposed-change entries`, at most 24; on re-review count changed entries only.
 
 ### Severity
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding

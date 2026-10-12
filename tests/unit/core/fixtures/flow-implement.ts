@@ -93,8 +93,12 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   }]; };
   const baseHandlers = createHandlers({ skillRoot: SKILL_ROOT, cwd, os: 'linux', git, tempRoot: path.join(cwd, 'tmp'), workspaceRoot: cwd, orchestratorPlatform: 'claude', wave });
   // NOTE: fake Git cannot host worktrees, so every checkout op resolves to the caller tree and delivery transfers the changed paths.
+  // NOTE: a trim `observe` input only reports the caller blobs at the review boundary, matching the real handler.
+  const observe = (files: unknown) => Array.isArray(files)
+    ? { observed: Object.fromEntries(files.map((file: string) => [file, fs.existsSync(path.join(cwd, file)) ? crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex') : null])) }
+    : null;
   const checkout = async (effect: Extract<Effect, { kind: 'checkout' }>) => [{ type: 'CHECKOUT_DONE' as const, effectId: effect.id, op: effect.op,
-    result: { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
+    result: observe((effect.input as Record<string, unknown> | undefined)?.['observe']) ?? { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
   const handlers = { ...baseHandlers, checkout, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
   const ports = fakePorts();
   ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
@@ -111,7 +115,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   const [slot] = write.frame?.data['tasks'] as { task: string; action: string; attempt: number; signature: string; envelopePath: string }[];
   assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
   const envelopePath = String(slot?.envelopePath);
-  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: (slot as unknown as { model: string }).model, ...(typeof write.frame!.data['effort'] === 'string' ? { effort: write.frame!.data['effort'] as string } : {}) }] } });
+  const launched = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: (slot as unknown as { model: string }).model, ...(typeof write.frame!.data['effort'] === 'string' ? { effort: write.frame!.data['effort'] as string } : {}) } });
   assert.equal((launched.frame?.data['tasks'] as { action: string }[])[0]?.action, 'running');
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');
@@ -122,8 +126,8 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
     evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],
   }));
-  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath } });
-  assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence']);
+  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath, briefHash: String((launched.frame?.data['tasks'] as { briefHash: string }[])[0]?.briefHash), model: (slot as unknown as { model: string }).model } });
+  assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence'], JSON.stringify(evidence.frame));
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
   assert.equal(done.frame?.await, 'done', JSON.stringify(done.frame));
   assert.equal(done.frame?.data['outcome'], 'complete', JSON.stringify(done.frame));

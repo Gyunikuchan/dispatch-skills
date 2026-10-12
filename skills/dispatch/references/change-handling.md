@@ -22,7 +22,7 @@ For `DECISION kind=drift`, supply `{by:"orchestrator",noticeId,afterHash,action,
 
 - `preserve`: retain evidence only for established irrelevant changes.
 - `refresh`: accept current content within settled intent, invalidate affected evidence and rerun dependent checks/review.
-- `reconcile`: use the existing revision/rebuild flow; retain approved write scope.
+- `reconcile`: change the plan; inside an implement task phase send `AMEND` per [implement](verbs/implement.md#amendments), elsewhere use the revision/rebuild flow; retain approved write scope.
 - `escalate`: take changed intent or unresolved disagreement to the user.
 
 The driver recaptures live state with a fresh effect ID before applying the answer. A second edit creates a new notice and makes the old answer obsolete. Resume the parked receipt once. Keep attempt identities, failure budgets, running handles and review caps. A refresh beyond the cap escalates with evidence retained.

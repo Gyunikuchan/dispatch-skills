@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { governedPlanText, materializePlanRevisionSeed, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { governedPlanText, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
+
+const splitMessage = (action: string, text: string) => `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text}".`;
 
 const PLAN = `# Add retry budget
 
@@ -121,34 +123,6 @@ test('readable plan syntax: invariant-only notes stay single and unlabeled detai
   assert.equal(parsed(continued).changes[0]?.note, '  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.');
 });
 
-test('readable plan revision: additions preserve nested constraints, generated inputs and summary hard breaks', () => {
-  const source = readable().replace('> **Scope:** src/fetch.ts', '> **Scope:** src/fetch.ts  ').replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve errors.');
-  const base = parsed(source);
-  const effective = { ...base, criteria: [...base.criteria, { ...base.criteria[1]!, id: 'SC3', title: 'Check extra output', changes: ['src/extra.ts'], verify: [{ command: 'npm run extra', final: false }] }], changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note: 'Check extra.\nInvariants: Preserve shape.\n  - Keep order.', command: null, line: 0 }], tasks: base.tasks.map(t => ({ ...t, paths: [...t.paths, 'src/extra.ts'], criteria: [...t.criteria, 'SC3'] })) };
-  const seed = materializePlanRevisionSeed(source, base, effective);
-  const revised = parsed(seed);
-  assert.match(seed, /> \*\*Scope:\*\* src\/fetch.ts, src\/extra.ts  \n/);
-  assert.match(seed, /- #### \[MODIFY\] src\/extra.ts\n  - Changes: Check extra.\n  - Invariants: Preserve shape.\n    - Keep order./);
-  assert.deepEqual(revised.tasks[0]?.generated, base.tasks[0]?.generated);
-  assert.equal(revised.changes[0]?.note, base.changes[0]?.note);
-  assert.deepEqual(revised.criteria[2]?.changes, ['src/extra.ts']);
-  assert.ok(revised.tasks[0]?.criteria.includes('SC3'));
-  assert.equal(revised.changes.filter(c => c.path === 'src/extra.ts').length, 1);
-  assert.equal(materializePlanRevisionSeed(seed, base, effective), seed);
-  assert.equal(governedPlanText(seed), governedPlanText(seed.replace('*No reviews conducted yet.*', 'Changed driver review.')));
-});
-
-for (const note of ['  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.', 'Invariants: Keep API.\n  - Keep flag.']) {
-  test(`readable plan revision: accepted ${note.startsWith('Invariants:') ? 'invariant-only' : 'continuation-only'} notes keep their labels and indentation`, () => {
-    const source = readable(), base = parsed(source);
-    const effective = { ...base, changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note, command: null, line: 0 }], tasks: base.tasks.map(t => ({ ...t, paths: [...t.paths, 'src/extra.ts'] })) };
-    const seed = materializePlanRevisionSeed(source, base, effective);
-    assert.equal(parsed(seed).changes.find(c => c.path === 'src/extra.ts')?.note, note);
-    assert.match(seed, note.startsWith('Invariants:') ? /- #### \[MODIFY\] src\/extra.ts\n  - Invariants: Keep API./ : /- #### \[MODIFY\] src\/extra.ts\n  - Changes:\n    - Add the counter./);
-    assert.equal(materializePlanRevisionSeed(seed, base, effective), seed);
-  });
-}
-
 test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, FINAL, traceability', () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));
@@ -164,54 +138,6 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
   assert.equal(plan.changes[2]?.command, 'npm run docs');
   assert.deepEqual(plan.verification.automated, ['npm run lint']);
   assert.deepEqual(plan.traceability, { 'Approved revision': 'none' });
-});
-
-test('implement-plan-revision: seed carries accepted scope into the editable plan', () => {
-  const parsed = parsePlan(PLAN);
-  assert.ok(parsed.ok, JSON.stringify(parsed));
-  const base = parsed.plan;
-  const extra = {
-    id: 'SC3', title: 'Accepted companion behavior', line: 0, changes: ['src/extra.ts'], verify: [{ command: 'npm run check-extra', final: false }],
-    evidence: 'verify' as const, preExisting: false, redException: null, testRationale: 'Checks the accepted companion behavior directly.', review: null, enforcementInfeasibility: null,
-  };
-  const effective = {
-    ...base,
-    keyDecisions: [...base.keyDecisions, 'Preserve the accepted companion behavior.'],
-    criteria: [...base.criteria, extra],
-    tasks: base.tasks.map((task) => task.id === 'T1' ? { ...task, paths: [...task.paths, 'src/extra.ts'], criteria: [...task.criteria, 'SC3'] } : task),
-    changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note: 'Accepted companion scope.', command: null, line: 0 }],
-    verification: { automated: [...base.verification.automated, 'npm run check-extra', 'npm run extra-check'], none: null, manual: [...base.verification.manual, 'Confirm companion behavior in the local service.'] },
-    finalCommands: [...base.finalCommands, 'npm run final-companion-check'],
-  };
-  const seed = materializePlanRevisionSeed(PLAN, base, effective);
-  const revised = parsePlan(seed);
-  assert.ok(revised.ok, JSON.stringify(revised));
-  assert.ok(seed.includes('Fetch stops retrying after three attempts so callers fail fast.'));
-  assert.match(seed, /^> \*\*Scope:\*\*.*src\/extra\.ts/m);
-  assert.deepEqual(revised.plan.tasks.find((task) => task.id === 'T1')?.paths, [...base.tasks[0]!.paths, 'src/extra.ts']);
-  assert.ok(revised.plan.tasks.find((task) => task.id === 'T1')?.criteria.includes('SC3'));
-  assert.deepEqual(revised.plan.criteria.find((criterion) => criterion.id === 'SC3')?.changes, ['src/extra.ts']);
-  assert.ok(revised.plan.verification.automated.includes('npm run extra-check'));
-  assert.ok(revised.plan.criteria.find((criterion) => criterion.id === 'SC3')?.verify.some((item) => item.command === 'npm run final-companion-check' && item.final));
-  assert.ok(revised.plan.keyDecisions.includes('Preserve the accepted companion behavior.'));
-  assert.ok(revised.plan.verification.manual.includes('Confirm companion behavior in the local service.'));
-});
-
-test('implement-plan-revision: seed assigns accepted hotfix paths that have no task owner', () => {
-  const parsed = parsePlan(PLAN);
-  assert.ok(parsed.ok, JSON.stringify(parsed));
-  const base = parsed.plan;
-  const effective = {
-    ...base,
-    criteria: base.criteria.map((criterion) => criterion.id === 'SC1' ? { ...criterion, changes: [...criterion.changes, 'src/hotfix-helper.ts'] } : criterion),
-    changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/hotfix-helper.ts', note: 'Accepted hotfix scope.', command: null, line: 0 }],
-  };
-  const seed = materializePlanRevisionSeed(PLAN, base, effective);
-  const revised = parsePlan(seed);
-  assert.ok(revised.ok, JSON.stringify(revised));
-  assert.ok(seed.includes('#### [MODIFY] src/hotfix-helper.ts'));
-  assert.ok(revised.plan.tasks.find((task) => task.id === 'T1')?.paths.includes('src/hotfix-helper.ts'));
-  assert.ok(revised.plan.criteria.find((criterion) => criterion.id === 'SC1')?.changes.includes('src/hotfix-helper.ts'));
 });
 
 test('implement-plan-lint: [FINAL] inside the code span is a defect naming the fix', () => {
@@ -373,7 +299,6 @@ test('task-plan: rejects mapping defects', () => {
   assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: none')).includes('task-criteria'), 'task without criteria');
   assert.ok(defects(TASKS.replace('  - Changes: src/reader.ts\n', '  - Changes: src/reader.ts, src/writer.ts\n')).includes('task-criteria'), 'foreign path');
   assert.ok(defects(TASKS.replace('- Criteria: SC3', '- Criteria: SC3, SC4')).includes('task-criteria'), 'task-mapped integration criterion');
-  assert.ok(defects(TASKS.replace('#### [MODIFY] src/writer.ts', '#### [MODIFY] src/Reader.ts')).includes('duplicate-change-path'), 'case alias');
 });
 
 test('task-plan: generated inputs require Inputs and cover producers through prerequisites', () => {
@@ -448,16 +373,6 @@ test('SC1 grouped delete flags a duplicate path', () => {
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/fetch.ts" appears more than once.']);
 });
 
-test('SC1 revision seed keeps grouped delete without duplicates', () => {
-  const source = withDelete('src/old-a.ts, src/old-b.ts');
-  const base = parsed(source);
-  const seed = materializePlanRevisionSeed(source, base, base);
-  assert.equal(seed, source);
-  assert.ok(parsePlan(seed).ok);
-});
-
-const splitMessage = (action: string, text: string) => `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text}".`;
-
 test('SC2 rejects comma list under modify', () => {
   const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
   assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')]);
@@ -487,4 +402,113 @@ test('SC3 duplicate delete notes hint grouping', () => {
 test('SC3 duplicate modify notes keep filler message', () => {
   const source = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n');
   assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." is filler; say what changes in this file.'));
+});
+
+// SECTION: Cross-task overlap
+
+const READER_ENTRY = '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n';
+const WRITER_ENTRY = '#### [MODIFY] src/writer.ts\n- Changes: encode with the contract.\n';
+/** T2 and T3 both require only T1, so a path they share has no Requires path between them. */
+const overlapPlan = (writerPath = 'src/shared.ts', writerHeader = '') => TASKS
+  .replace(READER_ENTRY, `${READER_ENTRY}#### [MODIFY] src/shared.ts\n- Changes: add the reader lookup table.\n`)
+  .replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] ${writerPath}\n- Changes: add the writer lookup table.\n`)
+  .replace('- Prerequisites: T1\n- Criteria: SC3', `- Prerequisites: T1\n- Criteria: SC3${writerHeader}`);
+const okPlan = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result; };
+const overlapCodes = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'overlap');
+
+test('warns on unjustified cross-task overlap', () => {
+  const result = okPlan(overlapPlan());
+  assert.deepEqual(result.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
+  assert.equal(overlapCodes(overlapPlan()).length, 1);
+  assert.deepEqual(result.plan.changes.filter((change) => change.path === 'src/shared.ts').map((change) => change.note), ['add the reader lookup table.', 'add the writer lookup table.']);
+  assert.deepEqual(selectTaskBrief(result.plan, 'T2')?.changes.map((change) => change.note), ['decode with the contract.', 'add the reader lookup table.']);
+  assert.deepEqual(selectTaskBrief(result.plan, 'T3')?.changes.map((change) => change.note), ['encode with the contract.', 'add the writer lookup table.', '']);
+  const alias = okPlan(overlapPlan('src/Shared.ts'));
+  assert.deepEqual(alias.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
+  assert.match(alias.warnings.find((item) => item.code === 'overlap')?.message ?? '', /\(as "src\/Shared\.ts" in T3\)/);
+});
+
+test('accepts justified overlap', () => {
+  const result = okPlan(overlapPlan('src/shared.ts', '\n- Overlap: `src/shared.ts` — both lookup tables live in one module.'));
+  assert.deepEqual(result.plan.warnings, []);
+  assert.deepEqual(overlapCodes(overlapPlan('src/shared.ts', '\n- Overlap: src/Shared.ts — case variants name one file.')), []);
+  assert.deepEqual(result.plan.tasks[2]?.overlaps, [{ path: 'src/shared.ts', reason: 'both lookup tables live in one module.' }]);
+  assert.equal(result.plan.tasks[2]?.summary, 'The writer encodes records with the shared shape and regenerates the docs.');
+  assert.ok(defects(overlapPlan('src/shared.ts', '\n- Overlap: src/shared.ts')).includes('task-overlap'), 'missing reason');
+  assert.ok(defects(overlapPlan('src/shared.ts', '\n- Overlap: src/reader.ts — not written here.')).includes('task-overlap'), 'unowned path');
+});
+
+test('keeps duplicate path defect within one task', () => {
+  const repeated = TASKS.replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/writer.ts\n- Changes: also log each encode.\n`);
+  assert.deepEqual(defectsOf(repeated, 'duplicate-change-path').map((item) => item.message), ['Change path "src/writer.ts" appears more than once.']);
+  const aliased = TASKS.replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/Writer.ts\n- Changes: also log each encode.\n`);
+  assert.deepEqual(defectsOf(aliased, 'duplicate-change-path').map((item) => item.message), ['Change path "src/Writer.ts" aliases "src/writer.ts" on case-insensitive filesystems.']);
+  const justified = repeated.replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T1\n- Criteria: SC3\n- Overlap: src/writer.ts — same task.');
+  assert.ok(defects(justified).includes('duplicate-change-path'), 'Overlap does not excuse a same-task repeat');
+});
+
+test('ignores reference-only paths for overlap', () => {
+  const source = TASKS
+    .replace('The reader decodes records with the shared shape.', 'The reader decodes records that `src/writer.ts` encodes.')
+    .replace(READER_ENTRY, '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract; mirror `src/writer.ts`.\n<!-- #### [MODIFY] src/writer.ts -->\n')
+    .replace('  - Integration: spans reader and writer tasks.', '  - Changes: src/reader.ts, src/writer.ts\n  - Integration: spans reader and writer tasks.');
+  const result = okPlan(source);
+  assert.deepEqual(result.plan.warnings, []);
+  assert.deepEqual(result.warnings.filter((item) => item.code === 'overlap'), []);
+});
+
+test('no overlap warning for directly ordered tasks', () => {
+  const source = TASKS.replace(READER_ENTRY, `${READER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the reader decode hook.\n`);
+  assert.deepEqual(okPlan(source).plan.warnings, []);
+  assert.deepEqual(overlapCodes(source), []);
+});
+
+test('no overlap warning for transitively ordered tasks', () => {
+  const source = TASKS
+    .replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T2\n- Criteria: SC3')
+    .replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the writer encode hook.\n`);
+  assert.deepEqual(okPlan(source).plan.warnings, []);
+  assert.deepEqual(overlapCodes(source), []);
+});
+
+// SECTION: Seams and transient criteria
+
+const SC1_RATIONALE = '  - Test rationale: fails today because the loop never stops retrying.\n';
+const transient = (fields: string, source = PLAN) => source.replace(SC1_RATIONALE, `${SC1_RATIONALE}${fields}`);
+
+test('parses seams', () => {
+  assert.deepEqual(parsed(PLAN).seams, []);
+  const source = PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: `tests/fetch.test.ts`, `node --test --test-name-pattern="a,b" tests/e2e.test.ts`\n');
+  assert.deepEqual(parsed(source).seams, ['tests/fetch.test.ts', 'node --test --test-name-pattern="a,b" tests/e2e.test.ts']);
+  assert.deepEqual(parsed(PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: none\n')).seams, []);
+});
+
+test('parses transient retain and coverage', () => {
+  const plan = parsed(transient('  - Retain: transient\n  - Covered by: `sc2`\n'));
+  assert.deepEqual(plan.criteria.map((criterion) => [criterion.id, criterion.retain, criterion.coveredBy]), [['SC1', 'transient', 'SC2'], ['SC2', 'durable', null]]);
+  assert.equal(parsed(transient('  - Retain: transient\n  - Covered by: FINAL\n')).criteria[0]?.coveredBy, 'FINAL');
+  assert.equal(parsed(transient('  - Retain: durable\n')).criteria[0]?.retain, 'durable');
+  assert.ok(defects(transient('  - Retain: sometimes\n')).includes('criterion-format'), 'unknown Retain value');
+});
+
+test('rejects transient criterion without coverage', () => {
+  const cases: [string, string][] = [
+    ['  - Retain: transient\n', 'requires Covered by'],
+    ['  - Retain: transient\n  - Covered by: SC9\n', 'unknown criterion SC9'],
+    ['  - Retain: transient\n  - Covered by: SC1\n', 'also transient'],
+    ['  - Retain: transient\n  - Covered by: the suite\n', 'use a criterion ID'],
+    ['  - Covered by: SC2\n', 'without Retain: transient'],
+  ];
+  for (const [fields, message] of cases) {
+    const found = defectsOf(transient(fields), 'transient-coverage');
+    assert.equal(found.length, 1, fields);
+    assert.match(found[0]?.message ?? '', new RegExp(message), fields);
+  }
+});
+
+test('rejects final coverage without final command', () => {
+  const source = transient('  - Retain: transient\n  - Covered by: FINAL\n');
+  assert.ok(parsePlan(source).ok);
+  const found = defectsOf(source.replace('`npm test` [FINAL]', '`npm test`'), 'transient-coverage');
+  assert.deepEqual(found.map((item) => item.message), ['Criterion SC1 is Covered by FINAL, but the plan has no [FINAL] Verify command.']);
 });

@@ -4,7 +4,6 @@ import type { PlanState } from './plan.ts';
 import type { ImplementState } from './implement.ts';
 import type { DesignState } from './design.ts';
 import type { ReviewState } from './review.ts';
-import type { RevisionState } from './revision.ts';
 
 const terminal = (tag: string): string | undefined => ({ complete: 'complete', settled: 'complete', skipped: 'skipped', empty: 'no-reviewable-changes', failed: 'failed', stopped: 'stopped', escalated: 'stopped', refused: 'stopped' })[tag];
 /** A review phase with the machine's own convergence result (history re-raises, halt escalation), so diagnostics agree with the driver. */
@@ -32,15 +31,10 @@ function implement(state: ImplementState, key: string): Phase[] {
   const code = state.tag === 'code-review' ? review(state.review, `${key}/code-review`) : state.c?.codeReview && terminal(state.c.codeReview.tag) ? review(state.c.codeReview, `${key}/code-review`) : [];
   return [...prior, outer, ...code];
 }
-function revision(state: RevisionState, key: string): Phase[] {
-  const current = `${key}/revision-${state.r.c.revisions.length + 1}`;
-  return [{ key: current, name: 'plan', ...(terminal(state.tag) ? { outcome: terminal(state.tag)! } : {}) }, ...(state.tag === 'review' ? review(state.review, `${current}/review`) : [])];
-}
 function design(state: DesignState, key: string): Phase[] {
   const outer: Phase = { key, name: 'design', ...(terminal(state.tag) ? { outcome: terminal(state.tag)! } : {}) };
   switch (state.tag) {
     case 'increment': return [outer, ...implement(state.child, `${key}/${state.increment.toLowerCase()}`)];
-    case 'plan-revision': return [outer, { key: `${key}/${state.increment.toLowerCase()}`, name: 'implementation' }, ...revision(state.child, `${key}/${state.increment.toLowerCase()}`)];
     case 'review': return [outer, ...review(state.review, `${key}/review`)];
     case 'integration': return [outer, ...review(state.review, `${key}/integration`, true)];
     case 'revision': return [outer, { key: `${key}/revision-${state.c.revisions.length + 1}`, name: 'design' }, ...(state.child.tag === 'review' ? review(state.child.review, `${key}/revision-${state.c.revisions.length + 1}/review`) : [])];
@@ -54,7 +48,6 @@ export function diagnosticPhases(state: RootState): Phase[] {
     case 'plan': return plan(state.child, 'plan');
     case 'implement': return implement(state.child, 'implementation');
     case 'review': return review(state.child, 'review');
-    case 'revision': return [{ key: 'implementation', name: 'implementation' }, ...revision(state.child, 'implementation')];
     case 'design': return design(state.child, 'design');
     case 'handoff': case 'retro': case 'done': {
       const last = state.last;

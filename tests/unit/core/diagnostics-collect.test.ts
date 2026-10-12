@@ -62,8 +62,10 @@ const flowMachine: Machine<FlowState> = {
       case 'rule:RULINGS': return to('native');
       case 'native:NATIVE_RESULTS': return to('approve');
       case 'approve:DECISION': return to('write');
-      case 'write:WRITE_LAUNCHED': return to('write', [], (event as { tasks: unknown[] }).tasks.length);
-      case 'write:WRITE_ENVELOPE': case 'write:WRITE_FAILED': return to(state.pending > 1 ? 'write' : 'done', [], state.pending - 1);
+      case 'write:WRITE_RECEIPT': {
+        if ((event as { status: string }).status === 'launched') return to('write', [], state.pending + 1);
+        return to(state.pending > 1 ? 'write' : 'done', [], state.pending - 1);
+      }
       default: return { state, effects: [] };
     }
   },
@@ -72,7 +74,7 @@ const flowMachine: Machine<FlowState> = {
   transitions: [
     { from: 'new', on: 'RUN_STARTED', to: 'snapshotting' }, { from: 'snapshotting', on: 'SNAPSHOT', to: 'author' }, { from: 'author', on: 'AUTHORED', to: 'waving' },
     { from: 'waving', on: 'WAVE_DONE', to: 'rule' }, { from: 'rule', on: 'RULINGS', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'approve' },
-    { from: 'approve', on: 'DECISION', to: 'write' }, { from: 'write', on: 'WRITE_ENVELOPE', to: 'done' },
+    { from: 'approve', on: 'DECISION', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' },
   ],
 };
 const flowPhases = (state: FlowState): Phase[] => {
@@ -112,10 +114,11 @@ async function flowRun() {
   await reply(60_000, { type: 'RULINGS', rulings: { F1: { ruling: 'accept' }, F2: { ruling: 'reject' } } });
   await reply(30_000, { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', model: 'sonnet', tokens: 5_000, durationMs: 60_000 }, { slot: 'claude[1]' }] });
   await reply(900_000, { type: 'DECISION', kind: 'approval', answer: { approved: true } });
-  await reply(10_000, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: 1, ...write, model: 'opus', effort: 'high' }, { task: 'T2', attempt: 2, ...write, model: 'sonnet' }] });
-  await reply(40_000, { type: 'WRITE_ENVELOPE', envelopePath: 't1.json', task: 'T1', attempt: 1, ...write, tokens: 1_200, durationMs: 30_000 });
-  await reply(5_000, { type: 'WRITE_FAILED', model: 'sonnet', kind: 'crash', reason: 'exit 1', task: 'T2', attempt: 2, ...write });
-  assert.deepEqual(awaits, ['author', 'author', 'rule', 'native', 'decide', 'write', 'write', 'write', 'done']);
+  await reply(5_000, { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: 1, ...write, model: 'opus', effort: 'high' });
+  await reply(5_000, { type: 'WRITE_RECEIPT', status: 'launched', task: 'T2', attempt: 2, ...write, model: 'sonnet' });
+  await reply(40_000, { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 't1.json', briefHash: 'b1', task: 'T1', attempt: 1, ...write, model: 'opus', effort: 'high', tokens: 1_200, durationMs: 30_000 });
+  await reply(5_000, { type: 'WRITE_RECEIPT', status: 'failed', model: 'sonnet', detail: 'crash: exit 1', task: 'T2', attempt: 2, ...write });
+  assert.deepEqual(awaits, ['author', 'author', 'rule', 'native', 'decide', 'write', 'write', 'write', 'write', 'done']);
   return { ports, runDir, facts: collectRunFacts(ports, runDir, {}, flowFold) };
 }
 
@@ -172,12 +175,12 @@ const hostMachine: Machine<HostState> = {
     if (event.type === 'RUN_STARTED') return { state: { tag: 'author' }, effects: [] };
     if (event.type === 'AUTHORED' && state.tag === 'author') return { state: { tag: 'native' }, effects: [] };
     if (event.type === 'NATIVE_RESULTS' && state.tag === 'native') return { state: { tag: 'write' }, effects: [] };
-    if (event.type === 'WRITE_ENVELOPE' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
+    if (event.type === 'WRITE_RECEIPT' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
     return { state, effects: [] };
   },
   awaitOf: (state) => state.tag === 'booting' ? null : state.tag,
   project: (state) => ({ at: `host › ${state.tag}`, data: state.tag === 'done' ? { outcome: 'complete' } : { kind: state.tag, path: 'plan.md' } }),
-  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_ENVELOPE', to: 'done' }],
+  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 
 // SECTION: SC10
@@ -192,7 +195,7 @@ test('SC10 derives phases gaps and user waits from journal', async () => {
   assert.equal(facts.phases.reduce((total, phase) => total + (phase.wallMs ?? 0), 0), 1_366_000, 'phase walls sum to the run wall');
   assert.deepEqual(facts.hostGaps, [
     { await: 'author', ms: 300_000 }, { await: 'rule', ms: 60_000 }, { await: 'native', ms: 30_000 },
-    { await: 'write', ms: 10_000 }, { await: 'write', ms: 40_000 }, { await: 'write', ms: 5_000 },
+    { await: 'write', ms: 5_000 }, { await: 'write', ms: 5_000 }, { await: 'write', ms: 40_000 }, { await: 'write', ms: 5_000 },
   ], 'the rejected reply is a note and never splits the author wait; the approval wait is user time');
   assert.equal(facts.rejectedEvents.length, 1);
   assert.equal(facts.rejectedEvents[0]?.eventType, 'RULINGS');
@@ -362,7 +365,7 @@ test('SC3 rejected event canaries never reach the report', async () => {
     { kind: 'event-rejected', eventType: 'UNKNOWN', reason: 'unknown-type at event.type' },
   ], 'the note journals only a known event type, the class, and an allowlisted path');
   await send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [] } });
-  assert.equal((await send({ ...base, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: 'e.json' } })).frame?.await, 'done');
+  assert.equal((await send({ ...base, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' } })).frame?.await, 'done');
   assert.doesNotMatch(JSON.stringify([...readJournal(ports, runDir).records]), /CANARY/, 'no journal line holds a submitted value, key, or type');
   const report = read(path.join(session, 'diagnostics.md'));
   assert.doesNotMatch(report, /CANARY/, 'neither the submitted value nor the arbitrary key renders');

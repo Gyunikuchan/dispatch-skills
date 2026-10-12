@@ -3,16 +3,14 @@
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
 import { renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, walkthroughPathOf } from '../domain/render.ts';
-import { materializePlanRevisionSeed } from '../domain/plan.ts';
 import type { ReviewKind } from '../domain/types.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
 import {
   beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState,
 } from './review.ts';
-import { effectivePlan, implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
+import { implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
-import { beginRevision, stepRevision, reboundRevision, revisionAwait, revisionData, validateRevision, type RevisionState } from './revision.ts';
 import { executionBindingDeferred, reconfigureRoot } from './execution-config.ts';
 import { refreshedRun } from '../domain/execution-config.ts';
 import { beginDesign, stepDesign, designAwait, designData, validateDesign, type DesignState } from './design.ts';
@@ -21,7 +19,6 @@ export type RunInfo = { verb: Verb; argument: string; slug: string; defaults?: R
 
 export type RootState =
   | { tag: 'design'; run: RunInfo; child: DesignState }
-  | { tag: 'revision'; run: RunInfo; child: RevisionState }
   | { tag: 'booting' }
   | { tag: 'ask'; run: RunInfo; child: AskState }
   | { tag: 'plan'; run: RunInfo; child: PlanState }
@@ -56,7 +53,6 @@ function childOf(state: RootState): Child | null {
     case 'plan': return { verb: 'plan', state: state.child };
     case 'review': return { verb: 'review', state: state.child };
     case 'implement': return { verb: 'implement', state: state.child };
-    case 'revision': return { verb: 'implement', state: state.child.r.parent };
     case 'handoff': case 'retro': case 'done': return state.last;
     case 'booting': return null;
     default: return never(state, 'root state');
@@ -107,10 +103,6 @@ function toHandoff(run: RunInfo, last: Child | null, counters: Counters, done: D
 }
 
 function wrap(run: RunInfo, child: Child, effects: Step<unknown>['effects']): S {
-  if (child.verb === 'implement' && child.state.tag === 'revision-request') {
-    const result = beginRevision(child.state.parent, child.state.event);
-    return { state: { tag: 'revision', run, child: result.state }, effects: result.effects };
-  }
   if (terminal(child)) return toHandoff(run, child, countersOf(child), doneOf(child));
   switch (child.verb) {
     case 'design': return { state: { tag: 'design', run, child: child.state }, effects };
@@ -173,24 +165,6 @@ export function stepRoot(state: RootState, event: Event): S {
     case 'plan': { const result = stepPlan(state.child, event); return wrap(state.run, { verb: 'plan', state: result.state }, result.effects); }
     case 'review': { const result = stepReview(state.child, event); return wrap(state.run, { verb: 'review', state: result.state }, result.effects); }
     case 'implement': { const result = stepImplement(state.child, event); return wrap(state.run, { verb: 'implement', state: result.state }, result.effects); }
-    case 'revision': {
-      const result = stepRevision(state.child, event);
-      if (result.state.tag === 'stopped') {
-        const context = result.state.r.c;
-        return wrap(state.run, { verb: 'implement', state: { tag: 'stopped', c: context, summary: result.state.summary } }, []);
-      }
-      if (result.state.tag === 'refused') {
-        const r = result.state.r;
-        const parent = 'c' in r.parent ? { ...r.parent, c: { ...r.c, concerns: [...r.c.concerns, result.state.error] } } as ImplementState : r.parent;
-        return wrap(state.run, { verb: 'implement', state: parent }, []);
-      }
-      if (result.state.tag === 'resume') {
-        const c = reboundRevision(result.state);
-        const parent: ImplementState = result.state.r.grew && !result.state.r.scopeAdjudicated ? { tag: 'approval', c } : result.state.r.parent.tag === 'evidence' ? { ...result.state.r.parent, c, ids: c.plan!.criteria.filter((row) => !c.evidence[row.id]).map((row) => row.id) } : { ...result.state.r.parent, c } as ImplementState;
-        return wrap(state.run, { verb: 'implement', state: parent }, []);
-      }
-      return { state: { tag: 'revision', run: state.run, child: result.state }, effects: result.effects };
-    }
     case 'handoff': {
       const base = { run: state.run, last: state.last, counters: state.counters, done: state.done };
       // The journaled diagnostics decision governs the rest of the run, so replay never consults live settings.
@@ -214,7 +188,6 @@ function awaitOf(state: RootState): Await | null {
     case 'plan': return planAwait(state.child);
     case 'review': return reviewAwait(state.child);
     case 'implement': return implementAwait(state.child);
-    case 'revision': return revisionAwait(state.child);
     case 'retro': return 'retro';
     case 'done': return 'done';
     case 'booting': case 'handoff': return null;
@@ -230,7 +203,6 @@ function project(state: RootState): { at: string; data: Readonly<Record<string, 
     case 'plan': return { at: `plan › ${state.child.tag}${state.child.tag === 'review' ? ` › ${state.child.review.tag}` : ''}`, data: planData(state.child) };
     case 'review': return { at: `review › ${state.child.tag}`, data: reviewData(state.child) };
     case 'implement': return { at: `implement › ${state.child.tag}${state.child.tag === 'plan-review' || state.child.tag === 'code-review' ? ` › ${state.child.review.tag}` : ''}`, data: implementData(state.child) };
-    case 'revision': return { at: `implement › revision › ${state.child.tag}`, data: revisionData(state.child) };
     case 'retro': return { at: `${state.run.verb} › retro`, data: { kind: 'retro' } };
     case 'done': {
       const data: Record<string, unknown> = { ...state.done, handoff: state.handoff };
@@ -248,7 +220,6 @@ function validate(state: RootState, event: HostEvent): string | null {
     case 'plan': return validatePlan(state.child, event);
     case 'review': return validateReview(state.child, event);
     case 'implement': return validateImplement(state.child, event);
-    case 'revision': return validateRevision(state.child, event);
     case 'booting': case 'handoff': case 'retro': case 'done': return null;
     default: return never(state, 'root state');
   }
@@ -282,6 +253,8 @@ function writeSection(ports: Ports, file: string, review: ReviewState, runDir: s
 }
 
 function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string, runDir: string): void {
+  // NOTE: an AMEND binds the run to its amended plan text; the file is written once so reruns see the bound hash.
+  for (const amendment of 'c' in implementation ? implementation.c?.amendments ?? [] : []) if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
   if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
   if (walkthrough) {
@@ -293,12 +266,6 @@ function renderImplementation(ports: Ports, implementation: ImplementState, walk
 }
 
 function render(state: RootState, ports: Ports, runDir: string): void {
-  if (state.tag === 'revision') {
-    const r = state.child.r;
-    if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, materializePlanRevisionSeed(ports.fs.readText(r.c.planPath), r.c.plan!, effectivePlan(r.c)));
-    if (state.child.tag === 'review') writeSection(ports, r.workingPath, state.child.review, runDir);
-    return;
-  }
   const child = childOf(state);
   if (!child || state.tag === 'booting') return;
   if (child.verb === 'design') {
@@ -313,11 +280,6 @@ function render(state: RootState, ports: Ports, runDir: string): void {
       const r = design.child;
       if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.path));
       if (r.tag === 'review') writeSection(ports, r.workingPath, r.review, runDir);
-    }
-    if (design.tag === 'plan-revision') {
-      const r = design.child.r;
-      if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, materializePlanRevisionSeed(ports.fs.readText(r.c.planPath), r.c.plan!, effectivePlan(r.c)));
-      if (design.child.tag === 'review') writeSection(ports, r.workingPath, design.child.review, runDir);
     }
     if (design.tag === 'review') writeSection(ports, design.c.path, design.review, runDir);
     for (const [id, history] of Object.entries(design.c.histories)) {
@@ -355,13 +317,7 @@ export const rootTransitions = [
   { from: 'booting', on: 'RUN_STARTED', to: 'design' },
   { from: 'design', on: 'DECISION', to: 'handoff' },
   { from: 'design', on: 'EFFECT_FAILED', to: 'handoff' },
-  { from: 'implement', on: 'SNAPSHOT', to: 'revision' },
-  { from: 'implement', on: 'RECOVERY_ASSESSED', to: 'revision' },
   { from: 'implement', on: 'RECOVERY_ASSESSED', to: 'handoff' },
-  { from: 'revision', on: 'ARTIFACT_PARSED', to: 'implement' },
-  { from: 'revision', on: 'SNAPSHOT', to: 'implement' },
-  { from: 'revision', on: 'SNAPSHOT', to: 'handoff' },
-  { from: 'revision', on: 'DECISION', to: 'implement' },
   { from: 'booting', on: 'RUN_STARTED', to: 'ask' },
   { from: 'booting', on: 'RUN_STARTED', to: 'plan' },
   { from: 'booting', on: 'RUN_STARTED', to: 'review' },
@@ -402,7 +358,7 @@ export const rootMachine: Machine<RootState> = {
     const session = sessionDirOf(runDir), owned = [`${session}/manifest.json`, `${session}/diagnostics.md`];
     if (!('run' in state)) return owned;
     if (state.tag === 'review' && 'c' in state.child && state.child.c.spec.kind === 'code' && !state.child.c.spec.governing?.walkthroughPath) owned.push(reportPathOf(runDir, state.run.slug));
-    if (state.tag === 'implement' || state.tag === 'revision') owned.push(walkthroughPathOf(session, state.run.slug));
+    if (state.tag === 'implement') owned.push(walkthroughPathOf(session, state.run.slug));
     if (state.tag === 'design') for (const id of [...Object.keys(state.child.c.histories), ...(state.child.tag === 'increment' ? [state.child.increment] : [])]) owned.push(walkthroughPathOf(session, state.run.slug, id));
     return owned;
   },

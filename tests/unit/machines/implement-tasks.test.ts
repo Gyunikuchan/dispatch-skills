@@ -4,7 +4,6 @@ import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/sc
 import type { ScopeAdjustment } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { beginRevision, reboundRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { effectivePlan, implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
@@ -45,58 +44,28 @@ test('tasks: schedule with cap one runs the same pipeline one task at a time', (
   assert.deepEqual(launchedTasks(trace), ['task-t1', 'task-t2', 'task-t3']);
 });
 
-test('level-journal: task admission supplies its mixed production/test paths to a RED_READY scope request', () => {
-  const sim: Sim = {
-    envelope: (id) => id === 'T1' ? {
-      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'RED_READY', summary: 'The regression needs one additional fixture.', evidence: [],
-      scopeRequest: { requestId: 'red-ready-extra-fixture', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required regression test needs a fixture outside this task.', delta: { paths: ['tests/extra.fixture.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
-    } : defaultEnvelope(id),
-  };
+test('level-journal: task admission supplies its mixed production/test paths to the envelope check', () => {
+  const sim: Sim = {};
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.equal(result.state.tag, 'scope-adjudication');
   const admission = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
   assert.ok(admission?.kind === 'check-envelope');
   if (admission?.kind === 'check-envelope') assert.deepEqual(admission.permitted, ['src/a.ts', 'tests/sc1.test.ts']);
 });
 
-test('level-journal: scope-driven fourth launch stays schedulable while repeated failures hit retry bound', () => {
-  let scopeRequests = 0;
+test('level-journal: repeated failures hit retry bound', () => {
   const sim: Sim = {
     plan: { ...PLAN, tasks: [PLAN.tasks[0]!] },
-    envelope: (id) => {
-      if (id !== 'T1') return defaultEnvelope(id);
-      if (scopeRequests < 3) {
-        const request = ++scopeRequests;
-        return {
-          schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: `Add required helper ${request}.`, evidence: [],
-          scopeRequest: { requestId: `scope-${request}`, source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The accepted outcome requires another helper.', delta: { paths: [`src/helper-${request}.ts`], criteria: [], obligations: [`Use helper ${request}`], commands: [], phaseDuties: [], increments: [] } },
-        };
-      }
-      return { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'Writer cannot complete.', evidence: [], blockers: ['upstream API remains unavailable'] };
-    },
+    envelope: (id) => id !== 'T1' ? defaultEnvelope(id) : { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'Writer cannot complete.', evidence: [], blockers: ['upstream API remains unavailable'] },
   };
   let { result, trace } = start(1, sim);
-  for (let scope = 1; scope <= 3; scope++) {
-    result = submit(launch(result, sim, trace), 'T1', sim, trace);
-    assert.equal(result.state.tag, 'scope-adjudication');
-    if (result.state.tag !== 'scope-adjudication') return;
-    result = host(result, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: result.state.request, ruling: 'approve', rationale: 'The requested helper supports the approved outcome.' } }, sim, trace);
-    assert.equal(result.state.tag, 'tasks');
-    const next = slots(result).find((slot) => slot.task === 'T1');
-    assert.equal(next?.action, 'launch');
-    assert.equal(next?.attempt, scope + 1);
-    assert.equal(record(result, 'T1')?.failures, 0);
-  }
-  assert.equal(slots(result).find((slot) => slot.task === 'T1')?.attempt, 4);
-
   for (let failures = 1; failures <= 3; failures++) {
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
     assert.equal(result.state.tag, 'failure');
     assert.equal(record(result, 'T1')?.failures, failures);
-    if (failures < 3) result = host(result, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'The upstream API is still unavailable.' } }, sim, trace);
+    if (failures < 3) result = host(result, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'The upstream API is still unavailable.' } }, sim, trace);
   }
-  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'Try again.' } }) ?? '', /failure limit/);
+  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'Try again.' } }) ?? '', /failure limit/);
 });
 
 test('tasks: schedule verifies GREEN in the task worktree and integration in the integration worktree', () => {
@@ -122,7 +91,7 @@ test('tasks: failure of one task blocks only its descendants and asks once', () 
   assert.deepEqual(launchedTasks(trace), ['task-t1', 'task-t2']);
   const items = (implementData(result.state)['items'] as { tasks: { task: string; status: string }[] }[])[0]!.tasks;
   assert.deepEqual(items.map((item) => [item.task, item.status]), [['T1', 'failed'], ['T3', 'blocked']]);
-  assert.deepEqual(implementData(result.state)['options'], ['retry', 'revise', 'stop']);
+  assert.deepEqual(implementData(result.state)['options'], ['retry', 'stop']);
 });
 
 test('amendment from a BLOCKED writer reaches the failure decision with unresolved targets flagged', () => {
@@ -142,7 +111,7 @@ test('amendment from a BLOCKED writer reaches the failure decision with unresolv
   const items = (implementData(result.state)['items'] as { tasks: { task: string; amendment?: unknown }[] }[])[0]!.tasks;
   assert.deepEqual(items.find((item) => item.task === 'T1')?.amendment, { ...amendment, unresolvedTargets: ['SC9'] });
   assert.equal(items.find((item) => item.task === 'T3')?.amendment, undefined);
-  result = host(result, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'pattern clarified' } }, sim, trace);
+  result = host(result, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'pattern clarified' } }, sim, trace);
   assert.equal(record(result, 'T1')?.amendment, null);
 });
 
@@ -155,11 +124,11 @@ test('tasks: failure retry re-pends the failed task with its admission defect an
     assert.equal(result.state.tag, 'failure');
     assert.equal(record(result, 'T1')?.attempt, attempt);
     if (attempt === 3) break;
-    result = host(result, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'API stub added' } }, sim, trace);
+    result = host(result, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'API stub added' } }, sim, trace);
     const brief = trace.effects.findLast((effect) => effect.kind === 'write-brief');
     assert.deepEqual(brief?.kind === 'write-brief' && brief.input['admissionDefects'], ['Writer returned BLOCKED: cannot proceed']);
   }
-  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'again' } }) ?? '', /failure limit/);
+  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'again' } }) ?? '', /failure limit/);
 });
 
 test('tasks: failure retry keeps the prior draft and rewinds a rejected candidate without discarding files', () => {
@@ -172,7 +141,7 @@ test('tasks: failure retry keeps the prior draft and rewinds a rejected candidat
   const c = (result.state as Extract<ImplementState, { tag: 'failure' }>).c;
   const withCandidate = { ...c, integration: { ...c.integration!, head: failed.input! }, tasks: { ...c.tasks, T1: { ...failed, candidate: 'rejected-candidate' } } };
   const before = trace.effects.length;
-  result = host({ state: { ...result.state, c: withCandidate } as ImplementState, effects: [] }, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'RED row fixed' } }, sim, trace);
+  result = host({ state: { ...result.state, c: withCandidate } as ImplementState, effects: [] }, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'RED row fixed' } }, sim, trace);
   const checkouts = trace.effects.slice(before).filter((effect) => effect.kind === 'checkout' && effect.op === 'task');
   assert.deepEqual(checkouts.map((effect) => { const input = effect.kind === 'checkout' ? effect.input as Readonly<Record<string, unknown>> : {}; return [input['revision'], input['keep'], input['reset']]; }), [[failed.input, true, undefined]]);
 });
@@ -183,14 +152,14 @@ test('tasks: failure cascade relaunches the next model in a reset worktree witho
   result = launch(result, sim, trace);
   const t1 = slots(result).find((slot) => slot.task === 'T1')!;
   const receipt = { task: 'T1', attempt: t1.attempt, signature: t1.signature, handle: t1.handle! };
-  assert.match(validateImplement(result.state, { type: 'WRITE_FAILED', ...receipt, model: 'writer-b', kind: 'quota', reason: 'x' }) ?? '', /current model/);
-  result = host(result, { type: 'WRITE_FAILED', ...receipt, model: 'writer-a', kind: 'quota', reason: 'no capacity' }, sim, trace);
+  assert.match(validateImplement(result.state, { type: 'WRITE_RECEIPT', status: 'failed', ...receipt, model: 'writer-b', detail: 'quota: x' }) ?? '', /active writer model/);
+  result = host(result, { type: 'WRITE_RECEIPT', status: 'failed', ...receipt, model: 'writer-a', detail: 'quota: no capacity' }, sim, trace);
   const reset = trace.effects.at(-1);
   assert.deepEqual(reset?.kind === 'checkout' && [reset.op, reset.input['name'], reset.input['revision']], ['reset', 'task-t1', 'b0']);
   assert.deepEqual(slots(result).map((slot) => [slot.task, slot.action, slot.model, slot.attempt]), [['T1', 'launch', 'writer-b', 2]]);
   result = launch(result, sim, trace);
   const fallback = slots(result).find((slot) => slot.task === 'T1')!;
-  result = host(result, { type: 'WRITE_FAILED', task: 'T1', attempt: fallback.attempt, signature: fallback.signature, handle: fallback.handle!, model: 'writer-b', kind: 'quota', reason: 'no capacity' }, sim, trace);
+  result = host(result, { type: 'WRITE_RECEIPT', status: 'failed', task: 'T1', attempt: fallback.attempt, signature: fallback.signature, handle: fallback.handle!, model: 'writer-b', detail: 'quota: no capacity' }, sim, trace);
   assert.equal(record(result, 'T1')?.status, 'failed');
   assert.deepEqual(slots(result).map((slot) => slot.task), ['T2']);
 });
@@ -199,16 +168,11 @@ test('tasks: failure cascade relaunches the next model in a reset worktree witho
 
 const rejections: [string, Sim, RegExp][] = [
   ['scope violation', { diff: (id) => [...pathsOf(id), 'README.md'] }, /outside the task scope/],
-  ['scope request after an out-of-envelope edit', {
-    envelope: () => ({ schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Need an extra module.', evidence: [], scopeRequest: { requestId: 'scope-1', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The accepted behavior requires this module.', delta: { paths: ['src/new.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } } }),
-    diff: (id) => [...pathsOf(id), 'src/new.ts'],
-  }, /Scope request rejected after out-of-envelope edits/],
   ['missing RED matrix', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: ['CRITERION SC1 | src/a.ts | behavior'] }) }, /RED matrix rejected/],
   ['unapproved checkpoint', { redDefects: ['T1'] }, /RED checkpoint rejected/],
   ['setup-only RED', { verify: (purpose) => purpose === 'red' ? { exit: 1, loadError: true } : { exit: 0 } }, /load, syntax, or missing-file/],
   ['fabricated RED', { verify: () => ({ exit: 0 }) }, /expected failures were not observed/],
   ['failing GREEN', { verify: (purpose, _command, _task) => purpose === 'red' ? defaultVerify('red') : purpose === 'scoped' ? { exit: 1, failedTests: ['test:x'] } : { exit: 0 } }, /Task verification failed/],
-  ['integration conflict', { conflict: ['T1'] }, /Integration conflict on src\/shared.ts/],
 ];
 for (const [name, sim, reason] of rejections) test(`tasks: admission rejects ${name} and keeps dependents blocked`, () => {
   let { result, trace } = start(1, sim);
@@ -263,29 +227,8 @@ test('tasks: replay folds the recorded events to identical frames without relaun
   assert.deepEqual(slots(first).map((slot) => [slot.task, slot.action]), [['T1', 'running']]);
   assert.equal(first.effects.filter((effect) => effect.kind === 'checkout' && effect.op === 'integrate').length, 1);
   const active = slots(first).find((slot) => slot.task === 'T1')!;
-  assert.match(validateImplement(first.state, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: active.attempt, signature: active.signature, handle: 'again', model: active.model }] }) ?? '', /launch slot/);
-  assert.match(validateImplement(first.state, { type: 'WRITE_ENVELOPE', task: 'T2', attempt: 1, signature: 'stale', handle: 'stale', envelopePath: 'run/T2.outcome.json' }) ?? '', /active task/);
-});
-
-test('level-journal: task drain retains handle, worktree and signature through replay', () => {
-  const sim: Sim = { envelope: (id) => id === 'T1' ? {
-    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Request an extra path before editing it.', evidence: [],
-    scopeRequest: { requestId: 'scope-replay', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required behavior uses a companion module.', delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
-  } : defaultEnvelope(id), verify: defaultVerify };
-  let { result, trace } = start(2, sim);
-  result = launch(result, sim, trace);
-  const original = record(result, 'T2');
-  result = submit(result, 'T1', sim, trace);
-  assert.equal(result.state.tag, 'scope-adjudication');
-  if (result.state.tag !== 'scope-adjudication') return;
-  result = host(result, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: result.state.request, ruling: 'approve', rationale: 'The additional path is required by the accepted outcome.' } }, sim, trace);
-  assert.equal(result.state.tag, 'scope-draining');
-  if (result.state.tag !== 'scope-draining' || !('c' in result.state) || !result.state.c) throw new Error('scope drain should retain the implementation context');
-  const drained = result.state.c.tasks['T2'];
-  assert.deepEqual([drained?.handle, drained?.worktree, drained?.signature], [original?.handle, original?.worktree, original?.signature]);
-  let replay = initialImplement();
-  for (const event of [run(2), ...trace.events]) replay = stepImplement(replay, event).state;
-  assert.deepEqual(replay, result.state);
+  assert.match(validateImplement(first.state, { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: active.attempt, signature: active.signature, handle: 'again', model: active.model }) ?? '', /already launched/);
+  assert.match(validateImplement(first.state, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T2', attempt: 1, signature: 'stale', handle: 'stale', envelopePath: 'run/T2.outcome.json', briefHash: 'stale', model: 'writer-a' }) ?? '', /running task/);
 });
 
 test('level-journal: task reconciliation retains the parked draft under its updated signature', () => {
@@ -392,36 +335,17 @@ test('tasks: admission skips RED replay after an attributed RED exception ruling
 
 // SECTION: Revision
 
-test('tasks: revision of an accepted criterion definition rewinds integration and reruns the invalidated tasks', () => {
-  const sim: Sim = { envelope: (id) => id === 'T2' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'cannot proceed', evidence: [], blockers: ['missing API'] } : defaultEnvelope(id) };
-  let { result, trace } = start(2, sim);
-  result = launch(result, sim, trace);
-  result = submit(result, 'T1', sim, trace);
-  result = submit(launch(result, sim, trace), 'T3', sim, trace);
-  result = submit(result, 'T2', sim, trace);
-  assert.equal(result.state.tag, 'failure');
-  assert.deepEqual(['T1', 'T2', 'T3'].map((id) => record(result, id)?.status), ['accepted', 'failed', 'accepted']);
-  const revised: ParsedPlan = { ...PLAN, criteria: PLAN.criteria.map((row) => row.id === 'SC1' ? { ...row, verify: [{ command: 'node --test tests/sc1-strict.test.ts', final: false }] } : row) };
-  const r = beginRevision(result.state as Extract<ImplementState, { tag: 'failure' }>, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'SC1 too weak' }).state.r;
-  const c = reboundRevision({ tag: 'resume', r: { ...r, plan: revised, hash: `sha256:${'b'.repeat(64)}`, changed: ['SC1'], removed: [], grew: false } });
-  const before = trace.effects.length;
-  result = host({ state: { ...result.state, c } as ImplementState, effects: [] }, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'SC1 revised' } }, { ...sim, plan: revised }, trace);
-  const rewind = trace.effects.slice(before).find((effect) => effect.kind === 'checkout' && effect.op === 'reset');
-  assert.deepEqual(rewind?.kind === 'checkout' && rewind.input, { name: 'integration', revision: 'b0' });
-  assert.deepEqual(['T1', 'T2', 'T3'].map((id) => record(result, id)?.status), ['running', 'running', 'pending']);
-});
-
 test('tasks: launch receipts must echo the configured writer model or disclose a substitution', () => {
   const sim: Sim = {};
   let { result, trace } = start(1, sim);
   const slot = slots(result).find((item) => item.action === 'launch')!;
   const launched = { task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: 'agent-1' };
-  assert.match(validateImplement(result.state, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: 'host-default' }] }) ?? '', /launched model host-default \(configured writer-a\)/);
-  assert.equal(validateImplement(result.state, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: slot.model }] }), null);
-  result = host(result, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: 'host-default', substitution: 'Task tool exposes no model parameter' }] }, sim, trace);
+  assert.match(validateImplement(result.state, { type: 'WRITE_RECEIPT', status: 'launched', ...launched, model: 'host-default' }) ?? '', /launched model host-default \(configured writer-a\)/);
+  assert.equal(validateImplement(result.state, { type: 'WRITE_RECEIPT', status: 'launched', ...launched, model: slot.model }), null);
+  result = host(result, { type: 'WRITE_RECEIPT', status: 'launched', ...launched, model: 'host-default', substitution: 'Task tool exposes no model parameter' }, sim, trace);
   assert.ok(result.state.tag === 'tasks' && result.state.c.concerns.some((item) => item === 'T1: writer substitution, launched model host-default (configured writer-a); Task tool exposes no model parameter'));
   assert.equal(slots(result).find((item) => item.task === slot.task)?.model, 'host-default');
-  const failure = { type: 'WRITE_FAILED' as const, ...launched, kind: 'timeout', reason: 'stalled' };
+  const failure = { type: 'WRITE_RECEIPT' as const, status: 'failed' as const, ...launched, detail: 'timeout: stalled' };
   assert.equal(validateImplement(result.state, { ...failure, model: 'host-default' }), null);
-  assert.match(validateImplement(result.state, { ...failure, model: 'writer-a' }) ?? '', /current model id/);
+  assert.match(validateImplement(result.state, { ...failure, model: 'writer-a' }) ?? '', /active writer model/);
 });

@@ -46,6 +46,7 @@
               "spec-gap",
               "standards",
               "state-machine",
+              "test-leak",
               "testability",
               "user-gap",
               "validation",

@@ -4,10 +4,10 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'retro' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 7 as const;
+export const JOURNAL_PROTOCOL_REVISION = 8 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
-  | 'level-classification' | 'level-recommendation' | 'scope-deviation' | 'scope-deviation-user' | 'run-stop';
+  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop';
 
 export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
 
@@ -93,6 +93,19 @@ export type RevisionScopeProposal =
   | { requestId: string; source: 'plan-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedTasks: readonly string[]; rationale: string; delta: ScopeDelta }
   | { requestId: string; source: 'design-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedIncrements: readonly string[]; rationale: string; delta: ScopeDelta };
 export type ScopeProposal = ScopeDeviation | RevisionScopeProposal;
+
+/** Orchestrator-owned rulings share one answer shape; `amendment` names the `AMEND` a ruling depends on (e.g. `discard`). */
+export type OrchestratorDecision<A extends string> = { by: 'orchestrator'; action: A; rationale: string; amendment?: string };
+export type ConflictDecision = OrchestratorDecision<'resolve' | 'discard'>;
+export type RequestDecision = OrchestratorDecision<'approve' | 'decline' | 'escalate'>;
+export type FailureDecision =
+  | OrchestratorDecision<'stop' | 'retry'>
+  | (OrchestratorDecision<'hotfix'> & { mode: 'inline' | 'writer'; external: readonly { path: string; reason: string }[] })
+  | { by: 'user'; action: 'manual-complete'; quote: string; criteria: Readonly<Record<CriterionId, CriterionEvidence>> };
+/** User answer to an escalated writer request. */
+export type RequestUserDecision = { by: 'user'; requestId: string; choice: 'accept' | 'decline'; quote: string };
+/** One plan edit inside an `AMEND` delta; `target` names a task, criterion, command, or path. */
+export type PlanEdit = { kind: 'modify' | 'remove' | 'add'; target: string; current?: string; proposed?: string };
 export type ScopeAdjustment = {
   proposal: ScopeProposal;
   approvedBy: 'orchestrator' | 'user';
@@ -113,7 +126,6 @@ export type NativeSlotResult = Payload;
 export type FindingId = string;
 export type Ruling = Payload;
 export type FixClusterResult = Payload;
-export type WriterFailureKind = string;
 export type CriterionId = string;
 export type CriterionEvidence = Payload;
 export type DecisionAnswer = unknown;
@@ -129,8 +141,8 @@ export type VerifyPurpose = string;
 export type CommandResult = Payload;
 export type TreeFingerprint = Payload;
 export type WriteStage = 'task' | 'hotfix';
-/** Driver-owned private Git operations; only `deliver` writes the caller checkout. */
-export type CheckoutOp = 'init' | 'task' | 'commit' | 'red' | 'integrate' | 'reset' | 'deliver' | 'cleanup' | 'scope-rebase';
+/** Driver-owned private Git operations; only `deliver` and `trim` write the caller checkout. */
+export type CheckoutOp = 'init' | 'task' | 'commit' | 'red' | 'integrate' | 'resolve' | 'reset' | 'deliver' | 'trim' | 'cleanup' | 'scope-rebase';
 export type ScopeRebaseInput = { name: string; originalName: string; revision: string; permitted: readonly string[]; transferKey: string; links: readonly string[]; ignored: readonly string[] };
 export type CheckoutEffect =
   | { kind: 'checkout'; id: string; op: 'scope-rebase'; input: ScopeRebaseInput }
@@ -209,24 +221,32 @@ export type DiagnosticNote =
 /** Optional host-attested figures on native slots and task write receipts; best effort, never measured totals. */
 export type Attestation = { tokens?: number; durationMs?: number };
 
-export type WriteLaunchedTask = { task: string; attempt: number; signature: string; handle: string; model: string; effort?: string; substitution?: string };
-export type WriteEnvelopeEvent =
-  | ({ type: 'WRITE_ENVELOPE'; envelopePath: string; task: string; attempt: number; signature: string; handle: string } & Attestation)
-  | ({ type: 'WRITE_ENVELOPE'; envelopePath: string; task?: never; attempt?: never; signature?: never; handle?: never } & Attestation);
-export type WriteFailureEvent =
-  | ({ type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task: string; attempt: number; signature: string; handle: string } & Attestation)
-  | ({ type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: never; attempt?: never; signature?: never; handle?: never } & Attestation);
-export type WriteCancelledEvent = { type: 'WRITE_CANCELLED'; task: string; attempt: number; signature: string; handle: string; reason: string } & Attestation;
+export type WriterIdentity = { task: string; attempt: number; signature: string; handle: string };
+/** Host-attested writer model and effort; a launched receipt's `substitution` discloses why they differ from the configured ones. */
+type WriterLaunch = { model: string; effort?: string };
+type Taskless = { task?: never; attempt?: never; signature?: never; handle?: never };
+/** One writer lifecycle receipt; the taskless `submitted` and `failed` forms belong to the hotfix writer. */
+export type WriteReceiptEvent =
+  | ({ type: 'WRITE_RECEIPT'; status: 'launched'; substitution?: string } & WriterIdentity & WriterLaunch)
+  | ({ type: 'WRITE_RECEIPT'; status: 'submitted'; envelopePath: string; briefHash: string } & WriterIdentity & WriterLaunch & Attestation)
+  | ({ type: 'WRITE_RECEIPT'; status: 'failed'; detail: string } & WriterIdentity & WriterLaunch & Attestation)
+  | ({ type: 'WRITE_RECEIPT'; status: 'cancelled' } & WriterIdentity & Attestation)
+  | ({ type: 'WRITE_RECEIPT'; status: 'submitted'; envelopePath: string; model?: string; effort?: string } & Taskless & Attestation)
+  | ({ type: 'WRITE_RECEIPT'; status: 'failed'; detail: string; model?: string; effort?: string } & Taskless & Attestation);
+export type WriteReceiptStatus = WriteReceiptEvent['status'];
+/** A live writer's need outside its brief; the writer stays live until the orchestrator answers. */
+export type WriterRequestEvent = { type: 'REQUEST'; task: string; attempt: number; need: string; paths: string[]; rationale: string };
+/** Live plan amendment; only the `notify` writers are told, and gated deltas carry the user's quote in `by`. */
+export type AmendEvent = { type: 'AMEND'; delta: PlanEdit[]; notify: { task: string; notice: string }[]; rationale: string; by?: { by: 'user'; quote: string } };
 
 export type HostEvent =
   | { type: 'AUTHORED'; path: string }
   | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
   | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
   | { type: 'FIXES_APPLIED'; clusters: FixClusterResult[] }
-  | { type: 'WRITE_LAUNCHED'; tasks: WriteLaunchedTask[] }
-  | WriteEnvelopeEvent
-  | WriteFailureEvent
-  | WriteCancelledEvent
+  | WriteReceiptEvent
+  | WriterRequestEvent
+  | AmendEvent
   | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence>; waiver?: { by: 'user'; quote: string } }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string }

@@ -28,7 +28,5 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 <<slot:kind-rules>>
 
 ### Scope requests
-- If required work exceeds the current brief or envelope, pause before editing outside it and submit the kind-specific `SCOPE_REQUEST` to the orchestrator with the concrete delta and why it is necessary.
-- The orchestrator adjudicates against the task objective and invariants. If it agrees, wait for the approval notice and revised brief before resuming; the accepted work keeps the settled level. If it disagrees, do no out-of-envelope work until the user accepts the delta.
-- Never treat an out-of-envelope edit as a scope request. The driver rejects a request when those edits already exist.
+- Edit only inside the current brief. When required work exceeds it, follow the request rule in your kind rules before editing outside it.
 ````

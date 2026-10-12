@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import type { Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { initialImplement, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { initialImplement, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, host } from './fixtures/implement-recovery.ts';
-import { launch, start, submit } from './fixtures/implement-tasks.ts';
+import { launch, pump, start, submit } from './fixtures/implement-tasks.ts';
 
 for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(`rewrite SC1 ordinary evidence ${outcome || 'empty'} cannot falsely complete`, () => {
   const c = approvalState().c;
@@ -31,8 +31,8 @@ const FP: Fingerprint = { head: 'head', index: 'index', worktree: 'tree' };
 const PLAN: ParsedPlan = {
   title: 'Generated feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [],
   criteria: [
-    { id: 'SC1', title: 'Source behavior works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'node --test tests/a.test.ts', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null },
-    { id: 'SC2', title: 'Generated output works', line: 2, changes: ['src/b.ts', 'src/generated.ts'], verify: [{ command: 'node --test tests/b.test.ts', final: true }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null },
+    { id: 'SC1', title: 'Source behavior works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'node --test tests/a.test.ts', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
+    { id: 'SC2', title: 'Generated output works', line: 2, changes: ['src/b.ts', 'src/generated.ts'], verify: [{ command: 'node --test tests/b.test.ts', final: true }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
   ],
   changes: [
     { action: 'MODIFY', path: 'src/a.ts', note: 'Source change', command: null, line: 1 },
@@ -40,7 +40,7 @@ const PLAN: ParsedPlan = {
     { action: 'GENERATED', path: 'src/generated.ts', note: 'Generated output', command: 'node scripts/gen.mjs', line: 3 },
   ],
   verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] },
-  tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1', 'SC2'], paths: ['src/a.ts', 'src/b.ts'], generated: [] }], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
+  tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1', 'SC2'], paths: ['src/a.ts', 'src/b.ts'], generated: [], overlaps: [] }], seams: [], warnings: [], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
 };
 /** Delivers the single task and stops at the code-review prepare effect. */
 function afterDelivery(): Point {
@@ -71,6 +71,12 @@ function throughReview(input: Point, mutate = false): ReviewPoint {
   const snapshot = getEffect(result.effects, 'snapshot');
   const postReviewFp = mutate ? { ...input.fingerprint, worktree: 'post-review' } : input.fingerprint;
   result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: postReviewFp, diff: { paths: mutate ? ['src/a.ts'] : [] } });
+  // A fixed durable file is observed at the review boundary before generation.
+  if (result.state.tag === 'task-checkout') {
+    const observe = getEffect(result.effects, 'checkout');
+    const files = observe.kind === 'checkout' ? (observe.input as Record<string, unknown>)['observe'] as string[] : [];
+    result = step(result.state, { type: 'CHECKOUT_DONE', effectId: observe.id, op: 'trim', result: { observed: Object.fromEntries(files.map((file) => [file, `blob-${file}`])) } });
+  }
   return { state: result.state, effect: result.effects[0] as Effect, effects: result.effects, fingerprint: postReviewFp };
 }
 
@@ -129,4 +135,113 @@ test('implement-evidence-postdates and implement-generated-rerun: mutations stal
   ], fingerprint: afterGenerate });
   assert.equal(result.state.tag, 'evidence');
   if (result.state.tag === 'evidence') assert.deepEqual(result.state.ids, ['SC1', 'SC2']);
+});
+
+// SECTION: SC11 — transient evidence and trim
+
+type CriterionSpec = { id: string; changes: string[]; verify: { command: string; final: boolean }[]; retain?: 'durable' | 'transient' };
+/** One task owning every path; SC1 is transient by default and covered by durable SC2. */
+function transientPlan(specs: CriterionSpec[], finalCommands: string[] = []): ParsedPlan {
+  const paths = [...new Set(specs.flatMap((row) => row.changes))].sort();
+  return {
+    title: 'Transient feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], seams: [], warnings: [], traceability: null, governedText: '# Transient feature',
+    criteria: specs.map((row, index) => ({ id: row.id, title: row.id, line: index + 1, changes: row.changes, verify: row.verify, evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: row.retain ?? 'durable', coveredBy: row.retain === 'transient' ? 'SC2' : null })),
+    changes: paths.map((path, index) => ({ action: 'MODIFY', path, note: path, command: null, line: index + 1 })),
+    verification: { automated: [], none: 'criterion commands', manual: [] }, finalCommands,
+    tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: specs.map((row) => row.id), paths, generated: [], overlaps: [] }],
+  };
+}
+const SC1 = (verify = [{ command: 'node --test tests/a.test.ts', final: false }]): CriterionSpec => ({ id: 'SC1', changes: ['src/t.ts', 'tests/a.test.ts'], verify, retain: 'transient' });
+const SC2 = (command = 'node --test tests/b.test.ts'): CriterionSpec => ({ id: 'SC2', changes: ['src/a.ts', 'tests/b.test.ts'], verify: [{ command, final: false }] });
+const BASIC = transientPlan([SC1(), SC2()]);
+
+/** Delivers T1 with review skipped and pumps through trim and final verification. */
+function delivered(plan: ParsedPlan, reviewRounds = 0) {
+  const sim = { plan, reviewRounds };
+  const { result, trace } = start(1, sim);
+  return { result: submit(launch(result, sim, trace), 'T1', sim, trace), trace };
+}
+const trims = (trace: { effects: Effect[] }) => trace.effects.flatMap((effect) => effect.kind === 'checkout' && effect.op === 'trim' ? [effect.input as Record<string, unknown>] : []);
+const finalCommands = (trace: { effects: Effect[] }) => trace.effects.flatMap((effect) => effect.kind === 'verify' && effect.purpose === 'final' ? [effect.commands.map((row) => String(row['command']))] : []).at(-1);
+
+test('transient evidence survives later mutation', () => {
+  const { result } = delivered(BASIC);
+  assert.equal(result.state.tag, 'evidence');
+  if (result.state.tag !== 'evidence') return;
+  const sc1 = result.state.c.evidence['SC1'];
+  assert.equal(sc1?.['evidence'], 'verified at i-T1');
+  assert.ok((result.state.c.criterionMutation['SC1'] ?? 0) > (sc1?.mutationEpoch ?? 0), 'delivery mutated SC1 paths after its evidence');
+  assert.deepEqual(result.state.ids, ['SC2']);
+});
+
+test('trim excludes transient commands from final verify', () => {
+  const { trace } = delivered(BASIC);
+  assert.deepEqual(trims(trace).map((input) => input['allowed']), [['tests/a.test.ts']]);
+  assert.deepEqual(finalCommands(trace), ['node --test tests/b.test.ts']);
+});
+
+test('rejects fix deleting durable test', () => {
+  const { result } = delivered(BASIC, 1);
+  assert.equal(result.state.tag, 'code-review');
+  const fix = (file: string) => ({ type: 'FIXES_APPLIED', clusters: [{ affectedPaths: [file], deletedPaths: [file] }] }) as never;
+  assert.match(validateImplement(result.state, fix('tests/b.test.ts')) ?? '', /may not delete files of durable criteria: tests\/b\.test\.ts/);
+  assert.doesNotMatch(validateImplement(result.state, fix('tests/a.test.ts')) ?? '', /durable/);
+});
+
+test('trim keeps production path of transient criterion', () => {
+  const { trace } = delivered(BASIC);
+  const [input] = trims(trace);
+  assert.ok(!(input?.['allowed'] as string[]).includes('src/t.ts'));
+  assert.deepEqual((input?.['files'] as { path: string }[]).map((row) => row.path), ['tests/a.test.ts']);
+});
+
+test('shared transient durable command is kept', () => {
+  const shared = 'npm run test:unit';
+  const { trace } = delivered(transientPlan([SC1([{ command: shared, final: false }]), SC2(shared)]));
+  assert.deepEqual(trims(trace).map((input) => input['allowed']), [['tests/a.test.ts']]);
+  assert.deepEqual(finalCommands(trace), [shared]);
+});
+
+test('shared transient final command is kept', () => {
+  const { trace } = delivered(transientPlan([SC1([{ command: 'node --test tests/a.test.ts', final: false }, { command: 'npm test', final: true }]), SC2()], ['npm test']));
+  assert.deepEqual(trims(trace).map((input) => input['allowed']), [['tests/a.test.ts']]);
+  assert.deepEqual(finalCommands(trace), ['node --test tests/b.test.ts', 'npm test']);
+});
+
+test('trim rejected when retained command names trimmed file', () => {
+  const { result, trace } = delivered(transientPlan([SC1(), SC2('node --test tests/a.test.ts tests/b.test.ts')]));
+  assert.equal(result.state.tag, 'failure');
+  if (result.state.tag !== 'failure') return;
+  assert.match(result.state.reason, /retained commands name trimmed files tests\/a\.test\.ts/);
+  assert.deepEqual(trims(trace), []);
+});
+
+/** Applies one review fix, settles review, and answers the post-review snapshot with `changed`. */
+function afterReviewFix(plan: ParsedPlan, fixed: string, changed: string[]) {
+  const { result, trace } = delivered(plan, 1);
+  assert.equal(result.state.tag, 'code-review');
+  const prepare = getEffect(result.effects, 'prepare-review');
+  let state = step(result.state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'C-1', status: 'applied', affectedPaths: [fixed] }] } as never).state;
+  let next = step(state, { type: 'REVIEW_PREPARED', effectId: prepare.id, scope: { empty: true }, promptPaths: {} });
+  assert.equal(next.state.tag, 'post-review-snapshot');
+  next = step(next.state, { type: 'SNAPSHOT', effectId: getEffect(next.effects, 'snapshot').id, fingerprint: { head: 'h', index: 'i', worktree: 'fixed' }, diff: { paths: changed } });
+  assert.equal(next.state.tag, 'task-checkout');
+  const observe = getEffect(next.effects, 'checkout');
+  return { next, observe: observe as Extract<Effect, { kind: 'checkout' }>, trace };
+}
+
+test('fix deleting durable test fails at observed boundary', () => {
+  const { next, observe } = afterReviewFix(BASIC, 'tests/b.test.ts', ['tests/b.test.ts']);
+  assert.deepEqual((observe.input as Record<string, unknown>)['observe'], ['tests/b.test.ts']);
+  const result = step(next.state, { type: 'CHECKOUT_DONE', effectId: observe.id, op: 'trim', result: { observed: { 'tests/b.test.ts': null } } });
+  assert.equal(result.state.tag, 'failure-snapshot');
+  if (result.state.tag === 'failure-snapshot') assert.match(result.state.reason, /deleted files of durable criteria: tests\/b\.test\.ts/);
+});
+
+test('trim binds review-fixed transient test', () => {
+  const { next, observe, trace } = afterReviewFix(BASIC, 'tests/a.test.ts', ['tests/a.test.ts']);
+  assert.deepEqual((observe.input as Record<string, unknown>)['observe'], ['tests/a.test.ts']);
+  const result = pump(step(next.state, { type: 'CHECKOUT_DONE', effectId: observe.id, op: 'trim', result: { observed: { 'tests/a.test.ts': 'blob-fixed' } } }), { plan: BASIC, reviewRounds: 1 }, trace);
+  assert.equal(result.state.tag, 'evidence');
+  assert.deepEqual(trims(trace).filter((input) => input['files']).map((input) => input['files']), [[{ path: 'tests/a.test.ts', hash: 'blob-fixed' }]]);
 });

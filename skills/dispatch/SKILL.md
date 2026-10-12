@@ -37,7 +37,7 @@ Apply accepted clusters within `affectedPaths` via frame `writer`, verify, and r
 
 ## Await write
 
-Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, host-assigned handle, and attested `model`/`effort`; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal, inform the user, then resume under the settled level. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
+Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. Reply in frame `events` with `WRITE_RECEIPT` per writer: `status` `launched` (attempt, signature, host-assigned handle, attested `model`/`effort`), then `submitted` (with `briefHash`), `failed`, or `cancelled`, echoing the task identity. Taskless hotfix receipts omit identity fields. Relay a live writer's out-of-scope need as `REQUEST`; it keeps running. Change the plan with `AMEND`, notifying each affected running writer; relay each notice and regenerated brief. See [implement](references/verbs/implement.md).
 
 ## Await evidence
 
@@ -45,7 +45,7 @@ Inspect summaries/logs; do not rerun emitted gates. Verify criteria; reply `EVID
 
 ## Await decide
 
-Answer `data.kind` with a listed option. Production approval and manual completion require `{by:"user",quote:"..."}`. Assess the `gateScope`; for a higher explicit-level recommendation, ask the user to adopt or retain. The orchestrator approves or disagrees with scope proposals; disagreement goes to the user. Resolve drift under [change handling](references/change-handling.md); escalate changed intent. A `run-stop` choice ends the run. Rule verified concerns and RED exceptions as `by:"orchestrator"` with evidence; follow the recorded failure decision. Never invent decisions. Reply `DECISION` with `kind` and `answer`.
+Answer `data.kind` with a listed option. Production approval and manual completion require `{by:"user",quote:"..."}`. Assess the `gateScope`; for a higher explicit-level recommendation, ask the user to adopt or retain. Rule integration conflicts and writer requests as `by:"orchestrator"`; see [implement](references/verbs/implement.md) for answers and `AMEND`. Resolve drift under [change handling](references/change-handling.md); escalate changed intent. A `run-stop` choice ends the run. Rule verified concerns and RED exceptions as `by:"orchestrator"` with evidence; follow the recorded failure decision. Never invent decisions. Reply `DECISION` with `kind` and `answer`.
 
 ## Await retro
 

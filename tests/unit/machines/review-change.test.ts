@@ -4,7 +4,6 @@ import { beginReview, reviewMachine, stepReview, validateReview, type ReviewStat
 import type { ChangeNotice, Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { stepRoot, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginPlan } from '../../../skills/dispatch/scripts/machines/plan.ts';
-import { beginRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { beginDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import type { ReviewFinding } from '../../../skills/dispatch/scripts/machines/types.ts';
 import { approvalState, RUN } from './fixtures/implement-recovery.ts';
@@ -92,7 +91,7 @@ test('review branch: changed bound preparation at the cap reuses its unissued ro
   const checked = stepReview(prepared.state, { type: 'REVIEW_TARGET_CHECKED', effectId: prepared.effects[0]!.id, manifestPath: 'fresh.json', result: 'unchanged' });
   assert.equal(checked.state.tag, 'wave'); if ('c' in checked.state) assert.equal(checked.state.c.round, 3);
 });
-for (const family of ['plan', 'implementation-plan', 'implementation-code', 'plan-revision', 'design', 'design-revision', 'design-integration'] as const) test(`review branch: ${family} parent forwards a bound change notice`, () => {
+for (const family of ['plan', 'implementation-plan', 'implementation-code', 'design', 'design-revision', 'design-integration'] as const) test(`review branch: ${family} parent forwards a bound change notice`, () => {
   const c = context(family.includes('code') || family.includes('integration') ? 'code' : family.includes('design') ? 'design' : 'plan');
   const check: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check' };
   const run = { verb: 'implement' as const, argument: 'feature', slug: 'feature' }, implemented = approvalState(), design = designApproval('implement');
@@ -102,10 +101,7 @@ for (const family of ['plan', 'implementation-plan', 'implementation-code', 'pla
     if (!('c' in plan) || !plan.c) throw new Error('plan context');
     seed = { tag: 'plan', run: { ...run, verb: 'plan' }, child: { tag: 'review', c: plan.c, review: check } };
   } else if (family === 'implementation-plan' || family === 'implementation-code') seed = { tag: 'implement', run, child: { tag: family === 'implementation-plan' ? 'plan-review' : 'code-review', c: implemented.c, review: check } };
-  else if (family === 'plan-revision') {
-    const r = beginRevision(implemented, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' }).state.r;
-    seed = { tag: 'revision', run, child: { tag: 'review', r, review: check } };
-  } else if (family === 'design-revision') {
+  else if (family === 'design-revision') {
     const revision = beginDesignRevision(design.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
     seed = { tag: 'design', run, child: { tag: 'revision', c: design.c, child: { ...revision, tag: 'review', review: check } } };
   } else if (family === 'design-integration') {

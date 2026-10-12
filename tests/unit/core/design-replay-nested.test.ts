@@ -65,9 +65,9 @@ test('level-journal: nested design replay classifies before its first writer and
     assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
     const [pending] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; envelopePath: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}`, model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) }] } });
-    const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath } });
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}`, model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) } });
+    const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string; briefHash: string; model: string }[];
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath, briefHash: slot!.briefHash, model: slot!.model } });
     if (increment === 'I01') {
       assert.deepEqual((result.frame?.data['levelAssessment'] as { gateScope: unknown } | undefined)?.gateScope, capturedGateScope);
       assert.equal(result.frame?.data['settledLevel'], 'low');

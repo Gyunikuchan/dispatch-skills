@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
+import { appendEvent, journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { LOCK_FILE } from '../../../skills/dispatch/scripts/core/lock.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
@@ -93,3 +93,15 @@ test('dry-run verdict reports validity with exit 0 for a valid event and 1 for a
   assert.deepEqual(bytes(runDir), journal);
 });
 
+test('rejects journal from prior protocol revision', async () => {
+  const ports = fakePorts();
+  const runDir = path.join(tempDir(), 'runs', '001-ask');
+  // Revision 7 carried the four write event types and kind-specific scope decisions.
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined, protocolRevision: 7 });
+  const before = bytes(runDir);
+  for (const dryRun of [false, true]) {
+    const result = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, dryRun });
+    assert.deepEqual([result.frame, result.exitCode, result.message], [null, 1, 'layout-unsupported: runs/001-ask']);
+  }
+  assert.deepEqual(bytes(runDir), before);
+});

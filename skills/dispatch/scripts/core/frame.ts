@@ -44,6 +44,11 @@ export function oneLine(text: string): string {
 type Row = Readonly<Record<string, unknown>>;
 const rows = (value: unknown): Row[] => Array.isArray(value) ? value.filter((item): item is Row => !!item && typeof item === 'object') : [];
 
+const amendExample = (task: string): HostEvent => ({
+  type: 'AMEND', delta: [{ kind: 'modify', target: '<task, criterion, command, or path>', current: '<current text>', proposed: '<proposed text>' }],
+  notify: [{ task, notice: '<what changed for this writer>' }], rationale: '<why the plan changes>',
+});
+
 /** Fill runtime paths/ids from the current frame; quotes and observations require actual host evidence. */
 export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
   switch (current) {
@@ -57,18 +62,23 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
     case 'fix': return [{ type: 'FIXES_APPLIED', clusters: rows(data['clusters']).map((cluster) => ({ clusterId: cluster['clusterId'], status: 'applied', affectedPaths: cluster['affectedPaths'] })) }];
     case 'write': {
       const candidates = rows(data['tasks']).filter((task) => typeof task['task'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0 && typeof task['signature'] === 'string' && typeof task['handle'] === 'string' && task['handle']);
+      const effort = typeof data['effort'] === 'string' && data['effort'] ? { effort: data['effort'] } : {};
       const events: HostEvent[] = candidates.flatMap((task) => {
         const identity = { task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: String(task['handle']) };
+        const model = String(task['model'] ?? data['model'] ?? '<actual launched model>');
         return [
-          { type: 'WRITE_ENVELOPE', envelopePath: String(task['envelopePath'] ?? data['envelopePath']), ...identity },
-          { type: 'WRITE_FAILED', model: String(task['model'] ?? data['model']), kind: '<observed failure class>', reason: '<observed failure>', ...identity },
-          { type: 'WRITE_CANCELLED', reason: '<confirmed cancellation>', ...identity },
+          { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: String(task['envelopePath'] ?? data['envelopePath']), briefHash: typeof task['briefHash'] === 'string' && task['briefHash'] ? task['briefHash'] : '<brief hash the writer echoes>', model, ...effort },
+          { type: 'WRITE_RECEIPT', status: 'failed', ...identity, detail: '<observed failure>', model, ...effort },
+          { type: 'WRITE_RECEIPT', status: 'cancelled', ...identity },
+          { type: 'REQUEST', task: identity.task, attempt: identity.attempt, need: '<what the writer needs>', paths: ['<requested path>'], rationale: '<writer rationale>' },
         ];
       });
-      if (typeof data['envelopePath'] === 'string' && data['envelopePath']) events.push({ type: 'WRITE_ENVELOPE', envelopePath: data['envelopePath'] });
-      if (typeof data['model'] === 'string' && data['model']) events.push({ type: 'WRITE_FAILED', model: data['model'], kind: '<observed failure class>', reason: '<observed failure>' });
+      if (typeof data['envelopePath'] === 'string' && data['envelopePath']) events.push({ type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: data['envelopePath'] });
+      if (typeof data['model'] === 'string' && data['model']) events.push({ type: 'WRITE_RECEIPT', status: 'failed', detail: '<observed failure>', model: data['model'] });
       const launches = rows(data['tasks']).filter((task) => task['action'] === 'launch' && typeof task['task'] === 'string' && typeof task['signature'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0);
-      if (launches.length && data['stage'] !== 'scope-draining') events.push({ type: 'WRITE_LAUNCHED', tasks: launches.map((task) => ({ task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>', model: String(task['model'] ?? '<actual launched model>'), ...(typeof data['effort'] === 'string' && data['effort'] ? { effort: data['effort'] } : {}) })) });
+      for (const task of launches) events.push({ type: 'WRITE_RECEIPT', status: 'launched', task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>', model: String(task['model'] ?? '<actual launched model>'), ...effort });
+      // Only live writers can be told about an amendment, so the example needs one to notify.
+      if (candidates.length) events.push(amendExample(String(candidates[0]!['task'])));
       return events;
     }
     case 'evidence': return [{ type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), { outcome: 'pass', evidence: '<observed criterion evidence>' }])) }];
@@ -81,11 +91,15 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
         : kind === 'concerns' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' }
         : kind === 'level-classification' ? { evaluatedLevel: 'medium', rationale: '<concrete scope and risk evidence>', gateScope: data['gateScope'] }
         : kind === 'level-recommendation' ? { choice: 'adopt', quote: '<actual user quote>' }
-        : kind === 'scope-deviation' ? { by: 'orchestrator', request: data['pendingProposal'], ruling: 'approve', rationale: '<adjudication against task intent and invariants>' }
-        : kind === 'scope-deviation-user' ? { by: 'user', requestId: rows([data['pendingProposal']])[0]?.['requestId'], choice: 'accept', quote: '<actual user quote>' }
+        : kind === 'integration-conflict' ? { by: 'orchestrator', action: 'resolve', rationale: '<resolution against the intent and criteria of both tasks>' }
+        : kind === 'request' ? { by: 'orchestrator', action: 'approve', rationale: '<ruling against task intent and invariants>' }
+        : kind === 'request-user' ? { by: 'user', requestId: data['requestId'] ?? rows([data['request']])[0]?.['requestId'], choice: 'accept', quote: '<actual user quote>' }
+        : kind === 'failure' ? { by: 'orchestrator', action: 'retry', rationale: '<observed root cause and the change that addresses it>' }
         : kind === 'run-stop' ? { by: 'user', quote: '<actual user quote>' } : 'stop';
       const examples: HostEvent[] = [];
       if (typeof kind === 'string') examples.push({ type: 'DECISION', kind, answer } as HostEvent);
+      // An approved request usually lands as a plan amendment; the target writer is the requester.
+      if (kind === 'request') examples.push(amendExample(String(rows([data['request']])[0]?.['task'] ?? '<requesting task>')));
       if (data['stopAllowed'] === true && kind !== 'run-stop') examples.push({ type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: '<actual user quote>' } });
       return kind === 'approval' ? [{ type: 'DECISION', kind, answer: { by: 'user', quote: '<actual user quote>', ...(typeof data['hash'] === 'string' ? { hash: data['hash'] } : {}) } }, { type: 'DECISION', kind, answer: 'stop' }] : examples;
     }

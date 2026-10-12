@@ -22,7 +22,7 @@ export function approveDesignScope(result: ReturnType<typeof stepDesign>): Retur
   if (state.tag !== 'revision') return result;
   let child = state.child;
   if (child.tag === 'scope-adjudication') {
-    child = stepDesignRevision(child, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: child.request, ruling: 'approve', rationale: 'The revised acceptance expands governed work.' } }).state;
+    child = stepDesignRevision(child, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The revised acceptance expands governed work.' } }).state;
   }
   if (child.tag !== 'resume') return result;
   const resumed = stepDesign({ ...state, child }, { type: 'LOCK_BROKEN', stalePid: 1 });

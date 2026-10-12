@@ -44,6 +44,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - Constraints: <optional shared task constraints>
 - Prerequisites: <none | T<n>[, T<n>...]>
 - Criteria: <SC#[, SC#...]>
+- Overlap: <path> — <why this unordered task also writes the path>
 
 - #### [NEW] <relative-path>
   - Purpose: Public interface and rationale.
@@ -64,6 +65,8 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>` [FINAL]
   - Evidence: <red|verify|review>
+  - Retain: <durable|transient>
+  - Covered by: <SC#|FINAL>
   - Pre-existing: <yes|no>
   - RED exception: <behavior-preserving|already-satisfied>
   - Test rationale: <why the retained RED is discriminating, stable, and behavioral, or why a new test is low-signal>
@@ -72,6 +75,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
   - Integration: <why this criterion spans tasks>
 
 ## Verification Plan
+- Seams: <test entry point>[, <test entry point>...]
 ### Automated Tests
 - `<one executable command>`
 - None: <reason>
@@ -100,7 +104,10 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
-- Tasks: every H4 belongs to one task; a task is a meaningful outcome with disjoint writable paths and independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.
+- Tasks: every H4 belongs to one task; a task is a meaningful outcome with independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.
+- Overlap: a write path repeated by tasks with no transitive Prerequisites path is an `overlap` warning (case variants count as one path; references never count). Order the tasks, or justify each shared path with `Overlap:` on the task. A repeat inside one task is a `duplicate-change-path` defect.
+- Seams: existing public test entry points that criteria verify through; the orchestrator chooses them from current tests and checks each criterion's Verify against them.
+- Retain: `durable` (default) keeps the test. `transient` tests prove one step and are trimmed after final review; they require `Covered by:` naming a durable criterion or `FINAL` that keeps the behavior covered. Only test files listed solely by transient criteria are trimmed; production paths are never trimmed.
 - Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks.
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
 - `[GENERATED]`: the driver reruns Command before completion verification; a task producing an Input must be a (transitive) prerequisite.

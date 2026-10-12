@@ -30,7 +30,18 @@ export type TaskRecord = {
   reason: string | null;
   /** Latest writer amendment for this failure; null clears a prior attempt's proposal. */
   amendment?: TaskAmendment | null;
+  /** Every brief issued to the current attempt, with the task scope it was written for; a stale receipt binds one of these. */
+  briefs?: readonly TaskBriefHistory[];
+  /** Envelope of a submission held until every prerequisite added by an amendment is accepted. */
+  parked?: { envelopePath: string } | null;
+  /** Paths the committed candidate changed; admission compares them with the current scope. */
+  candidatePaths?: readonly string[];
+  /** An amendment removed this running task; the record is dropped at its `cancelled` receipt. */
+  removed?: boolean;
+  /** Envelope a removed writer submitted before its cancellation was confirmed; kept as terminal evidence, never admitted. */
+  discardedSubmission?: string | null;
 };
+export type TaskBriefHistory = TaskBriefPaths & { scope: string };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
 /** Paths, criterion definitions, and prerequisites define a task's work; any change re-pends it and its descendants. */
@@ -41,6 +52,12 @@ export function taskSignature(plan: ParsedPlan, task: PlanTask): string {
 
 function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {
   return { id: task.id, status: 'pending', attempt: 0, failures: 0, signature: taskSignature(plan, task), input: null, worktree: null, worktreeNames: [], handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
+}
+
+/** Paths and criterion definitions bound by a brief; a stale brief stays valid only while this is unchanged. */
+export function taskScope(plan: ParsedPlan, task: PlanTask): string {
+  const criteria = taskCriteria(plan, task).map(({ line: _line, ...criterion }) => criterion).sort((a, b) => a.id.localeCompare(b.id));
+  return JSON.stringify({ paths: [...task.paths].sort(), definitions: criteria });
 }
 
 /** Validated config caps concurrent task writers; an absent or invalid value runs one writer at a time. */
@@ -91,6 +108,58 @@ export function reconcileTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
   }));
 }
 
+/** `removedRunning` lists launched writers an amendment removes; they discard live work, so the amendment is user-gated. */
+export type AmendResult = { ok: true; tasks: Tasks; rebrief: string[]; reverify: string[]; removedAccepted: string[]; discarded: string[]; removedRunning: string[] } | { ok: false; error: string };
+
+/**
+ * Rebinds records to an amended plan without draining writers: pending and failed tasks re-pend on a changed signature;
+ * running tasks keep their launch identity and need a notice when their scope changes; submitted candidates wait for
+ * admission against the new scope; accepted tasks with a changed scope are re-verified on the integration head.
+ */
+export function amendTasks(tasks: Tasks, before: ParsedPlan, after: ParsedPlan, notify: readonly string[]): AmendResult {
+  const next: Record<string, TaskRecord> = {};
+  const rebrief: string[] = [], reverify: string[] = [], removedAccepted: string[] = [], discarded: string[] = [], removedRunning: string[] = [];
+  for (const task of after.tasks) {
+    const old = tasks[task.id];
+    const prior = before.tasks.find((row) => row.id === task.id);
+    if (!old || !prior) { next[task.id] = fresh(after, task); continue; }
+    const signature = taskSignature(after, task);
+    const scopeChanged = taskScope(before, prior) !== taskScope(after, task);
+    const unaccepted = task.prerequisites.filter((id) => !prior.prerequisites.includes(id) && tasks[id]?.status !== 'accepted');
+    switch (old.status) {
+      case 'pending': case 'failed':
+        next[task.id] = signature === old.signature ? old : { ...fresh(after, task), attempt: old.attempt, worktreeNames: old.worktreeNames ?? [] };
+        break;
+      case 'running':
+        if (scopeChanged && !notify.includes(task.id)) return { ok: false, error: `AMEND changes running task ${task.id}; name it in notify so its brief is regenerated.` };
+        if (notify.includes(task.id)) rebrief.push(task.id);
+        next[task.id] = old;
+        break;
+      case 'submitted':
+        next[task.id] = old;
+        break;
+      case 'accepted':
+        if (unaccepted.length) return { ok: false, error: `AMEND adds unaccepted prerequisite ${unaccepted.join(', ')} to accepted task ${task.id}; reorder the tasks or discard the accepted work with a user-gated amendment.` };
+        if (scopeChanged) reverify.push(task.id);
+        next[task.id] = { ...old, signature };
+        break;
+      default: return { ok: false, error: `Unknown task status for ${task.id}.` };
+    }
+  }
+  for (const [id, old] of Object.entries(tasks)) {
+    if (after.tasks.some((task) => task.id === id)) continue;
+    if (old.status === 'running') {
+      if (old.handle && !old.removed) removedRunning.push(id);
+      next[id] = { ...old, removed: true };
+      continue;
+    }
+    if (old.status === 'accepted') removedAccepted.push(id);
+    if (old.status === 'submitted') discarded.push(id);
+  }
+  for (const id of notify) if (!next[id] || next[id]!.status !== 'running' || next[id]!.removed) return { ok: false, error: `notify names ${id}, which is not a live writer in the amended plan.` };
+  return { ok: true, tasks: next, rebrief, reverify, removedAccepted, discarded, removedRunning };
+}
+
 /** Accepted work is already integrated; losing any accepted record means integration must be rebuilt. */
 export function invalidatesIntegration(before: Tasks, after: Tasks): boolean {
   return Object.values(before).some((record) => record.status === 'accepted' && after[record.id]?.status !== 'accepted');
@@ -103,6 +172,11 @@ export function readyTasks(plan: ParsedPlan, tasks: Tasks, maxFailures: number):
 
 export function activeTasks(tasks: Tasks): TaskRecord[] {
   return Object.values(tasks).filter((task) => task.status === 'running' || task.status === 'submitted');
+}
+
+/** Records that hold a writer slot: a parked submission has finished writing, so it waits without one. */
+export function slotTasks(tasks: Tasks): TaskRecord[] {
+  return activeTasks(tasks).filter((task) => !(task.status === 'submitted' && task.parked));
 }
 
 /** Failed tasks plus every pending task that can no longer run because an ancestor failed. */

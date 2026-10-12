@@ -43,37 +43,40 @@ test('prewrite-level: task brief renders bound context, worktree, checkpoint, an
 test('hotfix template renders concrete limits, single-shot identity, external reasons and pre-RED restriction; retry carries root cause', async () => {
   const runDir = tempDir(), ports = fakePorts();
   const input = { rootCause: 'wrong mapping', stalledCheck: { command: 'check', logPath: 'failed.log', failureId: 'f1' }, hotfix: { maxFiles: 10, maxLines: 150, singleShot: true, model: 'writer-a', external: [{ path: 'env.txt', reason: 'repair environment' }], preRed: true, paths: ['tests/a.test.ts'] } };
-  Object.assign(input, { envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'SCOPE_REQUEST'] } });
+  Object.assign(input, { envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'BLOCKED'] } });
   const event = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.2', stage: 'hotfix', input }, ports, { runDir, attempt: 1 }));
   assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') return;
   const text = fs.readFileSync(event.path, 'utf8');
-  for (const value of ['single-shot hot fix', 'wrong mapping', 'failed.log', '10', '150', 'writer-a', 'repair environment', 'SCOPE_REQUEST', 'RED validation does not authorize other paths', 'scopeRequest: { requestId, source: "hotfix"', 'tests/a.test.ts']) assert.ok(text.includes(value), value);
+  for (const value of ['single-shot hot fix', 'wrong mapping', 'failed.log', '10', '150', 'writer-a', 'repair environment', 'return BLOCKED with the paths and reason', 'RED validation does not authorize other paths', 'taskless `WRITE_RECEIPT`', 'tests/a.test.ts']) assert.ok(text.includes(value), value);
   const retry = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.3', stage: 'task', input: { retryContext: { rootCause: 'wrong branch', failure: 'failed check identity f1' } } }, ports, { runDir, attempt: 1 }));
   assert.equal(retry.type, 'BRIEF_READY'); if (retry.type === 'BRIEF_READY') assert.match(fs.readFileSync(retry.path, 'utf8'), /wrong branch[\s\S]*failed check identity f1/);
 });
 
-test('prewrite-level: task and hotfix writer briefs require a pre-write deviation request', async () => {
+test('prewrite-level: task briefs request scope live and echo briefHash; hotfix briefs block', async () => {
   const runDir = tempDir(), ports = fakePorts();
   const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
   const taskInput = {
     planPath: 'docs/example.plan.md', planHash: `sha256:${'a'.repeat(64)}`, governingOutcome: { title: 'Example', outcome: 'Deliver behavior' },
     settledScope: { paths: ['src/a.ts'], changes: [{ action: 'MODIFY', path: 'src/a.ts' }] }, criteria: [{ id: 'SC1', title: 'works' }],
     rules: { writerStage: 'task' }, task: { id: 'T1', title: 'Feature', worktree: 'run/wt/task-t1', inputRevision: 'b0', checkpoint: { root: 'run/wt/task-t1', paths: [] } },
-    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'SCOPE_REQUEST'] }, selfCheck: 'dispatch send --dry-run <Expected Envelope Path>',
+    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'BLOCKED'] }, selfCheck: 'dispatch send --dry-run <Expected Envelope Path>',
   };
   const task = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.4', stage: 'task', input: taskInput }, ports, { runDir, attempt: 1 }));
   assert.equal(task.type, 'BRIEF_READY'); if (task.type !== 'BRIEF_READY') return;
-  assert.match(fs.readFileSync(task.path, 'utf8'), /Submit before changing any path outside the task paths/);
+  const taskText = fs.readFileSync(task.path, 'utf8');
+  assert.match(taskText, /send the orchestrator a writer request before that edit/);
+  assert.match(taskText, /Stay live and keep working within the task paths/);
+  assert.match(taskText, /echoes it as `briefHash` in the submitted receipt/);
 
   const hotfix = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.5', stage: 'hotfix', input: {
     rootCause: 'wrong mapping', stalledCheck: { command: 'check', logPath: 'failed.log', failureId: 'f1' },
     hotfix: { maxFiles: 10, maxLines: 150, singleShot: true, model: 'writer-a', external: [], preRed: true, paths: ['src/a.ts'] },
-    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'SCOPE_REQUEST'] },
+    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'BLOCKED'] },
   } }, ports, { runDir, attempt: 1 }));
   assert.equal(hotfix.type, 'BRIEF_READY'); if (hotfix.type !== 'BRIEF_READY') return;
   const hotfixText = fs.readFileSync(hotfix.path, 'utf8');
-  assert.match(hotfixText, /pause before that work and return `status: "SCOPE_REQUEST"`/);
-  assert.match(hotfixText, /submit before making the out-of-envelope change/i);
+  assert.match(hotfixText, /stop before that work and return BLOCKED/);
+  assert.doesNotMatch(hotfixText, /writer request before that edit/);
 });
 
 test('prepare-review-git-log: extracts commit messages and falls back on error or empty', async () => {

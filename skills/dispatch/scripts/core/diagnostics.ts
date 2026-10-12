@@ -20,7 +20,7 @@ export const ATTEST_HINT = ['tokens', 'durationMs'] as const;
  * Decide kinds whose production answer comes from the user: a `by:"user"` quote, per-finding user quotes, or a user
  * selection (`opt-in`). Mixed kinds (`failure`, `concerns`) are classified per reply.
  */
-export const USER_DECIDE_KINDS: ReadonlySet<string> = new Set(['approval', 'level-recommendation', 'needs-user', 'scope-deviation-user', 'opt-in']);
+export const USER_DECIDE_KINDS: ReadonlySet<string> = new Set(['approval', 'level-recommendation', 'needs-user', 'request-user', 'opt-in']);
 
 const HOST_TYPES: ReadonlySet<string> = new Set(Object.keys(HOST_EVENT_SHAPES));
 // Lock recovery and config refresh happen inside a host wait, so they never split a timing interval.
@@ -187,16 +187,16 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
           facts.invocations.push({ phase, provider: host, model, ...opt('effort', text(mapping['launcherEffort'])), surface: 'native', launched: true, outcome: 'ok', estimated: true, ...opt('tokens', count(slot['tokens'])), ...opt('durationMs', count(slot['durationMs'])) });
         }
         break;
-      case 'WRITE_LAUNCHED':
-        for (const task of list(d['tasks']).filter(record)) {
-          writers.set(`${String(task['task'])}#${String(task['attempt'])}`, { ...opt('model', text(task['model'])), ...opt('effort', text(task['effort'])) });
-          if ((count(task['attempt']) ?? 1) > 1) repairs++;
+      case 'WRITE_RECEIPT': {
+        const key = `${String(d['task'])}#${String(d['attempt'])}`;
+        if (d['status'] === 'launched') {
+          writers.set(key, { ...opt('model', text(d['model'])), ...opt('effort', text(d['effort'])) });
+          if ((count(d['attempt']) ?? 1) > 1) repairs++;
+          break;
         }
-        break;
-      case 'WRITE_ENVELOPE': case 'WRITE_FAILED': case 'WRITE_CANCELLED': {
-        const writer = writers.get(`${String(d['task'])}#${String(d['attempt'])}`);
-        const outcome = line.type === 'WRITE_ENVELOPE' ? 'ok' : line.type === 'WRITE_FAILED' ? 'failed' : 'cancelled';
-        facts.invocations.push({ phase, provider: host, model: text(d['model']) ?? writer?.model ?? '—', ...opt('effort', writer?.effort), mode: 'write', surface: 'native', launched: true, outcome, estimated: true, ...opt('tokens', count(d['tokens'])), ...opt('durationMs', count(d['durationMs'])) });
+        const outcome = d['status'] === 'submitted' ? 'ok' : d['status'] === 'failed' ? 'failed' : 'cancelled';
+        const writer = writers.get(key);
+        facts.invocations.push({ phase, provider: host, model: text(d['model']) ?? writer?.model ?? '—', ...opt('effort', text(d['effort']) ?? writer?.effort), mode: 'write', surface: 'native', launched: true, outcome, estimated: true, ...opt('tokens', count(d['tokens'])), ...opt('durationMs', count(d['durationMs'])) });
         break;
       }
       case 'ENVELOPE_CHECKED': admissionDefects += list(d['defects']).length; break;
@@ -224,7 +224,7 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
 function compact(line: JournalLine): JournalLine {
   const slots = (keep: (slot: Record<string, unknown>) => Record<string, unknown>) => list(line.data['slots']).filter(record).map(keep);
   switch (line.type) {
-    case 'RUN_STARTED': case 'RULINGS': case 'WRITE_LAUNCHED': case 'WRITE_ENVELOPE': case 'WRITE_FAILED': case 'WRITE_CANCELLED': case 'DIAGNOSTIC_NOTE': case 'RETRO':
+    case 'RUN_STARTED': case 'RULINGS': case 'WRITE_RECEIPT': case 'DIAGNOSTIC_NOTE': case 'RETRO':
       return line;
     case 'WAVE_DONE': return { ...line, data: { round: line.data['round'], slots: slots((slot) => ({ ...opt('slot', slot['slot']), ...opt('provider', slot['provider']), ...opt('invocations', slot['invocations']) })) } };
     case 'NATIVE_RESULTS': return { ...line, data: { slots: slots((slot) => {

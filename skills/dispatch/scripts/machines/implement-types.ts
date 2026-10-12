@@ -1,7 +1,7 @@
 // @ts-check
 
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
-import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask } from '../domain/types.ts';
+import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask, PlanWarning } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord, type WriterConfig } from './types.ts';
 
@@ -50,23 +50,28 @@ export type WriterEnvelope = WriteEnvelope & {
   amendment?: PlanAmendment;
 };
 export type SettledPlanInput = { path: string; hash: string; outcome: 'settled' | 'skipped' };
-export type FailureAnswer = { action: 'stop' } | { action: 'retry'; rootCause: string } | { action: 'hotfix'; mode: 'inline' | 'writer'; rootCause: string; external: readonly { path: string; reason: string }[] }
+/** Generic failure answers: orchestrator actions carry `rationale`; only manual completion is user-attributed. */
+export type FailureAnswer = { action: 'stop'; rationale: string } | { action: 'retry'; rationale: string } | { action: 'hotfix'; mode: 'inline' | 'writer'; rationale: string; external: readonly { path: string; reason: string }[] }
   | { action: 'manual-complete'; by: 'user'; quote: string; criteria: Readonly<Record<string, CriterionEvidence>> };
+const FAILURE_KEYS: Readonly<Record<string, readonly string[]>> = {
+  stop: ['by', 'action', 'rationale', 'amendment'], retry: ['by', 'action', 'rationale', 'amendment'],
+  hotfix: ['by', 'action', 'rationale', 'amendment', 'mode', 'external'], 'manual-complete': ['by', 'action', 'quote', 'criteria'],
+};
 export function failureAnswer(value: unknown): FailureAnswer | null {
-  if (value === 'stop') return { action: 'stop' };
-  if (!isRecord(value)) return null;
-  if (value['action'] === 'stop') return { action: 'stop' };
-  if (value['action'] === 'retry' && NON_EMPTY(value['rootCause'])) return { action: 'retry', rootCause: value['rootCause'] };
-  if (value['action'] === 'hotfix' && NON_EMPTY(value['rootCause'])) {
-    const hotfix = isRecord(value['hotfix']) ? value['hotfix'] : value;
-    const mode = hotfix['mode'] ?? 'writer';
-    if (mode !== 'inline' && mode !== 'writer') return null;
-    const external = hotfix['external'] ?? value['external'] ?? [];
-    if (!Array.isArray(external) || !external.every((v) => isRecord(v) && NON_EMPTY(v['path']) && NON_EMPTY(v['reason']))) return null;
-    return { action: 'hotfix', mode, rootCause: value['rootCause'], external: external as { path: string; reason: string }[] };
-  }
-  if ((value['action'] === 'manual-complete' || value['action'] === 'manual-completion') && value['by'] === 'user' && NON_EMPTY(value['quote']) && isRecord(value['criteria'])) return { action: 'manual-complete', by: 'user', quote: value['quote'], criteria: value['criteria'] as Record<string, CriterionEvidence> };
-  return null;
+  if (!isRecord(value) || typeof value['action'] !== 'string') return null;
+  const action = value['action'];
+  const keys = FAILURE_KEYS[action];
+  // NOTE: unknown keys (e.g. a legacy `rootCause`) are rejected so stale host payloads fail loudly.
+  if (!keys || Object.keys(value).some((key) => !keys.includes(key))) return null;
+  if (action === 'manual-complete') return value['by'] === 'user' && NON_EMPTY(value['quote']) && isRecord(value['criteria']) ? { action, by: 'user', quote: value['quote'], criteria: value['criteria'] as Record<string, CriterionEvidence> } : null;
+  if (value['by'] !== 'orchestrator' || !NON_EMPTY(value['rationale'])) return null;
+  if (value['amendment'] !== undefined && !NON_EMPTY(value['amendment'])) return null;
+  if (action === 'stop' || action === 'retry') return { action, rationale: value['rationale'] };
+  const mode = value['mode'];
+  if (mode !== 'inline' && mode !== 'writer') return null;
+  const external = value['external'] ?? [];
+  if (!Array.isArray(external) || !external.every((v) => isRecord(v) && NON_EMPTY(v['path']) && NON_EMPTY(v['reason']))) return null;
+  return { action: 'hotfix', mode, rationale: value['rationale'], external: external as { path: string; reason: string }[] };
 }
 const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
@@ -95,6 +100,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
       testRationale: typeof item['testRationale'] === 'string' ? item['testRationale'] : null,
       review: typeof item['review'] === 'string' ? item['review'] : null,
       enforcementInfeasibility: typeof item['enforcementInfeasibility'] === 'string' ? item['enforcementInfeasibility'] : null,
+      retain: item['retain'] === 'transient' ? 'transient' : 'durable', coveredBy: typeof item['coveredBy'] === 'string' ? item['coveredBy'] : null,
     });
   }
   const changes: PlanChange[] = [];
@@ -117,9 +123,10 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
       if (!isRecord(entry) || !NON_EMPTY(entry['path']) || !inputs) return null;
       generated.push({ path: entry['path'], inputs });
     }
+    const overlaps = Array.isArray(item['overlaps']) ? item['overlaps'].filter((row): row is { path: string; reason: string } => isRecord(row) && NON_EMPTY(row['path']) && typeof row['reason'] === 'string').map((row) => ({ path: row.path, reason: row.reason })) : [];
     tasks.push({
       id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], summary: typeof item['summary'] === 'string' ? item['summary'] : '',
-      line: typeof item['line'] === 'number' ? item['line'] : tasks.length + 1, prerequisites, criteria: taskCriteria, paths, generated,
+      line: typeof item['line'] === 'number' ? item['line'] : tasks.length + 1, prerequisites, criteria: taskCriteria, paths, generated, overlaps,
     });
   }
   return {
@@ -134,6 +141,8 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     },
     finalCommands: value['finalCommands'] as string[],
     traceability: isRecord(value['traceability']) ? Object.fromEntries(Object.entries(value['traceability']).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : null,
+    seams: Array.isArray(value['seams']) ? value['seams'].filter(NON_EMPTY) : [],
+    warnings: Array.isArray(value['warnings']) ? value['warnings'].filter((row): row is PlanWarning => isRecord(row) && row['kind'] === 'overlap' && NON_EMPTY(row['path']) && Array.isArray(row['tasks']) && row['tasks'].every(NON_EMPTY)).map((row) => ({ kind: 'overlap' as const, tasks: [...row.tasks], path: row.path })) : [],
     governedText: typeof value['governedText'] === 'string' ? value['governedText'] : '',
   };
 }

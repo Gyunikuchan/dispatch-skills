@@ -118,15 +118,11 @@ export function oneOf<T>(...options: readonly Validator<T>[]): Validator<T> {
 // SECTION: Host events
 
 const payload = rec(any);
-const LEGACY_DECIDE_KINDS = lit('approval', 'baseline', 'failure', 'concerns', 'escalation', 'needs-user', 'opt-in');
+const LEGACY_DECIDE_KINDS = lit('approval', 'baseline', 'concerns', 'escalation', 'needs-user', 'opt-in');
 const strings = arr(str);
 const nullableString: Validator<string | null> = (value, at) => value === null ? ok(null) : str(value, at);
-const nullableBoolean: Validator<boolean | null> = (value, at) => value === null || typeof value === 'boolean' ? ok(value) : fail(at, 'boolean or null', value);
 const nonBlank: Validator<string> = (value, at) => typeof value === 'string' && value.trim().length > 0 ? ok(value) : fail(at, 'non-empty trimmed string', value);
 const boundedText = (max: number): Validator<string> => (value, at) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max ? ok(value) : fail(at, `non-empty trimmed string of at most ${max} characters`, value);
-const incrementDelta = obj({ id: str, prerequisites: strings, paths: strings, acceptance: strings });
-const scopeCriterion = obj({ id: str, title: nonBlank, changes: strings, verify: arr(obj({ command: nonBlank, final: lit(true, false) })), evidence: oneOf(lit('red', 'verify', 'review'), (value, at) => value === null ? ok(null) : fail(at, 'evidence class or null', value)), preExisting: nullableBoolean, redException: nullableString, testRationale: nullableString, review: nullableString, enforcementInfeasibility: nullableString });
-const scopeDelta = obj({ paths: strings, criteria: strings, criterionDefinitions: opt(arr(scopeCriterion)), obligations: strings, commands: strings, finalCommands: opt(strings), phaseDuties: strings, increments: arr(incrementDelta) });
 const criterionScope = obj({ id: str, title: nonBlank, changes: strings, verify: strings, review: nullableString, evidence: str });
 const commandScope = obj({ command: str, criteria: strings, paths: strings, final: lit(true, false) });
 const baselineScope = obj({ command: str, status: str, exit: num, inputFingerprint: str });
@@ -137,11 +133,6 @@ const levelGateScope = obj({
   commandMappings: arr(commandScope), baselineEvidence: arr(baselineScope),
   phaseObligations: obj({ writer: strings, review: strings }), remainingIncrements: arr(remainingIncrement), design: oneOf(designScope, (value, at) => value === null ? ok(null) : fail(at, 'design object or null', value)),
 });
-const deviationTask = obj({ requestId: str, source: lit('task'), task: str, baseArtifactHash: str, writerRationale: nonBlank, delta: scopeDelta });
-const deviationHotfix = obj({ requestId: str, source: lit('hotfix'), baseArtifactHash: str, writerRationale: nonBlank, delta: scopeDelta });
-const revisionPlan = obj({ requestId: str, source: lit('plan-revision'), baseArtifactHash: str, proposedArtifactHash: str, affectedTasks: strings, rationale: nonBlank, delta: scopeDelta });
-const revisionDesign = obj({ requestId: str, source: lit('design-revision'), baseArtifactHash: str, proposedArtifactHash: str, affectedIncrements: strings, rationale: nonBlank, delta: scopeDelta });
-const scopeProposal = oneOf(deviationTask, deviationHotfix, revisionPlan, revisionDesign);
 const positiveInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) > 0 ? ok(Number(value)) : fail(at, 'positive integer', value);
 const nonNegativeInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) >= 0 ? ok(Number(value)) : fail(at, 'non-negative integer', value);
 /** Optional host-attested figures (diagnostics, best effort); accepted whether or not diagnostics are enabled. */
@@ -156,29 +147,58 @@ const nativeSlot: Validator<Record<string, unknown>> = (value, at) => {
   }
   return shape;
 };
+const nonEmptyArr = <T>(item: Validator<T>): Validator<T[]> => (value, at) => Array.isArray(value) && value.length === 0 ? fail(at, 'non-empty array', value) : arr(item)(value, at);
+const identity = { task: str, attempt: positiveInt, signature: str, handle: str };
+const launch = { model: nonBlank, effort: opt(str) };
+/** Dispatches on a discriminator field, so an error names the field of the chosen shape rather than a sibling's. */
+const byKey = (key: string, cases: Readonly<Record<string, Validator<Record<string, unknown>>>>): Validator<Record<string, unknown>> => (value, at) => {
+  const tag = isRecord(value) ? value[key] : undefined;
+  const shape = typeof tag === 'string' && Object.hasOwn(cases, tag) ? cases[tag] : undefined;
+  if (shape) return shape(value, at);
+  const named = lit(...Object.keys(cases))(tag, `${at}.${key}`);
+  return isRecord(value) && !named.ok ? named : fail(at, 'object', value);
+};
+const receipt = (status: string, shape: Readonly<Record<string, Validator<unknown>>>) => obj({ type: lit('WRITE_RECEIPT'), status: lit(status), ...shape });
+/** Orchestrator ruling: `rationale` replaces the former `rootCause`, and `amendment` names the AMEND a ruling relies on. */
+const ruling = (actions: readonly string[], extra: Readonly<Record<string, Validator<unknown>>> = {}) =>
+  obj({ by: lit('orchestrator'), action: lit(...actions), rationale: nonBlank, amendment: opt(nonBlank), ...extra });
+const decision = (kind: string, answer: Validator<unknown>) => obj({ type: lit('DECISION'), kind: lit(kind), answer });
+const planEdit = obj({ kind: lit('modify', 'remove', 'add'), target: nonBlank, current: opt(nonBlank), proposed: opt(nonBlank) });
 
 export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Record<string, unknown>> } = {
   AUTHORED: obj({ type: lit('AUTHORED'), path: str }),
   NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(nativeSlot) }),
   RULINGS: obj({ type: lit('RULINGS'), rulings: rec(payload) }),
   FIXES_APPLIED: obj({ type: lit('FIXES_APPLIED'), clusters: arr(payload) }),
-  WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, attempt: positiveInt, signature: str, handle: str, model: nonBlank, effort: opt(str), substitution: opt(nonBlank) })) }),
-  WRITE_ENVELOPE: oneOf(
-    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, ...attestation }),
-    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: str, attempt: positiveInt, signature: str, handle: str, ...attestation }),
-  ),
-  WRITE_FAILED: oneOf(
-    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, ...attestation }),
-    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: str, attempt: positiveInt, signature: str, handle: str, ...attestation }),
-  ),
-  WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str, ...attestation }),
+  // NOTE: the taskless forms come first, so a receipt naming a task reports the identity form's error.
+  WRITE_RECEIPT: byKey('status', {
+    launched: receipt('launched', { ...identity, ...launch, substitution: opt(nonBlank) }),
+    submitted: oneOf(
+      receipt('submitted', { envelopePath: str, model: opt(nonBlank), effort: opt(str), ...attestation }),
+      receipt('submitted', { ...identity, envelopePath: str, briefHash: str, ...launch, ...attestation }),
+    ),
+    failed: oneOf(
+      receipt('failed', { detail: nonBlank, model: opt(nonBlank), effort: opt(str), ...attestation }),
+      receipt('failed', { ...identity, detail: nonBlank, ...launch, ...attestation }),
+    ),
+    cancelled: receipt('cancelled', { ...identity, ...attestation }),
+  }),
+  REQUEST: obj({ type: lit('REQUEST'), task: str, attempt: positiveInt, need: nonBlank, paths: strings, rationale: nonBlank }),
+  AMEND: obj({ type: lit('AMEND'), delta: nonEmptyArr(planEdit), notify: arr(obj({ task: str, notice: nonBlank })), rationale: nonBlank, by: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
     obj({ type: lit('DECISION'), kind: lit('drift'), answer: obj({ by: lit('orchestrator'), noticeId: nonBlank, afterHash: nonBlank, action: lit('preserve', 'refresh', 'reconcile', 'escalate'), rationale: nonBlank, evidenceIds: strings }) }),
     obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
     obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),
-    obj({ type: lit('DECISION'), kind: lit('scope-deviation'), answer: obj({ by: lit('orchestrator'), request: scopeProposal, ruling: lit('approve', 'disagree'), rationale: nonBlank }) }),
-    obj({ type: lit('DECISION'), kind: lit('scope-deviation-user'), answer: obj({ by: lit('user'), requestId: str, choice: lit('accept', 'decline'), quote: nonBlank }) }),
+    decision('integration-conflict', ruling(['resolve', 'discard'])),
+    decision('request', ruling(['approve', 'decline', 'escalate'])),
+    decision('request-user', obj({ by: lit('user'), requestId: str, choice: lit('accept', 'decline'), quote: nonBlank })),
+    decision('failure', byKey('action', {
+      stop: ruling(['stop']),
+      retry: ruling(['retry']),
+      hotfix: ruling(['hotfix'], { mode: lit('inline', 'writer'), external: arr(obj({ path: str, reason: nonBlank })) }),
+      'manual-complete': obj({ by: lit('user'), action: lit('manual-complete'), quote: nonBlank, criteria: rec(payload) }),
+    })),
     obj({ type: lit('DECISION'), kind: lit('run-stop'), answer: obj({ by: lit('user'), quote: nonBlank }) }),
     obj({ type: lit('DECISION'), kind: LEGACY_DECIDE_KINDS, answer: any }),
   ),
@@ -187,15 +207,16 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
   RETRO: obj({ type: lit('RETRO'), observations: arr(any) }),
 };
 
-// NOTE: REVISE is accepted at every live await; the machine's validate hook narrows it (spec §5.7).
+// NOTE: REVISE is accepted at every live await but `write`, where AMEND changes the plan without draining writers;
+// the machine's validate hook narrows both (spec §5.7).
 export const AWAIT_ACCEPTS: { readonly [K in Await]: readonly HostEventType[] } = {
   author: ['AUTHORED', 'REVISE'],
   native: ['NATIVE_RESULTS', 'REVISE'],
   rule: ['RULINGS', 'REVISE'],
   fix: ['FIXES_APPLIED', 'REVISE'],
-  write: ['WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED', 'REVISE'],
+  write: ['WRITE_RECEIPT', 'REQUEST', 'AMEND'],
   evidence: ['EVIDENCE', 'REVISE'],
-  decide: ['DECISION', 'REVISE'],
+  decide: ['DECISION', 'AMEND', 'REVISE'],
   retro: ['RETRO'],
   done: [],
 };

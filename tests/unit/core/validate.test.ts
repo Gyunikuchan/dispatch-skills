@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { arr, AWAIT_ACCEPTS, lit, num, obj, oneOf, opt, rec, str, validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
 
+const IDENTITY = { task: 'T1', attempt: 1, signature: 'sig', handle: 'writer-T1' } as const;
+const AMEND = { type: 'AMEND', delta: [{ kind: 'modify', target: 'T2', current: 'old', proposed: 'new' }], notify: [{ task: 'T2', notice: 'T2 owns src/b.ts now' }], rationale: 'T1 needs the shared helper' } as const;
+
 test('combinators accept matching values and name the failing path', () => {
   const shape = obj({ name: str, count: num, mode: lit('a', 'b'), tags: arr(str), meta: rec(num), note: opt(str), pick: oneOf<unknown>(num, str) });
   assert.deepEqual(shape({ name: 'x', count: 1, mode: 'a', tags: ['t'], meta: { k: 2 }, pick: 's' }, 'v').ok, true);
@@ -30,8 +33,8 @@ test('shape guards cover every accepted host event', () => {
     ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]' }] }],
     ['rule', { type: 'RULINGS', rulings: { F1: { ruling: 'accept' } } }],
     ['fix', { type: 'FIXES_APPLIED', clusters: [] }],
-    ['write', { type: 'WRITE_ENVELOPE', envelopePath: 'e.json' }],
-    ['write', { type: 'WRITE_FAILED', model: 'm', kind: 'quota', reason: 'r' }],
+    ['write', { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' }],
+    ['write', { type: 'WRITE_RECEIPT', status: 'failed', detail: 'quota' }],
     ['evidence', { type: 'EVIDENCE', criteria: { SC1: {} } }],
     ['decide', { type: 'DECISION', kind: 'approval', answer: { by: 'u', quote: 'yes' } }],
     ['decide', { type: 'REVISE', artifact: 'plan', reason: 'r', evidence: 'e' }],
@@ -49,17 +52,17 @@ test('RETRO requires an observations array and leaves item gating to the report'
 });
 
 test('native slots and task write receipts accept attested tokens and durationMs as non-negative integers', () => {
-  const receipt = { envelopePath: 'e.json', task: 'T1', attempt: 1, signature: 's', handle: 'h' };
+  const receipt = { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json', briefHash: 'sha256:b', model: 'm', ...IDENTITY };
   for (const [current, event] of [
     ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', tokens: 1200, durationMs: 0 }] }],
-    ['write', { type: 'WRITE_ENVELOPE', ...receipt, tokens: 10, durationMs: 20 }],
-    ['write', { type: 'WRITE_FAILED', model: 'm', kind: 'quota', reason: 'r', tokens: 3 }],
-    ['write', { type: 'WRITE_CANCELLED', task: 'T1', attempt: 1, signature: 's', handle: 'h', reason: 'r', durationMs: 5 }],
+    ['write', { ...receipt, tokens: 10, durationMs: 20 }],
+    ['write', { type: 'WRITE_RECEIPT', status: 'failed', detail: 'quota', tokens: 3 }],
+    ['write', { type: 'WRITE_RECEIPT', status: 'cancelled', ...IDENTITY, durationMs: 5 }],
   ] as const) assert.deepEqual(validateHostEvent(current, event), { ok: true, value: event });
   for (const [current, event] of [
     ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', tokens: -1 }] }],
     ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', durationMs: 1.5 }] }],
-    ['write', { type: 'WRITE_ENVELOPE', ...receipt, tokens: '10' }],
+    ['write', { ...receipt, tokens: '10' }],
   ] as const) assert.equal(validateHostEvent(current, event).ok, false, JSON.stringify(event));
 });
 
@@ -76,8 +79,8 @@ test('level-journal: strict schemas enforce bounded rationale, attribution, and 
   }
   for (const [kind, answer] of [
     ['level-recommendation', { choice: 'maybe', quote: 'user said so' }],
-    ['scope-deviation', { by: 'user', request: {}, ruling: 'approve', rationale: 'scope' }],
-    ['scope-deviation-user', { by: 'orchestrator', requestId: 'r1', choice: 'accept', quote: 'yes' }],
+    ['request', { by: 'user', action: 'approve', rationale: 'scope' }],
+    ['request-user', { by: 'orchestrator', requestId: 'r1', choice: 'accept', quote: 'yes' }],
     ['run-stop', null],
   ] as const) assert.equal(validateHostEvent('decide', { type: 'DECISION', kind, answer }).ok, false);
   assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'stop now' } }).ok, true);
@@ -93,4 +96,78 @@ test('drift decision missing evidenceIds names evidenceIds', () => {
   assert.deepEqual(validateHostEvent('decide', { type: 'DECISION', kind: 'drift', answer }),
     { ok: false, error: 'event.answer.evidenceIds: expected array, got nothing' });
   assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'drift', answer: { ...answer, evidenceIds: [] } }).ok, true);
+});
+
+test('accepts each write receipt status', () => {
+  for (const event of [
+    { type: 'WRITE_RECEIPT', status: 'launched', ...IDENTITY, model: 'm', effort: 'high' },
+    { type: 'WRITE_RECEIPT', status: 'launched', ...IDENTITY, model: 'm2', substitution: 'configured model unavailable' },
+    { type: 'WRITE_RECEIPT', status: 'submitted', ...IDENTITY, envelopePath: 'e.json', briefHash: 'sha256:b', model: 'm', effort: 'high' },
+    { type: 'WRITE_RECEIPT', status: 'failed', ...IDENTITY, detail: 'quota exhausted', model: 'm' },
+    { type: 'WRITE_RECEIPT', status: 'cancelled', ...IDENTITY },
+    { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'hotfix.json' },
+    { type: 'WRITE_RECEIPT', status: 'failed', detail: 'hotfix writer crashed' },
+  ]) assert.deepEqual(validateHostEvent('write', event), { ok: true, value: event }, JSON.stringify(event));
+  assert.deepEqual(validateHostEvent('write', { type: 'WRITE_RECEIPT', status: 'submitted', ...IDENTITY, envelopePath: 'e.json', model: 'm' }),
+    { ok: false, error: 'event.briefHash: expected non-empty string, got nothing' });
+  assert.deepEqual(validateHostEvent('write', { type: 'WRITE_RECEIPT', status: 'cancelled', ...IDENTITY, reason: 'r' }),
+    { ok: false, error: 'event.reason: unexpected field' });
+  assert.equal(validateHostEvent('write', { type: 'WRITE_RECEIPT', status: 'running', ...IDENTITY }).ok, false);
+});
+
+test('rejects removed write event types', () => {
+  for (const type of ['WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED']) {
+    const result = validateHostEvent('write', { type, ...IDENTITY, envelopePath: 'e.json' });
+    assert.equal(result.ok, false);
+    assert.match(!result.ok ? result.error : '', new RegExp(`^event\\.type: expected one of .*, got "${type}"$`));
+  }
+});
+
+test('accepts request event', () => {
+  const event = { type: 'REQUEST', task: 'T1', attempt: 1, need: 'edit the shared helper', paths: ['src/shared.ts'], rationale: 'T1 cannot pass SC1 without it' };
+  assert.deepEqual(validateHostEvent('write', event), { ok: true, value: event });
+  assert.deepEqual(validateHostEvent('write', { ...event, need: ' ' }), { ok: false, error: 'event.need: expected non-empty trimmed string, got " "' });
+  assert.deepEqual(validateHostEvent('write', { ...event, extra: 1 }), { ok: false, error: 'event.extra: unexpected field' });
+});
+
+test('accepts amend event', () => {
+  assert.deepEqual(validateHostEvent('write', AMEND), { ok: true, value: AMEND });
+  const gated = { ...AMEND, delta: [{ kind: 'remove', target: 'T3' }], notify: [], by: { by: 'user', quote: 'drop T3' } };
+  assert.deepEqual(validateHostEvent('write', gated), { ok: true, value: gated });
+  assert.deepEqual(validateHostEvent('write', { ...AMEND, delta: [] }), { ok: false, error: 'event.delta: expected non-empty array, got array' });
+  assert.deepEqual(validateHostEvent('write', { ...AMEND, by: { by: 'orchestrator', quote: 'q' } }), { ok: false, error: 'event.by.by: expected one of "user", got "orchestrator"' });
+  assert.deepEqual(validateHostEvent('write', { ...AMEND, delta: [{ kind: 'rename', target: 'T2' }] }), { ok: false, error: 'event.delta[0].kind: expected one of "modify"|"remove"|"add", got "rename"' });
+});
+
+test('accepts generic orchestrator decision', () => {
+  const ruling = (kind: string, action: string, extra: object = {}) => ({ type: 'DECISION', kind, answer: { by: 'orchestrator', action, rationale: 'evidence-backed ruling', ...extra } });
+  for (const event of [
+    ruling('integration-conflict', 'resolve'),
+    ruling('integration-conflict', 'discard', { amendment: 'sha256:amended' }),
+    ruling('request', 'approve'), ruling('request', 'decline'), ruling('request', 'escalate'),
+    ruling('failure', 'stop'), ruling('failure', 'retry'),
+    ruling('failure', 'hotfix', { mode: 'writer', external: [{ path: 'vendor/x.ts', reason: 'generated' }] }),
+    { type: 'DECISION', kind: 'failure', answer: { by: 'user', action: 'manual-complete', quote: 'mark SC1 done', criteria: { SC1: { outcome: 'pass' } } } },
+    { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: 'r1', choice: 'decline', quote: 'no' } },
+  ]) assert.deepEqual(validateHostEvent('decide', event), { ok: true, value: event }, JSON.stringify(event));
+  for (const [event, error] of [
+    [ruling('integration-conflict', 'delegate'), 'event.answer.action: expected one of "resolve"|"discard", got "delegate"'],
+    [ruling('failure', 'retry', { rootCause: 'flaky' }), 'event.answer.rootCause: unexpected field'],
+    [ruling('failure', 'hotfix', { external: [] }), 'event.answer.mode: expected one of "inline"|"writer", got nothing'],
+    [{ type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve' } }, 'event.answer.rationale: expected non-empty trimmed string, got nothing'],
+    [{ type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId: 'r1', choice: 'accept' } }, 'event.answer.quote: expected non-empty trimmed string, got nothing'],
+  ] as const) assert.deepEqual(validateHostEvent('decide', event), { ok: false, error }, JSON.stringify(event));
+  for (const kind of ['scope-deviation', 'scope-deviation-user']) assert.equal(validateHostEvent('decide', { type: 'DECISION', kind, answer: {} }).ok, false);
+});
+
+test('write await accepts receipt request amend', () => {
+  assert.deepEqual(AWAIT_ACCEPTS.write, ['WRITE_RECEIPT', 'REQUEST', 'AMEND']);
+  assert.deepEqual(validateHostEvent('write', { type: 'REVISE', artifact: 'plan', reason: 'r', evidence: 'e' }),
+    { ok: false, error: 'event.type: REVISE is not accepted at await write; expected WRITE_RECEIPT|REQUEST|AMEND' });
+});
+
+test('decide await accepts amend', () => {
+  assert.deepEqual(AWAIT_ACCEPTS.decide, ['DECISION', 'AMEND', 'REVISE']);
+  assert.deepEqual(validateHostEvent('decide', AMEND), { ok: true, value: AMEND });
+  assert.equal(validateHostEvent('decide', { type: 'REQUEST', task: 'T1', attempt: 1, need: 'n', paths: [], rationale: 'r' }).ok, false);
 });

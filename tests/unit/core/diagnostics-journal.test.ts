@@ -256,12 +256,12 @@ const hostMachine: Machine<HostState> = {
   step(state, event) {
     if (event.type === 'RUN_STARTED') return { state: { tag: 'native' }, effects: [] };
     if (event.type === 'NATIVE_RESULTS' && state.tag === 'native') return { state: { tag: 'write' }, effects: [] };
-    if (event.type === 'WRITE_ENVELOPE' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
+    if (event.type === 'WRITE_RECEIPT' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
     return { state, effects: [] };
   },
   awaitOf: (state) => state.tag === 'booting' ? null : state.tag,
   project: (state) => ({ at: `host › ${state.tag}`, data: state.tag === 'done' ? { outcome: 'complete' } : { kind: state.tag } }),
-  transitions: [{ from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_ENVELOPE', to: 'done' }],
+  transitions: [{ from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 
 test('SC4 accepts native and receipt attestation', async () => {
@@ -270,11 +270,11 @@ test('SC4 accepts native and receipt attestation', async () => {
   assert.equal((await start({ ...base, runStarted: RUN_STARTED })).frame?.await, 'native');
   const native = await send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', model: 'haiku', tokens: 1200, durationMs: 3000 }] } });
   assert.equal(native.frame?.await, 'write', native.frame?.error);
-  const receipt = { type: 'WRITE_ENVELOPE', envelopePath: 'e.json', task: 'T1', attempt: 1, signature: 's', handle: 'h', tokens: 900, durationMs: 4000 };
+  const receipt = { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json', briefHash: 'b', task: 'T1', attempt: 1, signature: 's', handle: 'h', model: 'm', tokens: 900, durationMs: 4000 };
   assert.equal((await send({ ...base, rawEvent: receipt })).frame?.await, 'done');
   const lines = [...readJournal(ports, runDir).records];
   assert.deepEqual(lines.find((line) => line.type === 'NATIVE_RESULTS')?.data['slots'], [{ slot: 'claude[0]', model: 'haiku', tokens: 1200, durationMs: 3000 }]);
-  assert.deepEqual([lines.find((line) => line.type === 'WRITE_ENVELOPE')?.data['tokens'], lines.find((line) => line.type === 'WRITE_ENVELOPE')?.data['durationMs']], [900, 4000]);
+  assert.deepEqual([lines.find((line) => line.type === 'WRITE_RECEIPT')?.data['tokens'], lines.find((line) => line.type === 'WRITE_RECEIPT')?.data['durationMs']], [900, 4000]);
 });
 
 const notes = (lines: Iterable<JournalLine>) => [...lines].filter((line) => line.type === 'DIAGNOSTIC_NOTE');

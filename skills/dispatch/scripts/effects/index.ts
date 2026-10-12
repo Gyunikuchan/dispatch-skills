@@ -85,9 +85,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const task = effect.input['task'] as { id?: unknown; attempt?: unknown; signature?: unknown } | undefined;
       const identity = typeof task?.id === 'string' && Number.isSafeInteger(task.attempt) && Number(task.attempt) > 0 && typeof task.signature === 'string'
         ? { task: task.id, attempt: Number(task.attempt), signature: task.signature, handle: '<host-assigned handle>' }
-        : typeof task?.id === 'string' ? { task: task.id } : {};
-      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: runPaths(ctx.runDir).envelope(effect.id), ...identity })}\n`);
-      return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
+        : null;
+      const events = await createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
+      const ready = events.find((event) => event.type === 'BRIEF_READY');
+      if (!ready || ready.type !== 'BRIEF_READY') return events;
+      // NOTE: the brief embeds only the event path, so the preview receipt is written after rendering to echo the brief hash.
+      const receipt = identity
+        ? { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: ready.envelopePath, briefHash: ready.sha256, model: '<host-attested model>' }
+        : { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: ready.envelopePath };
+      try { ports.fs.writeAtomic(eventPath, `${JSON.stringify(receipt)}\n`); } catch (error) {
+        return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `self-check event: ${error instanceof Error ? error.message : String(error)}` }];
+      }
+      return events;
     },
     snapshot: async (effect, ports, ctx) => {
       const events = await createSnapshot({ ...deps, pathHashes: (cwd, ports, runDir) => pathHashes({ ...deps, cwd }, ports, runDir, ctx.ownedArtifacts) })(effect, ports, ctx);

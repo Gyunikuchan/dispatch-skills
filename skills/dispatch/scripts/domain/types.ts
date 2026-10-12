@@ -43,8 +43,9 @@ export type LintDefectCode =
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
+  | 'transient-coverage'
   // Plan tasks
-  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'generated-inputs'
+  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
@@ -71,6 +72,9 @@ export type PlanCriterion = {
   testRationale: string | null;
   review: string | null;
   enforcementInfeasibility: string | null;
+  /** `transient` tests are trimmed after the final review; `coveredBy` names the durable SC# or FINAL gate that keeps the behaviour covered. */
+  retain: 'durable' | 'transient';
+  coveredBy: string | null;
 };
 
 export type PlanChange = { action: ChangeAction; path: string; note: string; command: string | null; line: number };
@@ -85,7 +89,12 @@ export type PlanTask = {
   criteria: readonly string[];
   paths: readonly string[];
   generated: readonly { path: string; inputs: readonly string[] }[];
+  /** `Overlap: <path> — <reason>` justifications for paths shared with an unordered task. */
+  overlaps: readonly { path: string; reason: string }[];
 };
+
+/** A write path shared by tasks with no transitive `Requires` path between them and no `Overlap:` justification. */
+export type PlanWarning = { kind: 'overlap'; tasks: readonly string[]; path: string };
 
 export type ParsedPlan = {
   title: string | null;
@@ -97,6 +106,9 @@ export type ParsedPlan = {
   changes: readonly PlanChange[];
   verification: { automated: readonly string[]; none: string | null; manual: readonly string[] };
   finalCommands: readonly string[];
+  /** Plan-level test entry points that criteria verify through. */
+  seams: readonly string[];
+  warnings: readonly PlanWarning[];
   traceability: Readonly<Record<string, string>> | null;
   /** Source without the driver-owned `## Review Findings & Resolutions` section; the caller hashes it. */
   governedText: string;

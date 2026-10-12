@@ -1,7 +1,7 @@
 // Plan parse + lint + governed text (spec §8.1). Shared Markdown helpers are exported for domain/design.ts.
 
 import type {
-  ChangeAction, EvidenceClass, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask,
+  ChangeAction, EvidenceClass, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask, PlanWarning,
 } from './types.ts';
 
 export const RESOLUTION_HEADING = '## Review Findings & Resolutions';
@@ -14,7 +14,7 @@ const unreachable = (value: never): never => { throw new Error(`unhandled lint c
 export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
   switch (code) {
     case 'placeholder': case 'ambiguous-command': case 'automated-tests-unavailable': case 'missing-success-criteria':
-    case 'criterion-red-test-path':
+    case 'criterion-red-test-path': case 'overlap':
       return 'warning';
     case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note': case 'proposed-changes':
     case 'change-heading': case 'unknown-change-marker': case 'invalid-change-path': case 'duplicate-change-path':
@@ -26,6 +26,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
     case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'generated-inputs':
+    case 'task-overlap': case 'transient-coverage':
       return 'defect';
     default:
       return unreachable(code);
@@ -287,6 +288,8 @@ const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
 export const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · (?:sha256:[0-9a-f]{64}|I\d{2}))$/;
 const TASK_HEADING = /^###\s+(T[1-9]\d*)\s+[—–-]\s+(\S.*?)\s*$/;
 const TASK_FIELD = /^[-*+]\s+(Prerequisites|Criteria):\s*(.*?)\s*$/i;
+const OVERLAP_FIELD = /^[-*+]\s+Overlap:\s*(.*?)\s*$/i;
+const COVERAGE = /^(?:SC[1-9]\d*|FINAL)$/;
 const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;
 const MARKER_HEADING = /^####\s+\[([A-Z][A-Z-]*)\]\s+\S/;
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
@@ -297,168 +300,13 @@ const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
-type Criterion = PlanCriterion & { integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; critical: boolean; valid: boolean };
+type Criterion = PlanCriterion & { integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
 
 export type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
   | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
 
 export type PlanOptions = { placeholders?: PlaceholderVocabulary };
-
-/** Carries accepted scope overlays into the editable artifact used for a later plan revision. */
-export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan, effective: ParsedPlan): string {
-  const newline = source.includes('\r\n') ? '\r\n' : '\n';
-  let lines = source.replace(/\r\n/g, '\n').split('\n');
-  const addedPaths = effective.changes.map((change) => change.path).filter((file) => !baseline.changes.some((change) => change.path === file));
-  const seedTasks = effective.tasks.map((task) => ({ ...task, paths: [...task.paths] }));
-  for (const file of new Set(addedPaths)) {
-    if (seedTasks.some((task) => task.paths.includes(file))) continue;
-    const criterion = effective.criteria.find((row) => row.changes.includes(file));
-    const owner = criterion ? seedTasks.findIndex((task) => task.criteria.includes(criterion.id)) : -1;
-    const targetIndex = owner >= 0 ? owner : seedTasks.length ? 0 : -1;
-    const target = seedTasks[targetIndex];
-    if (target) seedTasks[targetIndex] = { ...target, paths: [...target.paths, file] };
-  }
-  if (addedPaths.length) {
-    const index = lines.findIndex((line) => /^>\s+\*\*Scope:\*\*/.test(line));
-    if (index >= 0) {
-      const current = lines[index] ?? '';
-      const suffix = addedPaths.filter((file) => !current.includes(file));
-      if (suffix.length) lines[index] = `${current.replace(/\s*$/, '')}, ${suffix.join(', ')}${current.endsWith('  ') ? '  ' : ''}`;
-    }
-  }
-  const replaceSection = (heading: string, update: (body: string[]) => string[]) => {
-    const start = lines.findIndex((line) => line.trimEnd() === heading);
-    if (start < 0) return false;
-    let end = start + 1;
-    while (end < lines.length && !/^##\s/.test(lines[end] ?? '')) end++;
-    lines = [...lines.slice(0, start + 1), ...update(lines.slice(start + 1, end)), ...lines.slice(end)];
-    return true;
-  };
-
-  replaceSection('## Proposed Changes', (body) => {
-    const result = [...body];
-    const headings = result.flatMap((line, index) => /^###\s+T[1-9]\d*\s+[—–-]\s+/.test(line) ? [index] : []);
-    for (const task of [...seedTasks].reverse()) {
-      const start = headings.find((index) => new RegExp(`^###\\s+${task.id}\\s+[—–-]\\s+`).test(result[index] ?? ''));
-      if (start === undefined) continue;
-      const end = headings.find((index) => index > start) ?? result.length;
-      const view = taskStructuralView(structuralLines(result.join('\n')));
-      let action = result.findIndex((_line, index) => index > start && index < end && /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+/.test(view[index]?.text ?? ''));
-      if (action < 0) action = end;
-      const criteriaIndex = result.findIndex((line, index) => index > start && index < action && /^[-*+]\s+Criteria:/i.test(line));
-      const criteriaLine = `- Criteria: ${task.criteria.length ? task.criteria.join(', ') : 'none'}`;
-      let headerAdded = false;
-      if (criteriaIndex >= 0) result[criteriaIndex] = criteriaLine;
-      else { result.splice(action, 0, criteriaLine); action++; headerAdded = true; }
-
-      const taskEnd = (headings.find((index) => index > start) ?? result.length) + (headerAdded ? 1 : 0);
-      const existing = new Set(taskStructuralView(structuralLines(result.join('\n'))).slice(start + 1, taskEnd).flatMap(({ text }) => {
-        const match = ACTION_HEADING.exec(text);
-        const listed = match?.[1] && match[2] ? headingPaths(match[1] as ChangeAction, match[2]) : null;
-        return listed && 'paths' in listed ? listed.paths.map((item) => item.path) : [];
-      }));
-      const nested = result.slice(start + 1, taskEnd).some((line) => /^- ####\s/.test(line));
-      const additions = task.paths.filter((path) => !existing.has(path)).flatMap((path) => {
-        const change = effective.changes.find((change) => change.path === path);
-        const note = change?.note || 'Accepted implementation scope adjustment.';
-        const indent = nested ? '  ' : '';
-        const noteLines = note.split('\n');
-        const continuationOnly = /^\s+\S/.test(noteLines[0] ?? '');
-        return ['', `${nested ? '- ' : ''}#### [${change?.action ?? 'MODIFY'}] ${path}`,
-          ...(continuationOnly ? [`${indent}- Changes:`] : []),
-          ...noteLines.map((line, index) => `${indent}${/^Invariants:/.test(line) ? '- ' : index === 0 && !continuationOnly ? '- Changes: ' : ''}${line}`),
-          ...(change?.command ? [`${indent}- Command: \`${change.command}\``, `${indent}- Inputs: ${task.generated.find((item) => item.path === path)?.inputs.join(', ') ?? ''}`] : [])];
-      });
-      if (additions.length) result.splice(taskEnd, 0, ...additions);
-    }
-    return result;
-  });
-
-  replaceSection('## Success Criteria', (body) => {
-    const first = body.findIndex((line) => /^(?:[-*+] |\d+[.)] )\[SC[1-9]\d*\]\s+/.test(line));
-    if (first < 0) return body;
-    const prefix = body.slice(0, first);
-    const existingGroups = new Map<string, string[]>();
-    let currentId: string | null = null;
-    for (const line of body.slice(first)) {
-      const heading = /^(?:[-*+] |\d+[.)] )\[SC([1-9]\d*)\]\s+/.exec(line);
-      if (heading) { currentId = `SC${heading[1]}`; existingGroups.set(currentId, [line]); }
-      else if (currentId) existingGroups.get(currentId)!.push(line);
-    }
-    const render = (criterion: PlanCriterion): string[] => {
-      const old = existingGroups.get(criterion.id) ?? [];
-      const integration = old.filter((line) => /^ {2,}[-*+] Integration:/i.test(line));
-      return [
-        `- [${criterion.id}] ${criterion.title}`,
-        ...(criterion.changes.length ? [`  - Changes: ${criterion.changes.join(', ')}`] : []),
-        ...criterion.verify.map(({ command, final }) => `  - Verify: \`${command}\`${final ? ' [FINAL]' : ''}`),
-        ...(criterion.evidence ? [`  - Evidence: ${criterion.evidence}`] : []),
-        ...(criterion.preExisting === null ? [] : [`  - Pre-existing: ${criterion.preExisting ? 'yes' : 'no'}`]),
-        ...(criterion.redException ? [`  - RED exception: ${criterion.redException}`] : []),
-        ...(criterion.testRationale ? [`  - Test rationale: ${criterion.testRationale}`] : []),
-        ...(criterion.review ? [`  - Review: ${criterion.review}`] : []),
-        ...(criterion.enforcementInfeasibility ? [`  - Enforcement infeasibility: ${criterion.enforcementInfeasibility}`] : []),
-        ...integration,
-      ];
-    };
-    const mapped = effective.criteria.flatMap((criterion) => {
-      const original = baseline.criteria.find((row) => row.id === criterion.id);
-      const unchanged = original && JSON.stringify({ ...original, line: 0 }) === JSON.stringify({ ...criterion, line: 0 });
-      return unchanged ? existingGroups.get(criterion.id) ?? render(criterion) : render(criterion);
-    });
-    return [...prefix, ...mapped];
-  });
-
-  const decisionsAdded = effective.keyDecisions.filter((item) => !baseline.keyDecisions.includes(item));
-  if (decisionsAdded.length) {
-    const found = replaceSection('## Key Decisions & Context', (body) => [...body, ...decisionsAdded.map((item) => `- ${item}`)]);
-    if (!found) {
-      const at = lines.findIndex((line) => line.trimEnd() === '## Success Criteria');
-      if (at >= 0) lines.splice(at, 0, '## Key Decisions & Context', ...decisionsAdded.map((item) => `- ${item}`), '');
-    }
-  }
-
-  const criterionCommands = new Set(effective.criteria.flatMap((criterion) => criterion.verify.map((item) => item.command)));
-  const commandsAdded = effective.verification.automated.filter((command) => !baseline.verification.automated.includes(command) && !criterionCommands.has(command));
-  if (commandsAdded.length) replaceSection('## Verification Plan', (body) => {
-    const result = [...body];
-    const at = result.findIndex((line) => line.trimEnd() === '### Automated Tests');
-    if (at < 0) return result;
-    let end = at + 1;
-    while (end < result.length && !/^#{2,3}\s/.test(result[end] ?? '')) end++;
-    result.splice(end, 0, ...commandsAdded.map((command) => `- \`${command}\``));
-    return result;
-  });
-
-  const dutiesAdded = effective.verification.manual.filter((item) => !baseline.verification.manual.includes(item));
-  if (dutiesAdded.length) replaceSection('## Verification Plan', (body) => {
-    const result = [...body];
-    let at = result.findIndex((line) => line.trimEnd() === '### Manual Verification');
-    if (at < 0) { result.push('', '### Manual Verification'); at = result.length - 1; }
-    let end = at + 1;
-    while (end < result.length && !/^#{2,3}\s/.test(result[end] ?? '')) end++;
-    result.splice(end, 0, ...dutiesAdded.map((item) => `- ${item}`));
-    return result;
-  });
-
-  const representedFinals = new Set(effective.criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command)));
-  const extraFinals = effective.finalCommands.filter((command) => !baseline.finalCommands.includes(command) && !representedFinals.has(command));
-  if (extraFinals.length && effective.criteria.length) {
-    const expandedPath = effective.criteria.find((criterion) => criterion.changes.some((path) => !baseline.changes.some((change) => change.path === path)));
-    const owner = expandedPath ?? effective.criteria[0]!;
-    replaceSection('## Success Criteria', (body) => {
-      const start = body.findIndex((line) => new RegExp(`^(?:[-*+] |\\d+[.)] )\\[${owner.id}\\]\\s+`).test(line));
-      if (start < 0) return body;
-      let end = start + 1;
-      while (end < body.length && !/^(?:[-*+] |\d+[.)] )\[SC[1-9]\d*\]\s+/.test(body[end] ?? '')) end++;
-      body.splice(end, 0, ...extraFinals.map((command) => `  - Verify: \`${command}\` [FINAL]`));
-      return body;
-    });
-  }
-
-  return lines.join(newline);
-}
 
 /** Parses and lints a plan; any defect-severity diagnostic fails the parse. */
 export function parsePlan(source: string, options: PlanOptions = {}): PlanResult {
@@ -467,7 +315,9 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const { changes, tasks } = parseChanges(lines, out);
   const verification = parseVerification(lines, out);
   const criteria = parseCriteria(lines, changes, out);
-  lintTasks(tasks, changes, criteria, out);
+  const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
+  lintTransientCoverage(criteria, finalCommands, out);
+  const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
   for (const entry of lines) {
@@ -484,12 +334,14 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     title: documentTitle(source),
     box: boxValues(source),
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
-    criteria: criteria.map(({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility }) =>
-      ({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility })),
-    tasks: tasks.map(({ id, title, summary, line, prerequisites, criteria: ids, paths, generated }) => ({ id, title, summary, line, prerequisites, criteria: ids, paths, generated })),
+    criteria: criteria.map(({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
+      ({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
+    tasks: tasks.map(({ id, title, summary, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
-    finalCommands: criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command)),
+    finalCommands,
+    seams: parseSeams(lines),
+    warnings: overlapWarnings,
     traceability: keyValues(lines, '## Technical-Design Traceability'),
     governedText: governedPlanText(source),
   };
@@ -516,7 +368,7 @@ function keyValues(lines: readonly StructuralLine[], heading: string): Record<st
   return values;
 }
 
-type DraftTask = PlanTask & { prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number };
+type DraftTask = PlanTask & { prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number; overlapLines: number[] };
 
 /** Normalize only task-owned file entries and their detail indentation. */
 function taskStructuralView(lines: readonly StructuralLine[]): StructuralLine[] {
@@ -542,7 +394,8 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   }
   const changes: PlanChange[] = [];
   const tasks: DraftTask[] = [];
-  const seen = new Map<string, string>();
+  // Same-owner repeats are malformed; lintOverlaps classifies cross-task repeats once the task graph is known.
+  const seen = new Map<DraftTask | null, Map<string, string>>();
   const body = taskStructuralView(lines).slice(range.start + 1, range.end);
   // `task` is null before the first H3 or under a malformed one; `inHeader` spans a task H3 up to its first H4.
   let task: DraftTask | null = null;
@@ -560,7 +413,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
         return;
       }
       malformed = false;
-      task = { id: heading[1], title: heading[2], summary: '', line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line };
+      task = { id: heading[1], title: heading[2], summary: '', line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], overlaps: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line, overlapLines: [] };
       tasks.push(task);
       return;
     }
@@ -582,9 +435,11 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
       if (!normalized.path) { out.push(lint('invalid-change-path', entry.line, `Invalid change path: ${normalized.reason ?? 'empty'}.`)); continue; }
       // NOTE: case-insensitive filesystems make case variants one file, so they count as duplicate ownership.
       const folded = normalized.path.toLowerCase();
-      const prior = seen.get(folded);
+      const owned = seen.get(current) ?? new Map<string, string>();
+      seen.set(current, owned);
+      const prior = owned.get(folded);
       if (prior !== undefined) out.push(lint('duplicate-change-path', entry.line, prior === normalized.path ? `Change path "${normalized.path}" appears more than once.` : `Change path "${normalized.path}" aliases "${prior}" on case-insensitive filesystems.`));
-      seen.set(folded, normalized.path);
+      owned.set(folded, normalized.path);
       if (EXCLUDED_CHANGE_PATH.test(normalized.path)) out.push(excluded(entry.line, normalized.path));
       if (!current && !malformed) out.push(lint('task-ownership', entry.line, `Change "${normalized.path}" has no owning task; group every change under "### T<n> — <outcome title>" (reauthor component-form plans).`));
       paths.push(normalized.path);
@@ -614,6 +469,15 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
 
 /** Task metadata bullets; other prose before the first H4 forms the summary. */
 function readTaskHeader(task: DraftTask, entry: StructuralLine, summary: string[], out: LintDefect[]): void {
+  const overlap = OVERLAP_FIELD.exec(entry.text);
+  if (overlap) {
+    const parts = /^(.+?)\s+[—–-]\s+(\S.*)$/.exec(overlap[1] ?? '');
+    const normalized = parts?.[1] ? normalizePlanPath(parts[1]) : null;
+    if (!parts?.[2] || !normalized?.path) { out.push(lint('task-overlap', entry.line, `Task ${task.id} Overlap requires "- Overlap: <path> — <reason>".`)); return; }
+    task.overlaps = [...task.overlaps, { path: normalized.path, reason: parts[2].trim() }];
+    task.overlapLines.push(entry.line);
+    return;
+  }
   const field = TASK_FIELD.exec(entry.text);
   if (field?.[1]) {
     // Duplicate IDs collapse; case and code spans are cosmetic.
@@ -728,7 +592,8 @@ function startCriterion(text: string, line: number, ids: Set<string>, out: LintD
   const id = /^\[SC([1-9]\d*)\]\s+/.exec(text);
   const base: Criterion = {
     id: '', title: text, line, changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
-    review: null, enforcementInfeasibility: null, integration: null, mapped: false, evidenceRaw: null, evidenceLine: line, redLine: line, reviewLine: line,
+    review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
+    evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
     critical: CRITICAL.test(text), valid: false,
   };
   if (!id?.[1]) { out.push(lint('criterion-id', line, 'Success criterion requires a stable [SC#] identifier.')); return base; }
@@ -789,6 +654,48 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   if (integration !== undefined) current.integration = integration;
   const enforcement = field('Enforcement infeasibility');
   if (enforcement !== undefined && enforcement.trim()) current.enforcementInfeasibility = enforcement.trim();
+  const retain = field('Retain');
+  if (retain !== undefined) {
+    const value = retain.replace(/`/g, '').trim().toLowerCase();
+    if (value === 'durable' || value === 'transient') current.retain = value;
+    else out.push(lint('criterion-format', entry.line, 'Retain must be durable or transient.'));
+  }
+  const covered = field('Covered by');
+  if (covered !== undefined) { current.coveredBy = covered.replace(/`/g, '').trim().toUpperCase() || null; current.coveredLine = entry.line; }
+}
+
+/** Transient tests are trimmed after the final review, so a durable criterion or the FINAL gate must keep covering the behaviour. */
+function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: readonly string[], out: LintDefect[]): void {
+  const byId = new Map(criteria.map((criterion) => [criterion.id, criterion]));
+  for (const criterion of criteria) {
+    const target = criterion.coveredBy;
+    const fail = (message: string) => out.push(lint('transient-coverage', criterion.coveredLine, `Criterion ${criterion.id} ${message}`));
+    if (criterion.retain === 'durable') { if (target !== null) fail('sets Covered by without Retain: transient.'); continue; }
+    if (target === null) { fail('is Retain: transient and requires Covered by: <SC#|FINAL>.'); continue; }
+    if (!COVERAGE.test(target)) { fail(`names Covered by "${target}"; use a criterion ID (SC#) or FINAL.`); continue; }
+    if (target === 'FINAL') { if (!finalCommands.length) fail('is Covered by FINAL, but the plan has no [FINAL] Verify command.'); continue; }
+    const covering = byId.get(target);
+    if (!covering) fail(`is Covered by unknown criterion ${target}.`);
+    else if (covering.retain === 'transient') fail(`is Covered by ${target}, which is also transient; name a durable criterion or FINAL.`);
+  }
+}
+
+/** `- Seams: <entry>[, <entry>...]` bullets directly under Verification Plan, before its first subsection. */
+function parseSeams(lines: readonly StructuralLine[]): string[] {
+  const range = sectionRanges(lines, '## Verification Plan')[0];
+  if (!range) return [];
+  const seams: string[] = [];
+  for (const { text } of lines.slice(range.start + 1, range.end)) {
+    if (/^###\s/.test(text)) break;
+    const value = /^[-*+]\s+Seams:\s*(.*?)\s*$/i.exec(text)?.[1];
+    if (value === undefined || /^none$/i.test(value)) continue;
+    // A comma inside a code span belongs to its entry.
+    for (const item of value.match(/(?:`[^`]*`|[^,])+/g) ?? []) {
+      const seam = item.replace(/`/g, '').trim();
+      if (seam) seams.push(seam);
+    }
+  }
+  return seams;
 }
 
 function finishCriterion(current: Criterion, out: LintDefect[]): void {
@@ -816,7 +723,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
 
 // SECTION: Task graph
 
-function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], criteria: readonly Criterion[], out: LintDefect[]): void {
+function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], criteria: readonly Criterion[], out: LintDefect[]): PlanWarning[] {
   const byId = new Map<string, DraftTask>();
   for (const task of tasks) {
     if (byId.has(task.id)) out.push(lint('duplicate-id', task.line, `Duplicate task ${task.id}.`));
@@ -848,6 +755,29 @@ function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], 
       }
     }
   }
+  return lintOverlaps(tasks, ancestors, out);
+}
+
+/** Write paths shared by tasks with no transitive Requires path warn unless either task justifies them with Overlap:. */
+function lintOverlaps(tasks: readonly DraftTask[], ancestors: ReadonlyMap<string, ReadonlySet<string>>, out: LintDefect[]): PlanWarning[] {
+  // NOTE: case-insensitive filesystems make case variants one file.
+  const owned = tasks.map((task) => new Map(task.paths.map((path) => [path.toLowerCase(), path] as const)));
+  const justified = tasks.map((task) => new Set(task.overlaps.map(({ path }) => path.toLowerCase())));
+  tasks.forEach((task, index) => task.overlaps.forEach(({ path }, entry) => {
+    if (!owned[index]?.has(path.toLowerCase())) out.push(lint('task-overlap', task.overlapLines[entry] ?? task.line, `Task ${task.id} justifies an overlap on "${path}", which it does not write.`));
+  }));
+  const warnings: PlanWarning[] = [];
+  tasks.forEach((first, i) => tasks.forEach((second, j) => {
+    if (j <= i || ancestors.get(first.id)?.has(second.id) || ancestors.get(second.id)?.has(first.id)) return;
+    for (const [folded, path] of owned[i] ?? []) {
+      const other = owned[j]?.get(folded);
+      if (other === undefined || justified[i]?.has(folded) || justified[j]?.has(folded)) continue;
+      warnings.push({ kind: 'overlap', tasks: [first.id, second.id], path });
+      const alias = other === path ? '' : ` (as "${other}" in ${second.id})`;
+      out.push(lint('overlap', second.line, `Tasks ${first.id} and ${second.id} both write "${path}"${alias} with no Requires path between them; add Requires, merge the tasks, or add "- Overlap: ${path} — <reason>".`));
+    }
+  }));
+  return warnings;
 }
 
 /** Transitive prerequisites per task; reports each cycle entry point once. */
@@ -919,9 +849,13 @@ export type TaskBrief = {
 export function selectTaskBrief(plan: ParsedPlan, id: string): TaskBrief | null {
   const task = plan.tasks.find((item) => item.id === id);
   if (!task) return null;
+  // An overlapped path has one change entry per owning task; prefer the entry under this task's own heading.
+  const next = Math.min(...plan.tasks.map((item) => item.line).filter((line) => line > task.line));
+  const inTask = (change: PlanChange) => change.line > task.line && change.line < next;
   return {
     task,
-    changes: plan.changes.filter((change) => task.paths.includes(change.path)),
+    changes: plan.changes.filter((change) => task.paths.includes(change.path)
+      && (inTask(change) || !plan.changes.some((other) => other.path === change.path && inTask(other)))),
     criteria: plan.criteria.filter((criterion) => task.criteria.includes(criterion.id)),
     prerequisites: plan.tasks.filter((item) => task.prerequisites.includes(item.id)),
     dependents: plan.tasks.filter((item) => item.prerequisites.includes(task.id)),

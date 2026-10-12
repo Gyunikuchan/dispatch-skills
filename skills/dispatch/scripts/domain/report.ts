@@ -14,7 +14,7 @@ export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
   plan: new Set([
     'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'dependency-graph',
     'domain-logic', 'edge-case', 'intent', 'invariant', 'migration', 'parallel-safety', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
-    'simplicity', 'spec-gap', 'standards', 'state-machine', 'testability', 'user-gap', 'validation', 'verification', 'yagni',
+    'simplicity', 'spec-gap', 'standards', 'state-machine', 'test-leak', 'testability', 'user-gap', 'validation', 'verification', 'yagni',
   ]),
   code: new Set([
     'a11y', 'adjacent', 'auth', 'breaking', 'compatibility', 'correctness', 'coupling', 'domain-logic', 'edge-case', 'intent',

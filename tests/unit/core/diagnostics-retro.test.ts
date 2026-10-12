@@ -41,12 +41,12 @@ const hostMachine: Machine<HostState> = {
     if (event.type === 'RUN_STARTED') return { state: { tag: 'author' }, effects: [] };
     if (event.type === 'AUTHORED' && state.tag === 'author') return { state: { tag: 'native' }, effects: [] };
     if (event.type === 'NATIVE_RESULTS' && state.tag === 'native') return { state: { tag: 'write' }, effects: [] };
-    if (event.type === 'WRITE_ENVELOPE' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
+    if (event.type === 'WRITE_RECEIPT' && state.tag === 'write') return { state: { tag: 'done' }, effects: [] };
     return { state, effects: [] };
   },
   awaitOf: (state) => state.tag === 'booting' ? null : state.tag,
   project: (state) => ({ at: `host › ${state.tag}`, data: state.tag === 'done' ? { outcome: 'complete' } : { kind: state.tag, path: 'plan.md' } }),
-  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_ENVELOPE', to: 'done' }],
+  transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 async function hostFrames(on: boolean): Promise<Frame[]> {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-host');
@@ -55,7 +55,7 @@ async function hostFrames(on: boolean): Promise<Frame[]> {
   frames.push((await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } })).frame);
   frames.push((await send({ ...base, dryRun: true })).frame);
   frames.push((await send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', tokens: 10 }] } })).frame);
-  frames.push((await send({ ...base, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: 'e.json', tokens: 5, durationMs: 9 } })).frame);
+  frames.push((await send({ ...base, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json', tokens: 5, durationMs: 9 } })).frame);
   return frames.map((frame) => frame ?? assert.fail('missing frame'));
 }
 const stateFiles = (dir: string): string[] => fs.readdirSync(dir, { recursive: true, withFileTypes: false }).map((file) => String(file).replaceAll('\\', '/'));

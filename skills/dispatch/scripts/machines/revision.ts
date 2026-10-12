@@ -1,231 +1,59 @@
-import type { Await, Event, HostEvent, TreeFingerprint, RevisionScopeProposal, ScopeAdjustment, ScopeDelta, ChangeNotice, DriftResolution } from '../core/types.ts';
-import { stableValue } from '../domain/stable-value.ts';
-import type { ParsedPlan, PlanCriterion } from '../domain/types.ts';
-import { effectivePlan, type Context, type ImplementState } from './implement.ts';
-import { invalidatesIntegration, reconcileTasks } from './implement-tasks.ts';
-import { asParsedPlan, approvedPaths, commandMappings, isFingerprint, sameFingerprint, artifactRelative } from './implement-types.ts';
-import { bindingHash, evidenceAssessment, refreshEvidence, resolution } from './change-resolution.ts';
-import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
-import { answers, isRecord, nextId, stay, type Step } from './types.ts';
-import { validateDesignTraceability } from '../domain/plan.ts';
+// Live plan amendments: an `AMEND` delta is a list of exact text edits on the governed plan text, applied in order,
+// then parsed and linted like any authored plan. Pure: the caller journals the delta, so replay recomputes the result.
 
-export type RevisionContext = {
-  parent: ImplementState; c: Context; original: ParsedPlan; originalHash: string; workingPath: string;
-  reason: string; evidence: string; plan: ParsedPlan | null; hash: string | null; changed: readonly string[]; removed: readonly string[]; grew: boolean; scopeAdjudicated: boolean;
-};
-export type RevisionState = { tag: 'author'; r: RevisionContext; error: string | null; defects: readonly Readonly<Record<string, unknown>>[] }
-  | { tag: 'checking-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string; resolution?: DriftResolution }
-  | { tag: 'assessing-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string; fingerprint: TreeFingerprint; resolution?: DriftResolution }
-  | { tag: 'drift'; r: RevisionContext; parent: RevisionState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint; notice: ChangeNotice }
-  | { tag: 'parse'; r: RevisionContext; effectId: string; afterReview: boolean }
-  | { tag: 'review'; r: RevisionContext; review: ReviewState }
-  | { tag: 'scope-adjudication'; r: RevisionContext; request: RevisionScopeProposal }
-  | { tag: 'scope-user-decision'; r: RevisionContext; request: RevisionScopeProposal; orchestratorRationale: string }
-  | { tag: 'resume'; r: RevisionContext }
-  | { tag: 'stopped'; r: RevisionContext; summary: string }
-  | { tag: 'refused'; r: RevisionContext; error: string };
-type S = Step<RevisionState>;
-const semantic = (row: PlanCriterion) => JSON.stringify({ title: row.title, changes: [...row.changes].sort(), verify: [...row.verify].sort((a, b) => a.command.localeCompare(b.command)), evidence: row.evidence, preExisting: row.preExisting, redException: row.redException, testRationale: row.testRationale, review: row.review, enforcementInfeasibility: row.enforcementInfeasibility });
+import crypto from 'node:crypto';
+import type { PlanEdit } from '../core/types.ts';
+import { parsePlan } from '../domain/plan.ts';
+import type { ParsedPlan } from '../domain/types.ts';
 
-export function revisionDelta(original: ParsedPlan, revised: ParsedPlan): { changed: string[]; removed: string[]; grew: boolean } {
-  const changed = revised.criteria.filter((row) => { const old = original.criteria.find((r) => r.id === row.id); return !old || semantic(old) !== semantic(row); }).map((row) => row.id);
-  const scope = revisionScopeDelta(original, revised, changed);
-  return { changed, removed: original.criteria.filter((row) => !revised.criteria.some((r) => r.id === row.id)).map((row) => row.id),
-    grew: Object.values(scope).some((items) => items.length > 0) };
+export type AmendedPlan = { ok: true; plan: ParsedPlan; hash: string; text: string; gates: string[] } | { ok: false; error: string };
+
+/** Manifests whose new or changed entry adds an external dependency or runtime prerequisite; such a delta needs a user quote. */
+const MANIFESTS = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'requirements.txt', 'pyproject.toml', 'poetry.lock', 'Pipfile', 'Pipfile.lock', 'Cargo.toml', 'Cargo.lock', 'go.mod', 'go.sum', 'Gemfile', 'Gemfile.lock', 'composer.json', 'composer.lock', 'pom.xml', 'build.gradle', 'build.gradle.kts']);
+
+function occurrences(text: string, needle: string): number {
+  let count = 0;
+  for (let index = text.indexOf(needle); index >= 0; index = text.indexOf(needle, index + needle.length)) count++;
+  return count;
 }
 
-function revisionScopeDelta(original: ParsedPlan, revised: ParsedPlan, changed: readonly string[]): ScopeDelta {
-  const oldPaths = new Set(approvedPaths(original));
-  const oldCommands = new Set(commandMappings(original).map((row) => row.command));
-  const oldObligations = new Set(original.keyDecisions);
-  const oldDuties = new Set(original.verification.manual);
-  const scopeContract = (row: PlanCriterion | undefined) => row && JSON.stringify({
-    changes: [...row.changes].sort(), verify: [...row.verify].sort((a, b) => a.command.localeCompare(b.command)),
-    evidence: row.evidence, preExisting: row.preExisting, redException: row.redException,
-    testRationale: row.testRationale, review: row.review, enforcementInfeasibility: row.enforcementInfeasibility,
-  });
-  const expandedCriteria = changed.filter((id) => {
-    const before = original.criteria.find((row) => row.id === id);
-    const after = revised.criteria.find((row) => row.id === id);
-    return !!after && (!before || scopeContract(before) !== scopeContract(after));
-  });
-  return {
-    paths: approvedPaths(revised).filter((file) => !oldPaths.has(file)).sort(),
-    criteria: expandedCriteria,
-    criterionDefinitions: revised.criteria.filter((row) => expandedCriteria.includes(row.id)).map((row) => ({
-      id: row.id, title: row.title, changes: [...row.changes], verify: row.verify.map((item) => ({ ...item })), evidence: row.evidence,
-      preExisting: row.preExisting, redException: row.redException, testRationale: row.testRationale, review: row.review, enforcementInfeasibility: row.enforcementInfeasibility,
-    })),
-    obligations: revised.keyDecisions.filter((item) => !oldObligations.has(item)),
-    commands: commandMappings(revised).filter((row) => !row.final && !oldCommands.has(row.command)).map((row) => row.command),
-    finalCommands: commandMappings(revised).filter((row) => row.final && !oldCommands.has(row.command)).map((row) => row.command),
-    phaseDuties: revised.verification.manual.filter((item) => !oldDuties.has(item)),
-    increments: [],
-  };
+function knownTargets(plan: ParsedPlan): Set<string> {
+  return new Set([
+    ...plan.tasks.map((task) => task.id), ...plan.criteria.flatMap((row) => [row.id, ...row.verify.map((item) => item.command)]),
+    ...plan.verification.automated, ...plan.finalCommands, ...plan.changes.map((change) => change.path),
+  ]);
 }
 
-function hasScopeDelta(delta: ScopeDelta): boolean { return Object.values(delta).some((items) => Array.isArray(items) && items.length > 0); }
-
-function revisionProposal(r: RevisionContext): RevisionScopeProposal {
-  const plan = r.plan!;
-  const delta = revisionScopeDelta(r.original, plan, r.changed);
-  const taskIds = plan.tasks.filter((task) => task.criteria.some((id) => delta.criteria.includes(id)) || task.paths.some((path) => delta.paths.includes(path)) || !r.original.tasks.some((old) => old.id === task.id)).map((task) => task.id);
-  const affectedTasks = taskIds.length ? taskIds : plan.tasks.map((task) => task.id);
-  const suffix = (value: string) => value.replace(/^sha256:/, '').slice(-12);
-  return {
-    requestId: `plan-revision-${suffix(r.originalHash)}-${suffix(r.hash!)}`,
-    source: 'plan-revision', baseArtifactHash: r.originalHash, proposedArtifactHash: r.hash!,
-    affectedTasks, rationale: `${r.reason}: ${r.evidence}`, delta,
-  };
-}
-
-function afterReview(r: RevisionContext): S {
-  if (!r.c.levelGatePassed) return stay({ tag: 'resume', r });
-  const request = revisionProposal(r);
-  return hasScopeDelta(request.delta) ? stay({ tag: 'scope-adjudication', r, request }) : stay({ tag: 'resume', r });
-}
-
-export function beginRevision(parent: ImplementState, event: Extract<HostEvent, { type: 'REVISE' }>): S {
-  if (!('c' in parent) || !parent.c?.plan || !parent.c.planHash) throw new Error('Revision requires a governed implementation context.');
-  const c = parent.c;
-  const session = typeof c.run.overrides['sessionDir'] === 'string' ? c.run.overrides['sessionDir'] : null;
-  if (!session) throw new Error('Revision requires the journal-bound sessionDir.');
-  const workingPath = `${session.replace(/[\\/]+$/, '')}/revision-${c.revisions.length + 1}.plan.md`;
-  return stay({ tag: 'author', error: null, defects: [], r: { parent, c, original: effectivePlan(c), originalHash: c.planHash!, workingPath, reason: event.reason, evidence: event.evidence, plan: null, hash: null, changed: [], removed: [], grew: false, scopeAdjudicated: false } });
-}
-
-function parse(r: RevisionContext, afterReview: boolean): S {
-  const next = nextId(r.c.counters, 'implement.revision', 'parse-artifact');
-  return { state: { tag: 'parse', r: { ...r, c: { ...r.c, counters: next.counters } }, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: r.workingPath, artifact: 'plan' }] };
-}
-function reviewed(r: RevisionContext, result: Step<ReviewState>): S {
-  const review = result.state;
-  const next = { ...r, c: { ...r.c, counters: 'c' in review ? review.c.counters : r.c.counters, revisionReviewRound: 'c' in review ? Math.max(r.c.revisionReviewRound, review.c.round) : r.c.revisionReviewRound } };
-  if (review.tag === 'settled' || review.tag === 'skipped') return parse(next, true);
-  if (review.tag === 'failed' || review.tag === 'escalated' || review.tag === 'empty') return stay({ tag: 'refused', r: next, error: `Revision delta review did not settle: ${review.tag}` });
-  return { state: { tag: 'review', r: next, review }, effects: result.effects };
-}
-function applyRevision(state: RevisionState, event: Event): S {
-  switch (state.tag) {
-    case 'author': return event.type === 'AUTHORED' && event.path === state.r.workingPath ? parse(state.r, false) : stay(state);
-    case 'parse': {
-      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'author', r: state.r, error: event.detail, defects: [] });
-      if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);
-      const plan = asParsedPlan(event.parsed);
-      if (!plan || event.defects.length || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', r: state.r, error: 'Revision parser rejected its concrete plan/hash.', defects: event.defects });
-      if (state.r.c.designBinding) {
-        const defects = validateDesignTraceability(plan, state.r.c.designBinding);
-        if (defects.length) return stay({ tag: 'author', r: state.r, error: defects.join(' '), defects: [] });
-      }
-      if (plan.box['TL;DR'] !== state.r.original.box['TL;DR']) return stay({ tag: 'refused', r: state.r, error: 'TL;DR objective cannot change during plan revision.' });
-      const r = { ...state.r, plan, hash: event.hash, ...revisionDelta(state.r.original, plan) };
-      if (state.afterReview || event.hash === r.originalHash) return afterReview(r);
-      const built = reviewSpecFromRun(r.c.run, 'plan', 'fix', r.workingPath);
-      if (!built.ok) return stay({ tag: 'refused', r, error: built.error });
-      const offset = r.c.revisionReviewRound;
-      const result = beginReview({ ...built.spec, cap: built.spec.cap > 0 ? built.spec.cap + offset : 0, context: `Review only the governed delta between the immutable original and working copy.\n${JSON.stringify({ beforeHash: r.originalHash, afterHash: event.hash, before: r.original.governedText, after: plan.governedText, changedCriteria: r.changed, removedCriteria: r.removed, reason: r.reason, evidence: r.evidence })}` }, 'implement.revision.review', r.c.counters);
-      if ('c' in result.state) result.state = { ...result.state, c: { ...result.state.c, round: result.state.c.round + offset, scope: 'delta' } };
-      result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, round: effect.round + offset, scope: { ...effect.scope, scope: 'delta', sinceHash: r.originalHash, beforeText: r.original.governedText, afterText: plan.governedText, delta: true, criteria: r.changed, removed: r.removed } } : effect);
-      return reviewed(r, result);
-    }
-    case 'review': return reviewed(state.r, stepReview(state.review, event));
-    case 'scope-adjudication': {
-      if (event.type === 'DECISION' && event.kind === 'run-stop') return stay({ tag: 'stopped', r: state.r, summary: `User stopped during plan-revision scope adjudication: ${(event.answer as { quote: string }).quote}` });
-      if (event.type !== 'DECISION' || event.kind !== 'scope-deviation') return stay(state);
-      const answer = event.answer as { by: 'orchestrator'; request: RevisionScopeProposal; ruling: 'approve' | 'disagree'; rationale: string };
-      if (answer.ruling === 'disagree') return stay({ tag: 'scope-user-decision', r: state.r, request: state.request, orchestratorRationale: answer.rationale });
-      const adjustment: ScopeAdjustment = { proposal: state.request, approvedBy: 'orchestrator', rationale: answer.rationale, ...(state.r.c.designBinding ? { ownerIncrement: state.r.c.designBinding.increment } : {}) };
-      const c = { ...state.r.c, scopeAdjustments: [...state.r.c.scopeAdjustments, adjustment], scopeNotice: { requestId: state.request.requestId, approvedBy: adjustment.approvedBy, rationale: adjustment.rationale } };
-      return stay({ tag: 'resume', r: { ...state.r, c, scopeAdjudicated: true } });
-    }
-    case 'scope-user-decision': {
-      if (event.type !== 'DECISION') return stay(state);
-      if (event.kind === 'run-stop') return stay({ tag: 'stopped', r: state.r, summary: `User stopped during plan-revision scope adjudication: ${(event.answer as { quote: string }).quote}` });
-      if (event.kind !== 'scope-deviation-user') return stay(state);
-      const answer = event.answer as { choice: 'accept' | 'decline'; quote: string };
-      if (answer.choice === 'decline') return stay({ tag: 'refused', r: state.r, error: `User declined plan-revision scope expansion: ${answer.quote}` });
-      const adjustment: ScopeAdjustment = { proposal: state.request, approvedBy: 'user', rationale: state.orchestratorRationale, quote: answer.quote, ...(state.r.c.designBinding ? { ownerIncrement: state.r.c.designBinding.increment } : {}) };
-      const c = { ...state.r.c, scopeAdjustments: [...state.r.c.scopeAdjustments, adjustment], scopeNotice: { requestId: state.request.requestId, approvedBy: adjustment.approvedBy, rationale: adjustment.rationale, quote: answer.quote } };
-      return stay({ tag: 'resume', r: { ...state.r, c, scopeAdjudicated: true } });
-    }
-    case 'resume': case 'refused': case 'assessing-host-event': case 'checking-host-event': case 'drift': return stay(state);
-    case 'stopped': return stay(state);
+/**
+ * Applies `delta` to `before.governedText`: `modify` replaces the single occurrence of `current` with `proposed`;
+ * `remove` deletes the single occurrence of `current`; `add` inserts `proposed` right after the single anchor `current`.
+ * Every `target` must name a task, criterion, command, or change path of the plan before or after the edit.
+ * `gates` lists the reasons the delta needs a user quote (intent change or a new or changed dependency manifest).
+ */
+export function amendPlan(before: ParsedPlan, delta: readonly PlanEdit[]): AmendedPlan {
+  let text = before.governedText;
+  for (const [index, edit] of delta.entries()) {
+    const at = `delta[${index}]`;
+    if (typeof edit.current !== 'string' || !edit.current) return { ok: false, error: `${at}.current: every edit names the exact current text${edit.kind === 'add' ? ' it inserts after' : ''}.` };
+    if (edit.kind !== 'remove' && (typeof edit.proposed !== 'string' || !edit.proposed)) return { ok: false, error: `${at}.proposed: ${edit.kind} needs the proposed text.` };
+    const count = occurrences(text, edit.current);
+    if (count !== 1) return { ok: false, error: `${at}.current must occur exactly once in the plan; found ${count}.` };
+    const start = text.indexOf(edit.current), end = start + edit.current.length;
+    text = edit.kind === 'modify' ? `${text.slice(0, start)}${edit.proposed}${text.slice(end)}`
+      : edit.kind === 'remove' ? `${text.slice(0, start)}${text.slice(end)}`
+        : `${text.slice(0, end)}${edit.proposed}${text.slice(end)}`;
   }
-}
-export function stepRevision(state: RevisionState, event: Event): S {
-  if (state.tag === 'checking-host-event') {
-    if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'refused', r: state.r, error: `Revision snapshot failed: ${event.detail}` });
-    if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-    if (!state.r.c.lastFingerprint) return stay({ tag: 'refused', r: state.r, error: 'Missing observation baseline.' });
-    if (!state.resolution && sameFingerprint(state.r.c.lastFingerprint, event.fingerprint)) return applyRevision({ ...state.parent, r: { ...state.r, c: { ...state.r.c, lastFingerprint: event.fingerprint } } }, state.parked);
-    const next = nextId(state.r.c.counters, 'implement.revision', 'assess-recovery');
-    const r = { ...state.r, c: { ...state.r.c, counters: next.counters } };
-    return { state: { tag: 'assessing-host-event', r, parent: state.parent, parked: state.parked, effectId: next.id, fingerprint: event.fingerprint, ...(state.resolution ? { resolution: state.resolution } : {}) }, effects: [{ kind: 'assess-recovery', id: next.id, purpose: 'drift', before: r.c.lastFingerprint!, after: event.fingerprint, phase: 'revision', pendingId: state.parked.type, input: { managedPlans: [artifactRelative(event.fingerprint, r.workingPath), artifactRelative(event.fingerprint, r.c.planPath)], expectedPaths: state.parked.type === 'AUTHORED' ? [artifactRelative(event.fingerprint, r.workingPath)] : [], inputs: approvedPaths(r.original), ...evidenceAssessment(r.c) } }] };
-  }
-  if (state.tag === 'assessing-host-event') {
-    if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'refused', r: state.r, error: event.detail });
-    if (event.type !== 'RECOVERY_ASSESSED' || !answers(event, state.effectId) || event.purpose !== 'drift' || event.beforeHash !== bindingHash(state.r.c.lastFingerprint) || event.afterHash !== bindingHash(state.fingerprint)) return stay(state);
-    if (state.resolution && state.resolution.afterHash === event.afterHash) {
-      if (state.resolution.action === 'escalate') return stay({ tag: 'stopped', r: state.r, summary: `Changed intent requires a user decision. Evidence retained: ${event.notice.rawDeltaRef.path}` });
-      if (state.resolution.action === 'reconcile') return stay({ tag: 'author', r: { ...state.r, c: { ...refreshEvidence(state.r.c, event.notice), lastFingerprint: state.fingerprint }, reason: state.resolution.rationale, evidence: event.notice.rawDeltaRef.path }, error: 'Reconcile changed inputs within the settled objective and scope.', defects: [] });
-      const r = { ...state.r, c: { ...(state.resolution.action === 'refresh' ? refreshEvidence(state.r.c, event.notice) : state.r.c), lastFingerprint: state.fingerprint } };
-      return applyRevision({ ...state.parent, r }, state.parked);
-    }
-    if (event.notice.relevance !== 'expected' && event.notice.relevance !== 'irrelevant') return stay({ tag: 'drift', r: state.r, parent: state.parent, parked: state.parked, paths: event.notice.paths, fingerprint: state.fingerprint, notice: event.notice });
-    return applyRevision({ ...state.parent, r: { ...state.r, c: { ...state.r.c, lastFingerprint: state.fingerprint } } }, state.parked);
-  }
-  if (state.tag === 'drift') {
-    if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
-    const answer = resolution(event.answer, state.notice); if (!answer) return stay(state);
-    const next = nextId(state.r.c.counters, 'implement.revision', 'snapshot');
-    const r = { ...state.r, c: { ...state.r.c, counters: next.counters } };
-    return { state: { tag: 'checking-host-event', r, parent: state.parent, parked: state.parked, effectId: next.id, resolution: answer }, effects: [{ kind: 'snapshot', id: next.id, since: r.c.lastFingerprint }] };
-  }
-  if (['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'DECISION'].includes(event.type) && revisionAwait(state) !== null && revisionAwait(state) !== 'done') {
-    if (validateRevision(state, event as HostEvent)) return stay(state);
-    const next = nextId(state.r.c.counters, 'implement.revision', 'snapshot');
-    const r = { ...state.r, c: { ...state.r.c, counters: next.counters } };
-    return { state: { tag: 'checking-host-event', r, parent: state, parked: event as HostEvent, effectId: next.id }, effects: [{ kind: 'snapshot', id: next.id, since: r.c.lastFingerprint }] };
-  }
-  return applyRevision(state, event);
-}
-export function reboundRevision(state: Extract<RevisionState, { tag: 'resume' }>): Context {
-  const r = state.r, plan = r.plan!, hash = r.hash!;
-  const tasks = Object.keys(r.c.tasks).length ? reconcileTasks(r.c.tasks, plan) : r.c.tasks;
-  const integration = r.c.integration && invalidatesIntegration(r.c.tasks, tasks) ? { ...r.c.integration, rewind: true } : r.c.integration;
-  const evidence = Object.fromEntries(Object.entries(r.c.evidence).filter(([id]) => plan.criteria.some((row) => row.id === id) && !r.changed.includes(id)).map(([id, row]) => [id, { ...row, planHash: hash }]));
-  const records = Object.fromEntries(Object.entries(r.c.records).filter(([command]) => {
-    const next = commandMappings(plan).find((row) => row.command === command), old = commandMappings(r.original).find((row) => row.command === command);
-    return next && old && JSON.stringify(next) === JSON.stringify(old) && !next.criteria.some((id) => r.changed.includes(id));
-  }));
-  return { ...r.c, plan, planHash: hash, planPath: r.workingPath, evidence, records, tasks, integration, criterionMutation: Object.fromEntries(plan.criteria.map((row) => [row.id, r.changed.includes(row.id) ? r.c.mutationEpoch : r.c.criterionMutation[row.id] ?? 0])),
-    concerns: [...r.c.concerns, ...r.removed.map((id) => `Revision removed criterion ${id}.`)], revisions: [...r.c.revisions, { artifact: 'plan', reason: r.reason, beforeHash: r.originalHash, afterHash: hash, rebind: { retained: Object.keys(evidence), pending: r.changed, removed: r.removed } }] };
-}
-export function revisionAwait(state: RevisionState): Await | null { return state.tag === 'author' ? 'author' : state.tag === 'review' ? reviewAwait(state.review) : state.tag === 'drift' || state.tag === 'scope-adjudication' || state.tag === 'scope-user-decision' ? 'decide' : state.tag === 'resume' || state.tag === 'stopped' || state.tag === 'refused' ? 'done' : null; }
-export function revisionData(state: RevisionState): Record<string, unknown> {
-  if (state.tag === 'drift') return { kind: 'drift', notice: state.notice, options: ['preserve', 'refresh', 'reconcile', 'escalate'] };
-  if (state.tag === 'author') return { artifact: 'plan', path: state.r.workingPath, originalPath: state.r.c.planPath, originalHash: state.r.originalHash, reason: state.r.reason, error: state.error, defects: state.defects };
-  if (state.tag === 'review') return { ...reviewData(state.review), delta: state.r.changed };
-  if (state.tag === 'scope-adjudication') return { kind: 'scope-deviation', pendingProposal: state.request, choices: ['approve', 'disagree', 'stop'], stopAllowed: true };
-  if (state.tag === 'scope-user-decision') return { kind: 'scope-deviation-user', pendingProposal: state.request, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };
-  if (state.tag === 'stopped') return { outcome: 'stopped', summary: state.summary };
-  return { changed: state.r.changed, removed: state.r.removed, grew: state.r.grew, ...(state.tag === 'refused' ? { error: state.error } : {}) };
-}
-export function validateRevision(state: RevisionState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return 'event.type: settle the outstanding revision first.';
-  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !resolution(event.answer, state.notice))) return 'event.answer: bind the current notice and affected evidence.';
-  if (state.tag === 'author' && (event.type !== 'AUTHORED' || event.path !== state.r.workingPath)) return 'event.path: expected the session revision working copy.';
-  if (state.tag === 'scope-adjudication') {
-    if (event.type === 'DECISION' && event.kind === 'run-stop' && isRecord(event.answer) && typeof event.answer['quote'] === 'string' && event.answer['quote'].trim()) return null;
-    if (event.type !== 'DECISION' || event.kind !== 'scope-deviation' || !isRecord(event.answer)) return 'event.answer: expected adjudication for the pending revision proposal, or stop with a user quote.';
-    const answer = event.answer;
-    return answer['by'] === 'orchestrator' && stableValue(answer['request']) === stableValue(state.request) && ['approve', 'disagree'].includes(String(answer['ruling'])) && typeof answer['rationale'] === 'string' && !!answer['rationale'].trim() ? null : 'event.answer: adjudication must bind the pending revision proposal and include a rationale.';
-  }
-  if (state.tag === 'scope-user-decision') {
-    if (event.type === 'DECISION' && event.kind === 'run-stop' && isRecord(event.answer) && typeof event.answer['quote'] === 'string' && event.answer['quote'].trim()) return null;
-    if (event.type !== 'DECISION' || event.kind !== 'scope-deviation-user' || !isRecord(event.answer)) return 'event.answer: expected a user choice for the pending revision request, or stop with a user quote.';
-    const answer = event.answer;
-    return answer['by'] === 'user' && answer['requestId'] === state.request.requestId && ['accept', 'decline'].includes(String(answer['choice'])) && typeof answer['quote'] === 'string' && !!answer['quote'].trim() ? null : 'event.answer: user choice must bind the pending revision request and include a quote.';
-  }
-  return state.tag === 'review' ? validateReview(state.review, event) : null;
+  const parsed = parsePlan(text);
+  if (!parsed.ok) return { ok: false, error: `Amended plan fails lint: ${parsed.defects.map((defect) => `${defect.code}: ${defect.message}`).join('; ')}` };
+  const after = parsed.plan;
+  const known = new Set([...knownTargets(before), ...knownTargets(after)]);
+  const unknown = delta.filter((edit) => !known.has(edit.target)).map((edit) => edit.target);
+  if (unknown.length) return { ok: false, error: `delta target names no task, criterion, command, or path: ${[...new Set(unknown)].join(', ')}.` };
+  const gates: string[] = [];
+  if (after.title !== before.title || after.box['TL;DR'] !== before.box['TL;DR'] || JSON.stringify(after.keyDecisions) !== JSON.stringify(before.keyDecisions)) gates.push('intent change (title, TL;DR, or Key Decisions)');
+  // NOTE: a changed note on an already planned manifest can add a dependency too, so any changed manifest entry gates.
+  const work = (change: ParsedPlan['changes'][number]): string => JSON.stringify([change.action, change.note, change.command]);
+  const manifests = [...new Set(after.changes.filter((change) => MANIFESTS.has(change.path.split('/').at(-1) ?? '') && !before.changes.some((prior) => prior.path === change.path && work(prior) === work(change))).map((change) => change.path))];
+  if (manifests.length) gates.push(`new external dependency (${manifests.join(', ')})`);
+  return { ok: true, plan: after, hash: `sha256:${crypto.createHash('sha256').update(after.governedText).digest('hex')}`, text: after.governedText, gates };
 }

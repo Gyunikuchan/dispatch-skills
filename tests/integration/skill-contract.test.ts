@@ -74,31 +74,19 @@ test('level-rubric: carries phase skips and post-gate scope decisions forward', 
   assert.match(config, /Retries, later phases, accepted scope changes, and later design increments keep the settled level/);
 });
 
-test('level-rubric: tells writers to request orchestrator adjudication before deviating', () => {
-  const implement = read('skills/dispatch/references/verbs/implement.md');
-  assert.match(implement, /pauses before editing outside it and submits the typed `SCOPE_REQUEST`/);
-  assert.match(implement, /If it agrees, Dispatch records the approved delta, informs the user before writer resumption/);
-  assert.match(implement, /only a disagreement requires user adjudication/);
-});
-
-test('level-rubric: documents scope requests outside Await write and task receipt identity', () => {
+test('contract documents receipt request amend events', () => {
   const contract = read(`skills/dispatch/${contractName}`);
   const awaitWrite = contract.split('## Await write\n')[1]?.split('\n## ')[0] ?? '';
-  assert.match(contract, /Before out-of-brief edits, writers request orchestrator adjudication/);
-  assert.doesNotMatch(awaitWrite, /SCOPE_REQUEST/);
-  assert.match(contract, /task-scoped slots.*task-scoped terminal receipts echo all three/);
-  assert.match(contract, /Taskless hotfix receipts omit these identity fields/);
-});
-test('level-rubric: implement guide documents decision payloads, scope receipt placement, and writer draining', () => {
+  for (const name of ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'briefHash']) assert.ok(awaitWrite.includes(name), name);
+  assert.match(awaitWrite, /Taskless hotfix receipts omit identity fields/);
   const guide = read('skills/dispatch/references/verbs/implement.md');
-  for (const kind of ['run-stop', 'level-classification', 'level-recommendation', 'scope-deviation', 'scope-deviation-user']) {
-    assert.ok(guide.includes('DECISION kind=' + kind));
+  for (const kind of ['run-stop', 'level-classification', 'level-recommendation', 'integration-conflict', 'request', 'request-user']) {
+    assert.ok(guide.includes('DECISION kind=' + kind + '`'), kind);
   }
-  assert.match(guide, /submits `SCOPE_REQUEST` as the `status` in its `WRITE_ENVELOPE`/);
-  assert.match(guide, /Taskless hotfix `WRITE_ENVELOPE` and `WRITE_FAILED` receipts omit those four fields/);
-  assert.match(guide, /sibling `SCOPE_REQUEST` during this drain is nonterminal: keep that attempt active/);
-  assert.match(guide, /Do not charge its retry budget or launch replacements while any live sibling remains/);
-  assert.match(guide, /Show the writer's rationale and the orchestrator's rationale to the user only when they disagree/);
+  for (const status of ['launched', 'submitted', 'failed', 'cancelled']) assert.ok(guide.includes('`' + status + '`'), status);
+  assert.match(guide, /reply `REQUEST` with `\{ task, attempt, need, paths, rationale \}`; the writer keeps running/);
+  assert.match(guide, /`AMEND` `\{ delta, notify, rationale, by\? \}` changes the plan live/);
+  assert.match(guide, /first send a user-gated `AMEND` that records the discarded work, then reply `discard`/);
 });
 test('level-rubric: Await sections contain only their configured accepted events', () => {
   const contract = read(`skills/dispatch/${contractName}`);
