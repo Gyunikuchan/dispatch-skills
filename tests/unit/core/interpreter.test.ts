@@ -105,3 +105,129 @@ test('rejects journal from prior protocol revision', async () => {
   }
   assert.deepEqual(bytes(runDir), before);
 });
+
+const transportFindings = (round: number) => [{ id: `F${round}`, severity: 'MUST', category: 'intent', locus: 'src/a.ts:L1', defect: `full body ${round}`, requiredChange: 'fix', sources: ['native[0]'], scope: 'in' }];
+const transportMachine: import('../../../skills/dispatch/scripts/core/types.ts').Machine<number> = {
+  transitions: [],
+  initial: () => 0,
+  step: (state, event) => ({ state: event.type === 'RUN_STARTED' || event.type === 'RULINGS' ? state + 1 : state, effects: [] }),
+  awaitOf: () => 'rule',
+  project: (state) => ({ at: 'review', data: { findings: transportFindings(state) } }),
+};
+const summaries = (round: number) => transportFindings(round).map(({ id, severity, category, locus }) => ({ id, severity, category, locus }));
+
+test('diagnostics amendment findings transport writes current full findings, overwrites and repairs on replay', async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+  const options = { ports, runDir, runRel: 'runs/001-review', machine: transportMachine, handlers: fakeHandlers };
+  const result = await start({ ...options, runStarted: RUN_STARTED });
+  const file = path.join(runDir, 'rule.findings.json');
+  assert.equal(result.frame?.data['findingsPath'], 'runs/001-review/rule.findings.json');
+  assert.deepEqual(result.frame?.data['findings'], summaries(1));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), transportFindings(1));
+  assert.deepEqual(transportMachine.project(1).data['findings'], transportFindings(1));
+  const next = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: {} } });
+  assert.deepEqual(next.frame?.data['findings'], summaries(2));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), transportFindings(2));
+  fs.writeFileSync(file, '[]');
+  assert.deepEqual((await send(options)).frame?.data['findings'], summaries(2));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), transportFindings(2));
+  const rejected = await send({ ...options, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
+  assert.ok(rejected.frame?.error);
+  assert.deepEqual(rejected.frame?.data['findings'], summaries(2));
+  const refresh = await send({ ...options, refreshConfig: true });
+  assert.ok(refresh.frame?.error);
+  assert.deepEqual(refresh.frame?.data['findings'], summaries(2));
+});
+
+for (const freshness of ['current', 'missing', 'stale', 'invalid']) test(`diagnostics amendment findings transport dry-run ${freshness} writes nothing`, async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+  const options = { ports, runDir, runRel: 'runs/001-review', machine: transportMachine, handlers: fakeHandlers };
+  await start({ ...options, runStarted: RUN_STARTED });
+  const file = path.join(runDir, 'rule.findings.json');
+  if (freshness === 'missing') fs.rmSync(file, { force: true });
+  else fs.writeFileSync(file, freshness === 'invalid' ? '{bad' : JSON.stringify(transportFindings(freshness === 'stale' ? 0 : 1)));
+  const before = ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]);
+  for (const refreshConfig of [false, true]) {
+    const result = await send({ ...options, dryRun: true, refreshConfig });
+    assert.deepEqual(result.frame?.data['findings'], freshness === 'current' ? summaries(1) : transportFindings(1));
+    assert.equal(result.frame?.data['findingsPath'], freshness === 'current' ? 'runs/001-review/rule.findings.json' : undefined);
+  }
+  assert.deepEqual(ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]), before);
+});
+
+test('diagnostics amendment findings transport leaves non-rule frames unchanged', async () => {
+  const ports = fakePorts();
+  const { runDir, result } = await startAwaiting(ports);
+  assert.equal(result.frame?.data['findingsPath'], undefined);
+  assert.equal(fs.existsSync(path.join(runDir, 'rule.findings.json')), false);
+  assert.deepEqual(result.frame?.data, { artifact: 'plan', path: 'plan.md' });
+});
+
+test('diagnostics amendment findings transport adapts queued recovery and terminal effect results under the lock', async () => {
+  type State = { findings: ReturnType<typeof transportFindings>; waiting: boolean; round: number };
+  const machine: import('../../../skills/dispatch/scripts/core/types.ts').Machine<State> = {
+    transitions: [],
+    initial: () => ({ findings: [], waiting: false, round: 0 }),
+    step(state, event) {
+      if (event.type === 'RUN_STARTED' || event.type === 'RULINGS') {
+        const round = state.round + 1;
+        return { state: { ...state, waiting: true, round }, effects: [{ kind: 'wave', id: `fixture.wave.${round}`, round, roster: [], timeoutMs: 1000 }] };
+      }
+      if (event.type === 'WAVE_DONE') return { state: { ...state, waiting: false, findings: event.findings as State['findings'] }, effects: [] };
+      return { state, effects: [] };
+    },
+    awaitOf: () => 'rule',
+    project: (state) => ({ at: 'review', data: { findings: state.findings } }),
+  };
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+  const options = { ports, runDir, runRel: 'runs/001-review', machine, handlers: { wave: async (effect: import('../../../skills/dispatch/scripts/core/types.ts').Effect) => [{ type: 'WAVE_DONE' as const, effectId: effect.id, round: 1, slots: [], findings: transportFindings(effect.kind === 'wave' ? effect.round : 1) as never }] } };
+  const atomic = ports.fs.writeAtomic;
+  let writes = 0;
+  ports.fs.writeAtomic = (file, text) => {
+    if (file.endsWith('rule.findings.json')) { assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), true); writes++; }
+    atomic(file, text);
+  };
+  const started = await start({ ...options, runStarted: RUN_STARTED });
+  assert.deepEqual(started.frame?.data['findings'], summaries(1));
+  const current = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: {} } });
+  assert.deepEqual(current.frame?.data['findings'], summaries(2));
+  const wave = Array.from(readJournal(ports, runDir).records).filter((line) => line.type === 'WAVE_DONE').at(-1)!;
+  assert.deepEqual(wave.data['findings'], transportFindings(2), 'journal retains bodies');
+  appendEvent(ports, runDir, 'RULINGS', { rulings: {} });
+  const queued = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: {} } });
+  assert.ok(queued.frame?.error);
+  assert.deepEqual(queued.frame?.data['findings'], summaries(2));
+  const recovered = await send(options);
+  assert.deepEqual(recovered.frame?.data['findings'], summaries(3));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'rule.findings.json'), 'utf8')), transportFindings(3));
+  assert.equal(writes, 4);
+});
+
+test('diagnostics amendment findings transport publish failure preserves completed effects and inline findings', async () => {
+  const ports = fakePorts();
+  const runDir = path.join(tempDir(), 'runs', '001-review');
+  const machine = {
+    ...awaitingMachine,
+    awaitOf: (state: ReturnType<typeof awaitingMachine.initial>) => state.tag === 'done' ? 'rule' as const : awaitingMachine.awaitOf(state),
+    project: (state: ReturnType<typeof awaitingMachine.initial>) => state.tag === 'done' ? { at: 'review', data: { findings: transportFindings(1) } } : awaitingMachine.project(state),
+  };
+  let effects = 0;
+  const handlers = { ...fakeHandlers, verify: async (...args: Parameters<NonNullable<typeof fakeHandlers.verify>>) => { effects++; return fakeHandlers.verify!(...args); } };
+  const options = { ports, runDir, machine, handlers };
+  await start({ ...options, runStarted: RUN_STARTED });
+  const atomic = ports.fs.writeAtomic;
+  ports.fs.writeAtomic = (file, text) => { if (file.endsWith('rule.findings.json')) throw new Error('injected publish failure'); atomic(file, text); };
+  const result = await send({ ...options, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.frame?.await, 'rule');
+  assert.deepEqual(result.frame?.data['findings'], transportFindings(1));
+  assert.equal(result.frame?.data['findingsPath'], undefined);
+  assert.deepEqual(types(ports, runDir), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT', 'AUTHORED', 'EFFECT_STARTED', 'VERIFY_DONE']);
+  const journal = bytes(runDir);
+  const replay = await send(options);
+  assert.equal(replay.exitCode, 0);
+  assert.deepEqual(replay.frame?.data['findings'], transportFindings(1));
+  assert.equal(replay.frame?.data['findingsPath'], undefined);
+  assert.deepEqual(bytes(runDir), journal);
+  assert.equal(effects, 1);
+});

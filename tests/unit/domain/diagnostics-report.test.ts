@@ -108,7 +108,7 @@ test('SC2 heuristic H1 fires', () => {
   assert.match(finding.evidence, /`timeout`: 1 of 2 CLI attempts failed \(codex ×1\), 2m 0s of driver time/);
 });
 
-test('SC2 heuristic H2 fires', () => {
+test('diagnostics amendment convergence keeps H2 signals and suppresses plain known-cap continuation', () => {
   const reraised = assertShape(only(heuristics(facts({ reviews: [
     { phase: 'review', round: 1, accepted: 1, rejected: 1 },
     { phase: 'review', round: 2, accepted: 1, rejected: 0, reraised: ['R1-F001'] },
@@ -120,7 +120,7 @@ test('SC2 heuristic H2 fires', () => {
   ] })), 'H2');
   assert.match(assertShape(escalated[0], 'review-convergence').evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
   const rounds = only(heuristics(facts({ reviews: [1, 2, 3, 4].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3 })) })), 'H2');
-  assert.match(assertShape(rounds[0], 'review-convergence').evidence, /code review: 4 rounds; cap reached \(3\)\./);
+  assert.deepEqual(rounds, []);
 });
 
 test('SC2 heuristic H3 fires', () => {
@@ -180,15 +180,42 @@ test('SC2 orders findings by severity', () => {
   assert.deepEqual([...new Set(headings)], ['Correctness / protocol', 'Token economy', 'Speed', 'Review convergence', 'Instruction clarity']);
 });
 
-test('heuristic precision H2 stays silent for rounds within the cap', () => {
+test('diagnostics amendment convergence H2 stays silent within and beyond the known cap', () => {
   const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
   assert.deepEqual(only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'), [], 'three rounds within cap 3 is normal convergence');
-  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2')[0], 'review-convergence').evidence, /code review: 4 rounds; cap reached \(3\)\./);
+  assert.deepEqual(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2'), [], 'plain continuation beyond cap 3 is designed');
   const reraised = [...rounds(2, { cap: 3 }), { phase: 'review', round: 3, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] }];
   assert.equal(only(heuristics(facts({ reviews: reraised })), 'H2').length, 1, 'a re-raise fires within the cap');
   const escalated = [{ phase: 'review', round: 1, accepted: 1, rejected: 0, cap: 3, escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } }];
   assert.equal(only(heuristics(facts({ reviews: escalated })), 'H2').length, 1, 'an escalation fires within the cap');
   assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
+});
+
+test('diagnostics amendment convergence preserves reraises beyond the known cap', () => {
+  const finding = assertShape(only(heuristics(facts({ reviews: [
+    { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] },
+  ] })), 'H2')[0], 'review-convergence');
+  assert.match(finding.evidence, /4 rounds/);
+  assert.match(finding.evidence, /1 finding re-raised across rounds \(R1-F001\)/);
+});
+
+for (const kind of ['regression', 'deadlock'] as const) {
+  test(`diagnostics amendment convergence preserves ${kind} beyond the known cap`, () => {
+    const escalationOnly = assertShape(only(heuristics(facts({ reviews: [
+      { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, escalation: { kind, ids: ['R1-F001'] } },
+    ] })), 'H2')[0], 'review-convergence');
+    assert.match(escalationOnly.evidence, kind === 'deadlock' ? /cap reached \(3\)/ : /regression escalation \(R1-F001\)/);
+    const finding = assertShape(only(heuristics(facts({ reviews: [
+      { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'], escalation: { kind, ids: ['R1-F001'] } },
+    ] })), 'H2')[0], 'review-convergence');
+    assert.match(finding.evidence, new RegExp(`${kind} escalation \\(R1-F001\\)`));
+  });
+}
+
+test('diagnostics amendment convergence preserves unknown-cap fallback threshold', () => {
+  const reviews = (round: number) => [{ phase: 'review', round, accepted: 1, rejected: 0 }];
+  assert.deepEqual(only(heuristics(facts({ reviews: reviews(2) })), 'H2'), []);
+  assert.match(assertShape(only(heuristics(facts({ reviews: reviews(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./);
 });
 
 test('H2 cap reached wording', () => {

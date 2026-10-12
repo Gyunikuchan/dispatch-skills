@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, Event, Level, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { reviewMachine, resolutionRounds, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { renderResolutionSection } from '../../../skills/dispatch/scripts/domain/render.ts';
 import { play } from '../../helpers/play.ts';
@@ -19,6 +19,52 @@ const finding = (id: string, over: Record<string, unknown> = {}) => ({
 const prepared = (n: number): Event => ({ type: 'REVIEW_PREPARED', effectId: `review.prepare-review.${n}`, scope: {}, promptPaths: { 'codex[0]': 'p0', 'agy[0]': 'p1' } });
 const rows = [{ slot: 'codex[0]', state: 'success' }, { slot: 'agy[0]', state: 'success' }];
 const waveDone = (n: number, findings: unknown[]): Event => ({ type: 'WAVE_DONE', effectId: `review.wave.${n}`, round: n, slots: rows, findings: findings as never });
+
+for (const [level, expected] of Object.entries({ low: 600_000, medium: 600_000, high: 1_200_000, xhigh: 1_800_000, max: 1_800_000 })) {
+  test(`diagnostics amendment timeout: ${level} default and positive override`, () => {
+    const config = { 'read-delegates': { codex: { targets: [{ [level]: { model: 'gpt-5' } }] } }, phases: { 'code-review': { rounds: { [level]: 2 }, targets: { [level]: 1 } } } };
+    for (const timeout of [undefined, 0, -1, 7]) {
+      const { state, effects } = drive([started({ level: level as Level, config, overrides: timeout === undefined ? {} : { timeout } }), prepared(1)]);
+      assert.equal(state.tag, 'wave');
+      assert.equal(effects[0]?.kind === 'wave-start' && effects[0].timeoutMs, timeout === 7 ? 7_000 : expected);
+    }
+  });
+}
+
+test('diagnostics amendment timeout: failed report spec retains fallback', () => {
+  const { state } = drive([started({ level: 'max', config: { 'read-delegates': {} } })]);
+  assert.equal(state.tag, 'failed');
+  assert.equal('c' in state && state.c.spec.timeoutMs, 600_000);
+});
+
+test('diagnostics amendment continuation frame: within cap omits reason and exposes full scope', () => {
+  const { state } = drive([started(), prepared(1), waveDone(1, [finding('R1-F001')])]);
+  const data = reviewMachine.project(state).data;
+  assert.equal(data['scope'], 'full');
+  assert.ok(!('continuationReason' in data));
+});
+
+for (const scope of ['delta', 'disputes-only'] as const) test(`diagnostics amendment continuation frame: ${scope} beyond cap describes MUST continuation`, () => {
+  const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } } };
+  const events: Event[] = [started({ fix: true, config }), prepared(1), waveDone(1, [finding('R1-F001')]),
+    { type: 'RULINGS', rulings: { 'R1-F001': scope === 'delta' ? { ruling: 'accept' } : { ruling: 'reject', reason: 'by design' } } }];
+  if (scope === 'delta') {
+    const { state } = drive(events);
+    assert.equal(state.tag, 'fix');
+    if (state.tag !== 'fix') throw new Error('fix state missing');
+    events.push({ type: 'FIXES_APPLIED', clusters: state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) },
+      { type: 'VERIFY_DONE', effectId: 'review.verify.1', purpose: 'fix-verify', results: [], fingerprint: {} });
+  }
+  events.push(prepared(2), waveDone(2, [finding('R2-F001', { locus: 'src/b.ts:L1', defect: 'new defect' })]));
+  const { state } = drive(events);
+  assert.equal(state.tag, 'rule');
+  const data = reviewMachine.project(state).data;
+  assert.equal(data['round'], 2);
+  assert.equal(data['cap'], 1);
+  assert.equal(data['scope'], scope);
+  assert.match(String(data['continuationReason']), /MUST/);
+  assert.match(String(data['continuationReason']), scope === 'delta' ? /delta.*fixed|fixed.*delta/ : /disputes-only.*pending.rejection|pending.rejection.*disputes-only/);
+});
 
 function drive(events: readonly Event[]): { state: ReviewState; effects: readonly Effect[] } {
   let state = reviewMachine.initial();

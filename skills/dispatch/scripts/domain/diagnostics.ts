@@ -339,10 +339,10 @@ export function heuristics(run: RunFacts): Finding[] {
     const rounds = Math.max(...rows.map((r) => r.round));
     const reraised = [...new Set(rows.flatMap((r) => r.reraised ?? []))];
     const escalation = rows.map((r) => r.escalation).filter((e) => e !== undefined).at(-1);
-    // Rounds within the resolved cap are normal convergence; only a run without a recorded cap uses the fixed threshold.
+    // Known-cap continuation is designed; only a run without a recorded cap uses the fixed threshold.
     const cap = rows.map((r) => r.cap).filter((c) => c !== undefined).at(-1);
-    const overCap = cap === undefined ? rounds >= T.reviewRounds : rounds > cap;
-    if (!overCap && !reraised.length && !escalation) continue;
+    const fallback = cap === undefined && rounds >= T.reviewRounds;
+    if (!fallback && !reraised.length && !escalation) continue;
     const ids = (values: readonly string[]) => values.length ? ` (${values.slice(0, 5).join(', ')})` : '';
     // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label, so it reports as the cap; a regression is always real.
     const capReached = cap !== undefined && (escalation?.kind === 'deadlock' ? rounds >= cap && !reraised.length : !escalation && rounds > cap);

@@ -17,8 +17,9 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   const frame: Frame = { v: 1, run: runRel, at, await: awaiting, data, reply: replyTemplate(runRel, seq !== undefined && awaiting !== 'done' ? { seq, awaiting } : undefined) };
   const events = (awaitEnvelopes(frame.await, data) ?? []).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
   if (events.length) frame.events = events;
-  // NOTE: the RULINGS example defaults intent findings to `needs-user`; the hint names the user-backed alternative shape.
-  if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: '{ ruling: accept|reject, quote: <user words> }' };
+  // NOTE: intent examples default to `needs-user`; alternative rulings require actual authority evidence.
+  if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: 'needs-user; { ruling: accept|reject, quote: <user words> }; { ruling: accept|reject, by: orchestrator, reason: <settled decision> }' };
+  if (frame.await === 'rule') frame.data = { ...frame.data, fixScope: 'Example locus paths are suggestions. Declare every production, test, fixture, helper edit and verification-generated output before sending RULINGS.' };
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };
   if (error !== undefined) frame.error = error;
   return frame;

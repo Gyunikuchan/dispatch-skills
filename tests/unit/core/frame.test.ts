@@ -129,10 +129,10 @@ test('plan review rule example uses the plan path', () => {
   assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['R1-F001'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, ['docs/x.plan.md']);
 });
 
-test('rule frame intent shape hint names the quoted accept/reject ruling', () => {
+test('diagnostics amendment dual intent hint names both accept/reject routes', () => {
   const machine = (category: string) => ({ ...awaitingMachine, awaitOf: () => 'rule' as const, project: () => ({ at: 'review › rule', data: { findings: [{ id: 'R1-F001', category, locus: 'src/a.ts:L1' }] } }) });
   const intent = projectFrame(machine('intent'), awaitingMachine.initial(), 'run');
-  assert.equal(intent.data['intentRuling'], '{ ruling: accept|reject, quote: <user words> }');
+  assert.equal(intent.data['intentRuling'], 'needs-user; { ruling: accept|reject, quote: <user words> }; { ruling: accept|reject, by: orchestrator, reason: <settled decision> }');
   const example = intent.events?.find((event) => event.type === 'RULINGS');
   assert.equal(example?.type === 'RULINGS' && (example.rulings['R1-F001'] as { ruling: string }).ruling, 'needs-user');
   assert.equal(projectFrame(machine('correctness'), awaitingMachine.initial(), 'run').data['intentRuling'], undefined);
@@ -196,4 +196,16 @@ test('renders generic decision reply template', () => {
     assert.deepEqual(event, { type: 'DECISION', kind, answer }, kind);
     assert.equal(validateHostEvent('decide', event).ok, true, kind);
   }
+});
+
+for (const fixTarget of [undefined, 'docs/x.plan.md']) test(`diagnostics amendment rule scope ${fixTarget ? 'artifact' : 'code'} guidance preserves examples`, () => {
+  const machine = { ...awaitingMachine, awaitOf: () => 'rule' as const, project: () => ({ at: 'review', data: { fixTarget, findings: [{ id: 'F1', locus: 'src/a.ts:L1', category: 'correctness' }] } }) };
+  const frame = projectFrame(machine, awaitingMachine.initial(), 'run', undefined, 4);
+  assert.match(String(frame.data['fixScope']), /suggestions/);
+  assert.match(String(frame.data['fixScope']), /production.*test.*fixture.*helper.*verification-generated.*before.*RULINGS/);
+  const example = frame.events?.[0];
+  assert.equal(validateHostEvent('rule', example).ok, true);
+  assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['F1'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, [fixTarget ?? 'src/a.ts']);
+  assert.equal(frame.await, 'rule');
+  assert.match(frame.reply, /events\/4-rule.json$/);
 });

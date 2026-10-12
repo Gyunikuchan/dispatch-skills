@@ -384,9 +384,10 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     // Rendered under this run's lock before release; a concurrent run's later render replaces it (last writer wins).
     const report = done && !wasDone && enabled ? render() : null;
     if (done) pruneWorkerFiles(ports, runDir);
-    releaseLock(ports, runDir); locked = false;
     const status = refreshStatus?.['status'] === 'unchanged' ? refreshStatus : executionStatus(recentLines, machine.awaitOf(folder.state), machine.executionDeferred?.(folder.state));
-    return { frame: withDiagnostics(options, executionFrame(boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, undefined, hostBoundary(recentLines))), status), enabled, report, warn), exitCode: 0 };
+    const frame = withDiagnostics(options, executionFrame(boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, undefined, hostBoundary(recentLines))), status), enabled, report, warn);
+    releaseLock(ports, runDir); locked = false;
+    return { frame, exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     let report: DiagnosticReport | null = null;
@@ -416,7 +417,24 @@ function hostBoundary(lines: Iterable<JournalLine>): number {
 /** Creates `events/` before a frame names a path inside it, so hosts write the reply without a mkdir. */
 function boundaryFrame(ports: Ports, runDir: string, frame: Frame): Frame {
   if (frame.await !== 'done') ports.fs.mkdir(path.join(runDir, 'events'), { recursive: true });
-  return frame;
+  return findingsFrame(ports, runDir, frame);
+}
+
+/** Full findings stay in projection and journal; only the emitted frame uses the current file. */
+function findingsFrame(ports: Ports, runDir: string, frame: Frame, dryRun = false): Frame {
+  const findings = frame.data['findings'];
+  if (frame.await !== 'rule' || !Array.isArray(findings)) return frame;
+  const file = runPaths(runDir).ruleFindings();
+  if (dryRun) {
+    try {
+      if (JSON.stringify(JSON.parse(ports.fs.readText(file))) !== JSON.stringify(findings)) return frame;
+    } catch { return frame; }
+  } else {
+    // NOTE: failed frame publication must not roll back completed effects.
+    try { ports.fs.writeAtomic(file, `${JSON.stringify(findings, null, 2)}\n`); } catch { return frame; }
+  }
+  const summaries = findings.map(({ id, severity, category, locus }) => ({ id, severity, category, locus }));
+  return { ...frame, data: { ...frame.data, findings: summaries, findingsPath: runPaths(frame.run).ruleFindings().replace(/\\/g, '/') } };
 }
 
 /** Worker recovery files only serve resume, so a done run drops them; best-effort, as a failed unlink must not change the outcome. */
@@ -470,7 +488,7 @@ async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendR
     const read = readJournal(ports, runDir, true), lines = read.records;
     const folder = fold(machine, lines, runSession(runDir));
     const enabled = diagnosticsEnabled(options.diagnosticToggle, read.started, warn);
-    const hint = (frame: Frame): Frame => withDiagnostics(options, frame, enabled, null, warn);
+    const hint = (frame: Frame): Frame => withDiagnostics(options, findingsFrame(ports, runDir, frame, true), enabled, null, warn);
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, read);
       return { frame: hint('error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(read.recent)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), refresh.status)), exitCode: 0 };

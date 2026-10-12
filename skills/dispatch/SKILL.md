@@ -17,19 +17,19 @@ Use `design` for multiple increments, `plan` for one coherent unit, `implement` 
 2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON.
 3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as separate background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Send one frame `events` object per `await` until `done`; eventless send resumes automation.
 
-Read [verb guide](references/verbs/), [review rules](references/review-rules.md), [providers](references/providers.md).
+Read [verbs](references/verbs/), [review rules](references/review-rules.md), [providers](references/providers.md).
 
 ## Await author
 
-Author at `data.path` with `data.template`; resolve defects against the governing outcome. Reply `AUTHORED` with `path`.
+Author `data.path` with `data.template`; resolve defects against governing outcome. Reply `AUTHORED` with `path`.
 
 ## Await native
 
-Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply with `NATIVE_RESULTS` and attested slot fields ([fields](references/providers.md)).
+Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply `NATIVE_RESULTS` with attested slot fields ([fields](references/providers.md)).
 
 ## Await rule
 
-Verify findings against code and outcome. Before editing targets, reply `RULINGS` with finding-id `ruling` (intent: `needs-user`, or `accept`/`reject` with user `quote`) and scoped `fix`; explain rejection/downgrade and follow [review rules](references/review-rules.md).
+Read `data.findingsPath` when present; inline `data.findings` otherwise. Verify findings; send `RULINGS` before editing with scoped `fix`. Intent: `needs-user`, `accept`/`reject` with user `quote` or `by:orchestrator` and settled decision `reason`. User gate: changed intent, new external dependency or runtime prerequisite, discarded work. Follow [review rules](references/review-rules.md) for complete scope, rejection/downgrade, parked-receipt recovery.
 
 ## Await fix
 
@@ -37,11 +37,11 @@ Apply accepted clusters within `affectedPaths` via frame `writer`, verify, and r
 
 ## Await write
 
-Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. Reply in frame `events` with `WRITE_RECEIPT` per writer: `status` `launched` (attempt, signature, host-assigned handle, attested `model`/`effort`), then `submitted` (with `briefHash`), `failed`, or `cancelled`, echoing the task identity. Taskless hotfix receipts omit identity fields. Relay a live writer's out-of-scope need as `REQUEST`; it keeps running. Change the plan with `AMEND`, notifying each affected running writer; relay each notice and regenerated brief. See [implement](references/verbs/implement.md).
+Launch native writers per `launch` slot with its model, verified brief, envelope path, and worktree. Reply in frame `events` with `WRITE_RECEIPT` per writer: `status` `launched` (attempt, signature, host-assigned handle, attested `model`/`effort`), then `submitted` (`briefHash`), `failed`, or `cancelled`, echoing task identity. Taskless hotfix receipts omit identity fields. Relay a live writer's out-of-scope need as `REQUEST`; it keeps running. `AMEND` the plan; notify each affected running writer; relay each notice and regenerated brief. See [implement](references/verbs/implement.md).
 
 ## Await evidence
 
-Inspect summaries/logs; do not rerun emitted gates. Verify criteria; reply `EVIDENCE` with id-keyed `outcome:"pass"` and concrete evidence.
+Inspect summaries/logs; do not rerun emitted gates. Reply `EVIDENCE` with id-keyed `outcome:"pass"` and criterion evidence.
 
 ## Await decide
 
@@ -53,7 +53,7 @@ Follow `data.diagnostics.instruction`; reply `RETRO`.
 
 ## Await done
 
-Report outcome, behavior, verification, concerns, rulings, and artifact links. If `data.diagnostics` exists, add one line with its `path` and the report's first top finding. Complete only when every criterion passes; preserve the handoff folder.
+Report outcome, behavior, verification, concerns, rulings, artifact links. If `data.diagnostics` exists, add one line with its `path` and the report's first top finding. Complete only when every criterion passes; preserve the handoff folder.
 
 ## Write boundaries and recovery
 

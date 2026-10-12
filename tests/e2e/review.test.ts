@@ -143,7 +143,7 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     const names = (dir: string, directories: boolean) => entries(dir).filter((entry) => entry.isDirectory() === directories).map((entry) => entry.name).sort();
     assert.deepEqual(names(session, false), ['manifest.json', 'review.report.md', ...(diagnostics ? ['diagnostics.md'] : [])].sort());
     assert.deepEqual(names(session, true), ['.state']);
-    assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json']);
+    assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json', 'rule.findings.json']);
     const folders = names(run, true);
     assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', 'recovery-deltas']);
     assert.deepEqual(fs.readdirSync(path.join(run, 'events')).sort(), [path.basename(named), ...(retro ? [path.basename(retro)] : [])].sort());

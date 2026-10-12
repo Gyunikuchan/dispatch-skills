@@ -63,11 +63,12 @@ export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejecti
 
 export const RULING_KINDS = ['accept', 'reject', 'downgrade', 'needs-user'] as const;
 export type RulingKind = (typeof RULING_KINDS)[number];
-export type Ruling = { ruling: RulingKind; severity?: Severity; reason?: string; quote?: string; fix?: NonNullable<Finding['fix']> };
+export type Ruling = { ruling: RulingKind; by?: 'orchestrator'; severity?: Severity; reason?: string; quote?: string; fix?: NonNullable<Finding['fix']> };
 
 export function asRuling(value: unknown): Ruling | null {
   if (!isRecord(value) || !RULING_KINDS.includes(value['ruling'] as RulingKind)) return null;
   const out: Ruling = { ruling: value['ruling'] as RulingKind };
+  if (value['by'] === 'orchestrator') out.by = 'orchestrator';
   const severity = value['severity'];
   if (severity === 'MUST' || severity === 'SHOULD' || severity === 'CONSIDER') out.severity = severity;
   if (typeof value['reason'] === 'string') out.reason = value['reason'];

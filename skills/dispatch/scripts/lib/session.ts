@@ -247,6 +247,7 @@ export function runPaths(runDir: string) {
   const inEffect = (id: string, name: string): string => path.join(effectDir(id), name);
   return {
     effectDir,
+    ruleFindings: () => path.join(runDir, 'rule.findings.json'),
     input: (id: string) => inEffect(id, 'input.json'),
     launch: (id: string) => inEffect(id, 'launch.json'),
     prompt: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.prompt.md`),

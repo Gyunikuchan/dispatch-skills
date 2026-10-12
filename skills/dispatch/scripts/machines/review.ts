@@ -20,6 +20,8 @@ import { writerConfig } from './implement-types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 600_000;
 
+export const defaultTimeoutMs = (level: Level): number => level === 'high' ? 1_200_000 : level === 'xhigh' || level === 'max' ? 1_800_000 : DEFAULT_TIMEOUT_MS;
+
 // SECTION: Spec resolution (shared with ask and plan)
 
 type Row = Readonly<Record<string, unknown>>;
@@ -47,7 +49,7 @@ export function resolveSlots(run: RunStartedEvent, phase: 'plan-review' | 'code-
   if (isString(run.overrides['model'])) overrides.model = run.overrides['model'];
   if (isString(run.overrides['effort'])) overrides.effort = run.overrides['effort'];
   const timeout = run.overrides['timeout'];
-  const timeoutMs = typeof timeout === 'number' && timeout > 0 ? timeout * 1000 : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = typeof timeout === 'number' && timeout > 0 ? timeout * 1000 : defaultTimeoutMs(level);
   try {
     const input: Parameters<typeof resolveRoster>[0] = { level, readDelegates: delegates, pins, overrides, orchestrator: { platform: run.orchestrator, model: run.orchestratorModel } };
     if (policy) input.policy = policy;
@@ -314,6 +316,7 @@ function afterWave(c0: ReviewCtx): S {
 const roundOpen = (c: ReviewCtx) => c.findings.filter((finding) => finding.round === c.round && finding.status === 'open');
 /** A known user answer settles an intent finding directly, with the needs-user decision semantics. */
 const userRuled = (ruling: Ruling): ruling is Ruling & { quote: string } => (ruling.ruling === 'accept' || ruling.ruling === 'reject') && ruling.quote !== undefined;
+const orchestratorRuled = (ruling: Ruling): ruling is Ruling & { reason: string } => (ruling.ruling === 'accept' || ruling.ruling === 'reject') && ruling.by === 'orchestrator' && !!ruling.reason?.trim();
 
 export function validateRulings(c: ReviewCtx, rulings: Readonly<Record<string, unknown>>): string | null {
   const open = roundOpen(c);
@@ -324,8 +327,8 @@ export function validateRulings(c: ReviewCtx, rulings: Readonly<Record<string, u
     const ruling = asRuling(raw);
     if (!ruling) return `event.rulings.${finding.id}.ruling: expected accept|reject|downgrade|needs-user`;
     if (finding.category === 'intent' && ruling.ruling !== 'needs-user') {
-      if (!userRuled(ruling)) return `event.rulings.${finding.id}.ruling: expected needs-user, or accept|reject with the user's quote, for an intent finding`;
-      continue; // NOTE: the user's quote is the recorded reason.
+      if (!userRuled(ruling) && !orchestratorRuled(ruling)) return `event.rulings.${finding.id}.ruling: expected needs-user, accept|reject with the user's quote, or accept|reject by orchestrator with a reason, for an intent finding`;
+      continue; // NOTE: recorded authority settles intent directly.
     }
     if ((ruling.ruling === 'reject' || ruling.ruling === 'downgrade') && !ruling.reason?.trim()) return `event.rulings.${finding.id}.reason: expected a nonblank reason for ${ruling.ruling}`;
   }
@@ -338,8 +341,8 @@ function onRulings(c0: ReviewCtx, rulings: Readonly<Record<string, unknown>>): S
     if (finding.round !== c0.round || finding.status !== 'open') return finding;
     const ruling = asRuling(rulings[finding.id]);
     if (!ruling) return finding;
-    if (finding.category === 'intent' && userRuled(ruling)) {
-      const ruled = { ...finding, resolution: `user: ${ruling.quote}`, ...(ruling.fix ? { fix: ruling.fix } : {}) };
+    if (finding.category === 'intent' && (userRuled(ruling) || orchestratorRuled(ruling))) {
+      const ruled = { ...finding, resolution: userRuled(ruling) ? `user: ${ruling.quote}` : `orchestrator: ${ruling.reason}`, ...(ruling.fix ? { fix: ruling.fix } : {}) };
       return { ...ruled, status: ruling.ruling === 'accept' ? 'accepted' : 'rejected' };
     }
     const resolution = { ...(ruling.reason === undefined ? {} : { resolution: ruling.reason }), ...(ruling.fix ? { fix: ruling.fix } : {}) };
@@ -778,7 +781,11 @@ export function reviewData(state: ReviewState): Readonly<Record<string, unknown>
     case 'rule': {
       const { c } = state;
       return {
-        round: c.round, cap: c.spec.cap, threshold: threshold(c.round, c.spec.cap), findings: roundOpen(c),
+        round: c.round, cap: c.spec.cap, scope: c.scope, threshold: threshold(c.round, c.spec.cap), findings: roundOpen(c),
+        ...(c.round > c.spec.cap ? { continuationReason: c.scope === 'disputes-only'
+          ? 'MUST continuation beyond the cap: disputes-only review of pending-rejection MUST findings.'
+          : c.scope === 'delta' ? 'MUST continuation beyond the cap: delta review of fixed MUST findings.'
+            : 'MUST continuation beyond the cap: review remaining MUST findings.' } : {}),
         pending: c.findings.filter((finding) => finding.status === 'pending-rejection').map((finding) => ({ id: finding.id, severity: finding.severity, status: finding.status })),
         reportPaths: [],
         ...(c.spec.kind === 'code' ? {} : { fixTarget: c.spec.target }),
