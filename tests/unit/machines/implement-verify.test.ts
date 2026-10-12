@@ -7,11 +7,13 @@ import { initialImplement, stepImplement, validateImplement } from '../../../ski
 import { approvalState, host } from './fixtures/implement-recovery.ts';
 import { launch, pump, start, submit } from './fixtures/implement-tasks.ts';
 
-for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(`rewrite SC1 ordinary evidence ${outcome || 'empty'} cannot falsely complete`, () => {
-  const c = approvalState().c;
-  const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
-  const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome, evidence: 'observed behavior' } } });
-  assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence');
+test('ordinary evidence completes only when every required criterion passes', () => {
+  for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) {
+    const c = approvalState().c;
+    const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
+    const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome, evidence: 'observed behavior' } } });
+    assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence', outcome || 'empty');
+  }
 });
 
 test('user-waived evidence completes and reports the waiver as a limitation', () => {

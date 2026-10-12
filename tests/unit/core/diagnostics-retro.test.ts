@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
+import { before, test } from 'node:test';
 import { dispatchMachine, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Frame, Handlers, Machine, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
@@ -60,6 +60,9 @@ async function hostFrames(on: boolean): Promise<Frame[]> {
 }
 const stateFiles = (dir: string): string[] => fs.readdirSync(dir, { recursive: true, withFileTypes: false }).map((file) => String(file).replaceAll('\\', '/'));
 
+let enabledFrames: Frame[];
+before(async () => { enabledFrames = await hostFrames(true); });
+
 // SECTION: SC5 — enabled frames and the retro await
 
 test('SC5 enters retro after handoff when enabled', async () => {
@@ -79,7 +82,7 @@ test('SC5 retro frame carries instruction only', async () => {
 });
 
 test('SC5 native and write frames carry attest hint', async () => {
-  const frames = await hostFrames(true);
+  const frames = enabledFrames;
   const native = frames.find((frame) => frame.await === 'native'), write = frames.find((frame) => frame.await === 'write');
   assert.deepEqual(native?.data['diagnostics'], { attest: ['tokens', 'durationMs'] });
   assert.deepEqual(write?.data['diagnostics'], { attest: ['tokens', 'durationMs'] });
@@ -108,7 +111,7 @@ test('SC5 invalid retro items are counted', async () => {
 });
 
 test('SC5 other frames carry no diagnostics', async () => {
-  const frames = await hostFrames(true);
+  const frames = enabledFrames;
   for (const frame of frames.filter((item) => item.await !== 'native' && item.await !== 'write')) assert.equal(frame.data['diagnostics'], undefined, frame.await);
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   const base = { ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, diagnosticToggle: () => true };

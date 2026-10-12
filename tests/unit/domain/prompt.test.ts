@@ -16,6 +16,9 @@ test('prompt: fill rejects missing declared values and undeclared value names', 
 
 test('prompt: fill is single-pass and passes undeclared placeholders through', () => {
   assert.equal(fillTemplate('<A> at <file>:L<line> tag <tag>', ['A'], { A: '<A> <tag>' }), '<A> <tag> at <file>:L<line> tag <tag>');
+});
+
+test('prompt: declared variables and body are extracted from the Markdown template', () => {
   const { variables, template } = extractTemplate('# X\n\n## Prompt template\n- `<Name>` — who\n````markdown\nHi <Name>\n````\n');
   assert.deepEqual(variables, ['Name']);
   assert.equal(fillTemplate(template, variables, { Name: 'Ada' }), 'Hi Ada');

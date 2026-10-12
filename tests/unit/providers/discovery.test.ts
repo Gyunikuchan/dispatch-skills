@@ -48,11 +48,14 @@ test('each candidate is probed once per invocation (in-memory cache)', () => {
   assert.equal(discovery.probes, fs.probes.length);
 });
 
-test('glob segments expand newest-first; PATHEXT applies to bare names on Windows', () => {
+test('glob candidates sort newest versions first', () => {
   const fs = table({ '/a/v1/x': 'exec', '/a/v2/x': 'exec' });
   assert.deepEqual(expandCandidate('/a/v*/x', fs), ['/a/v2/x', '/a/v1/x']);
   const versions = table({ '/b/v1.9/x': 'exec', '/b/v1.10/x': 'exec' });
   assert.deepEqual(expandCandidate('/b/v*/x', versions), ['/b/v1.10/x', '/b/v1.9/x']);
+});
+
+test('Windows bare binary candidates use PATHEXT', () => {
   const win: PlatformEnv = { ...env, os: 'win32', path: ['C:\\bin'], pathExt: ['.exe', '.cmd'] };
   const probes = table({ 'C:\\bin\\codex.cmd': 'exec' });
   assert.deepEqual(createDiscovery(SPECS, win, probes).resolve('codex', 'cli'), { status: 'path', path: 'C:\\bin\\codex.cmd' });

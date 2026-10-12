@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
+import { before, describe, test } from 'node:test';
 import { collectRunFacts, renderSessionDiagnostics, type FoldRun, type TimelineStep } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
 import { dispatchMachine, fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { appendEvent, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
@@ -185,44 +185,50 @@ const hostMachine: Machine<HostState> = {
 
 // SECTION: SC10
 
-test('SC10 derives phases gaps and user waits from journal', async () => {
-  const { facts } = await flowRun();
-  assert.deepEqual(facts.phases, [
-    { key: 'plan', name: 'plan', outcome: 'complete', wallMs: 301_000, driverMs: 1_000, hostMs: 300_000, userMs: 0 },
-    { key: 'plan-review', name: 'plan review', outcome: 'complete', wallMs: 80_000, driverMs: 20_000, hostMs: 60_000, userMs: 0 },
-    { key: 'impl', name: 'implementation', outcome: 'complete', wallMs: 985_000, driverMs: 0, hostMs: 85_000, userMs: 900_000 },
-  ]);
-  assert.equal(facts.phases.reduce((total, phase) => total + (phase.wallMs ?? 0), 0), 1_366_000, 'phase walls sum to the run wall');
-  assert.deepEqual(facts.hostGaps, [
-    { await: 'author', ms: 300_000 }, { await: 'rule', ms: 60_000 }, { await: 'native', ms: 30_000 },
-    { await: 'write', ms: 5_000 }, { await: 'write', ms: 5_000 }, { await: 'write', ms: 40_000 }, { await: 'write', ms: 5_000 },
-  ], 'the rejected reply is a note and never splits the author wait; the approval wait is user time');
-  assert.equal(facts.rejectedEvents.length, 1);
-  assert.equal(facts.rejectedEvents[0]?.eventType, 'RULINGS');
-  assert.equal(facts.rejectedEvents[0]?.reason, 'wrong-await at event.type');
-  assert.deepEqual([facts.verb, facts.level, facts.pins, facts.host, facts.outcome], ['plan', 'medium', '2', 'claude', 'complete']);
-  assert.deepEqual(facts.reviews, [{ phase: 'plan-review', round: 1, accepted: 1, rejected: 1 }]);
-});
+describe('completed flow diagnostics', () => {
+  let collected: Awaited<ReturnType<typeof flowRun>>;
+  before(async () => { collected = await flowRun(); });
 
-test('SC10 derives invocation totals and attestations', async () => {
-  const { facts } = await flowRun();
-  const cli = { phase: 'plan-review', surface: 'cli', mode: 'cli' } as const;
-  assert.deepEqual(facts.invocations, [
-    { ...cli, provider: 'codex', model: 'gpt-x', effort: 'high', launched: true, durationMs: 4_000, outcome: 'effort-unsupported' },
-    { ...cli, provider: 'codex', model: 'gpt-x', launched: true, durationMs: 16_000, outcome: 'ok', usage: { input: 600, output: 200, cacheRead: 400 } },
-    { ...cli, provider: 'claude', model: 'opus', launched: true, durationMs: 12_000, outcome: 'ok', usage: { input: 50, output: 300, cacheRead: 2_000, cacheWrite: 100, models: { opus: { input: 40, output: 250, cacheRead: 2_000, cacheWrite: 100 }, haiku: { input: 10, output: 50 } } }, reportedModels: ['opus', 'haiku'] },
-    { ...cli, provider: 'gemini', model: 'default', launched: false, outcome: 'not-found' },
-    { phase: 'impl', provider: 'claude', model: 'sonnet', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 5_000, durationMs: 60_000 },
-    { phase: 'impl', provider: 'claude', model: '—', surface: 'native', launched: true, outcome: 'ok', estimated: true },
-    { phase: 'impl', provider: 'claude', model: 'opus', effort: 'high', mode: 'write', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 1_200, durationMs: 30_000 },
-    { phase: 'impl', provider: 'claude', model: 'sonnet', mode: 'write', surface: 'native', launched: true, outcome: 'failed', estimated: true },
-  ]);
-  assert.equal(facts.repairs, 1, 'a second write attempt is a repair');
-  const report = renderDiagnostics([facts]).text;
-  assert.ok(report.includes('- Measured tokens: 3,650 (input 650 · cache read 2,400 · cache write 100 · output 500) · coverage 2/3'), 'measured totals exclude estimates; unlaunched attempts never count against coverage');
-  assert.ok(report.includes('native and write ~6,200'), 'attested native and write tokens stay a separate estimate');
-  assert.ok(report.includes('| codex | all models | 600 | 400 | — | 200 | 1/2 |'));
-  assert.ok(report.includes('| claude | haiku | 10 | — | — | 50 | — |'), 'per-model counters split the cascade');
+  test('SC10 derives phases gaps and user waits from journal', async () => {
+    const { facts } = collected;
+    assert.deepEqual(facts.phases, [
+      { key: 'plan', name: 'plan', outcome: 'complete', wallMs: 301_000, driverMs: 1_000, hostMs: 300_000, userMs: 0 },
+      { key: 'plan-review', name: 'plan review', outcome: 'complete', wallMs: 80_000, driverMs: 20_000, hostMs: 60_000, userMs: 0 },
+      { key: 'impl', name: 'implementation', outcome: 'complete', wallMs: 985_000, driverMs: 0, hostMs: 85_000, userMs: 900_000 },
+    ]);
+    assert.equal(facts.phases.reduce((total, phase) => total + (phase.wallMs ?? 0), 0), 1_366_000, 'phase walls sum to the run wall');
+    assert.deepEqual(facts.hostGaps, [
+      { await: 'author', ms: 300_000 }, { await: 'rule', ms: 60_000 }, { await: 'native', ms: 30_000 },
+      { await: 'write', ms: 5_000 }, { await: 'write', ms: 5_000 }, { await: 'write', ms: 40_000 }, { await: 'write', ms: 5_000 },
+    ], 'the rejected reply is a note and never splits the author wait; the approval wait is user time');
+    assert.equal(facts.rejectedEvents.length, 1);
+    assert.equal(facts.rejectedEvents[0]?.eventType, 'RULINGS');
+    assert.equal(facts.rejectedEvents[0]?.reason, 'wrong-await at event.type');
+    assert.deepEqual([facts.verb, facts.level, facts.pins, facts.host, facts.outcome], ['plan', 'medium', '2', 'claude', 'complete']);
+    assert.deepEqual(facts.reviews, [{ phase: 'plan-review', round: 1, accepted: 1, rejected: 1 }]);
+  });
+
+  test('SC10 derives invocation totals and attestations', async () => {
+    const { facts } = collected;
+    const cli = { phase: 'plan-review', surface: 'cli', mode: 'cli' } as const;
+    assert.deepEqual(facts.invocations, [
+      { ...cli, provider: 'codex', model: 'gpt-x', effort: 'high', launched: true, durationMs: 4_000, outcome: 'effort-unsupported' },
+      { ...cli, provider: 'codex', model: 'gpt-x', launched: true, durationMs: 16_000, outcome: 'ok', usage: { input: 600, output: 200, cacheRead: 400 } },
+      { ...cli, provider: 'claude', model: 'opus', launched: true, durationMs: 12_000, outcome: 'ok', usage: { input: 50, output: 300, cacheRead: 2_000, cacheWrite: 100, models: { opus: { input: 40, output: 250, cacheRead: 2_000, cacheWrite: 100 }, haiku: { input: 10, output: 50 } } }, reportedModels: ['opus', 'haiku'] },
+      { ...cli, provider: 'gemini', model: 'default', launched: false, outcome: 'not-found' },
+      { phase: 'impl', provider: 'claude', model: 'sonnet', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 5_000, durationMs: 60_000 },
+      { phase: 'impl', provider: 'claude', model: '—', surface: 'native', launched: true, outcome: 'ok', estimated: true },
+      { phase: 'impl', provider: 'claude', model: 'opus', effort: 'high', mode: 'write', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 1_200, durationMs: 30_000 },
+      { phase: 'impl', provider: 'claude', model: 'sonnet', mode: 'write', surface: 'native', launched: true, outcome: 'failed', estimated: true },
+    ]);
+    assert.equal(facts.repairs, 1, 'a second write attempt is a repair');
+    const report = renderDiagnostics([facts]).text;
+    assert.ok(report.includes('- Measured tokens: 3,650 (input 650 · cache read 2,400 · cache write 100 · output 500) · coverage 2/3'), 'measured totals exclude estimates; unlaunched attempts never count against coverage');
+    assert.ok(report.includes('native and write ~6,200'), 'attested native and write tokens stay a separate estimate');
+    assert.ok(report.includes('| codex | all models | 600 | 400 | — | 200 | 1/2 |'));
+    assert.ok(report.includes('| claude | haiku | 10 | — | — | 50 | — |'), 'per-model counters split the cascade');
+  });
+
 });
 
 test('SC10 native receipt records launched model and effort', async () => {
@@ -274,12 +280,7 @@ test('SC10 later run-end render replaces older snapshot', async () => {
   assert.match(text, /- Runs: 3 · /);
 });
 
-test('SC10 collector imports no machines', () => {
-  const source = read(path.join(import.meta.dirname, '../../../skills/dispatch/scripts/core/diagnostics.ts'));
-  const imports = [...source.matchAll(/^import [^;]* from '([^']+)';$/gm)].map((match) => match[1] ?? '');
-  assert.ok(imports.length > 0);
-  assert.deepEqual(imports.filter((specifier) => /machines\/|interpreter/.test(specifier)), []);
-});
+
 
 // SECTION: Heuristic precision
 

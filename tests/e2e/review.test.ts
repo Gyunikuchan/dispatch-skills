@@ -8,6 +8,7 @@ import { acquireGpuLock, fetchModels } from '../../skills/dispatch/scripts/provi
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
 import { createGit } from '../../skills/dispatch/scripts/effects/git.ts';
 import { test } from 'node:test';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import { CLEAN, fixture, until } from '../helpers/e2e.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../skills/dispatch/scripts/core/types.ts';
 
@@ -225,16 +226,16 @@ test('review fix bounded manifests observe non-ignored scratch and retain deleti
   } finally { f.cleanup(); }
 });
 
-test('review fix GPU release awaits a busy guard without blocking timers or losing its lease', async () => {
-  const f = fixture(), file = path.join(f.dir, 'release.lock'); let timer: ReturnType<typeof setTimeout> | undefined;
+test('review fix GPU release awaits a busy guard without blocking the event loop or losing its lease', async () => {
+  const f = fixture(), file = path.join(f.dir, 'release.lock');
   try {
     const release = await acquireGpuLock(1000, file); fs.writeFileSync(`${file}.guard`, 'other critical section');
-    let timerRan = false;
-    timer = setTimeout(() => { timerRan = true; fs.unlinkSync(`${file}.guard`); }, 1200);
+    let callbackRan = false;
+    const unguard = nextTurn().then(() => { callbackRan = true; assert.equal(fs.existsSync(file), true); fs.unlinkSync(`${file}.guard`); });
     const pending = release(); assert.equal(release(), pending);
-    await pending; assert.equal(timerRan, true); assert.equal(fs.existsSync(file), false);
+    await pending; await unguard; assert.equal(callbackRan, true); assert.equal(fs.existsSync(file), false);
     await release(); assert.equal(fs.existsSync(`${file}.guard`), false);
-  } finally { if (timer) clearTimeout(timer); f.cleanup(); }
+  } finally { f.cleanup(); }
 });
 
 test('review code with --context passes semantic intent through CLI to reviewer prompt', async () => {

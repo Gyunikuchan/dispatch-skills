@@ -51,8 +51,11 @@ test('observation boundary: hard limits — outside repo, .git/, secrets, task-s
   assert.ok(!isSecretPath('src/tokenizer.ts'));
 });
 
-test('hotfix: pre-RED restricts production paths; a surviving failure identity withdraws the hotfix', () => {
+test('hotfix: production changes before RED violate the boundary', () => {
   assert.ok(judgeHotfix(input({ preRed: true })).violations.some((item) => item.includes('production path before RED')));
+});
+
+test('hotfix: only the original surviving failure withdraws the fix', () => {
   assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#cap' })).withdrawn, true);
   assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#other' })).withdrawn, false);
 });

@@ -16,7 +16,7 @@ const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
 const gitWith = (names: string) => createGit({ run: async (args) => (args[0] === 'rev-parse' ? '/repo\n' : args[0] === 'diff' ? names : '') });
 
-test('parse-artifact: hash excludes the resolution section, defects are listed, a missing file is EFFECT_FAILED io', async () => {
+test('parse-artifact excludes managed resolution text from the hash and reports plan defects', async () => {
   const dir = tempDir();
   const a = path.join(dir, 'a.plan.md');
   const b = path.join(dir, 'b.plan.md');
@@ -30,7 +30,11 @@ test('parse-artifact: hash excludes the resolution section, defects are listed, 
   assert.match(first.hash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(first.kind, 'plan');
   assert.ok(first.defects.length > 0);
-  const missing = only(await parseArtifact({ kind: 'parse-artifact', id: 'e.3', path: path.join(dir, 'nope.plan.md'), artifact: 'plan' }, fakePorts(), ctx));
+});
+
+test('parse-artifact reports a missing file as EFFECT_FAILED io', async () => {
+  const dir = tempDir();
+  const missing = only(await parseArtifact({ kind: 'parse-artifact', id: 'e.3', path: path.join(dir, 'nope.plan.md'), artifact: 'plan' }, fakePorts(), { runDir: dir, attempt: 1 }));
   assert.deepEqual(missing.type === 'EFFECT_FAILED' && missing.cls, 'io');
 });
 

@@ -123,19 +123,9 @@ test('diagnostics amendment convergence keeps H2 signals and suppresses plain kn
   assert.deepEqual(rounds, []);
 });
 
-test('SC2 heuristic H3 fires', () => {
-  const finding = assertShape(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3')[0], 'review-convergence');
-  assert.match(finding.evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
-});
-
 test('SC2 heuristic H4 fires', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 700, cacheRead: 300, output: 10 } })] })), 'H4')[0], 'token-economy');
   assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
-});
-
-test('SC2 heuristic H5 fires', () => {
-  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } }), invocation(), invocation()] })), 'H5')[0], 'token-economy');
-  assert.match(finding.evidence, /codex gpt-6-sol in code review: 18,100 of 24,780 measured tokens \(73%\)/);
 });
 
 test('SC2 heuristic H6 fires', () => {
@@ -243,7 +233,9 @@ test('heuristic precision screens the review cap as a bounded integer', () => {
 
 test('heuristic precision H3 needs three findings', () => {
   assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 2 }] })), 'H3'), [], 'two findings are too few to judge a rejection share');
-  assert.equal(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3').length, 1);
+  const findings = only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3');
+  assert.equal(findings.length, 1);
+  assert.match(assertShape(findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
 });
 
 test('heuristic precision H5 needs three metered invocations and a share above two over n', () => {
@@ -252,7 +244,9 @@ test('heuristic precision H5 needs three metered invocations and a share above t
   // 13,360 of 20,040 tokens is exactly 2/3, the bound for three invocations.
   const even = invocation({ usage: { input: 4000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
-  assert.equal(only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5').length, 1);
+  const findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
+  assert.equal(findings.length, 1);
+  assert.match(assertShape(findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 18,100 of 24,780 measured tokens \(73%\)/);
 });
 
 test('heuristic precision H6 makes no driver-repeat claim', () => {

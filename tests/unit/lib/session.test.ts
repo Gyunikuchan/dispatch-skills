@@ -24,6 +24,9 @@ test('session-naming: timestamp-slug format without session ID', () => {
   assert.equal(folderName(now, 'Rewrite Dispatch As!'), '20260929T1754Z-rewrite-dispatch-as');
   assert.match(folderName(now, 'x'), FOLDER_NAME);
   assert.equal(truncateSlug('a'.repeat(30) + '-' + 'b'.repeat(30)), 'a'.repeat(30));
+});
+
+test('repository root: ancestor Git metadata identifies the root; absence returns null', () => {
   const existing = new Set([path.resolve('/w/repo/.git')]);
   assert.equal(findRepoRoot('/w/repo/src/deep', (file) => existing.has(path.resolve(file))), path.resolve('/w/repo'));
   assert.equal(findRepoRoot('/nowhere', () => false), null);
@@ -72,7 +75,7 @@ test('session-matching: skips corrupt unrelated directories and matches by manif
   assert.equal(readManifest(salvaged).sessionId, 's4');
 });
 
-test('session-lifecycle: a held claim waits for the winner and reuses its folder', () => {
+test('session-lifecycle: a held claim waits for the winner and reuses its folder', (t) => {
   const { root, temp } = repo();
   const first = initializeSession({ repositoryRoot: root, sessionId: 'c1', sessionTitle: 'demo', now, tempRoot: temp });
   const claim = path.join(path.dirname(first), '.claim-c2');
@@ -82,6 +85,9 @@ test('session-lifecycle: a held claim waits for the winner and reuses its folder
   fs.writeFileSync(path.join(winner, 'manifest.json'), fs.readFileSync(path.join(first, 'manifest.json'), 'utf8').replace(/"c1"/g, '"c2"').replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'));
   assert.equal(initializeSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, tempRoot: temp, waitMs: 50 }), fs.realpathSync(winner));
   fs.rmSync(winner, { recursive: true });
+  let elapsed = 0;
+  t.mock.method(Date, 'now', () => elapsed);
+  t.mock.method(Atomics, 'wait', () => { elapsed += 10; return 'timed-out'; });
   assert.throws(() => initializeSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, tempRoot: temp, waitMs: 30 }), /still claimed/);
 });
 

@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent, Verb } from '../../../skills/dispatch/scripts/core/types.ts';
 import { inferKind, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
-import { approvalState, FP, HASH, PLAN } from './fixtures/implement-recovery.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -22,12 +21,6 @@ function drive(events: readonly Event[]): { state: RootState; effects: Effect[] 
 }
 const handoffDone = (warning: string | null = null): Event => ({ type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning });
 
-test('root implement child rejects plan REVISE with a pointer to AMEND', () => {
-  const parent = approvalState();
-  const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'x.plan.md', slug: 'feature' }, child: parent };
-  assert.match(rootMachine.validate!(state, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check failure' }) ?? '', /AMEND/);
-});
-
 test('root selects each verb', () => {
   assert.equal(rootMachine.project(drive([started('ask')]).state).at, 'ask › preparing');
   assert.deepEqual(play(rootMachine, [started('plan')]).map((frame) => [frame.at, frame.await]), [['plan › author', 'author']]);
@@ -36,10 +29,14 @@ test('root selects each verb', () => {
   assert.deepEqual(review.effects.map((effect) => effect.id), ['review.prepare-review.1']);
 });
 
-test('implement routes into its reducer; design routes into authoring', () => {
+test('implement routes to initial snapshot collection', () => {
   const implementation = drive([started('implement')]);
   assert.deepEqual(implementation.effects.map((effect) => effect.kind), ['snapshot']);
   assert.equal(rootMachine.project(implementation.state).at, 'implement › starting');
+});
+
+test('initial implementation snapshot failure is handed off with its plan context', () => {
+  const implementation = drive([started('implement')]);
   const failed = { type: 'EFFECT_FAILED', effectId: implementation.effects[0]?.id ?? '', cls: 'io', detail: 'snapshot failed' } as const;
   const frame = play(rootMachine, [started('implement'), failed, handoffDone()]).at(-1);
   assert.equal(frame?.await, 'done');
@@ -47,7 +44,9 @@ test('implement routes into its reducer; design routes into authoring', () => {
   assert.equal(frame?.data['summary'], 'initial snapshot failed: io: snapshot failed');
   assert.equal(frame?.data['handoff'], '/tmp/dispatch-skills/s');
   assert.equal((frame?.data['completion'] as Record<string, unknown>)['planPath'], 'src-a-ts.plan.md');
+});
 
+test('design routes to authoring without production effects', () => {
   const design = drive([started('design')]);
   assert.deepEqual(design.effects, []);
   assert.equal(rootMachine.awaitOf(design.state), 'author');
@@ -74,7 +73,7 @@ test('review-report-only-default: standalone review reports unless fix is true',
   assert.equal(mode(true), 'fix');
 });
 
-test('a terminal child emits handoff { terminal: true }, then done carries outcome and destination; EFFECT_FAILED keeps a warning', () => {
+test('a terminal child schedules handoff and preserves its outcome and destination', () => {
   const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   const { state, effects } = drive([started('review'), empty]);
   assert.equal(state.tag, 'handoff');
@@ -82,6 +81,10 @@ test('a terminal child emits handoff { terminal: true }, then done carries outco
   const done = play(rootMachine, [started('review'), empty, handoffDone()]).at(-1);
   assert.equal(done?.at, 'review › done');
   assert.deepEqual(done?.data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
+});
+
+test('handoff failure preserves the child outcome with a warning', () => {
+  const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   const warned = play(rootMachine, [started('review'), empty, { type: 'EFFECT_FAILED', effectId: 'root.handoff.1', cls: 'io', detail: 'EBUSY' }]).at(-1);
   assert.deepEqual(warned?.data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: null, warning: 'handoff failed: io: EBUSY' });
 });

@@ -93,13 +93,6 @@ test('SC1 unknown tag recovers in code and design reviews', () => {
   assert.deepEqual([design?.category, design?.originalTag, design?.scope], ['uncategorized', 'robustness', 'in']);
 });
 
-test('SC1 known tags carry no original tag', () => {
-  const findings = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'perf', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
-  assert.equal(findings.length, 2);
-  assert.equal(findings[1]?.category, 'perf');
-  assert.ok(!('originalTag' in (findings[1] ?? {})));
-});
-
 test('SC1 findings differing only in unknown tag are both kept', () => {
   const findings = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'resilience' })]));
   assert.deepEqual(findings.map((item) => [item.category, item.originalTag]), [['uncategorized', 'robustness'], ['uncategorized', 'resilience']]);
@@ -116,10 +109,12 @@ test('SC1 findings whose unknown tags differ only after the bound are both kept'
   assert.deepEqual(findings.map((item) => [item.category, item.originalTag]), [['uncategorized', prefix], ['uncategorized', prefix]]);
 });
 
-test('SC1 collectFindings keeps original tag', () => {
+test('SC1 collected findings preserve unknown tags and known categories', () => {
   const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'perf', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
   const findings = collectFindings(1, drafts);
+  assert.equal(findings.length, 2);
   assert.equal(findings[0]?.originalTag, 'robustness');
+  assert.equal(findings[1]?.category, 'perf');
   assert.ok(!('originalTag' in (findings[1] ?? {})));
 });
 

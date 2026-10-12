@@ -69,9 +69,12 @@ test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy
   assert.equal(env['OPENAI_API_KEY'], undefined);
 });
 
-test('an offline local server is model-not-loaded without a launch; a remote endpoint skips preflight and trap', async () => {
+test('an offline local server fails as model-not-loaded', async () => {
   const offline = await prepareOpencode(launchReq({ endpoint: 'http://localhost:1234/v1' }), { fetchModels: async () => null, acquireGpuLock: async () => () => {} });
   assert.equal(offline.kind === 'fail' && offline.outcome.cls, 'model-not-loaded');
+});
+
+test('a remote endpoint skips model preflight, GPU locking, and the proxy trap', async () => {
   let touched = false;
   const remote = await prepareOpencode(launchReq({ endpoint: 'https://api.example.com/v1' }), {
     fetchModels: async () => { touched = true; return []; }, acquireGpuLock: async () => { touched = true; return () => {}; },

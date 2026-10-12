@@ -2,16 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { hashes } from '../../../scripts/generate-hashes.ts';
 import { collectRunFacts } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
 import { fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Event, Handlers, JournalLine, Machine } from '../../../skills/dispatch/scripts/core/types.ts';
 import { renderDiagnostics } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
 import { createWaveHandler, finishWave, runWaveWorker, startWave, type WaveContext, type WaveDeps, type WorkerDeps } from '../../../skills/dispatch/scripts/effects/wave.ts';
-import { claudeUsage } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
 import type { LinkFs } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
-import { checkIntegrity, generateSkillHashes, MANIFEST_NAME, readVersion } from '../../../skills/dispatch/scripts/lib/integrity.ts';
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, Invocation, LaunchRequest, ModeId, ProcessResult, ProviderId, ProviderSpec, RunOutcome, RunResult } from '../../../skills/dispatch/scripts/providers/types.ts';
@@ -332,26 +329,3 @@ test('SC4 note bypasses machine apply', async () => {
 });
 
 // SECTION: Usage and build identity
-
-test('SC4 claude usage keeps per-model counters', () => {
-  const usage = claudeUsage(JSON.stringify({ type: 'result', modelUsage: {
-    'claude-sonnet-4-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 40 },
-    'claude-haiku-4-5': { inputTokens: 5, outputTokens: 1 },
-  } }));
-  assert.deepEqual(usage?.models, { 'claude-sonnet-4-5': { input: 100, output: 20, cacheRead: 300, cacheWrite: 40 }, 'claude-haiku-4-5': { input: 5, output: 1 } });
-  assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite], [105, 21, 300, 40]);
-  assert.deepEqual(usage?.actualModels, ['claude-sonnet-4-5', 'claude-haiku-4-5']);
-});
-
-test('SC4 integrity ignores version key', () => {
-  const root = tempDir(), skill = path.join(root, 'skills/dispatch');
-  fs.mkdirSync(skill, { recursive: true });
-  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.7.1' }));
-  assert.deepEqual(hashes(root), []);
-  const manifest = JSON.parse(fs.readFileSync(path.join(skill, MANIFEST_NAME), 'utf8')) as Record<string, string>;
-  assert.deepEqual(manifest, { $version: '0.7.1', ...generateSkillHashes(skill) });
-  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
-  assert.equal(readVersion(skill), '0.7.1');
-  assert.deepEqual(hashes(root, true), []);
-});

@@ -11,7 +11,7 @@ const started: RunStartedEvent = {
 };
 const prepared: Event = { type: 'REVIEW_PREPARED', effectId: 'ask.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0' } };
 
-test('ask: preparing → wave → done { claims, failed }', () => {
+test('ask: successful review returns attributed claims and transport coverage', () => {
   const effect = askMachine.step(askMachine.initial(), started).effects[0];
   assert.deepEqual(effect?.kind === 'prepare-review' && [effect.id, effect.review['kind'], effect.review['target']], ['ask.prepare-review.1', 'ask', 'Where is the lock released?']);
   const frames = play(askMachine, [started, prepared, { type: 'WAVE_DONE', effectId: 'ask.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success', claim: 'core/lock.ts:L40' }], findings: [] }]);
@@ -45,7 +45,7 @@ test('ask: zero resolved reviewers fails instead of completing', () => {
 });
 
 
-test('rewrite SC3 ask consumes started and finished waves and labels coverage unknown', () => {
+test('ask: a started wave schedules completion and returns raw captures with unknown coverage', () => {
   let r = askMachine.step(askMachine.initial(), started); r = askMachine.step(r.state, prepared);
   r = askMachine.step(r.state, { type: 'WAVE_STARTED', effectId: r.effects[0]!.id, waveKey: 'ask.wave.1', attempt: 1, roster: [], native: [], early: [], claimPath: 'claim', inputPath: 'input' });
   assert.equal(r.effects[0]?.kind, 'wave-finish');

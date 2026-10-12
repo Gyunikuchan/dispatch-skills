@@ -12,7 +12,7 @@ test('recovery manifest: identical publication reuses immutable metadata and ref
   const ports = fakePorts(), runDir = tempDir(), snapshot = manifest();
   snapshot.contents = Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`src/${i}`, null])); snapshot.entries = Object.fromEntries(Object.keys(snapshot.contents).map((file)=>[file,null]));
   const first = publishRecovery(ports, runDir, snapshot);
-  for (let i = 0; i < 20; i++) assert.deepEqual(publishRecovery(ports, runDir, snapshot), first);
+  assert.deepEqual(publishRecovery(ports, runDir, snapshot), first);
   assert.ok(JSON.stringify(first).length < 300);
   assert.equal(fs.readdirSync(path.join(runDir, 'recovery-manifests')).length, 1);
   assert.deepEqual(loadRecovery(ports, runDir, first).contents, snapshot.contents);

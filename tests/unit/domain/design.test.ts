@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { governedDesignText, parseDesign } from '../../../skills/dispatch/scripts/domain/design.ts';
+import { asParsedDesign, designScopeGrew, governedDesignText, parseDesign } from '../../../skills/dispatch/scripts/domain/design.ts';
+
+import { design } from '../machines/fixtures/design.ts';
 
 const detail = (id: string) => `### ${id} Step
 - Outcome: ${id} outcome delivered
@@ -77,15 +79,27 @@ test('design: parses graph, details, and Execution Status', () => {
   assert.equal(design.executionStatus?.nextAction, 'implement:I02');
 });
 
-test('design: graph lint catches cycles, unknown prerequisites, and a wrong Increments count', () => {
+test('design: graph cycles are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I01 | 1 | Parser | none |', '| I01 | 1 | Parser | I02 |')).includes('cycle'));
+});
+
+test('design: unknown increment prerequisites are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I02 | 2 | Loader | I01 |', '| I02 | 2 | Loader | I07 |')).includes('missing-prerequisite'));
+});
+
+test('design: summary increment count must match the graph', () => {
   assert.ok(codes(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3')).includes('summary-label'));
 });
 
-test('design: details and Execution Status lint', () => {
+test('design: increment details require a rollback boundary', () => {
   assert.ok(codes(DESIGN.replace('- Rollback boundary: revert I02\n', '')).includes('missing-increment-field'));
+});
+
+test('design: unknown execution states are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I02 | ready |', '| I02 | pending |')).includes('execution-status'));
+});
+
+test('design: final integration section is required', () => {
   assert.ok(codes(DESIGN.replace('## Final Integration\n', '## Finale\n')).includes('missing-section'));
 });
 
@@ -97,7 +111,51 @@ test('design: governed text excludes Execution Status and the resolution section
   assert.ok(governed.includes('## Final Integration'));
 });
 
-test('design: Execution Status needs a Next Action and unique rows', () => {
+test('design: Execution Status requires a Next Action', () => {
   assert.ok(codes(DESIGN.replace('Next Action: implement:I02\n', '')).includes('execution-status'));
+});
+
+test('design: Execution Status rejects duplicate increment rows', () => {
   assert.ok(codes(DESIGN.replace('| I02 | ready | next | implement:I02 |', '| I02 | ready | next | implement:I02 |\n| I02 | ready | again | implement:I02 |')).includes('execution-status'));
+});
+
+test('journal design admission rejects malformed objectives and dependency graphs', () => {
+  assert.ok(asParsedDesign(design));
+  const rows = design.increments;
+  const invalid = [
+    { ...design, box: {} }, { ...design, box: { 'TL;DR': ' ' } },
+    { ...design, increments: [{ ...rows[0]!, paths: [] }, rows[1]!] },
+    { ...design, increments: [rows[0]!, { ...rows[1]!, id: 'I01' }] },
+    { ...design, increments: [rows[0]!, { ...rows[1]!, priority: 1 }] },
+    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] },
+    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] },
+    { ...design, increments: [rows[1]!] },
+  ];
+  for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
+});
+
+test('designScopeGrew compares validation case-insensitively', () => {
+  const before = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', validation: 'npm test -- a' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const sameCased = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- a' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const changedVal = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- a and b' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  assert.equal(designScopeGrew(before, sameCased), false);
+  assert.equal(designScopeGrew(before, changedVal), true);
 });

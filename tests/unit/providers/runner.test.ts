@@ -76,7 +76,7 @@ test('delegates-credential-stripping: the delegate env keeps the whitelist and d
   assert.deepEqual(Object.keys(env).sort(), ['HOME', 'HTTPS_PROXY', 'PATH']);
 });
 
-test('delegates-sensitive-file-guardrail: guardrail prepended; symlinked sensitive paths match by realpath', async () => {
+test('delegates-sensitive-file-guardrail: launched prompts prepend the guardrail to the request', async () => {
   const h = harness(posix);
   const run = runDelegate(claude, req, 'cli', h.ports);
   await flush();
@@ -85,6 +85,9 @@ test('delegates-sensitive-file-guardrail: guardrail prepended; symlinked sensiti
   const prompt = h.launches[0]?.argv[2] ?? '';
   assert.ok(prompt.startsWith(GUARDRAIL_HEADER));
   assert.ok(prompt.endsWith('Review it'));
+});
+
+test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked by realpath', () => {
   assert.equal(findSensitiveMatch('/repo/notes.txt', () => '/home/u/.ssh/id_rsa'), 'file');
   assert.equal(findSensitiveMatch('/repo/link', () => '/home/u/.aws/config'), 'dir');
   assert.equal(findSensitiveMatch('/repo/my-token-service/app.ts', (f) => f), null);
@@ -132,7 +135,7 @@ test('timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output 
   assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at \/r\/log/);
 });
 
-test('timeout on Windows launches taskkill /T /F; output over the cap sets truncated → buffer', async () => {
+test('timeout on Windows kills the process tree with taskkill /T /F', async () => {
   assert.deepEqual(killArgv('win32', 50), ['taskkill', '/pid', '50', '/T', '/F']);
   const h = harness(windows);
   const run = runDelegate(claude, req, 'cli', h.ports);
@@ -142,6 +145,9 @@ test('timeout on Windows launches taskkill /T /F; output over the cap sets trunc
   assert.deepEqual(h.signals, []);
   h.finish(ok({ exit: 1, stdout: '' }));
   assert.equal((await run).result?.timedOut, true);
+});
+
+test('output over the cap fails as buffer even when the process exits', async () => {
   const capped = harness(posix);
   const second = runDelegate(claude, req, 'cli', capped.ports);
   await flush();
@@ -169,9 +175,16 @@ test('batch launchers reject % arguments because cmd.exe expands them despite es
 });
 
 
-for (const limit of ['timedOut', 'truncated'] as const) test(`rewrite SC4 parsed success retains ${limit} failure`, async () => {
-  const h = harness(posix); const pending = runDelegate(claude, req, 'cli', h.ports); await flush(); h.finish(ok({ [limit]: true }));
-  const result = await pending; assert.equal(result.outcome.status, 'fail'); assert.equal(result.outcome.status === 'fail' && result.outcome.cls, limit === 'timedOut' ? 'timeout' : 'buffer');
+test('parsed success retains process timeout and truncation failures', async () => {
+  for (const [limit, expected] of [['timedOut', 'timeout'], ['truncated', 'buffer']] as const) {
+    const h = harness(posix);
+    const pending = runDelegate(claude, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ [limit]: true }));
+    const result = await pending;
+    assert.equal(result.outcome.status, 'fail', limit);
+    assert.equal(result.outcome.status === 'fail' && result.outcome.cls, expected, limit);
+  }
 });
 test('rewrite SC4 native config selectors survive while secrets remain stripped', () => {
   assert.deepEqual(sanitizeEnv({ OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli', OPENCODE_API_KEY: 'secret' }), { OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli' });

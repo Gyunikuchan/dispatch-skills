@@ -32,6 +32,8 @@ const applied = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', cluster
 const freshFix = (kind: 'code' | 'plan' = 'code') => drive([started({ argument: kind === 'plan' ? 'x.plan.md' : '', overrides: { kind } }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]).state;
 const failApply = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'failed' })) : [] });
 
+// SECTION: Fix attempts and receipt recovery
+
 test('bounded-recovery: failed applies consume all three attempts and retain findings', () => {
   let state = freshFix();
   for (const budget of [3, 2, 1]) {
@@ -160,6 +162,8 @@ test('bounded-recovery: exhaustion names pending work as well as exhausted findi
   assert.equal(done.tag, 'failed');
   assert.match(String(reviewMachine.project(done).data['summary']), /exhausted.*R1-F001.*pending.*R1-F002/);
 });
+
+// SECTION: Verification and optional fixes
 
 test('review-report-only-default: report mode records acceptance without fix', () => {
   const { state, effects } = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]);

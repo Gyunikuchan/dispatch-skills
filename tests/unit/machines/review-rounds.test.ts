@@ -94,14 +94,6 @@ test('disputes-only round when nothing was fixed; affinity carries the rejection
   });
 });
 
-test('accept-by-omission closes a carried rejection the reviewer did not re-raise', () => {
-  const events = [started({ fix: true }), prepared(1), waveDone(1, [finding('R1-F001')]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } } as Event, prepared(2), waveDone(2, [])];
-  const { state } = drive(events);
-  assert.equal(state.tag, 'settled');
-  assert.equal('c' in state && state.c.findings.find((entry) => entry.id === 'R1-F001')?.status, 'closed-by-reviewer');
-  assert.deepEqual(state.tag === 'settled' && state.exit.rejections, ['R1-F001']);
-});
-
 test('orchestrator closure below threshold at the cap', () => {
   const should = finding('R1-F001', { severity: 'SHOULD' });
   const events = [
@@ -136,6 +128,7 @@ for (const coverage of ['failed', 'missing', 'clean'] as const) test(`rewrite SC
   const { state } = drive(events);
   assert.equal(state.tag, coverage === 'clean' ? 'settled' : 'failed');
   assert.equal('c' in state && state.c.findings[0]?.status, coverage === 'clean' ? 'closed-by-reviewer' : 'pending-rejection');
+  if (coverage === 'clean') assert.deepEqual(state.tag === 'settled' && state.exit.rejections, ['R1-F001']);
 });
 
 test('rewrite SC1 all-failed review reports coverage failure', () => {

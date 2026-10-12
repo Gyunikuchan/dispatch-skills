@@ -16,7 +16,7 @@ test('shipped code has no .mjs or nested package.json', () => {
   assert.deepEqual(checkRuntimeVersion(scanOverlay()), []);
 });
 
-test('violations name the rule and the fix', () => {
+test('legacy JavaScript and nested packages identify the runtime rule and corrective action', () => {
   const errors = checkRuntimeVersion([{ path: 'skills/dispatch/scripts/guard.mjs', text: '' }, { path: 'skills/dispatch/package.json', text: '{}' }]);
   assert.deepEqual(errors, [
     'runtime rule: skills/dispatch/scripts/guard.mjs is .mjs; shipped code is TypeScript run by type stripping, so rename it to .ts',

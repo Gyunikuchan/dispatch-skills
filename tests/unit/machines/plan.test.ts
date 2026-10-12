@@ -78,29 +78,22 @@ test('plan: default plan path is scoped to sessionDir', () => {
   }
 });
 
-test('slugOf keeps the leading words of an objective that mentions a path', () => {
-  const slug = slugOf('Fix review tags; see skills/dispatch/scripts/domain/report.ts and opencode usage parsers');
-  assert.ok(slug.startsWith('fix-review-tags-see-skills-dispatch'), slug);
+test('objective slugs retain leading words when the objective mentions a path', () => {
+  for (const [objective, prefix] of [
+    ['Fix review tags; see skills/dispatch/scripts/domain/report.ts and opencode usage parsers', 'fix-review-tags-see-skills-dispatch'],
+    ['Update documentation in docs/README.md', 'update-documentation-in-docs'],
+  ]) {
+    const slug = slugOf(objective!);
+    assert.ok(slug.startsWith(prefix!), slug);
+  }
 });
 
-test('slugOf slugs the basename of a bare path', () => {
-  assert.equal(slugOf('skills/dispatch/scripts/domain/report.ts'), 'report-ts');
-});
-
-test('slugOf slugs the basename of .plan.md and .design.md paths', () => {
-  assert.equal(slugOf('work/session/add-a-cache.plan.md'), 'add-a-cache');
-  assert.equal(slugOf('work/session/add-a-cache.design.md'), 'add-a-cache');
-});
-
-test('slugOf slugs the basename of a Windows backslash path', () => {
-  assert.equal(slugOf('C:\\work\\session\\foo-bar.design.md'), 'foo-bar');
-});
-
-test('slugOf keeps the leading words of an objective that ends in a markdown path', () => {
-  const slug = slugOf('Update documentation in docs/README.md');
-  assert.ok(slug.startsWith('update-documentation-in-docs'), slug);
-});
-
-test('slugOf slugs the basename of a .design.md path in a directory with spaces', () => {
-  assert.equal(slugOf('C:\\Users\\John Smith\\work\\foo-bar.design.md'), 'foo-bar');
+test('bare path slugs use the basename across separators, spaces, and artifact extensions', () => {
+  for (const [input, expected] of [
+    ['skills/dispatch/scripts/domain/report.ts', 'report-ts'],
+    ['work/session/add-a-cache.plan.md', 'add-a-cache'],
+    ['work/session/add-a-cache.design.md', 'add-a-cache'],
+    ['C:\\work\\session\\foo-bar.design.md', 'foo-bar'],
+    ['C:\\Users\\John Smith\\work\\foo-bar.design.md', 'foo-bar'],
+  ]) assert.equal(slugOf(input!), expected, input);
 });

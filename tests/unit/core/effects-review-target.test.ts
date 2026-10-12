@@ -43,10 +43,12 @@ test('change receipt: artifact captures an allowed fix and parks verification ed
   fs.appendFileSync(f.target, '\nExternal edit\n'); const result = (await f.run())[0]; assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'changed');
 });
 
-for (const malformed of [null, '{}', '{bad']) test(`review-target fails closed on missing or malformed binding ${malformed}`, async () => {
-  const f = artifact(); if (malformed === null) fs.rmSync(f.manifestPath); else fs.writeFileSync(f.manifestPath, malformed);
-  const result = (await f.run())[0]; assert.equal(result?.type, 'EFFECT_FAILED');
-  assert.match(result?.type === 'EFFECT_FAILED' ? result.detail : '', /target-changed/);
+test('review-target fails closed on missing or malformed bindings', async () => {
+  for (const malformed of [null, '{}', '{bad']) {
+    const f = artifact(); if (malformed === null) fs.rmSync(f.manifestPath); else fs.writeFileSync(f.manifestPath, malformed);
+    const result = (await f.run())[0]; assert.equal(result?.type, 'EFFECT_FAILED');
+    assert.match(result?.type === 'EFFECT_FAILED' ? result.detail : '', /target-changed/);
+  }
 });
 
 test('review-target code permits fix paths but refuses outside index worktree and ref drift', async () => {
@@ -139,14 +141,11 @@ function regeneratedManifest(valid: boolean, index: { staged?: string[]; deleted
   return createCheckReviewTarget({ cwd: root, git })({ kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '' }, manifestPath, allowedPaths: [script] }, fakePorts(), { runDir: path.join(root, 'run'), attempt: 1 });
 }
 
-test('review-target admits a verified regenerated hash manifest for a ruled skill path', async () => {
-  const result = (await regeneratedManifest(true))[0];
-  assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'expected', JSON.stringify(result));
-});
-
-test('review-target admits a verified hash manifest carrying $version metadata', async () => {
-  const result = (await regeneratedManifest(true, {}, { $version: '0.7.0' }))[0];
-  assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'expected', JSON.stringify(result));
+test('review-target admits verified regenerated hash manifests with optional version metadata', async () => {
+  for (const metadata of [{}, { $version: '0.7.0' }]) {
+    const result = (await regeneratedManifest(true, {}, metadata))[0];
+    assert.equal(result?.type === 'REVIEW_TARGET_CHECKED' && result.result, 'expected', JSON.stringify(result));
+  }
 });
 
 test('review-target keeps an invalid regenerated hash manifest as drift', async () => {
@@ -154,12 +153,9 @@ test('review-target keeps an invalid regenerated hash manifest as drift', async 
   assert.ok(result?.type === 'REVIEW_TARGET_CHECKED' && result.result === 'changed' && result.notice?.paths.includes('skill/skill-hashes.json'), JSON.stringify(result));
 });
 
-test('review-target keeps a staged hash manifest as drift despite a valid working-tree copy', async () => {
-  const result = (await regeneratedManifest(true, { staged: ['skill/skill-hashes.json'] }))[0];
-  assert.ok(result?.type === 'REVIEW_TARGET_CHECKED' && result.result === 'changed' && result.notice?.paths.includes('skill/skill-hashes.json'), JSON.stringify(result));
-});
-
-test('review-target keeps a staged hash manifest deletion as drift despite a valid working-tree copy', async () => {
-  const result = (await regeneratedManifest(true, { staged: ['skill/skill-hashes.json'], deleted: ['skill/skill-hashes.json'] }))[0];
-  assert.ok(result?.type === 'REVIEW_TARGET_CHECKED' && result.result === 'changed' && result.notice?.paths.includes('skill/skill-hashes.json'), JSON.stringify(result));
+test('review-target keeps staged hash manifest changes as drift despite a valid working-tree copy', async () => {
+  for (const deleted of [[], ['skill/skill-hashes.json']]) {
+    const result = (await regeneratedManifest(true, { staged: ['skill/skill-hashes.json'], deleted }))[0];
+    assert.ok(result?.type === 'REVIEW_TARGET_CHECKED' && result.result === 'changed' && result.notice?.paths.includes('skill/skill-hashes.json'), JSON.stringify(result));
+  }
 });

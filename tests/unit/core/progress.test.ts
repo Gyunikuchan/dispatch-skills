@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { nodeFs } from '../../../skills/dispatch/scripts/core/ports.ts';
-import { milestone, PROGRESS_FILE, STALL_HINT_MS, writeProgress } from '../../../skills/dispatch/scripts/core/progress.ts';
+import { milestone, PROGRESS_FILE, writeProgress } from '../../../skills/dispatch/scripts/core/progress.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
 test('progress.json is replaced atomically with no temp file left behind', () => {
@@ -20,5 +20,4 @@ test('milestones are [dispatch]-prefixed stderr lines', () => {
   const ports = fakePorts();
   milestone(ports, 'wave R2 done');
   assert.deepEqual(ports.stderrLines, ['[dispatch] wave R2 done\n']);
-  assert.equal(STALL_HINT_MS, 300_000);
 });

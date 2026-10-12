@@ -16,7 +16,7 @@ test('review-rounds-policy: threshold is SHOULD below the cap and MUST at or aft
   assert.deepEqual([1, 2, 3, 4].map((round) => threshold(round, 3)), ['SHOULD', 'SHOULD', 'MUST', 'MUST']);
 });
 
-test('review-rounds-policy: next round trigger and scope table', () => {
+test('review-rounds-policy: fixes and pending rejections select the next review scope', () => {
   const rows: [string, Parameters<typeof nextRound>[0], ReturnType<typeof nextRound>][] = [
     ['fixed SHOULD below cap → full', { round: 1, cap: 3, findings: [f('R1-F001', 'SHOULD', 'fixed')] }, { run: true, round: 2, scope: 'full', threshold: 'SHOULD', carry: [] }],
     ['CONSIDER only → stop', { round: 1, cap: 3, findings: [f('R1-F001', 'CONSIDER', 'fixed')] }, { run: false }],
@@ -36,10 +36,16 @@ test('review-rounds-policy: missing policy → one target, one round; zero disab
   assert.deepEqual(roundsPolicy({ rounds: { low: 1, high: 3 }, targets: { low: 2 } }, 'max'), { enabled: true, cap: 3, targets: 2, configured: true });
 });
 
-test('review-rounds-policy: closures, affinity, and accept-by-omission', () => {
+test('review-rounds-policy: orchestrator closes only CONSIDER rejections below the cap', () => {
   const findings = [f('R1-F001', 'CONSIDER', 'pending-rejection'), f('R1-F002', 'MUST', 'pending-rejection')];
   assert.deepEqual(orchestratorClosures({ round: 1, cap: 3, findings }), [{ id: 'R1-F001', closedBy: 'orchestrator' }]);
+});
+
+test('review-rounds-policy: responsible reviewer omission closes only findings not re-raised', () => {
   assert.deepEqual(acceptByOmission(['R1-F002', 'R1-F003'], ['R1-F003'], ['R1-F002', 'R1-F003']), [{ id: 'R1-F002', closedBy: 'reviewer' }]);
+});
+
+test('review-rounds-policy: affinity assigns sources to available reviewers and substitutes', () => {
   assert.deepEqual(assignAffinity(
     [{ id: 'R1-F001', source: 'codex[0]' }, { id: 'R1-F002', source: 'agy[0]' }, { id: 'R1-F003', source: 'copilot[0]' }],
     [{ slot: 'codex[0]' }, { slot: 'claude[0]', substitutesFor: 'agy[0]' }],

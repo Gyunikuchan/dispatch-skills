@@ -17,9 +17,12 @@ test('root-aware hash fixture recognizes contract and catches drift', () => {
   assert.deepEqual(hashes(root, true), []);
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(skill, 'skill-hashes.json'), 'utf8'))), ['SKILL.md']);
 });
-test('root-aware terminology fixture reports actionable paths while skipping code and glossary', () => {
+test('toolingRoot defaults and requires a directory value', () => {
   assert.equal(toolingRoot([]), '.'); assert.equal(toolingRoot(['--check']), '.'); assert.equal(toolingRoot(['--check', '--root', '.']), '.');
   for (const args of [['--root'], ['--root', '--check'], ['--check', '--root']]) assert.throws(() => toolingRoot(args), /--root requires a directory value/);
+});
+
+test('root-aware terminology fixture reports actionable paths while skipping code and glossary', () => {
   const root = tempDir(), skill = path.join(root, 'skills/dispatch'); fs.mkdirSync(path.join(skill, 'references'), { recursive: true });
   fs.writeFileSync(path.join(skill, 'references/glossary.md'), '| Term | Banned synonym |\n|---|---|\n| subagent | sub-agent |\n');
   fs.writeFileSync(path.join(skill, 'SKILL.md'), 'Use a sub-agent.\n`sub-agent`\n```\nsub-agent\n```\n');

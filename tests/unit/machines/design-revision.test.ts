@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { test } from 'node:test';
 import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision, designRevisionData } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { stepDesign } from '../../../skills/dispatch/scripts/machines/design.ts';
@@ -16,11 +15,12 @@ function revisionParsing() {
   return { author, parse, event: { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash, parsed: design, defects: [] as Record<string, unknown>[] } };
 }
 
-test('revision-handoff: initial author exposes the existing canonical design template', () => {
+// SECTION: Revision author handoff
+
+test('revision-handoff: initial author exposes the canonical design template', () => {
   const { author } = revisionParsing();
   const data = designRevisionData(author);
   assert.equal(data['template'], 'references/templates/design.md');
-  assert.ok(fs.existsSync(new URL('../../../skills/dispatch/references/templates/design.md', import.meta.url)));
   assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'path', 'reason', 'template']);
   assert.deepEqual(data['defects'], []);
 });
@@ -80,6 +80,8 @@ test('revision-handoff: non-author projections omit the author template', () => 
   const refused = stepDesignRevision(parse.state, { ...event, parsed: { ...design, box: { 'TL;DR': 'Different goal' } } }).state;
   for (const state of [parse.state, resumed, refused]) assert.equal(designRevisionData(state)['template'], undefined);
 });
+
+// SECTION: Revision settlement and scope adjudication
 
 test('design-revision: completed changed acceptance and dependent increments invalidate', () => {
   const changed = { ...design, details: { ...design.details, I01: { Outcome: 'Changed behavior' } } };

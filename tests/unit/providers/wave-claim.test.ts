@@ -101,13 +101,16 @@ test('a live pid with a heartbeat stale past startedAt + timeoutMs + 30 s → at
   assert.deepEqual(arbitrate(claims(fs, new Set([77]), TIMEOUT), RUN, 'e1', 1, TIMEOUT), { action: 'reattach', attempt: 1 });
 });
 
-test('earlier attempts’ files are ignored; the worker self-enforces its deadline', async () => {
+test('a new worker attempt ignores earlier outcome files', async () => {
   const fs = seeded();
   fs.writeAtomic(outcomePath(RUN, 'e1', 1, 'codex[0]'), JSON.stringify({ state: 'failed', slot: 'codex[0]', cls: 'quota', reason: 'old', records: [] }));
   const fresh = worker(fs);
   const result = await runWaveWorker(RUN, 'e1', 2, fresh);
   assert.equal(result.launched && result.finals[0]?.state, 'success');
   assert.equal(JSON.parse(fs.readText(outcomePath(RUN, 'e1', 1, 'codex[0]')) ?? '{}').reason, 'old');
+});
+
+test('an expired worker deadline prevents delegate launches', async () => {
   let now = 0;
   const late = worker(seeded(), () => { const value = now; now += TIMEOUT; return value; });
   const timed = await runWaveWorker(RUN, 'e1', 1, late);

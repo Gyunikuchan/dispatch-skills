@@ -63,6 +63,8 @@ const defects = (source: string) => {
 const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
 const parsed = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result.plan; };
 
+// SECTION: Readable plan syntax
+
 test('readable plan syntax: nested and mixed entries preserve executable contracts and source lines', () => {
   const plain = parsed(PLAN), nested = parsed(readable());
   assert.deepEqual(nested.changes, plain.changes);
@@ -123,6 +125,8 @@ test('readable plan syntax: invariant-only notes stay single and unlabeled detai
   assert.equal(parsed(continued).changes[0]?.note, '  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.');
 });
 
+// SECTION: Plan parsing and validation
+
 test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, FINAL, traceability', () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));
@@ -181,7 +185,7 @@ test('implement-plan-lint: a fence line with an info string inside a fence keeps
   assert.deepEqual(lines.map((entry) => entry.fenced), [true, true, true, true, false]);
 });
 
-test('implement-plan-lint: fenced automated commands, bad Pre-existing, blank review fields, blank infeasibility fail', () => {
+test('implement-plan-lint: rejects fenced automated commands, invalid Pre-existing, and blank review fields', () => {
   const fenced = PLAN.replace('- `npm run lint`', '```sh\nnpm run lint\n```');
   assert.ok(defects(fenced).includes('automated-command'));
   assert.ok(defects(PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - Pre-existing: maybe\n')).includes('criterion-format'));
@@ -194,6 +198,8 @@ test('implement-plan-lint: a fence inside an HTML comment does not swallow later
   assert.equal(lines[3]?.fenced, false);
   assert.equal(lines[3]?.text, '## Real');
 });
+
+// SECTION: Task graph and ownership
 
 const TASKS = `# Shared contract with consumers
 

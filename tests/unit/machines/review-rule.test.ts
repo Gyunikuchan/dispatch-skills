@@ -26,10 +26,13 @@ test('ruling-reason: reject and downgrade require a nonblank string before consu
       assert.match(reviewMachine.validate?.(state, event) ?? '', /reason.*nonblank/);
       assert.deepEqual(reviewMachine.step(state, event).state, state);
     }
-    const event = rulings({ 'R1-F001': { ruling, reason: 'Evidence in D2', severity: 'CONSIDER' } });
+    const reason = ruling === 'reject' ? 'recorded decision D2; no new evidence' : 'Evidence in D2';
+    const event = rulings({ 'R1-F001': { ruling, reason, severity: 'CONSIDER' } });
     assert.equal(reviewMachine.validate?.(state, event), null);
     const next = reviewMachine.step(state, event).state;
-    assert.equal('c' in next && next.c.findings[0]?.resolution, 'Evidence in D2');
+    assert.equal(next.tag, 'settled');
+    assert.equal('c' in next && next.c.findings[0]?.resolution, reason);
+    assert.equal('c' in next && next.c.findings[0]?.status, ruling === 'reject' ? 'rejected' : 'downgraded');
     assert.deepEqual(drive([event], state), next);
   }
 });
@@ -66,14 +69,6 @@ test('review-needs-user-accept: a user-accepted finding joins the fix batch', ()
   const fix = drive([{ type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'accept', quote: 'yes', fix: { affectedPaths: ['src/a.ts'], dependsOn: [], verification: [] } } } }], state);
   assert.equal(fix.tag, 'fix');
   assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
-});
-
-test('review-recorded-decision: a finding contradicting a recorded decision is host-ruled reject and recorded with its reason', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001', { severity: 'CONSIDER' })]),
-    rulings({ 'R1-F001': { ruling: 'reject', reason: 'recorded decision D2; no new evidence' } })]);
-  assert.equal(state.tag, 'settled');
-  const recorded = 'c' in state ? state.c.findings[0] : undefined;
-  assert.deepEqual([recorded?.status, recorded?.resolution], ['rejected', 'recorded decision D2; no new evidence']);
 });
 
 test('regression → decide:escalation → escalated on stop', () => {

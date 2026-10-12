@@ -32,7 +32,15 @@ test('a never-awaiting machine faults at MAX_STEPS with exit 2, the baseline jou
   const runDir = tempDir();
   appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
   const journal = bytes(runDir);
+  // NOTE: the loop guard needs journal semantics, while journal.test.ts covers physical writes.
+  const file = journalPath(runDir), real = { ...ports.fs };
+  let buffered = journal;
+  ports.fs.appendDurable = (target, text) => target === file ? void (buffered = Buffer.concat([buffered, Buffer.from(text)])) : real.appendDurable(target, text);
+  ports.fs.readChunks = function* (target, size) { if (target === file) yield buffered; else yield* real.readChunks(target, size); };
+  ports.fs.size = (target) => target === file ? buffered.length : real.size(target);
+  ports.fs.truncate = (target, length) => target === file ? void (buffered = buffered.subarray(0, length)) : real.truncate(target, length);
   const result = await send({ runDir, machine: neverAwaitingMachine, handlers: fakeHandlers, ports });
+  fs.writeFileSync(file, buffered);
   assert.equal(result.exitCode, 2);
   assert.equal(result.frame?.await, 'done');
   assert.deepEqual(result.frame?.data, { outcome: 'fault' });

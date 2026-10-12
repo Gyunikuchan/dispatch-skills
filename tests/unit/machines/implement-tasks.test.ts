@@ -146,7 +146,7 @@ test('tasks: failure retry keeps the prior draft and rewinds a rejected candidat
   assert.deepEqual(checkouts.map((effect) => { const input = effect.kind === 'checkout' ? effect.input as Readonly<Record<string, unknown>> : {}; return [input['revision'], input['keep'], input['reset']]; }), [[failed.input, true, undefined]]);
 });
 
-test('tasks: failure cascade relaunches the next model in a reset worktree without a new attempt', () => {
+test('tasks: writer failure resets the worktree and advances the model and attempt', () => {
   const sim: Sim = {};
   let { result, trace } = start(1, sim);
   result = launch(result, sim, trace);

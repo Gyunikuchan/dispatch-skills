@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/domain/plan.ts';
-import { parseDesign } from '../../../skills/dispatch/scripts/domain/design.ts';
+import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/domain/plan.ts';
+import { parseDesign } from '../../skills/dispatch/scripts/domain/design.ts';
 
-const root = new URL('../../../skills/dispatch/references/templates/', import.meta.url);
+const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md',
   'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md',
@@ -105,7 +105,7 @@ test('templates: plan review prompt requires inspecting task dependencies, owner
 });
 
 test('templates: every tag a review prompt offers is accepted by the validator and its schema', async () => {
-  const { REVIEW_TAGS } = await import('../../../skills/dispatch/scripts/domain/report.ts');
+  const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/domain/report.ts');
   const enumOf = (node: unknown): string[] | null => {
     if (!node || typeof node !== 'object') return null;
     const record = node as Record<string, unknown>;

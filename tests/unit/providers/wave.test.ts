@@ -202,7 +202,10 @@ test('rewrite SC4 worker requests preserve injected native config launch selecto
   const w = setup({}, [slot('opencode[0]', 'opencode', { model: 'local/qwen' })]);
   let request: DelegateRequest | undefined;
   const worker: WorkerDeps = { configSelectors: { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }, fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS, modes: () => ['cli'], run: async (_provider, req) => { request = req; return { outcome: ok(CLEAN), invocations: [] }; } };
-  w.deps.launchWorker = (dir, id, attempt) => { void runWaveWorker(dir, id, attempt, worker); };
-  const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps); await start.attempt; await new Promise<void>((resolve) => setImmediate(resolve));
+  let completed: ReturnType<typeof runWaveWorker> | undefined;
+  w.deps.launchWorker = (dir, id, attempt) => { completed = runWaveWorker(dir, id, attempt, worker); };
+  const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps);
+  await start.attempt;
+  await completed;
   assert.equal(request?.model, 'local/qwen'); assert.deepEqual(request?.configSelectors, { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }); assert.equal(request?.timeoutMs, 60000);
 });

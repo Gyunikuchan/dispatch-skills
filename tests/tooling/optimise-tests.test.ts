@@ -19,15 +19,13 @@ function inventory(files: FileEntry[], extra: Partial<Inventory> = {}): Inventor
 
 // SECTION: unitOf
 
-test('unitOf maps a test path to its configured unit folder', async () => {
+test('unitOf maps only configured test tiers across path separators', async () => {
   const { unitOf } = await loadInventory();
-  assert.equal(unitOf('tests/unit/core/frame.test.ts'), 'tests/unit/core');
-  assert.equal(unitOf('tests\\tooling\\tooling.test.ts'), 'tests/tooling');
-});
-
-test('unitOf returns undefined for a path outside every unit', async () => {
-  const { unitOf } = await loadInventory();
-  assert.equal(unitOf('tests/helpers/play.ts'), undefined);
+  for (const [input, expected] of [
+    ['tests/unit/core/frame.test.ts', 'tests/unit/core'],
+    ['tests\\tooling\\tooling.test.ts', 'tests/tooling'],
+    ['tests/helpers/play.ts', undefined],
+  ] as const) assert.equal(unitOf(input), expected, input);
 });
 
 test('unitOf prefers the longest matching unit', async () => {

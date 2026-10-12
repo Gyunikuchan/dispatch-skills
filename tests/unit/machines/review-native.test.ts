@@ -22,7 +22,7 @@ const events: Event[] = [
   { type: 'WAVE_DONE', effectId: 'review.wave.2', round: 1, slots: [{ slot: 'claude[0]', state: 'native' }], findings: [finding('R1-F001', 'claude[0]')] },
 ];
 
-test('native frame { round, slots } → NATIVE_RESULTS → native wave → merged findings → rule', () => {
+test('native review completion merges attributed findings with unique round IDs', () => {
   const frames = play(reviewMachine, events);
   assert.deepEqual(frames.map((frame) => frame.at), ['review › prepare', 'review › wave', 'review › native', 'review › wave', 'review › rule']);
   assert.equal(frames[2]?.await, 'native');

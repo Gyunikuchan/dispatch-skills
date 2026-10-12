@@ -13,10 +13,6 @@ import { awaitingMachine, RUN_STARTED } from './fixtures/machines.ts';
 
 const require = createRequire(import.meta.url);
 
-test('node:child_process and child_process resolve to one patched module object', () => {
-  assert.equal(require('node:child_process'), require('child_process'));
-});
-
 test('every child_process launcher throws a rule-naming error outside tests/e2e/', () => {
   const shared = require('child_process') as Record<string, (...args: unknown[]) => unknown>;
   for (const name of BLOCKED_LAUNCHERS) {

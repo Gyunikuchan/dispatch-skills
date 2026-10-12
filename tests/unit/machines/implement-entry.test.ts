@@ -93,7 +93,7 @@ test('settled hash mismatch re-enters plan review and does not run the baseline'
   assert.equal(result.effects[0]?.kind, 'prepare-review');
 });
 
-test('implement-baseline-known-red: records failure identities, requires the full set, and checks side effects', () => {
+test('implement-baseline-known-red: acceptance requires every recorded failure identity', () => {
   const { state, effect } = atBaseline();
   const decision = toDecision(state, effect.id, 2, 'node --test tests/example.test.ts::test:old failure');
   assert.equal(decision.tag, 'baseline-decision');
@@ -102,6 +102,10 @@ test('implement-baseline-known-red: records failure identities, requires the ful
   const accepted = step(decision, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids: ['node --test tests/example.test.ts::test:old failure'] } });
   assert.equal(accepted.state.tag, 'approval');
 
+});
+
+test('implement-baseline: verification side effects require recovery assessment', () => {
+  const { state, effect } = atBaseline();
   const sideEffect = toDecision(state, effect.id, 0, null, { ...FP, worktree: 'changed' });
   assert.equal(sideEffect.tag, 'assessing-host-event');
 });

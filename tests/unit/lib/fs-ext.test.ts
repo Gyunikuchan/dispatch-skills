@@ -28,6 +28,10 @@ test('real LinkFs: writeAtomic replaces the target and leaves no partial file', 
   nodeLinkFs.writeAtomic(file, 'two');
   assert.equal(nodeLinkFs.readText(file), 'two');
   assert.deepEqual(nodeLinkFs.list(root), ['beat.json']);
+});
+
+test('real LinkFs: absent files and directories return null and an empty list', () => {
+  const root = dir();
   assert.equal(nodeLinkFs.readText(path.join(root, 'missing')), null);
   assert.deepEqual(nodeLinkFs.list(path.join(root, 'missing')), []);
 });

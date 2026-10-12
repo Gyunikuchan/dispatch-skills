@@ -19,7 +19,7 @@ test('change receipt: drift envelope preserves actor notice hash and evidence bi
   assert.equal(validateHostEvent('decide', { ...event, answer: { ...(event.answer as object), action: 'refresh' } }).ok, true);
 });
 
-test('a projected frame carries the envelope fields in order', () => {
+test('a projected frame carries the host envelope and optional error', () => {
   const frame = projectFrame(awaitingMachine, { tag: 'authoring', counters: {} }, 'runs/001');
   assert.deepEqual(frame, {
     v: 1, run: 'runs/001', at: 'fixture › authoring', await: 'author',

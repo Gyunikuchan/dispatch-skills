@@ -255,14 +255,14 @@ Values are normalized before use so downstream comparisons agree.
     session = path.resolve(f.absoluteRun(reuseFrame.run), '../../..');
 
     // 3b. Reusing settled plan with differing drive/path case matches via designPathIdentity
-    const casedPlan = process.platform === 'win32'
-      ? (/^[a-z]:/i.test(plan) ? (plan[0] === plan[0]?.toLowerCase() ? plan[0]!.toUpperCase() : plan[0]!.toLowerCase()) + plan.slice(1) : plan)
-      : plan;
-    const casedReuseFrame = await f.begin('implement', session, casedPlan);
-    const casedReuseJournal = fs.readFileSync(path.join(f.absoluteRun(casedReuseFrame.run), 'events.jsonl'), 'utf8');
-    assert.equal(casedReuseFrame.await, 'decide');
-    assert.equal(casedReuseFrame.data['kind'], 'approval');
-    assert.doesNotMatch(casedReuseJournal, /"effectId":"implement\.plan-review/);
+    if (process.platform === 'win32') {
+      const casedPlan = /^[a-z]:/i.test(plan) ? (plan[0] === plan[0]?.toLowerCase() ? plan[0]!.toUpperCase() : plan[0]!.toLowerCase()) + plan.slice(1) : plan;
+      const casedReuseFrame = await f.begin('implement', session, casedPlan);
+      const casedReuseJournal = fs.readFileSync(path.join(f.absoluteRun(casedReuseFrame.run), 'events.jsonl'), 'utf8');
+      assert.equal(casedReuseFrame.await, 'decide');
+      assert.equal(casedReuseFrame.data['kind'], 'approval');
+      assert.doesNotMatch(casedReuseJournal, /"effectId":"implement\.plan-review/);
+    }
 
     // 4. Stale hash: modify plan on disk so hash differs from settled run
     fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- Preserve case.', '- Preserve case and format.'));

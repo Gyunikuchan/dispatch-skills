@@ -217,15 +217,13 @@ for (const kind of ['code', 'plan'] as const) test(`pre-ruling edit inside accep
   assert.equal(verifying.state.tag, 'fix-verify');
 });
 
-test('pre-ruling edit outside accepted paths needs a drift decision', () => {
-  assert.equal(preRuling('code', { 'R1-F001': acceptFix('src/a.ts') }, ['src/a.ts', 'src/b.ts']).state.tag, 'change-resolution');
-});
-
-test('pre-ruling edit with a comparison identity change needs a drift decision', () => {
-  assert.equal(preRuling('code', { 'R1-F001': acceptFix('src/a.ts') }, ['src/a.ts'], 'Comparison identity changed.').state.tag, 'change-resolution');
-});
-
-test('pre-ruling edit with a rejected ruling needs a drift decision', () => {
-  const rulings = { 'R1-F001': acceptFix('src/a.ts'), 'R1-F002': { ruling: 'reject', reason: 'Not a defect' } };
-  assert.equal(preRuling('code', rulings, ['src/a.ts']).state.tag, 'change-resolution');
+test('pre-ruling edits need a drift decision unless every change is an accepted fix', () => {
+  const accepted = { 'R1-F001': acceptFix('src/a.ts') };
+  for (const [label, rulings, paths, reason] of [
+    ['outside accepted paths', accepted, ['src/a.ts', 'src/b.ts'], notice.reason],
+    ['comparison identity changed', accepted, ['src/a.ts'], 'Comparison identity changed.'],
+    ['rejected ruling', { ...accepted, 'R1-F002': { ruling: 'reject', reason: 'Not a defect' } }, ['src/a.ts'], notice.reason],
+  ] as const) {
+    assert.equal(preRuling('code', rulings, paths, reason).state.tag, 'change-resolution', label);
+  }
 });

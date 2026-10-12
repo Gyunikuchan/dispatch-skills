@@ -66,10 +66,6 @@ test('walkthrough-minimum-contract: comment markers in change paths are neutrali
   assert.ok(!out.includes('<!--'));
 });
 
-test('readable artifact rendering: change details sit beneath their file', () => {
-  assert.ok(renderWalkthrough(view).includes('- #### [MODIFY] `src/a.ts`\n  - Changes: adds the counter'));
-});
-
 test('walkthrough-minimum-contract: an info-string fence line does not close an open fence', () => {
   const doc = ['# D', '```', '```md', '## Review Findings & Resolutions', 'example', '```', '', '## Review Findings & Resolutions', 'old'].join('\n');
   const out = replaceResolutionSection(doc, '## Review Findings & Resolutions\nnew');

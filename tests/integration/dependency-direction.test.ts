@@ -70,7 +70,7 @@ test('the overlay obeys the dependency matrix and purity rules', () => {
 const IMPORT = 'imp' + 'ort';
 const file = (path: string, ...lines: string[]) => ({ path, text: lines.join('\n') });
 
-test('violations name the rule and the fix', () => {
+test('dependency and purity violations identify the broken layer rule and corrective action', () => {
   const errors = checkDependencies([
     file(`${SCRIPTS}machines/root.ts`, `${IMPORT} fs from 'node:fs';`, `${IMPORT} { run } from '../effects/wave.ts';`, 'const t = new Date();'),
     file(`${SCRIPTS}core/frame.ts`, `${IMPORT} { step } from '../machines/root.ts';`),

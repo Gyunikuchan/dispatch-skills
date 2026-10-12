@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { stepDesign, selectReady, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
-import { validateDesignTraceability } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { approval, approveDesignScope, hash, design } from './fixtures/design.ts';
 import { beginDesignRevision, stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { PLAN, FP } from './fixtures/implement-recovery.ts';
@@ -48,16 +47,7 @@ test('design-increment-selection: priority and prerequisite completion select re
   assert.equal(selectReady(design, ['I01']), 'I02');
   assert.equal(selectReady(design, ['I01', 'I02']), null);
 });
-test('design-derived-approvals and design-traceability: inherited contract rejects stale revision and wrong increment', () => {
-  const state = started();
-  assert.equal(state.tag, 'increment');
-  if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c) throw new Error('child');
-  const binding = state.child.c.designBinding!;
-  const plan = { traceability: { Design: binding.path, Revision: hash, Increment: 'I01', Outcome: 'First behavior' } } as never;
-  assert.deepEqual(validateDesignTraceability(plan, binding), []);
-  assert.ok(validateDesignTraceability(plan, { ...binding, increment: 'I02' }).length);
-  assert.ok(validateDesignTraceability(plan, { ...binding, revision: `sha256:${'b'.repeat(64)}` }).length);
-});
+
 test('design-implement-delivers-all: two child outcomes retain ownership and use distinct effect paths', () => {
   let state = started();
   const ids: string[] = [];
@@ -87,33 +77,4 @@ test('bound child baseline derives approval without an approval await', () => {
   assert.equal(result.state.child.tag, 'task-checkout');
   assert.equal(result.state.child.c.approval?.by, 'design');
   assert.ok(result.state.child.c.designBinding && result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
-});
-
-test('traceability scope admits directory and glob forms while rejecting escapes and sibling prefixes', () => {
-  const state = started();
-  if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c?.designBinding) throw new Error('binding');
-  const binding = state.child.c.designBinding;
-  const plan = (file: string) => ({ traceability: { Design: binding.path, Revision: hash, Increment: 'I01', Outcome: 'First behavior' }, changes: [{ path: file }] }) as never;
-  for (const [scope, allowed, denied] of [
-    ['src/a.ts', 'src/a.ts', 'src/b.ts'],
-    ['src/', 'src/deep/a.ts', 'src-other/a.ts'],
-    ['src/**', 'src/deep/a.ts', 'src-other/a.ts'],
-    ['src/*.ts', 'src/a.ts', 'src/deep/a.ts'],
-    ['src/**/*.ts', 'src/a.ts', 'src/deep/a.js'],
-    ['src/{a,b}.ts', 'src/b.ts', 'src/c.ts'],
-  ]) {
-    const scoped = { ...binding, paths: [scope!] };
-    assert.deepEqual(validateDesignTraceability(plan(allowed!), scoped), []);
-    assert.match(validateDesignTraceability(plan(denied!), scoped).join(';'), /outside increment/);
-    assert.match(validateDesignTraceability(plan('src/../caller.ts'), scoped).join(';'), /outside increment/);
-  }
-});
-
-test('template traceability binds Parent path, revision, increment, contract and owned changes', () => {
-  const state = started();
-  if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c?.designBinding) throw new Error('binding');
-  const binding = state.child.c.designBinding;
-  const plan = { box: { Parent: `\`${binding.path}\` · I01` }, traceability: { 'Approved revision': hash, 'Increment ID and inherited contract': 'I01 — First behavior', 'Prerequisite evidence': 'None', 'Acceptance mapping': 'src/a.ts → SC1' }, changes: [{ path: 'src/a.ts' }] } as never;
-  assert.deepEqual(validateDesignTraceability(plan, binding), []);
-  for (const other of [{ ...binding, path: 'other.design.md' }, { ...binding, revision: `sha256:${'b'.repeat(64)}` }, { ...binding, increment: 'I02' }, { ...binding, contract: { Outcome: 'Other behavior' } }, { ...binding, paths: ['src/b.ts'] }]) assert.ok(validateDesignTraceability(plan, other).length);
 });

@@ -112,8 +112,9 @@ test('path snapshot augmentation returns EFFECT_FAILED on a path hash read failu
 test('dirty path byte hashing batches argv below the Windows command-line limit', async () => {
   const { pathHashes } = await import('../../../skills/dispatch/scripts/effects/check-envelope.ts');
   const files = Array.from({ length: 400 }, (_, index) => `generated/${'long-directory-'.repeat(8)}${index}.bin`);
+  const fileSet = new Set(files);
   const ports = fakePorts();
-  ports.fs = { ...ports.fs, exists: () => true, inspectPath: (file) => ({ kind: files.some((f) => file.replace(/\\/g, '/').endsWith(f)) ? 'file' : 'directory', mode: 0o644, linkTarget: null, realPath: file }) };
+  ports.fs = { ...ports.fs, exists: () => true, inspectPath: (file) => ({ kind: fileSet.has(path.relative('/repo', file).split(path.sep).join('/')) ? 'file' : 'directory', mode: 0o644, linkTarget: null, realPath: file }) };
   const batches: string[][] = [];
   ports.git = { run: async (argv) => { batches.push([...argv]); return argv.slice(2).map(() => 'a'.repeat(40)).join('\n'); } };
   const git: Git = { toplevel: async () => '/repo', indexEntries: async () => '', diffNames: async () => files, fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [] };

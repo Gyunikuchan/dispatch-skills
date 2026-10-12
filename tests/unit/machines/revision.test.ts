@@ -50,9 +50,12 @@ test('amend plan rejects unknown targets', () => {
   assert.ok(!result.ok && /T9/.test(result.error));
 });
 
-test('amend plan gates intent change and new dependency manifests', () => {
+test('amend plan gates an objective change', () => {
   const intent = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'T1', current: 'deliver three parts.', proposed: 'deliver four parts.' }]);
   assert.ok(intent.ok && intent.gates.some((gate) => /intent change/.test(gate)));
+});
+
+test('amend plan gates a newly added dependency manifest', () => {
   const manifest = amendPlan(AMEND_PLAN, [
     { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/b.ts, package.json' },
     { kind: 'add', target: 'package.json', current: '- Changes: part two.\n', proposed: '#### [MODIFY] package.json\n- Changes: add a dependency.\n' },

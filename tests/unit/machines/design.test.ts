@@ -5,7 +5,6 @@ import { beginDesign, stepDesign, validateDesign, type DesignState } from '../..
 import { implementData, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { launch, record, start } from './fixtures/implement-tasks.ts';
 import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
-import { asParsedDesign, designScopeGrew } from '../../../skills/dispatch/scripts/domain/design.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { approvalState, FP } from './fixtures/implement-recovery.ts';
 import { hash, design, run, approval, approveDesignScope } from './fixtures/design.ts';
@@ -17,13 +16,16 @@ test('design-stops-at-approval: hash-bound authoring completes without productio
   assert.equal(result.state.tag, 'complete');
   assert.deepEqual(result.effects, []);
 });
-test('design-governed-hash: stale or unattributed approval and lint failure cannot authorize delivery', () => {
+test('design-governed-hash: stale or unattributed approval cannot authorize delivery', () => {
   const state = approval('implement');
   for (const answer of [{ by: 'user', quote: 'yes', hash: `sha256:${'b'.repeat(64)}` }, { by: 'agent', quote: 'yes', hash }]) {
     const event = { type: 'DECISION' as const, kind: 'approval' as const, answer };
     assert.match(validateDesign(state, event)!, /current governed hash/);
     assert.equal(stepDesign(state, event).state, state);
   }
+});
+
+test('design: lint failure returns to authoring before approval', () => {
   const parsing = stepDesign(beginDesign(run()).state, { type: 'AUTHORED', path: 'x.design.md' });
   assert.equal(stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', effectId: parsing.effects[0]!.id, kind: 'design', hash, parsed: design, defects: [{ message: 'lint' }] }).state.tag, 'author');
 });
@@ -34,6 +36,8 @@ test('prewrite-level: author-only runs stop after invocation classification', ()
   assert.equal(state.c.levelAssessment, null);
   assert.equal(state.c.scopeAdjustments.length, 0);
 });
+// SECTION: Nested implementation boundaries
+
 test('level-journal: design parent delegates nested implementation event validation', () => {
   const nested = {
     tag: 'tasks',
@@ -100,6 +104,8 @@ test('REVISE design refused while sibling writer is live', () => {
   const nested: DesignState = { tag: 'approval', c: parent.c, parent: { tag: 'approval', c: parent.c, parent: deciding } };
   assert.match(validateDesign(nested, revise) ?? '', /live writers T1, T2/);
 });
+// SECTION: Approval and revision invalidation
+
 test('post-review hash changes require approval of the reparsed hash', () => {
   const parsing = stepDesign(beginDesign(run()).state, { type: 'AUTHORED', path: 'x.design.md' });
   const reviewed = stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', effectId: parsing.effects[0]!.id, kind: 'design', hash, parsed: design, defects: [] });
@@ -109,20 +115,7 @@ test('post-review hash changes require approval of the reparsed hash', () => {
   assert.ok(validateDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'old', hash } }));
 });
 
-test('journal design admission rejects malformed objectives and dependency graphs', () => {
-  assert.ok(asParsedDesign(design));
-  const rows = design.increments;
-  const invalid = [
-    { ...design, box: {} }, { ...design, box: { 'TL;DR': ' ' } },
-    { ...design, increments: [{ ...rows[0]!, paths: [] }, rows[1]!] },
-    { ...design, increments: [rows[0]!, { ...rows[1]!, id: 'I01' }] },
-    { ...design, increments: [rows[0]!, { ...rows[1]!, priority: 1 }] },
-    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] },
-    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] },
-    { ...design, increments: [rows[1]!] },
-  ];
-  for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
-});
+
 
 test('re-requests approval when increment scope expands', () => {
   const state = approval('implement');
@@ -261,31 +254,7 @@ test('preserves completed increments when only increment details or non-contract
   assert.deepEqual(resumed.state.c.ownership, { I01: ['src/a.ts'] });
 });
 
-test('designScopeGrew compares validation case-insensitively', () => {
-  const before = {
-    ...design,
-    details: {
-      I01: { Outcome: 'First behavior', validation: 'npm test -- a' },
-      I02: { Outcome: 'Second behavior' },
-    },
-  };
-  const sameCased = {
-    ...design,
-    details: {
-      I01: { Outcome: 'First behavior', Validation: 'npm test -- a' },
-      I02: { Outcome: 'Second behavior' },
-    },
-  };
-  const changedVal = {
-    ...design,
-    details: {
-      I01: { Outcome: 'First behavior', Validation: 'npm test -- a and b' },
-      I02: { Outcome: 'Second behavior' },
-    },
-  };
-  assert.equal(designScopeGrew(before, sameCased), false);
-  assert.equal(designScopeGrew(before, changedVal), true);
-});
+
 
 test('approval of invalidating expansion restarts delivery rather than resuming obsolete child', () => {
   const state = approval('implement');
@@ -502,6 +471,8 @@ test('revert after invalidating revision resets binding index so later non-inval
   assert.ok('C01' in resumedChild.c.evidence);
 });
 
+// SECTION: Artifact paths
+
 test('design: default design path is scoped to sessionDir', () => {
   const s = beginDesign({
     ...run(),
@@ -512,8 +483,9 @@ test('design: default design path is scoped to sessionDir', () => {
   if (s.state.tag === 'author') {
     assert.equal(s.state.c.path, '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design/deliver-feature.design.md');
   }
+});
 
-  // Explicit argument ending in .design.md is preserved
+test('design: explicit design path is preserved when a session directory is configured', () => {
   const explicit = beginDesign({
     ...run(),
     argument: 'custom/external.design.md',
