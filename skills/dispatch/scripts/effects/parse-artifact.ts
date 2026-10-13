@@ -17,6 +17,9 @@ export const parseArtifact: Handler<ParseEffect> = async (effect, ports) => {
   const base = { type: 'ARTIFACT_PARSED' as const, effectId: effect.id, kind: effect.artifact };
   if (effect.artifact === 'plan') {
     const result = parsePlan(source);
+    for (const warning of result.warnings.filter((item) => item.code === 'missing-seams')) {
+      ports.proc.stderr(`[dispatch] ${effect.path}${warning.line === null ? '' : `:${warning.line}`}: warning ${warning.code}: ${warning.message}\n`);
+    }
     const hash = `sha256:${sha256(governedPlanText(source))}`;
     return [result.ok ? { ...base, hash, parsed: result.plan, defects: [] } : { ...base, hash, parsed: {}, defects: result.defects }];
   }

@@ -14,7 +14,7 @@ const unreachable = (value: never): never => { throw new Error(`unhandled lint c
 export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
   switch (code) {
     case 'placeholder': case 'ambiguous-command': case 'automated-tests-unavailable': case 'missing-success-criteria':
-    case 'criterion-red-test-path': case 'overlap':
+    case 'criterion-red-test-path': case 'overlap': case 'missing-seams':
       return 'warning';
     case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note': case 'proposed-changes':
     case 'change-heading': case 'unknown-change-marker': case 'invalid-change-path': case 'duplicate-change-path':
@@ -315,6 +315,12 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const { changes, tasks } = parseChanges(lines, out);
   const verification = parseVerification(lines, out);
   const criteria = parseCriteria(lines, changes, out);
+  const seamDeclarations = parseSeamDeclarations(lines);
+  const seams = seamsFromDeclarations(seamDeclarations);
+  if (criteria.some((criterion) => criterion.verify.length) && !seams.length && !seamDeclarations.some(({ value }) => /^none$/i.test(value))) {
+    const range = sectionRanges(lines, '## Verification Plan')[0];
+    out.push(lint('missing-seams', range ? lines[range.start]?.line ?? null : null, 'Automated criteria have no test seams; declare Seams: <entry points> or Seams: none when inapplicable.'));
+  }
   const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
   lintTransientCoverage(criteria, finalCommands, out);
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
@@ -340,7 +346,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     changes,
     verification,
     finalCommands,
-    seams: parseSeams(lines),
+    seams,
     warnings: overlapWarnings,
     traceability: keyValues(lines, '## Technical-Design Traceability'),
     governedText: governedPlanText(source),
@@ -681,14 +687,22 @@ function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: re
 }
 
 /** `- Seams: <entry>[, <entry>...]` bullets directly under Verification Plan, before its first subsection. */
-function parseSeams(lines: readonly StructuralLine[]): string[] {
+function parseSeamDeclarations(lines: readonly StructuralLine[]): { value: string }[] {
   const range = sectionRanges(lines, '## Verification Plan')[0];
   if (!range) return [];
-  const seams: string[] = [];
+  const declarations: { value: string }[] = [];
   for (const { text } of lines.slice(range.start + 1, range.end)) {
     if (/^###\s/.test(text)) break;
     const value = /^[-*+]\s+Seams:\s*(.*?)\s*$/i.exec(text)?.[1];
-    if (value === undefined || /^none$/i.test(value)) continue;
+    if (value !== undefined) declarations.push({ value });
+  }
+  return declarations;
+}
+
+function seamsFromDeclarations(declarations: readonly { value: string }[]): string[] {
+  const seams: string[] = [];
+  for (const { value } of declarations) {
+    if (/^none$/i.test(value)) continue;
     // A comma inside a code span belongs to its entry.
     for (const item of value.match(/(?:`[^`]*`|[^,])+/g) ?? []) {
       const seam = item.replace(/`/g, '').trim();

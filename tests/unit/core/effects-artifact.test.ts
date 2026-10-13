@@ -10,6 +10,7 @@ import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { parseArtifact } from '../../../skills/dispatch/scripts/effects/parse-artifact.ts';
 import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
+import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
@@ -36,6 +37,32 @@ test('parse-artifact reports a missing file as EFFECT_FAILED io', async () => {
   const dir = tempDir();
   const missing = only(await parseArtifact({ kind: 'parse-artifact', id: 'e.3', path: path.join(dir, 'nope.plan.md'), artifact: 'plan' }, fakePorts(), { runDir: dir, attempt: 1 }));
   assert.deepEqual(missing.type === 'EFFECT_FAILED' && missing.cls, 'io');
+});
+
+test('seam advisory reaches the host and enters review', async () => {
+  const dir = tempDir();
+  const file = path.join(dir, 'seams.plan.md');
+  const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** user request\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Proposed Changes\n### T1 — Expose command\nThe existing command becomes public.\n- Prerequisites: none\n- Criteria: SC1\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
+  const ports = fakePorts();
+  const started = planMachine.step(planMachine.initial(), { type: 'RUN_STARTED', verb: 'plan', argument: file,
+    level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'codex', orchestratorModel: null,
+    overrides: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } } }, repo: {} });
+  const author = planMachine.step(started.state, { type: 'AUTHORED', path: file });
+  for (const [declaration, expected] of [['', 1], ['- Seams: none\n', 0]] as const) {
+    ports.stderrLines.length = 0;
+    fs.writeFileSync(file, source.replace('## Verification Plan\n', `## Verification Plan\n${declaration}`));
+    const effect = author.effects[0];
+    assert.ok(effect?.kind === 'parse-artifact');
+    const event = only(await parseArtifact(effect, ports, { runDir: dir, attempt: 1 }));
+    assert.ok(event.type === 'ARTIFACT_PARSED');
+    assert.deepEqual(event.defects, []);
+    assert.equal(ports.stderrLines.length, expected);
+    if (expected) {
+      assert.ok(ports.stderrLines[0]?.includes(file));
+      assert.match(ports.stderrLines[0] ?? '', /warning.*missing-seams.*Seams:/);
+    }
+    assert.equal(planMachine.step(author.state, event).state.tag, 'review');
+  }
 });
 
 test('effect folder: prepare-review writes one prompt per slot, carried rejections ride their affinity slot; an empty code diff is an empty scope', async () => {

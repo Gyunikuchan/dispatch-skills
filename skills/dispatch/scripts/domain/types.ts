@@ -38,7 +38,7 @@ export type LintDefectCode =
   // Plan structure
   | 'proposed-changes' | 'change-heading' | 'unknown-change-marker' | 'invalid-change-path' | 'duplicate-change-path'
   | 'change-path-excluded' | 'generated-command' | 'verification-plan' | 'automated-tests' | 'automated-tests-owner'
-  | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-verify'
+  | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-verify' | 'missing-seams'
   // Plan criteria
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'

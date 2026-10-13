@@ -489,6 +489,47 @@ test('parses seams', () => {
   assert.deepEqual(parsed(PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: none\n')).seams, []);
 });
 
+const seamWarnings = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'missing-seams');
+const withSeams = (declaration: string) => PLAN.replace('## Verification Plan\n', `## Verification Plan\n${declaration}`);
+
+test('seam advisory warns for absent and empty declarations', () => {
+  for (const source of [PLAN, withSeams('- Seams:\n'), withSeams('- Seams: ``, ,\n')]) {
+    const warnings = seamWarnings(source);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.severity, 'warning');
+    assert.equal(warnings[0]?.line, source.split('\n').indexOf('## Verification Plan') + 1);
+    assert.match(warnings[0]?.message ?? '', /Seams:.*none/);
+    assert.deepEqual(parsed(source).seams, []);
+  }
+});
+
+test('seam advisory permits explicit none and populated declarations', () => {
+  for (const declaration of ['- Seams: none\n', '* seams: NoNe\n', '- Seams: `tests/fetch.test.ts`\n']) {
+    assert.deepEqual(seamWarnings(withSeams(declaration)), []);
+  }
+  assert.deepEqual(parsed(withSeams('- Seams: `tests/fetch.test.ts`\n')).seams, ['tests/fetch.test.ts']);
+});
+
+test('seam advisory ignores review-only criteria', () => {
+  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace('- [SC2] Whole suite stays green\n', '- [SC2] Whole suite stays green\n  - Changes: src/fetch.ts\n').replace(/  - Evidence: (red|verify)/g,
+    '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
+  assert.deepEqual(seamWarnings(source), []);
+});
+
+test('seam advisory rejects structural decoys', () => {
+  for (const declaration of ['```text\n- Seams: none\n```\n', '<!--\n- Seams: none\n-->\n', '> - Seams: none\n']) {
+    assert.equal(seamWarnings(withSeams(declaration)).length, 1);
+  }
+  assert.equal(seamWarnings(PLAN.replace('### Automated Tests\n', '### Automated Tests\n- Seams: none\n')).length, 1);
+  assert.equal(seamWarnings(PLAN.replace('## Key Decisions & Context\n', '## Key Decisions & Context\n- Seams: none\n')).length, 1);
+});
+
+test('seam advisory includes FINAL-only Verify', () => {
+  const source = PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`\n', '')
+    .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
+  assert.equal(seamWarnings(source).length, 1);
+});
+
 test('parses transient retain and coverage', () => {
   const plan = parsed(transient('  - Retain: transient\n  - Covered by: `sc2`\n'));
   assert.deepEqual(plan.criteria.map((criterion) => [criterion.id, criterion.retain, criterion.coveredBy]), [['SC1', 'transient', 'SC2'], ['SC2', 'durable', null]]);
