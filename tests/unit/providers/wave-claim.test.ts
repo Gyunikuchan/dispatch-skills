@@ -151,3 +151,45 @@ test('effect folder: status discovery finds first and later attempts across effe
   fs.writeAtomic(runPaths(RUN).heartbeat('review.wave.2', 1), '{}');
   assert.deepEqual(listWorkerClaims(fs, RUN), [{ effect: 'e1', attempt: 1 }, { effect: 'e1', attempt: 2 }, { effect: 'review.wave.2', attempt: 1 }]);
 });
+
+function orphanRecovery(launchWorker: WaveDeps['launchWorker'] = () => {}) {
+  const fs = seeded();
+  const launches: number[] = [];
+  const deps: WaveDeps = {
+    ...claims(fs, new Set()),
+    context: () => ({ review: 'code', orchestratorPlatform: null, cwd: '/repo', paths: input.paths }),
+    launchWorker: (run, id, attempt) => { launches.push(attempt); launchWorker(run, id, attempt); },
+    awaitWorker: async () => {},
+  };
+  const effect = { kind: 'wave' as const, id: 'e1', round: 1, roster: input.roster as unknown as Record<string, unknown>[], timeoutMs: TIMEOUT };
+  return { fs, launches, deps, effect };
+}
+
+test('effect folder: resumed orphan-fence recovery launches a replacement', async () => {
+  const w = orphanRecovery();
+  w.fs.writeAtomic(runPaths(RUN).launch('e1'), JSON.stringify({ attempt: 1, host: 'h', at: 0 }));
+  const resumed = startWave(w.effect, { runDir: RUN, attempt: 2 }, w.deps);
+  assert.equal(await resumed.attempt, 2);
+  assert.deepEqual(w.launches, [2]);
+  assert.deepEqual(JSON.parse(w.fs.readText(claimPath(RUN, 'e1', 1))!), { fenced: true, by: 'send', at: 0 });
+});
+
+test('effect folder: late orphan worker is fenced by the attempt-1 tombstone', async () => {
+  const w = orphanRecovery();
+  w.fs.writeAtomic(runPaths(RUN).launch('e1'), '{}');
+  await startWave(w.effect, { runDir: RUN, attempt: 2 }, w.deps).attempt;
+  const late = worker(w.fs);
+  assert.deepEqual(await runWaveWorker(RUN, 'e1', 1, late), { launched: false });
+  assert.equal(late.launched, 0);
+  const replacement = worker(w.fs);
+  assert.equal((await runWaveWorker(RUN, 'e1', 2, replacement)).launched, true);
+  assert.equal(replacement.launched, 1);
+});
+
+test('effect folder: synchronous spawn failure permits resumed recovery', async () => {
+  const w = orphanRecovery((_run, _id, attempt) => { if (attempt === 1) throw new Error('spawn failed'); });
+  assert.throws(() => startWave(w.effect, { runDir: RUN, attempt: 1 }, w.deps), /spawn failed/);
+  assert.notEqual(w.fs.readText(runPaths(RUN).launch('e1')), null);
+  assert.equal(await startWave(w.effect, { runDir: RUN, attempt: 2 }, w.deps).attempt, 2);
+  assert.deepEqual(w.launches, [1, 2]);
+});

@@ -353,11 +353,11 @@ function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: 
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);
   if (latest > 0 && deps.fs.readText(runPaths(ctx.runDir).done(effect.id, latest)) !== null) return latest;
   const launchFence = runPaths(ctx.runDir).launch(effect.id);
-  if (latest === 0 && deps.fs.readText(launchFence) !== null) return 1;
+  if (ctx.attempt === 1 && latest === 0 && deps.fs.readText(launchFence) !== null) return 1;
   // A resumed send settles the newest attempt; a first send launches past any leftovers.
   const decision: Arbitration = ctx.attempt > 1 || latest > 0 ? arbitrate(deps, ctx.runDir, effect.id, Math.max(latest, 1), effect.timeoutMs) : { action: 'launch', attempt: 1 };
   if (decision.action === 'launch') {
-    if (latest === 0 && !publishExclusive(deps.fs, launchFence, JSON.stringify({ attempt: decision.attempt, host: deps.proc.host, at: deps.clock.now() }))) return 1;
+    if (ctx.attempt === 1 && latest === 0 && !publishExclusive(deps.fs, launchFence, JSON.stringify({ attempt: decision.attempt, host: deps.proc.host, at: deps.clock.now() }))) return 1;
     deps.launchWorker(ctx.runDir, effect.id, decision.attempt);
   }
   return decision.attempt;

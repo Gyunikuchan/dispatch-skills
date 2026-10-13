@@ -10,7 +10,7 @@ import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/ma
 import type { Event, JournalLine } from '../../../skills/dispatch/scripts/core/types.ts';
 
 function revisionParsing() {
-  const author = beginDesignRevision(approval('implement').c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'lint defect' }).state;
+  const author = beginDesignRevision(approval('implement').c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'User constraint: keep the existing public API.' }).state;
   const parse = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath });
   return { author, parse, event: { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash, parsed: design, defects: [] as Record<string, unknown>[] } };
 }
@@ -21,7 +21,8 @@ test('revision-handoff: initial author exposes the canonical design template', (
   const { author } = revisionParsing();
   const data = designRevisionData(author);
   assert.equal(data['template'], 'references/templates/design.md');
-  assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'path', 'reason', 'template']);
+  assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'evidence', 'path', 'reason', 'template']);
+  assert.equal(data['evidence'], 'User constraint: keep the existing public API.');
   assert.deepEqual(data['defects'], []);
 });
 
@@ -49,7 +50,8 @@ test('revision-handoff: replay reproduces the diagnostic author frame', () => {
   const folder = createFolder(machine);
   const events: Event[] = [];
   const apply = (event: Event) => { events.push(event); folder.apply(event); };
-  apply({ type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'parser defect' });
+  apply({ type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'User constraint: keep the existing public API.' });
+  assert.equal(machine.project(folder.state).data['evidence'], 'User constraint: keep the existing public API.');
   const path = machine.project(folder.state).data['path'];
   assert.equal(typeof path, 'string');
   apply({ type: 'AUTHORED', path: String(path) });
@@ -61,6 +63,7 @@ test('revision-handoff: replay reproduces the diagnostic author frame', () => {
   const replay = fold(machine, lines);
   assert.deepEqual(replay.state, folder.state);
   const data = machine.project(replay.state).data;
+  assert.equal(data['evidence'], 'User constraint: keep the existing public API.');
   assert.equal(data['template'], 'references/templates/design.md');
   assert.deepEqual(data['defects'], defects);
 });

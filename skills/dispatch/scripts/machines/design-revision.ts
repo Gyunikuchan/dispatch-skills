@@ -146,7 +146,7 @@ export function designRevisionAwait(state: DesignRevisionState) {
   }
 }
 export const designRevisionData = (state: DesignRevisionState): Readonly<Record<string, unknown>> => {
-  if (state.tag === 'author') return { artifact: 'design', path: state.workingPath, reason: state.reason, template: 'references/templates/design.md', defects: state.defects };
+  if (state.tag === 'author') return { artifact: 'design', path: state.workingPath, reason: state.reason, evidence: state.evidence, template: 'references/templates/design.md', defects: state.defects };
   if (state.tag === 'review') return reviewData(state.review);
   if (state.tag === 'scope-adjudication') return { kind: 'request', request: state.request, requestId: state.request.requestId, choices: ['approve', 'decline', 'escalate', 'stop'], stopAllowed: true };
   if (state.tag === 'scope-user-decision') return { kind: 'request-user', request: state.request, requestId: state.request.requestId, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };
