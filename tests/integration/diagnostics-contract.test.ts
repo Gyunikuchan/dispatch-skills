@@ -30,7 +30,19 @@ test('SC8 skill contract documents retro and done mention', () => {
   // Off means off: diagnostics prose stays in the retro await, the done mention, and the session-root list.
   const mentions = contract.split('\n## ').filter((part) => /diagnostics/.test(part)).map((part) => part.split('\n')[0]);
   assert.deepEqual(mentions, ['Await retro', 'Await done', 'Write boundaries and recovery']);
-  assert.ok(contract.trim().split(/\s+/).length < 657);
+  assert.ok(contract.trim().split(/\s+/).length < 680);
+});
+
+test('worktree cleanup covers creation, failure, completion, and durable ownership', () => {
+  const contract = read('skills/dispatch/SKILL.md');
+  assert.match(contract, /When any step creates a worktree, follow \[worktree cleanup\]\(references\/worktree-cleanup\.md\)\./);
+  assert.match(contract, /After stop, failure, or interruption, follow \[worktree cleanup\]\(references\/worktree-cleanup\.md\)\./);
+  assert.match(section(contract, '## Await done'), /Complete only when every criterion passes and owned worktrees are cleaned/);
+  const cleanup = read('skills/dispatch/references/worktree-cleanup.md');
+  assert.match(cleanup, /\.state\/runs\/NNN-<kind>\/scratch\/worktrees\.json/);
+  assert.match(cleanup, /path, owner, host\/lifecycle identity, and status/);
+  assert.match(cleanup, /`active`, `removed`, `archived`, or `retained`/);
+  assert.match(cleanup, /read it after interruption or compaction/);
 });
 
 test('SC8 no legacy diagnostics text remains', () => {

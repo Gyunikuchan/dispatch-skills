@@ -7,7 +7,7 @@ description: Multi-agent planning, review, and implementation. Use only when exp
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Retain an explicit level unless that assessment recommends higher; then ask the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, `(all)` select providers, count, or all configured targets. `-m`/`-e` map to `--model`/`--effort`. Map explicit fix requests to `--fix`; review is otherwise report-only.
+Parse `[level] [(pins)] [verb:] argument` (default `ask`). `design`, `plan`, and `implement` need an argument; empty `review` targets the working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep explicit levels unless that assessment recommends higher; ask the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user selection for `xhigh` and `max`. Pins `(a,b)`, `(3)`, `(all)` select providers, count, or all configured targets. `-m`/`-e` map to `--model`/`--effort`. Map explicit fix requests to `--fix`; review is otherwise report-only.
 
 Use `design` for multiple increments, `plan` for one coherent unit, `implement` for delivery. For mismatches, recommend and await user choice.
 
@@ -16,6 +16,8 @@ Use `design` for multiple increments, `plan` for one coherent unit, `implement` 
 1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir`/`sessionId`; fallback identity: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
 2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`. Start/send emit JSON.
 3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as separate background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Send one frame `events` object per `await` until `done`; eventless send resumes automation.
+
+When any step creates a worktree, follow [worktree cleanup](references/worktree-cleanup.md).
 
 Read [verbs](references/verbs/), [review rules](references/review-rules.md), [providers](references/providers.md).
 
@@ -53,7 +55,7 @@ Follow `data.diagnostics.instruction`; reply `RETRO`.
 
 ## Await done
 
-Report outcome, behavior, verification, concerns, rulings, artifact links. If `data.diagnostics` exists, add one line with its `path` and the report's first top finding. Complete only when every criterion passes; preserve the handoff folder.
+[Clean worktrees](references/worktree-cleanup.md). Report outcome, behavior, verification, concerns, rulings, artifact links. If `data.diagnostics` exists, add one line with its `path` and the report's first top finding. Complete only when every criterion passes and owned worktrees are cleaned; preserve the handoff folder.
 
 ## Write boundaries and recovery
 
@@ -61,4 +63,4 @@ The driver owns journals and generated artifacts; writers follow frame permissio
 
 Session-root files: `manifest.json`, deliverable specs/designs/plans/walkthroughs/reports, optional `diagnostics.md`. Agent-created helpers/logs/intermediates/backups go in `.state/runs/NNN-<kind>/scratch/`; pre-run/shared work in `.state/scratch/`. Classify backups by purpose. Preserve supplied driver/scoped production paths.
 
-The journal is authoritative. After interruption, inspect `status --run <dir>`, then `send --run <dir>` to replay/reattach. `send --dry-run --event` validates (exit 1: invalid). Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break only dead-process locks.
+After stop, failure, or interruption, follow [worktree cleanup](references/worktree-cleanup.md). The journal is authoritative. After interruption, inspect `status --run <dir>`, then `send --run <dir>` to replay/reattach. `send --dry-run --event` validates (exit 1: invalid). Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break only dead-process locks.
