@@ -166,6 +166,8 @@ export const killArgv = (os: OsId, pid: number): readonly string[] =>
 /** Shared classifier over diagnostics text; null when nothing matches. */
 export function classifyFailure(text: string): FailureClass | null {
   if (!text) return null;
+  // A missing or lapsed plan needs user action, so it is auth and takes precedence over quota wording.
+  if (/(no (active )?subscription|subscription (is )?(required|expired|inactive|not found)|payment required|\b402\b)/i.test(text)) return 'auth';
   if (/\b(usage limit|rate limit|rate_limit|quota|credit balance|insufficient[_ ]quota|too many requests|\b429\b)/i.test(text)) return 'quota';
   if (/(context (window|length)|prompt is too long|maximum context|token limit|context_length_exceeded|too many tokens|CONTEXT_BUDGET_EXCEEDED)/i.test(text)) return 'context-overflow';
   if (/(unauthorized|not authenticated|authentication failed|no authentication|invalid api key|please (log|sign) in|access denied by policy|policy settings may be preventing access|\b401\b|\b403\b)/i.test(text)) return 'auth';

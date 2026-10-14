@@ -75,6 +75,23 @@ test('resolve reverifies touched tasks', () => {
   assert.equal(record(result, 'T2')?.integrated, 'r-1');
 });
 
+test('resolve involves an accepted task that owns the conflict path only through scope admission', () => {
+  const state = conflicted();
+  const current = state.result.state;
+  assert.equal(current.tag, 'integration-conflict');
+  if (current.tag !== 'integration-conflict') return;
+  const t1 = current.c.tasks['T1']!;
+  state.result = { state: { ...current, c: { ...current.c, tasks: { ...current.c.tasks, T1: { ...t1, admittedPaths: ['README.md'] } } }, conflict: { ...current.conflict, paths: ['README.md'] } }, effects: [] };
+  state.sim.resolve = (input) => ({ revision: `r-${String(input['attempt'])}`, paths: ['README.md'] });
+  const from = state.trace.effects.length;
+  send(state, resolveDecision);
+  const [resolve] = checkouts(state.trace, 'resolve');
+  assert.ok(((resolve?.input as Record<string, unknown> | undefined)?.['tasks'] as string[]).includes('T1'));
+  assert.ok((resolve?.input['permitted'] as string[]).includes('src/a.ts'));
+  const [verify] = verifies(state.trace, from);
+  assert.ok(verify?.commands.some((row) => row['command'] === 'node --test tests/sc1.test.ts'));
+});
+
 test('resolve check failure returns decision', () => {
   const state = conflicted();
   state.failing.add('node --test tests/sc1.test.ts');

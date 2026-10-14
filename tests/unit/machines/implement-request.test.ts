@@ -96,6 +96,18 @@ test('amend reverifies changed accepted task', () => {
 
 // SECTION: SC10 — stale brief hashes
 
+test('amend during a scope request re-checks the submitted envelope', () => {
+  const sim: Sim = { plan: AMEND_PLAN, diff: (id) => id === 'T1' ? ['src/a.ts', 'README.md'] : [] };
+  let { result, trace } = start(3, sim);
+  result = launch(result, sim, trace);
+  result = submit(result, 'T1', sim, trace);
+  assert.equal(result.state.tag === 'request-decision' && result.state.request.source, 'scope');
+  const checks = trace.effects.filter((effect) => effect.kind === 'check-envelope').length;
+  result = host(result, amend([T1_NOTE]), sim, trace);
+  assert.ok(trace.effects.filter((effect) => effect.kind === 'check-envelope').length > checks);
+  assert.equal(result.state.tag === 'request-decision' && result.state.request.source, 'scope');
+});
+
 test('stale brief hash accepted when scope unchanged', () => {
   let { result, sim, trace } = running();
   const old = slot(result, 'T1');

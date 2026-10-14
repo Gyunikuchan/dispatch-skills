@@ -33,6 +33,8 @@ Report each writer through `WRITE_RECEIPT` with `status`:
 
 Taskless hotfix receipts carry only `submitted` or `failed` and omit identity.
 
+Non-ignored paths outside the task scope open a `scope` request that the orchestrator approves or declines ([write boundaries](../change-handling.md#concrete-write-boundaries)). Keep host-owned scratch, such as extra worktrees or timing copies, in a Git-ignored path, or remove it before sending `submitted`.
+
 ### Writer requests
 
 When a live writer needs work outside its task scope, reply `REQUEST` with `{ task, attempt, need, paths, rationale }`; the writer keeps running. At the `request` decision, weigh the need against task intent and invariants:
@@ -40,6 +42,8 @@ When a live writer needs work outside its task scope, reply `REQUEST` with `{ ta
 - `approve` after an `AMEND` brings the paths in scope; the driver then resumes scheduling.
 - `decline`, then tell the writer to continue within its scope.
 - `escalate` when you disagree with the writer or the need changes intent; the user answers with `request-user`.
+
+A `scope` request comes from a submitted candidate, not a live writer. `approve` admits exactly its paths without `AMEND`; inspect them first and decline incidental output that does not belong in delivery.
 
 A submission against an older brief must still pass current scope admission. A writer notice grants no additional paths.
 

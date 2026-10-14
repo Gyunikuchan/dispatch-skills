@@ -29,12 +29,21 @@ test('implement-envelope-self-check parses a strict receipt and accepts only app
   if (result.type === 'ENVELOPE_CHECKED') assert.deepEqual([result.defects, result.diff], [[], { paths: ['src/a.ts'] }]);
 });
 
-test('implement-envelope-self-check rejects out-of-scope COMPLETE changes during preview', async () => {
+test('check-envelope reports out-of-scope COMPLETE changes for the orchestrator without a defect', async () => {
   const { runDir, handler, ports } = setup(['src/a.ts', 'src/outside.ts']);
   const file = path.join(runDir, 'outcome.json');
   fs.writeFileSync(file, JSON.stringify(complete));
   const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
-  assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /outside the approved scope/.test(defect)));
+  assert.ok(result.type === 'ENVELOPE_CHECKED');
+  if (result.type === 'ENVELOPE_CHECKED') assert.deepEqual([result.defects, result.diff['outside']], [[], ['src/outside.ts']]);
+});
+
+test('check-envelope rejects envelope file paths that escape the repository', async () => {
+  const { runDir, handler, ports } = setup(['src/a.ts']);
+  const file = path.join(runDir, 'outcome.json');
+  fs.writeFileSync(file, JSON.stringify({ ...complete, files: [{ path: '../escape.ts', note: 'escape' }] }));
+  const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+  assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /files\[0\]\.path must be repository-relative/.test(defect)));
 });
 
 const SKILL_ROOT = path.resolve(import.meta.dirname, '../../../skills/dispatch');
@@ -94,7 +103,6 @@ test('writer scope ignores caller dirt and still detects changes to that same di
   const bad = resultOf(await handler(effect, ports, { runDir, attempt: 1 }));
   assert.ok(bad.type === 'ENVELOPE_CHECKED');
   if (bad.type === 'ENVELOPE_CHECKED') {
-    assert.ok(bad.defects.some((defect) => /outside the approved scope/.test(defect)));
     assert.deepEqual(bad.diff['outside'], ['caller.txt']);
   }
 });

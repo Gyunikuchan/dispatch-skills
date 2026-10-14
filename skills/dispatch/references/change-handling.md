@@ -22,7 +22,7 @@ For changed requirements, use [plan reconciliation](verbs/implement.md#amendment
 
 ## Concrete write boundaries
 
-Receipt identity, scoped write admission, path containment, executable/configuration integrity and immutable reference validation remain mandatory. A disposition never authorizes unspecified edits. Valid applied artifact fixes name their plan/design target; failed or invalid receipts admit none.
+Receipt identity, path containment, executable/configuration integrity and immutable reference validation remain mandatory. A production writer's paths outside its task scope open a `scope` request: approve with a rationale to admit exactly those paths into that task's scope, or decline to fail the task with work preserved. Tests-only stages and integration-conflict resolutions keep hard scope limits. A disposition never authorizes unspecified edits. Valid applied artifact fixes name their plan/design target; failed or invalid receipts admit none.
 
 Delivery and restore inspect every destination, including ignored files, symlinks, modes and ancestors. Complete all-path preflight before mutation. A concrete collision preserves caller bytes and the candidate and can still return a `DECISION kind=drift` for that collision. Rebuild/reconcile the candidate before retry, then run live preflight again. Ordinary observations have no drift decision. No disposition permits overwriting newer caller content.
 

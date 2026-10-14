@@ -101,12 +101,12 @@ export type Context = {
 /** `affected` accumulates every resolution delta and `failed` the unresolved check commands, so repairs re-verify both. */
 type ReplayOwner = { task: string; paths: readonly string[]; commands: readonly string[] };
 export type Conflict = { task: string; candidate: string; base: string; head: string; attempt: number; paths: readonly string[]; detail: string; evidence: readonly string[]; replay?: { archivedName: string; base: string; head: string; owners?: readonly ReplayOwner[] }; affected?: readonly string[]; failed?: readonly string[]; retry?: { id: string; input: Readonly<Record<string, unknown>> }; outside?: readonly string[] };
-/** A live writer's need (`writer`) or a submitted candidate outside its amended scope (`admission`). */
-export type WriterRequest = { requestId: string; task: string; attempt: number; need: string; paths: readonly string[]; rationale: string; source: 'writer' | 'admission' };
+/** A live writer's need (`writer`), a submitted candidate outside its amended scope (`admission`), or envelope diff paths outside the task scope (`scope`). */
+export type WriterRequest = { requestId: string; task: string; attempt: number; need: string; paths: readonly string[]; rationale: string; source: 'writer' | 'admission' | 'scope' };
 /** `text` is the amended governed plan; root render writes it to `path` so the plan file matches the bound hash. */
 /** `kind: 'replace'` binds a `REPLACE_PLAN` file at `path`; the prior plan file stays as written. */
 export type AmendmentRecord = { id: string; kind?: 'amend' | 'replace'; reconciliation?: PlanReconciliation; retire?: readonly WriterRetirement[]; delta: readonly PlanEdit[]; notify: readonly { task: string; notice: string }[]; rationale: string; by: { by: 'user'; quote: string } | null; beforeHash: string; afterHash: string; removed: readonly string[]; dropped: Readonly<Record<string, readonly string[]>>; path: string; text: string };
-type AmendResume = { kind: 'schedule' } | { kind: 'admit'; task: string } | { kind: 'conflict'; conflict: Conflict };
+type AmendResume = { kind: 'schedule' } | { kind: 'admit'; task: string } | { kind: 'recheck'; task: string } | { kind: 'conflict'; conflict: Conflict };
 
 type CheckoutStep = 'observe' | 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'resolve' | 'discard' | 'reset' | 'rebase' | 'deliver' | 'trim' | 'cleanup';
 
@@ -408,7 +408,7 @@ function rebaseTaskDraft(c0: Context, id: string): S {
   const transferKey = `${c0.scopeNotice?.requestId ?? 'scope'}:${id}:${revision}:${record.signature}`;
   return {
     state: { tag: 'task-checkout', c, effectId: effectIdValue, step: 'scope-rebase', task: id, reason: null },
-    effects: [{ kind: 'checkout', id: effectIdValue, op: 'scope-rebase', input: { name, originalName, revision, permitted: planTask(c0, id)?.paths ?? [], transferKey, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] } }],
+    effects: [{ kind: 'checkout', id: effectIdValue, op: 'scope-rebase', input: { name, originalName, revision, permitted: [...new Set([...(planTask(c0, id)?.paths ?? []), ...(record.admittedPaths ?? [])])].sort(), transferKey, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] } }],
   };
 }
 
@@ -627,11 +627,11 @@ function conflictLive(c: Context, conflict: Conflict): boolean { return !!confli
 /** The integrating task plus accepted tasks whose approved paths meet the conflict. */
 function involvedTasks(c: Context, conflict: Conflict): string[] {
   if (conflict.replay?.owners) return [...new Set(conflict.replay.owners.map((owner) => owner.task))];
-  return [conflict.task, ...Object.values(c.tasks).filter((record) => record.status === 'accepted' && record.id !== conflict.task && (planTask(c, record.id)?.paths ?? []).some((file) => conflict.paths.includes(file))).map((record) => record.id)];
+  return [conflict.task, ...Object.values(c.tasks).filter((record) => record.status === 'accepted' && record.id !== conflict.task && [...(planTask(c, record.id)?.paths ?? []), ...(record.admittedPaths ?? [])].some((file) => conflict.paths.includes(file))).map((record) => record.id)];
 }
 
 function conflictScope(c: Context, conflict: Conflict): string[] {
-  return [...new Set(conflict.replay?.owners ? conflict.replay.owners.flatMap((owner) => owner.paths) : involvedTasks(c, conflict).flatMap((id) => planTask(c, id)?.paths ?? []))].sort();
+  return [...new Set(conflict.replay?.owners ? conflict.replay.owners.flatMap((owner) => owner.paths) : involvedTasks(c, conflict).flatMap((id) => [...(planTask(c, id)?.paths ?? []), ...(c.tasks[id]?.admittedPaths ?? [])]))].sort();
 }
 
 /** Retired signatures retain their accepted contract; these checks preserve bytes without restoring requirements. */
@@ -641,7 +641,7 @@ function replayOwnership(c: Context, candidate: string, candidatePaths: readonly
     let signature: Record<string, unknown>;
     try { signature = JSON.parse(record.signature) as Record<string, unknown>; } catch { return null; }
     if (!isRecord(signature) || !Array.isArray(signature['paths']) || !Array.isArray(signature['definitions'])) return null;
-    const retainedPaths = [...new Set([...signature['paths'], ...(record.candidatePaths ?? [])].filter((file): file is string => typeof file === 'string'))];
+    const retainedPaths = [...new Set([...signature['paths'], ...(record.candidatePaths ?? []), ...(record.admittedPaths ?? [])].filter((file): file is string => typeof file === 'string'))];
     const commands = signature['definitions'].filter(isRecord).flatMap((row) => Array.isArray(row['verify']) ? row['verify'].filter(isRecord).flatMap((verify) => typeof verify['command'] === 'string' && verify['command'].trim() ? [verify['command']] : []) : []);
     return { record, owner: { task: record.id, paths: retainedPaths, commands: [...new Set(commands)] } };
   }).filter((row) => row !== null);
@@ -662,7 +662,7 @@ function briefScopePaths(record: TaskRecord): string[] {
 
 function checkEnvelope(c0: Context, id: string, envelopePath: string): S {
   const record = c0.tasks[id] as TaskRecord;
-  const permitted = [...new Set([...(planTask(c0, id)?.paths ?? []), ...briefScopePaths(record)])].sort();
+  const permitted = [...new Set([...(planTask(c0, id)?.paths ?? []), ...briefScopePaths(record), ...(record.admittedPaths ?? [])])].sort();
   const { c, id: effect } = effectId(withTask(c0, id, { status: 'submitted' }), 'check-envelope');
   return { state: { tag: 'task-envelope', c, effectId: effect, task: id }, effects: [{ kind: 'check-envelope', id: effect, envelopePath, permitted, ...(record.baseline ? { since: record.baseline } : {}), cwd: record.worktree as string }] };
 }
@@ -672,9 +672,10 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   if (!task) return taskFailed(c, id, 'Task is no longer in the governed plan.');
   const envelope = event.envelope;
   if (event.defects.length || !isWriterEnvelope(envelope)) return taskFailed(c, id, `Envelope rejected: ${event.defects.join('; ') || 'malformed envelope.'}`);
-  const allowed = new Set([...task.paths, ...briefScopePaths(record)]);
+  const allowed = new Set([...task.paths, ...briefScopePaths(record), ...(record.admittedPaths ?? [])]);
   const outside = diffPaths(event).filter((file) => !allowed.has(file));
-  if (outside.length) return taskFailed(c, id, `Writer changed paths outside the task scope: ${outside.join(', ')}.`);
+  // NOTE: hosts produce incidental files (caches, generated output), so the orchestrator judges extra paths instead of a hard failure.
+  if (outside.length) return requestDecision(c, { task: id, attempt: record.attempt, need: `Admit writer paths outside the task scope: ${outside.join(', ')}.`, paths: outside, rationale: 'The writer diff changed paths outside the approved task scope.', source: 'scope' });
   if (envelope.stage !== 'COMPLETE') return taskFailed(c, id, `Envelope stage must be COMPLETE; got ${envelope.stage}.`);
   if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return taskFailed(c, id, `Writer returned ${envelope.status}: ${envelope.summary}`, envelope.amendment ? resolveAmendment(plan, envelope.amendment) : null);
   const missing = criterionEvidenceRows(envelope.evidence, taskCriteria(plan, task));
@@ -689,7 +690,7 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
 
 /** A committed candidate inside the current scope proceeds; one an amendment narrowed after its brief asks the orchestrator. */
 function admitCandidate(c: Context, id: string): S {
-  const record = c.tasks[id] as TaskRecord, scope = planTask(c, id)?.paths ?? [];
+  const record = c.tasks[id] as TaskRecord, scope = [...(planTask(c, id)?.paths ?? []), ...(record.admittedPaths ?? [])];
   const outside = (record.candidatePaths ?? []).filter((file) => !scope.includes(file));
   if (!outside.length) return redReplay(c, id);
   const briefPaths = briefScopePaths(record);
@@ -706,8 +707,19 @@ function requestDecision(c: Context, request: Omit<WriterRequest, 'requestId'>):
 
 /** A writer need is approved only once its paths are in scope (AMEND widens scope); an admission approval admits the narrowed candidate. */
 function resolveRequest(c: Context, request: WriterRequest, approved: boolean): S {
+  // NOTE: approval re-runs the envelope check with the admitted paths, so every remaining admission check still applies.
+  if (request.source === 'scope') return approved ? admitScopePaths(c, request) : taskFailed(c, request.task, `Writer paths outside the task scope were declined: ${request.paths.join(', ')}.`);
   if (request.source === 'admission') return approved ? continueAdmission(c, request.task, () => redReplay(c, request.task)) : taskFailed(c, request.task, `Candidate paths outside the amended scope were declined: ${request.paths.join(', ')}.`);
   return schedule(c);
+}
+
+/** Records the admitted paths before the admission guard, so a parked submission re-checks with them later. */
+function admitScopePaths(c0: Context, request: WriterRequest): S {
+  const record = c0.tasks[request.task];
+  if (!record || record.removed) return continueAdmission(c0, request.task, () => schedule(c0));
+  const c = withTask(c0, request.task, { admittedPaths: [...new Set([...(record.admittedPaths ?? []), ...request.paths])].sort() });
+  const envelopePath = record.brief?.envelopePath;
+  return continueAdmission(c, request.task, () => envelopePath ? checkEnvelope(c, request.task, envelopePath) : taskFailed(c, request.task, 'Admitted scope paths have no submitted envelope to re-check.'));
 }
 
 /**
@@ -855,7 +867,9 @@ function prepareAmend(c: Context, event: AmendEvent, conflict: Conflict | null):
 
 function revisionResume(state: AmendOrigin, c: Context): AmendResume {
   // NOTE: a revision that retired the candidate under admission ends that admission; scheduling resumes instead.
-  if (state.tag === 'request-decision' && state.request.source === 'admission' && !c.tasks[state.request.task]) return { kind: 'schedule' };
+  if (state.tag === 'request-decision' && (state.request.source === 'admission' || state.request.source === 'scope') && !c.tasks[state.request.task]) return { kind: 'schedule' };
+  // A revision during a scope request re-checks the submitted envelope against the reconciled scope.
+  if (state.tag === 'request-decision' && state.request.source === 'scope') return { kind: 'recheck', task: state.request.task };
   return state.tag === 'integration-conflict' ? { kind: 'conflict', conflict: state.conflict }
     : state.tag === 'request-decision' && state.request.source === 'admission' ? { kind: 'admit', task: state.request.task } : { kind: 'schedule' };
 }
@@ -897,6 +911,10 @@ function continueAmend(c: Context): S {
   const resume = c.amendResume ?? { kind: 'schedule' as const };
   const done = { ...c, amendResume: null };
   if (resume.kind === 'admit') return continueAdmission(done, resume.task, () => admitCandidate(done, resume.task));
+  if (resume.kind === 'recheck') {
+    const envelopePath = done.tasks[resume.task]?.brief?.envelopePath;
+    return continueAdmission(done, resume.task, () => envelopePath ? checkEnvelope(done, resume.task, envelopePath) : schedule(done));
+  }
   if (resume.kind === 'conflict') return stay({ tag: 'integration-conflict', c: done, conflict: resume.conflict });
   return schedule(done);
 }
@@ -995,7 +1013,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       const conflict = state.conflict!;
       const integration = { ...c.integration!, head: conflict.base };
       const record = c.tasks[conflict.task];
-      const next = record ? withTask({ ...c, integration }, conflict.task, { status: 'pending', handle: null, baseline: null, brief: null, briefs: [], candidate: null, candidatePaths: [], integrated: null, redRows: [], preserveDraft: false, parked: null }) : { ...c, integration };
+      const next = record ? withTask({ ...c, integration }, conflict.task, { status: 'pending', handle: null, baseline: null, brief: null, briefs: [], candidate: null, candidatePaths: [], admittedPaths: [], integrated: null, redRows: [], preserveDraft: false, parked: null }) : { ...c, integration };
       return schedule(next);
     }
     case 'observe': {
@@ -1742,7 +1760,8 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
     case 'hotfix-envelope': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
       if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
-      if (event.defects.length || !isWriterEnvelope(event.envelope) || !['DONE', 'DONE_WITH_CONCERNS'].includes(event.envelope.status)) return stay(withContext(state.origin, state.c));
+      // NOTE: taskless hotfixes have no scope request, so any path outside the approved scope stays a hard failure.
+      if (event.defects.length || (Array.isArray(event.diff['outside']) && event.diff['outside'].length) || !isWriterEnvelope(event.envelope) || !['DONE', 'DONE_WITH_CONCERNS'].includes(event.envelope.status)) return stay(withContext(state.origin, state.c));
       return hotfixSnapshot(state);
     }
     case 'hotfix-snapshot': {
@@ -1866,7 +1885,7 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
     case 'request-decision': {
       const scope = planTask(state.c, state.request.task)?.paths ?? [];
       return state.stage === 'orchestrator'
-        ? { ...decideData('request', state.request.source === 'admission' ? `Candidate ${state.request.task} changed paths an amendment removed from its scope. Approve admission, decline it, or escalate to the user.` : `Writer ${state.request.task} needs: ${state.request.need}. Approve once the paths are in scope (send AMEND to widen it), decline, or escalate to the user.`, ['approve', 'decline', 'escalate']), request: state.request, requestId: state.request.requestId, scope }
+        ? { ...decideData('request', state.request.source === 'admission' ? `Candidate ${state.request.task} changed paths an amendment removed from its scope. Approve admission, decline it, or escalate to the user.` : state.request.source === 'scope' ? `Submitted task ${state.request.task} changed paths outside its scope: ${state.request.paths.join(', ')}. Inspect them; approve to admit exactly these paths (no AMEND), decline incidental output to fail the task with work preserved, or escalate to the user.` : `Writer ${state.request.task} needs: ${state.request.need}. Approve once the paths are in scope (send AMEND to widen it), decline, or escalate to the user.`, ['approve', 'decline', 'escalate']), request: state.request, requestId: state.request.requestId, scope }
         : { ...decideData('request-user', 'The orchestrator escalated this request. Show the request and rationale, then record the user choice and quote.', ['accept', 'decline']), request: state.request, requestId: state.request.requestId, orchestratorRationale: state.orchestratorRationale, scope };
     }
     case 'approval': return decideData('approval', 'Approve these plan paths and verification commands before any writer stage.', ['approve', 'stop'], [{ by: 'required', quote: 'required', paths: state.c.plan ? approvedPaths(state.c.plan) : [], commands: state.c.plan ? commandMappings(state.c.plan).map((row) => row.command) : [] }]);

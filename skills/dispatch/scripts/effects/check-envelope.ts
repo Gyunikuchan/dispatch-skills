@@ -241,7 +241,6 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
     if (allowed.size !== effect.permitted.length) defects.push('Permitted paths must be unique repository-relative slash paths.');
     const changed = [...new Set(paths.map((file) => cleanRepoPath(file) ?? file))].sort();
     const outside = changed.filter((file) => !allowed.has(file));
-    if (outside.length && envelope?.stage === 'COMPLETE') defects.push('Writer changed paths outside the approved scope: ' + outside.join(', ') + '.');
     if (outside.length && testsOnly) defects.push(`Tests-only writer changed paths outside the approved scope: ${outside.join(', ')}.`);
     if (testsOnly && changed.some((file) => !TEST_PATH.test(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !TEST_PATH.test(file)).join(', ')}.`);
     if (envelope?.files) for (const file of envelope.files) {

@@ -36,6 +36,8 @@ export type TaskRecord = {
   parked?: { envelopePath: string } | null;
   /** Paths the committed candidate changed; admission compares them with the current scope. */
   candidatePaths?: readonly string[];
+  /** Out-of-scope writer paths the orchestrator or user admitted into this task's effective scope. */
+  admittedPaths?: readonly string[];
   /** A revision retired this running task; the record moves to the archive at its terminal receipt. */
   removed?: boolean;
   /** Host disposition for a retired live writer: `stop` waits for cancellation, `retain` keeps its submission as evidence. */

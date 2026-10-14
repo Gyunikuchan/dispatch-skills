@@ -143,6 +143,8 @@ Explain non-obvious rationale (why, CLI/subprocess quirks, cross-platform nuance
 
   Add `--test-name-pattern="PATTERN"` when narrowing a test run. With multiple files, require a name-pattern match in each.
 - Test behavior at each layer through its public entrypoint: protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Keep one behavior per test and name it for that behavior. Put real Git/subprocess flows in `tests/e2e/`.
+- Keep logical unit fixtures in memory (`memoryRunFs`); use physical storage only when the claim depends on bytes or filesystem behavior. Physical I/O breaks per-file timing budgets under aggregate load.
+- When a change alters a shared machine or effect contract, list its callers with CodeGraph and cover every parent machine family, including failure after each durable boundary.
 - For intended changes to hash-tracked skill files, run `npm run hashes`, then rerun `npm test`.
 
 ## Long-Running Work and Handoff

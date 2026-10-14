@@ -52,6 +52,17 @@ test('`Variant unavailable` with effort classifies as config, not model-not-foun
   assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
 });
 
+test('a missing subscription classifies as auth, not empty-output', () => {
+  const outcome = opencode.parse(result('', 1, 'Error: No active subscription for this model'), launchReq());
+  assert.equal(outcome.status, 'fail');
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
+});
+
+test('a payment-required diagnostic with quota wording classifies as auth', () => {
+  const outcome = opencode.parse(result('', 1, 'HTTP 402 Payment Required: insufficient credit balance; no active subscription'), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
+});
+
 test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt', async () => {
   const events: string[] = [];
   const prepare = {

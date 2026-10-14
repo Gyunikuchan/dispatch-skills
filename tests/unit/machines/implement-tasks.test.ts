@@ -166,7 +166,6 @@ test('tasks: writer failure resets the worktree and advances the model and attem
 // SECTION: Admission
 
 const rejections: [string, Sim, RegExp][] = [
-  ['scope violation', { diff: (id) => [...pathsOf(id), 'README.md'] }, /outside the task scope/],
   ['missing RED matrix', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: ['CRITERION SC1 | src/a.ts | behavior'] }) }, /RED matrix rejected/],
   ['unapproved checkpoint', { redDefects: ['T1'] }, /RED checkpoint rejected/],
   ['setup-only RED', { verify: (purpose) => purpose === 'red' ? { exit: 1, loadError: true } : { exit: 0 } }, /load, syntax, or missing-file/],
@@ -182,6 +181,62 @@ for (const [name, sim, reason] of rejections) test(`tasks: admission rejects ${n
   result = submit(launch(result, sim, trace), 'T2', sim, trace);
   assert.equal(result.state.tag, 'failure');
   assert.equal(launchedTasks(trace).includes('task-t3'), false);
+});
+
+// SECTION: Orchestrator scope admission
+
+const extraPaths: Sim = { diff: (id) => id === 'T1' ? [...pathsOf(id), 'README.md'] : [...pathsOf(id)], commitPaths: (id) => id === 'T1' ? [...pathsOf(id), 'README.md'] : [...pathsOf(id)] };
+const scopeAnswer = (action: string) => ({ type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action, rationale: 'Generated doc output.' } }) as never;
+
+test('tasks: writer paths outside the task scope request an orchestrator decision', () => {
+  let { result, trace } = start(1, extraPaths);
+  result = submit(launch(result, extraPaths, trace), 'T1', extraPaths, trace);
+  assert.equal(result.state.tag, 'request-decision');
+  const request = result.state.tag === 'request-decision' ? result.state.request : null;
+  assert.deepEqual([request?.source, request?.paths, request?.task], ['scope', ['README.md'], 'T1']);
+  assert.match(request?.need ?? '', /README\.md/);
+  assert.equal(record(result, 'T1')?.status, 'submitted');
+});
+
+test('tasks: a scope request frame directs approval without AMEND', () => {
+  let { result, trace } = start(1, extraPaths);
+  result = submit(launch(result, extraPaths, trace), 'T1', extraPaths, trace);
+  const instruction = JSON.stringify(implementData(result.state));
+  assert.match(instruction, /README\.md/);
+  assert.match(instruction, /no AMEND/);
+  assert.doesNotMatch(instruction, /send AMEND to widen it/);
+});
+
+test('tasks: orchestrator approval admits outside paths through commit and candidate admission', () => {
+  let { result, trace } = start(1, extraPaths);
+  result = submit(launch(result, extraPaths, trace), 'T1', extraPaths, trace);
+  assert.equal(validateImplement(result.state, scopeAnswer('approve')), null);
+  result = host(result, scopeAnswer('approve'), extraPaths, trace);
+  assert.deepEqual(record(result, 'T1')?.admittedPaths, ['README.md']);
+  const recheck = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
+  assert.ok(recheck?.kind === 'check-envelope' && recheck.permitted.includes('README.md'));
+  assert.ok(trace.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'commit'));
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+});
+
+test('tasks: orchestrator decline fails the task naming the outside paths', () => {
+  let { result, trace } = start(1, extraPaths);
+  result = submit(launch(result, extraPaths, trace), 'T1', extraPaths, trace);
+  result = host(result, scopeAnswer('decline'), extraPaths, trace);
+  assert.equal(record(result, 'T1')?.status, 'failed');
+  assert.match(record(result, 'T1')?.reason ?? '', /declined: README\.md/);
+});
+
+test('tasks: user acceptance after escalation admits outside paths', () => {
+  let { result, trace } = start(1, extraPaths);
+  result = submit(launch(result, extraPaths, trace), 'T1', extraPaths, trace);
+  result = host(result, scopeAnswer('escalate'), extraPaths, trace);
+  const requestId = result.state.tag === 'request-decision' ? result.state.request.requestId : '';
+  const accept = { type: 'DECISION', kind: 'request-user', answer: { by: 'user', requestId, choice: 'accept', quote: 'Keep the README change.' } } as never;
+  assert.equal(validateImplement(result.state, accept), null);
+  result = host(result, accept, extraPaths, trace);
+  assert.deepEqual(record(result, 'T1')?.admittedPaths, ['README.md']);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
 test('tasks: admission resets the integration worktree when integration verification fails', () => {

@@ -40,6 +40,7 @@ export type Sim = {
   reviewRounds?: number;
   envelope?: (id: string) => Record<string, unknown>;
   diff?: (id: string) => string[];
+  commitPaths?: (id: string) => string[];
   verify?: (purpose: string, command: string, task: string | null) => Outcome;
   conflict?: string[];
   redDefects?: string[];
@@ -79,7 +80,7 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
       const results: Record<string, Record<string, unknown>> = {
         init: { path: 'run/wt/integration', base: 'b0', manifest: { linked: [] } },
         task: { path: `run/wt/${input['name']}`, revision: input['revision'] },
-        commit: { revision: `c-${id}`, paths: pathsOf(id ?? 'T1', plan) },
+        commit: { revision: `c-${id}`, paths: sim.commitPaths ? sim.commitPaths(id ?? 'T1') : pathsOf(id ?? 'T1', plan) },
         red: { path: `run/wt/${input['name']}`, defects: sim.redDefects?.includes(id ?? '') ? ['checkpoint names an unapproved path'] : [], files: [] },
         'scope-rebase': { path: `run/wt/${input['name']}`, revision: input['revision'], conflict: false, conflicts: [] },
         integrate: sim.conflict?.includes(id ?? '') ? { conflict: true, paths: ['src/shared.ts'], detail: 'both modified' } : { revision: `i-${id}`, conflict: false, paths: [] },
