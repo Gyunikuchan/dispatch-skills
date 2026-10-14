@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reviews reject preference-only and tool-enforced findings, and check new code for existing equivalents.
+
 ## [0.7.1] - 2026-10-11
 
 - Runs recover more reliably after interruptions or file drift, keeping applied fixes and settled review rulings.

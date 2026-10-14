@@ -126,3 +126,17 @@ test('templates: every tag a review prompt offers is accepted by the validator a
     }
   }
 });
+
+test('templates: plans name searched equivalents and plan review checks them', () => {
+  const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(plan, /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/);
+  assert.match(plan, /^- Reuse: on `\[NEW\]` entries and on `\[MODIFY\]` entries that add a helper, module, or type;/m);
+  const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(prompt.includes('each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search'));
+});
+
+test('templates: task brief cleanup covers existing-code duplicates without a new step', () => {
+  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
+  assert.match(brief, /^- After GREEN, inspect the task's changes for duplication, including new helpers that duplicate existing repository code, unclear naming/m);
+  assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
+});

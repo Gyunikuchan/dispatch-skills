@@ -21,11 +21,16 @@ success criteria well, not merely whether it matches the plan.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local
+convention is not a finding; when the convention itself is defective, report it once and name the
+other instances in `defect`.
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
+Skip issues that configured linters, formatters, or type checkers enforce. For each new exported or
+shared symbol, search the repository by name and behaviour for an existing equivalent; report a
+match as `reuse` anchored on the new symbol, and cite the existing `path:L<line>` in `defect`.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
@@ -39,7 +44,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
 - correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
 - robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races
-- security/resources: `security`, `auth`, `resource-leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unclosed handles; unbounded memory/concurrency; blocked event loops; hot-path quadratics
+- security/resources: `security`, `auth`, `resource-leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unchecked object ownership (IDOR); sensitive data in logs or errors; unclosed handles; unbounded memory/concurrency; blocked event loops; hot-path quadratics; N+1 queries; unpaginated reads; new filter or sort columns without an index
 - compatibility: `compatibility`, `breaking`, `migration` — callers and serialized formats; migrations
 - simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); delete, reuse, stdlib, then new code; shared root-cause fixes
 - tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — observable outcomes at seams; missing failure-mode tests; `test-leak`: retained tests coupled to internals or duplicating seam coverage (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); touched UI, a11y, CLI/API ergonomics
@@ -50,13 +55,16 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
 If unspecified, target `8 + 2 × changed files`; on re-review count files changed since the prior
-round only.
+round only. Reuse searches do not count toward the target.
 
 ### Severity
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
 constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
 improvement; no defect.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
+vulnerability class. Preference is not a finding; between technically equivalent approaches, the
+author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
 
 ### Reply
 Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain

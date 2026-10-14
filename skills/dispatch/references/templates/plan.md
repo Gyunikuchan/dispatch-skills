@@ -54,6 +54,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 - #### [NEW] <relative-path>
   - Purpose: Public interface and rationale.
+  - Reuse: <existing equivalents searched and why not reused, or none found>
 
 - #### [MODIFY] <relative-path>
   - Changes: Concrete symbol/signature and behavior changes.
@@ -115,4 +116,5 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - Retain: `durable` (default) keeps the test. `transient` tests prove one step and are trimmed after final review; they require `Covered by:` naming a durable criterion or `FINAL` that keeps the behavior covered. Only test files listed solely by transient criteria are trimmed; production paths are never trimmed.
 - Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks.
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
+- Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add a helper, module, or type; name the equivalents searched by name and behaviour, or `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
 - `[GENERATED]`: the driver reruns Command before completion verification; a task producing an Input must be a (transitive) prerequisite.

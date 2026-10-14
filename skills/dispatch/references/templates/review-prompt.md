@@ -25,7 +25,9 @@ Populate the template variables (kind blocks declare the rest):
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local
+convention is not a finding; when the convention itself is defective, report it once and name the
+other instances in `defect`.
 <<slot:inspection>>
 Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify prior resolutions in the review log that `## Review Findings & Resolutions` links, and treat
@@ -47,6 +49,9 @@ constraint. `SHOULD`: real defect that degrades the outcome without blocking it.
 improvement; no defect.
 <<slot:severity>>
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
+vulnerability class. Preference is not a finding; between technically equivalent approaches, the
+author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
 
 ### Reply
 Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain

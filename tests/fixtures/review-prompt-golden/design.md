@@ -20,7 +20,9 @@ code has been written yet.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local
+convention is not a finding; when the convention itself is defective, report it once and name the
+other instances in `defect`.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -52,6 +54,9 @@ Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a
 constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
 improvement; no defect.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
+vulnerability class. Preference is not a finding; between technically equivalent approaches, the
+author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
 
 ### Reply
 Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain

@@ -48,11 +48,11 @@ when missing evidence, an adjudication dispute or recovery requires it; follow
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
 - decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; unjustified overlap or shared resources; fragmented or oversized tasks
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
-- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal
+- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization and object ownership, input validation, injection, traversal, sensitive data in logs
 - compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback
-- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs
+- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs; N+1 access, unpaginated reads, and unindexed new queries
 - verification: `verification`, `testability`, `spec-gap`, `test-leak` — planned tests coupled to internals or duplicating seam coverage; a named test or concrete step per criterion; pass/fail definitions; edge expectations; broad or slow commands lacking `[FINAL]`, narrow feedback commands marked `[FINAL]`
-- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code
+- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code; each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
 ## severity

@@ -29,7 +29,9 @@ executing the plan as written delivers the requirement.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local
+convention is not a finding; when the convention itself is defective, report it once and name the
+other instances in `defect`.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-level shared constraints, nested file ownership and each criterion's specific checks.
 Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -46,11 +48,11 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
 - decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; unjustified overlap or shared resources; fragmented or oversized tasks
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
-- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal
+- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization and object ownership, input validation, injection, traversal, sensitive data in logs
 - compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback
-- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs
+- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs; N+1 access, unpaginated reads, and unindexed new queries
 - verification: `verification`, `testability`, `spec-gap`, `test-leak` — planned tests coupled to internals or duplicating seam coverage; a named test or concrete step per criterion; pass/fail definitions; edge expectations; broad or slow commands lacking `[FINAL]`, narrow feedback commands marked `[FINAL]`
-- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code
+- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code; each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
 ### Budget
@@ -66,6 +68,9 @@ In plan reviews, MUST means the plan as written cannot deliver its outcome or br
 constraint. A gap that the plan's own Verify gates would surface deterministically during
 implementation, such as a fixture update or a test assertion, is SHOULD.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
+vulnerability class. Preference is not a finding; between technically equivalent approaches, the
+author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
 
 ### Reply
 Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain
