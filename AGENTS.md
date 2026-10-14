@@ -41,11 +41,37 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 
 When `/dispatch-implement` (or `dispatch implement`) runs in this checkout, do not start the driver: a driver run that edits its own scripts mid-run is self-referential, so its journal, frames, and hashes become unreliable. Follow the dispatch flow by hand instead:
 
-1. Read the plan; map task dependencies (`Requires`).
-2. Launch one native writer subagent per independent task, in parallel, with a brief that names the task, its in-scope paths, criteria, Verify commands, and the plan path and hash. Direct the writer to read only these plan parts: the header; `Background`, `Key Decisions & Context`, `User Review Required`, `Open Questions & Assumptions`, and `Out of Scope`; its own `### T<n>` section, `[SC<n>]` entries, and Verification Plan `Seams` and SC rows; and, for each sibling task, its heading, `Outcome`, `Prerequisites`, `Criteria`, and path headings. Writers read other sections only for a gap they name, and keep edits to paths shared with sibling tasks minimal. Before launch, if the `codegraph` CLI is available and the repository has no `.codegraph/`, ask the user once whether to index it. When an index exists, tell each writer in its brief to locate code symbols with `codegraph explore "<symbols>"` before reading, then read only the returned ranges; non-code and small files may be read whole. Writers never initialize or rebuild the index. Resolve each writer's model and effort from the active dispatch config's `write-subagents` entry for this platform at the run's level, and pass both explicitly per the native launch rule in `skills/dispatch/references/providers.md`. Run dependent tasks after their prerequisites finish. Writers never run git write commands.
-3. Check each writer's result against the plan; run each criterion's Verify command, then `npm run hashes` when hash-tracked files changed, then `npm test`.
-4. Run a standalone `/dispatch-code-review --fix` on the working tree after the implementation is complete. Rerun `npm test` after its fixes.
-5. Hand off per [Long-Running Work and Handoff](#long-running-work-and-handoff), with evidence for each criterion.
+1. **Resolve plan, level, and model:** Read the plan; map task dependencies (`Requires`). Resolve the implementation level (explicit or classified, default `medium`). Query the driver's policy engine for writer configuration:
+   ```text
+   node skills/dispatch/scripts/dispatch.ts doctor --level <level> --json
+   ```
+   Read `.writers[<platform>].value` (`model` and `effort`) for the host platform. Pass both explicitly per the native launch rule in `skills/dispatch/references/providers.md`.
+2. **Prepare task worktree:** For independent tasks up to `write-concurrency` (default 1):
+   - Create a detached worktree at `.scratch/worktrees/T<n>` from `HEAD`:
+     ```text
+     git worktree add -q --detach .scratch/worktrees/T<n> HEAD
+     ```
+   - Link `node_modules` into the worktree (Windows directory junction: `cmd /c mklink /J .scratch\worktrees\T<n>\node_modules node_modules`; Unix symlink: `ln -s ../../node_modules .scratch/worktrees/T<n>/node_modules`) so test runners execute without separate dependency installs.
+   - Record the worktree in `.state/scratch/worktrees.json` with path, owner (`T<n>`), host identity, and status `active` per `skills/dispatch/references/worktree-cleanup.md`.
+3. **Launch writer subagents:** Launch one native writer subagent per prepared task worktree with a brief naming the task, its worktree path, in-scope paths, criteria, Verify commands, and the plan path and hash. Confine edits to the task worktree; writers never run git write commands. Direct the writer to read only these plan parts: the header; `Background`, `Key Decisions & Context`, `User Review Required`, `Open Questions & Assumptions`, and `Out of Scope`; its own `### T<n>` section, `[SC<n>]` entries, and Verification Plan `Seams` and SC rows; and, for each sibling task, its heading, `Outcome`, `Prerequisites`, `Criteria`, and path headings. Writers read other sections only for a gap they name, and keep edits to paths shared with sibling tasks minimal. Before launch, if the `codegraph` CLI is available and the repository has no `.codegraph/`, ask the user once whether to index it. When an index exists, tell each writer in its brief to locate code symbols with `codegraph explore "<symbols>"` before reading, then read only the returned ranges; non-code and small files may be read whole. Writers never initialize or rebuild the index. Run dependent tasks after their prerequisites finish.
+4. **Integrate candidate delta:** When a writer completes:
+   - Check that changed files inside `.scratch/worktrees/T<n>` touch only approved task paths.
+   - Commit candidate inside the worktree:
+     ```text
+     git -C .scratch/worktrees/T<n> add -A && git -C .scratch/worktrees/T<n> commit -m "dispatch candidate T<n>"
+     ```
+   - Transfer or cherry-pick the candidate delta into the caller checkout.
+   - Run task Verify commands.
+5. **Clean task worktrees:** Before review, clean completed task worktrees:
+   - Remove dependency link (`.scratch/worktrees/T<n>/node_modules`).
+   - Remove worktree: `git worktree remove --force .scratch/worktrees/T<n>` and run `git worktree prune`.
+   - Verify removal with `git worktree list --porcelain`.
+   - Update `.state/scratch/worktrees.json` status to `removed`.
+6. **Review, trim, and verify:**
+   - Run a standalone `/dispatch-code-review --fix` on the working tree.
+   - Trim temporary test files owned only by `Retain: transient` criteria.
+   - Run `npm run hashes` when hash-tracked files changed, then `npm test`.
+7. **Handoff:** Hand off per [Long-Running Work and Handoff](#long-running-work-and-handoff), with evidence for each criterion.
 
 ## Product Architecture and Key Areas
 
