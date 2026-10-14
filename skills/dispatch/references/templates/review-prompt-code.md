@@ -33,9 +33,6 @@ Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and unt
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
-Skip issues that configured linters, formatters, or type checkers enforce. For each new exported or
-shared symbol, search the repository by name and behaviour for an existing equivalent; report a
-match as `reuse` anchored on the new symbol, and cite the existing `path:L<line>` in `defect`.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
@@ -45,10 +42,10 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
 - correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
 - robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races
-- security/resources: `security`, `auth`, `resource-leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unchecked object ownership (IDOR); sensitive data in logs or errors; unclosed handles; unbounded memory/concurrency; blocked event loops; hot-path quadratics; N+1 queries; unpaginated reads; new filter or sort columns without an index
+- security/resources: `security`, `auth`, `resource-leak`, `perf` — violations of the quality bar's security and resource rules
 - compatibility: `compatibility`, `breaking`, `migration` — callers and serialized formats; migrations
-- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); delete, reuse, stdlib, then new code; shared root-cause fixes
-- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — observable outcomes at seams; missing failure-mode tests; `test-leak`: retained tests coupled to internals or duplicating seam coverage (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); retained tests that fail the durable bar in the plan template (implementation step, internals, no named regression, or redundant with another retained test), with `requiredChange` rewrite to meet it, demote to transient, or delete when redundant; test names, describe blocks, comments, section headers, or fixture names that reference plan artifacts (criterion, task, or finding IDs; plan or session paths); touched UI, a11y, CLI/API ergonomics
+- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); departures from the quality bar's simplicity order; `reuse`: an existing equivalent found by the quality bar's search, anchored on the new symbol, with the existing `path:L<line>` in `defect`; shared root-cause fixes
+- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: retained tests that fail the quality bar's test or naming rules, with the bar's remedy as `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); touched UI, a11y, CLI/API ergonomics
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
 - out of scope: `adjacent` — a concrete defect you meet outside Scope while inspecting; cite its real locus; spend no extra turns hunting
 

@@ -302,7 +302,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const dir = path.join(deps.skillRoot, 'references', 'templates');
         const frame = ports.fs.readText(path.join(dir, 'review-prompt.md'));
         const block = ports.fs.readText(path.join(dir, `review-prompt-${kind}.md`));
-        const template = assembleTemplate(frame, block);
+        // Only code reviews judge code, so only they merge the shared quality bar.
+        const template = assembleTemplate(frame, block, undefined, kind === 'code' ? [ports.fs.readText(path.join(dir, 'quality-bar.md'))] : []);
         const values: Record<string, string> = {
           'User Focus Areas': text(spec['context'], 'General review') || 'General review', 'Tool Turn Budget': 'Unspecified',
           ...(await kindValues(kind, spec, scopeText, deps, ports)),

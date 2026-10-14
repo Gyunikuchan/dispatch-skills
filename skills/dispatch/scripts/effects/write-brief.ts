@@ -71,7 +71,7 @@ export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
     let text: string;
     try {
       const dir = path.join(deps.skillRoot, 'references', 'templates');
-      const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)));
+      const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)), undefined, [ports.fs.readText(path.join(dir, 'quality-bar.md'))]);
       const rawSelfCheck = typeof effect.input['selfCheck'] === 'string' ? effect.input['selfCheck'] : 'dispatch --check-envelope <Expected Envelope Path>';
       const selfCheck = rawSelfCheck.split('<Expected Envelope Path>').join(envelopePath);
       const task = typeof effect.input['task'] === 'object' && effect.input['task'] !== null ? effect.input['task'] as Readonly<Record<string, unknown>> : null;

@@ -20,9 +20,8 @@ code has been written yet.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local
-convention is not a finding; when the convention itself is defective, report it once and name the
-other instances in `defect`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+when the convention itself is defective, report it once and name the other instances in `defect`.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -33,6 +32,7 @@ On re-review, verify prior resolutions in the review log that `## Review Finding
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+Host rule files take precedence over dispatch defaults: content that follows a host rule is not a finding, even when it contradicts a dispatch default. Where host rules are silent, dispatch defaults apply.
 
 ### Tags
 - intent: `intent`, `scope` — goals traced to the ask; explicit non-goals; flawed premises

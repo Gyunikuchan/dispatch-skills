@@ -102,6 +102,26 @@ test('prewrite-level: task briefs request scope live and echo briefHash; hotfix 
   assert.doesNotMatch(hotfixText, /writer request before that edit/);
 });
 
+test('task and hotfix briefs render the same quality bar as the code review prompt, with fixed precedence limits', async () => {
+  const quality = fs.readFileSync(path.join(SKILL_ROOT, 'references', 'templates', 'quality-bar.md'), 'utf8').replace(/\r\n/g, '\n').split(/^## quality\n/m)[1]!.trim();
+  assert.ok(quality.includes('Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed.'));
+  const runDir = tempDir(), ports = fakePorts();
+  const once = (text: string, label: string) => assert.equal(text.split(quality).length, 2, label);
+  const brief = createWriteBrief({ skillRoot: SKILL_ROOT });
+  for (const [index, stage] of (['task', 'hotfix'] as const).entries()) {
+    const event = only(await brief({ kind: 'write-brief', id: `implement.write-brief.${7 + index}`, stage, input: {} }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') return;
+    once(fs.readFileSync(event.path, 'utf8'), stage);
+  }
+  const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], log: async () => '' };
+  const [review] = await createPrepareReview({ cwd: tempDir(), skillRoot: SKILL_ROOT, git })({
+    kind: 'prepare-review', id: 'p-quality', round: 1,
+    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: 'Quality bar' }, scope: { scope: 'full' },
+  }, ports, { runDir, attempt: 1 });
+  assert.equal(review?.type, 'REVIEW_PREPARED'); if (review?.type !== 'REVIEW_PREPARED') return;
+  once(ports.fs.readText(review.promptPaths['codex[0]']!), 'code review');
+});
+
 test('prepare-review-git-log: extracts commit messages and falls back on error or empty', async () => {
   const tmp = tempDir();
   const runDir = tempDir();

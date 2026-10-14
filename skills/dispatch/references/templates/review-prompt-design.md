@@ -45,6 +45,10 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 - standards: `standards` — violations of the host rule files above
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest design heading as locus, code cited in the defect; spend no extra turns hunting
 
+## quality
+
+Host rule files take precedence over dispatch defaults: content that follows a host rule is not a finding, even when it contradicts a dispatch default. Where host rules are silent, dispatch defaults apply.
+
 ## severity
 
 ## budget

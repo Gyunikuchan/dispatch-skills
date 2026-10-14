@@ -1,7 +1,8 @@
 # Review delegate prompt (shared frame)
 
-Shared by every review kind; `domain/prompt.ts` `assembleTemplate(frame, kindBlock)` fills each
-`<<slot:NAME>>` from `## NAME` section of `review-prompt-<kind>.md`, and its variables are both files' declarations.
+Shared by every review kind; `domain/prompt.ts` `assembleTemplate(frame, kindBlock, section, shared)` fills each
+`<<slot:NAME>>` from `## NAME` section of `review-prompt-<kind>.md` or, for code reviews, the shared
+`quality-bar.md`; its variables are all files' declarations.
 
 ## Prompt template
 
@@ -25,15 +26,15 @@ Populate the template variables (kind blocks declare the rest):
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local
-convention is not a finding; when the convention itself is defective, report it once and name the
-other instances in `defect`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+when the convention itself is defective, report it once and name the other instances in `defect`.
 <<slot:inspection>>
 Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify prior resolutions in the review log that `## Review Findings & Resolutions` links, and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+<<slot:quality>>
 
 ### Tags
 <<slot:tags>>

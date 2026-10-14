@@ -7,7 +7,7 @@ import { parseDesign } from '../../skills/dispatch/scripts/domain/design.ts';
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md',
-  'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md',
+  'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md', 'quality-bar.md',
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
 
@@ -135,10 +135,12 @@ test('templates: plans name searched equivalents and plan review checks them', (
   assert.ok(prompt.includes('each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search'));
 });
 
-test('templates: task brief cleanup covers existing-code duplicates without a new step', () => {
+test('templates: task brief cleanup applies the quality bar without a new step', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
-  assert.match(brief, /^- After GREEN, inspect the task's changes for duplication, including new helpers that duplicate existing repository code, unclear naming/m);
+  assert.match(brief, /^- After GREEN, inspect the task's changes against the quality bar, plus unclear naming/m);
   assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
+  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  assert.ok(quality.includes('search the repository by name and behaviour for an existing equivalent'));
 });
 
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
@@ -150,5 +152,6 @@ test('templates: plan template defines the durable bar and isolates transient te
 
 test('templates: task brief applies the durable bar and isolates transient tests', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8').replace(/\s+/g, ' ');
-  for (const text of ['only in their transient files', 'the durable bar in the plan template', 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
+  for (const text of ['only in their transient files', "the quality bar's test rules", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
+  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the durable bar in the plan template'));
 });

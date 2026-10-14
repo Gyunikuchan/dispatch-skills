@@ -73,7 +73,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
   ...files('references', 'change-handling diagnostics glossary providers review-rules worktree-cleanup', '.md'),
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
-  ...files('references/templates', 'design plan review-prompt-code review-prompt-design review-prompt-plan review-prompt walkthrough write-brief-hotfix write-brief-task write-brief', '.md'),
+  ...files('references/templates', 'design plan review-prompt-code review-prompt-design review-prompt-plan review-prompt quality-bar walkthrough write-brief-hotfix write-brief-task write-brief', '.md'),
   ...files('references/templates/schemas', 'report-code report-design report-plan', '.json'),
   ...files('references/verbs', 'ask design implement plan review', '.md'),
 ]);

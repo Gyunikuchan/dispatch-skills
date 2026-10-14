@@ -21,16 +21,12 @@ success criteria well, not merely whether it matches the plan.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local
-convention is not a finding; when the convention itself is defective, report it once and name the
-other instances in `defect`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+when the convention itself is defective, report it once and name the other instances in `defect`.
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
-Skip issues that configured linters, formatters, or type checkers enforce. For each new exported or
-shared symbol, search the repository by name and behaviour for an existing equivalent; report a
-match as `reuse` anchored on the new symbol, and cite the existing `path:L<line>` in `defect`.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
@@ -39,15 +35,24 @@ On re-review, verify prior resolutions in the review log that `## Review Finding
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+Code quality bar (shared by writers and code reviewers):
+- Precedence: host rule files (`AGENTS.md` / `CLAUDE.md`; the nearest nested file wins over its parent), then this bar, then preference. Code that follows a host rule is not a finding, even when it contradicts this bar. Where host rules are silent, this bar applies.
+- Host rules override only this bar. Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed. Writers report a conflict between host rules and the brief under concerns; reviewers do not report such a conflict as a finding.
+- Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
+- Reuse: for each new exported or shared symbol, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding the symbol.
+- Security and resources: prevent injection, traversal, missing escaping, exposed secrets, and auth bypass; check object ownership (IDOR); put no sensitive data in logs or errors; close handles; bound memory and concurrency; never block the event loop; avoid hot-path quadratics, N+1 queries, and unpaginated reads; index new filter or sort columns.
+- Tests: assert observable outcomes at seams, not internals, and cover failure modes. Each retained (`Retain: durable`) test meets the durable bar in the plan template; implementation steps, internals, no named regression, or redundancy with another retained test fail it. A test that fails the bar is rewritten to meet it, demoted to transient, or deleted when redundant.
+- Test naming: name tests, describe blocks, test files, comments, section headers, and fixtures for behavior; never reference plan artifacts (criterion, task, or finding IDs; plan or session paths).
+- Tooling: skip issues that configured linters, formatters, or type checkers enforce.
 
 ### Tags
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
 - correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
 - robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races
-- security/resources: `security`, `auth`, `resource-leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unchecked object ownership (IDOR); sensitive data in logs or errors; unclosed handles; unbounded memory/concurrency; blocked event loops; hot-path quadratics; N+1 queries; unpaginated reads; new filter or sort columns without an index
+- security/resources: `security`, `auth`, `resource-leak`, `perf` — violations of the quality bar's security and resource rules
 - compatibility: `compatibility`, `breaking`, `migration` — callers and serialized formats; migrations
-- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); delete, reuse, stdlib, then new code; shared root-cause fixes
-- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — observable outcomes at seams; missing failure-mode tests; `test-leak`: retained tests coupled to internals or duplicating seam coverage (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); retained tests that fail the durable bar in the plan template (implementation step, internals, no named regression, or redundant with another retained test), with `requiredChange` rewrite to meet it, demote to transient, or delete when redundant; test names, describe blocks, comments, section headers, or fixture names that reference plan artifacts (criterion, task, or finding IDs; plan or session paths); touched UI, a11y, CLI/API ergonomics
+- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); departures from the quality bar's simplicity order; `reuse`: an existing equivalent found by the quality bar's search, anchored on the new symbol, with the existing `path:L<line>` in `defect`; shared root-cause fixes
+- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: retained tests that fail the quality bar's test or naming rules, with the bar's remedy as `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); touched UI, a11y, CLI/API ergonomics
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
 - out of scope: `adjacent` — a concrete defect you meet outside Scope while inspecting; cite its real locus; spend no extra turns hunting
 

@@ -29,9 +29,8 @@ executing the plan as written delivers the requirement.
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local
-convention is not a finding; when the convention itself is defective, report it once and name the
-other instances in `defect`.
+reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+when the convention itself is defective, report it once and name the other instances in `defect`.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-level shared constraints, nested file ownership and each criterion's specific checks.
 Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -42,6 +41,7 @@ On re-review, verify prior resolutions in the review log that `## Review Finding
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+Host rule files take precedence over dispatch defaults: content that follows a host rule is not a finding, even when it contradicts a dispatch default. Where host rules are silent, dispatch defaults apply.
 
 ### Tags
 - intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating

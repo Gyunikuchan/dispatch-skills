@@ -71,12 +71,21 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
 }
 
 /**
- * Fills every `<<slot:NAME>>` of the frame's template with the kind block's `## NAME` body; variables are
- * the union of both declarations. A slot without a section, or a section without a slot, throws.
+ * Fills every `<<slot:NAME>>` of the frame's template with the `## NAME` body of the kind block or a shared
+ * kind block; variables are the union of all declarations. A slot without a section, a section without a
+ * slot, or a section declared by more than one input throws.
  */
-export function assembleTemplate(frameMarkdown: string, kindMarkdown: string, section = DEFAULT_SECTION): Template {
+export function assembleTemplate(frameMarkdown: string, kindMarkdown: string, section = DEFAULT_SECTION, shared: readonly string[] = []): Template {
   const frame = extractTemplate(frameMarkdown, section);
   const kind = parseKindBlock(kindMarkdown);
+  // Shared blocks parse separately so each file's title line stays out of the previous input's last section.
+  for (const block of shared.map(parseKindBlock)) {
+    kind.variables.push(...block.variables);
+    for (const [name, body] of block.sections) {
+      if (kind.sections.has(name)) throw new Error(`Kind block declares section "${name}" twice`);
+      kind.sections.set(name, body);
+    }
+  }
   const slots = new Set([...frame.template.matchAll(SLOT_PATTERN)].map((match) => match[1] ?? ''));
   const missing = [...slots].filter((name) => !kind.sections.has(name));
   if (missing.length) throw new Error(`Kind block has no section for slot(s): ${missing.join(', ')}`);
