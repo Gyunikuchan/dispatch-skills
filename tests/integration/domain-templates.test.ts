@@ -140,3 +140,15 @@ test('templates: task brief cleanup covers existing-code duplicates without a ne
   assert.match(brief, /^- After GREEN, inspect the task's changes for duplication, including new helpers that duplicate existing repository code, unclear naming/m);
   assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
 });
+
+test('templates: plan template defines the durable bar and isolates transient test files', () => {
+  const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(plan.includes('- Retain: <transient|durable>'));
+  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'lasting contract', 'observable outcome', 'regression', 'no other retained test', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
+  assert.equal(plan.match(/durable bar:/g)?.length, 1);
+});
+
+test('templates: task brief applies the durable bar and isolates transient tests', () => {
+  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8').replace(/\s+/g, ' ');
+  for (const text of ['only in their transient files', 'the durable bar in the plan template', 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
+});

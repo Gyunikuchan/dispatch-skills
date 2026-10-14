@@ -35,7 +35,8 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
     case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'generated-inputs':
-    case 'task-overlap': case 'transient-coverage': case 'section-order':
+    case 'task-overlap': case 'transient-coverage': case 'section-order': case 'criterion-retain-required': case 'transient-test-path':
+    case 'plan-id-in-test-name':
       return 'defect';
     default:
       return unreachable(code);
@@ -318,11 +319,21 @@ const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/i;
 const EVIDENCE: readonly EvidenceClass[] = ['red', 'verify', 'review'];
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
-// Common test-path conventions; a heuristic, so a miss only warns.
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
+// Common test-path conventions shared by plan lint, implement machines, and envelope checks; a heuristic, so a red-path miss only warns.
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/i;
+export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
+
+/** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
+export function planIdPattern(ids: readonly string[]): RegExp | null {
+  if (!ids.length) return null;
+  const escaped = ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`(?<![A-Za-z0-9-])(?:${escaped.join('|')})(?![A-Za-z0-9])`, 'i');
+}
+
+const FINDING_ID = /\bR\d+-F\d+\b/gi;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
-type Criterion = PlanCriterion & { integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
+type Criterion = PlanCriterion & { retainLine: number | null; verifyLines: number[]; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
 
 export type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
@@ -345,6 +356,9 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   }
   const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
   lintTransientCoverage(criteria, finalCommands, out);
+  lintTransientTestPaths(criteria, changes, out);
+  const planIds = collectPlanIds(lines, criteria);
+  lintPlanIdNames(criteria, changes, planIds, out);
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
@@ -373,6 +387,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     warnings: overlapWarnings,
     traceability: keyValues(lines, '## Technical-Design Traceability'),
     governedText: governedPlanText(source),
+    planIds,
     sharedContext: '',
   };
   return { ok: true, plan: { ...plan, sharedContext: sharedPlanContext(plan) }, warnings };
@@ -637,7 +652,7 @@ function startCriterion(text: string, line: number, ids: Set<string>, out: LintD
   const id = criterionHeading(text);
   const base: Criterion = {
     id: '', title: text, line, changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
-    review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
+    review: null, enforcementInfeasibility: null, retain: 'durable', retainLine: null, verifyLines: [], coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
     evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
     critical: CRITICAL.test(text), valid: false,
   };
@@ -671,6 +686,7 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
     } else {
       const next: PlanCommand = { command: command[1].trim(), final: Boolean(command[2]) };
       current.verify = [...current.verify, next];
+      current.verifyLines = [...current.verifyLines, entry.line];
     }
   }
   const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(entry.text)?.[1];
@@ -701,6 +717,8 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   if (enforcement !== undefined && enforcement.trim()) current.enforcementInfeasibility = enforcement.trim();
   const retain = field('Retain');
   if (retain !== undefined) {
+    if (current.retainLine !== null) out.push(lint('criterion-format', entry.line, 'Criterion requires exactly one Retain.'));
+    current.retainLine = entry.line;
     const value = retain.replace(/`/g, '').trim().toLowerCase();
     if (value === 'durable' || value === 'transient') current.retain = value;
     else out.push(lint('criterion-format', entry.line, 'Retain must be durable or transient.'));
@@ -722,6 +740,47 @@ function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: re
     const covering = byId.get(target);
     if (!covering) fail(`is Covered by unknown criterion ${target}.`);
     else if (covering.retain === 'transient') fail(`is Covered by ${target}, which is also transient; name a durable criterion or FINAL.`);
+  }
+}
+
+/** Trim is file-level, so a transient test must live in a [NEW] transient-named file that no durable criterion lists. */
+function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonly PlanChange[], out: LintDefect[]): void {
+  const actions = new Map(changes.map((change) => [change.path, change.action]));
+  const durable = new Set(criteria.filter((criterion) => criterion.retain === 'durable').flatMap((criterion) => criterion.changes));
+  for (const criterion of criteria) {
+    if (criterion.retain !== 'transient') continue;
+    for (const path of criterion.changes.filter(isTestPath)) {
+      const fail = (reason: string) => out.push(lint('transient-test-path', criterion.retainLine ?? criterion.line, `Criterion ${criterion.id} transient test ${path} ${reason}`));
+      const action = actions.get(path);
+      if (action !== 'NEW') fail(`is [${action ?? 'unknown'}]; transient tests need a [NEW] file.`);
+      else if (!/transient/i.test(path.slice(path.lastIndexOf('/') + 1))) fail('needs "transient" in its file name.');
+      else if (durable.has(path)) fail('is also listed by a durable criterion; isolate transient tests in their own file.');
+    }
+  }
+}
+
+/** Criterion IDs plus finding IDs recorded under Review Findings, which governedText strips. */
+function collectPlanIds(lines: readonly StructuralLine[], criteria: readonly Criterion[]): string[] {
+  const ids = new Set(criteria.map((criterion) => criterion.id));
+  for (const range of sectionRanges(lines, RESOLUTION_HEADING)) {
+    for (const { text } of lines.slice(range.start + 1, range.end)) for (const id of text.match(FINDING_ID) ?? []) ids.add(id.toUpperCase());
+  }
+  return [...ids].sort();
+}
+
+/** Tests outlive plans, so Verify commands and test file names must not carry plan-scoped IDs. */
+function lintPlanIdNames(criteria: readonly Criterion[], changes: readonly PlanChange[], ids: readonly string[], out: LintDefect[]): void {
+  const pattern = planIdPattern(ids);
+  if (!pattern) return;
+  const check = (where: string, value: string, line: number) => {
+    const id = pattern.exec(value)?.[0];
+    if (id) out.push(lint('plan-id-in-test-name', line, `${where} names plan ID ${id.toUpperCase()}; name the behavior instead.`));
+  };
+  for (const criterion of criteria) {
+    criterion.verify.forEach((item, index) => check(`Criterion ${criterion.id} Verify`, item.command, criterion.verifyLines[index] ?? criterion.line));
+  }
+  for (const change of changes) {
+    if (isTestPath(change.path)) check(`Test path ${change.path}`, change.path.slice(change.path.lastIndexOf('/') + 1), change.line);
   }
 }
 
@@ -760,8 +819,11 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(lint('criterion-red-exception', current.redLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   }
-  if (current.evidence === 'red' && current.redException === null && current.changes.length && !current.changes.some((file) => TEST_PATH.test(file))) {
+  if (current.evidence === 'red' && current.redException === null && current.changes.length && !current.changes.some(isTestPath)) {
     out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but its Changes line names no conventional test path.`));
+  }
+  if (current.retainLine === null && current.changes.some(isTestPath)) {
+    out.push(lint('criterion-retain-required', current.line, `Criterion ${name} changes tests; state Retain: transient or Retain: durable (durable tests meet the durable bar in the plan template).`));
   }
   if (current.evidence !== 'review') return;
   if (current.review === null) { out.push(lint('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.')); return; }

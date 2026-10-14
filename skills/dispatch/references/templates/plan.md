@@ -72,7 +72,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>` [FINAL]
   - Evidence: <red|verify|review>
-  - Retain: <durable|transient>
+  - Retain: <transient|durable>
   - Covered by: <SC#|FINAL>
   - Pre-existing: <yes|no>
   - RED exception: <behavior-preserving|already-satisfied>
@@ -106,14 +106,14 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - Shared range: every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. Put context that all tasks need in the shared range and task-specific detail under the task.
 
 - Technical-Design Traceability: increment plans only.
-- Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
+- Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only. Selectors match behavior-named tests; a Verify command or test file name that contains a criterion or finding ID is a `plan-id-in-test-name` defect.
 - Task Map: driver-rendered from parsed tasks (ID, Outcome, Prerequisites, Criteria, Paths, Overlap) and excluded from the plan hash; keep the placeholder.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - Tasks: every H4 belongs to one task; a task is a meaningful outcome with independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.
 - Overlap: a write path repeated by tasks with no transitive Prerequisites path is an `overlap` warning (case variants count as one path; references never count). Order the tasks, or justify each shared path with `Overlap:` on the task. A repeat inside one task is a `duplicate-change-path` defect.
 - Seams: existing public test entry points that criteria verify through; the orchestrator chooses them from current tests and checks each criterion's Verify against them.
-- Retain: `durable` (default) keeps the test. `transient` tests prove one step and are trimmed after final review; they require `Covered by:` naming a durable criterion or `FINAL` that keeps the behavior covered. Only test files listed solely by transient criteria are trimmed; production paths are never trimmed.
+- Retain: required on every criterion whose Changes names a test path; prefer `transient`. `durable` keeps the test and must meet the durable bar: (1) protects a lasting contract (requirement, invariant, public contract, or fixed bug), not an implementation step; (2) exercises a `Seams:` entry and asserts an observable outcome, not internals or call counts; (3) names the plausible regression it catches; (4) no other retained test fails for the same regression. Its `Test rationale:` names the lasting contract, the regression caught, and why no other retained test catches it. `transient` tests prove one step and are trimmed after final review; their test files are `[NEW]` paths that no durable criterion lists, named with `transient` under the runner's convention (`x.transient.test.ts`, `x_transient_test.go`, `tests/test_x_transient.py`). Inline-only test forms (Rust `#[cfg(test)]`, doctests) must be durable or move to a separate test file. Transient criteria require `Covered by:` naming a durable criterion or `FINAL` that keeps the behavior covered. Only test files listed solely by transient criteria are trimmed; production paths are never trimmed.
 - Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks.
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add a helper, module, or type; name the equivalents searched by name and behaviour, or `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.

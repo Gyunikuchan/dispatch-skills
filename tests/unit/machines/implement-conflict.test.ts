@@ -67,9 +67,9 @@ test('resolve reverifies touched tasks', () => {
   const from = state.trace.effects.length;
   const result = send(state, resolveDecision);
   const [resolve] = checkouts(state.trace, 'resolve');
-  assert.deepEqual(resolve?.input['permitted'], ['src/a.ts', 'src/b.ts', 'tests/sc1.test.ts']);
+  assert.deepEqual(resolve?.input['permitted'], ['src/a.ts', 'src/b.ts', 'tests/part-1.test.ts']);
   const [verify] = verifies(state.trace, from);
-  assert.deepEqual(verify?.commands.map((row) => row['command']).sort(), ['node --test tests/sc1.test.ts', 'node --test tests/sc2.test.ts']);
+  assert.deepEqual(verify?.commands.map((row) => row['command']).sort(), ['node --test tests/part-1.test.ts', 'node --test tests/part-2.test.ts']);
   assert.equal(verify?.cwd, 'run/wt/integration');
   assert.equal(record(result, 'T2')?.status, 'accepted');
   assert.equal(record(result, 'T2')?.integrated, 'r-1');
@@ -89,23 +89,23 @@ test('resolve involves an accepted task that owns the conflict path only through
   assert.ok(((resolve?.input as Record<string, unknown> | undefined)?.['tasks'] as string[]).includes('T1'));
   assert.ok((resolve?.input['permitted'] as string[]).includes('src/a.ts'));
   const [verify] = verifies(state.trace, from);
-  assert.ok(verify?.commands.some((row) => row['command'] === 'node --test tests/sc1.test.ts'));
+  assert.ok(verify?.commands.some((row) => row['command'] === 'node --test tests/part-1.test.ts'));
 });
 
 test('resolve check failure returns decision', () => {
   const state = conflicted();
-  state.failing.add('node --test tests/sc1.test.ts');
+  state.failing.add('node --test tests/part-1.test.ts');
   const result = send(state, resolveDecision);
   assert.equal(result.state.tag, 'integration-conflict');
   const data = implementData(result.state);
   assert.deepEqual([data['attempt'], data['head']], [1, 'r-1']);
-  assert.match((data['evidence'] as string[]).join(' '), /attempt 1 at r-1 failed checks: node --test tests\/sc1\.test\.ts/);
+  assert.match((data['evidence'] as string[]).join(' '), /attempt 1 at r-1 failed checks: node --test tests\/part-1\.test\.ts/);
   assert.equal(record(result, 'T2')?.status, 'submitted');
 });
 
 test('repair after failed check resolves on replay', () => {
   const state = conflicted();
-  state.failing.add('node --test tests/sc1.test.ts');
+  state.failing.add('node --test tests/part-1.test.ts');
   send(state, resolveDecision);
   state.failing.clear();
   const result = send(state, resolveDecision);
@@ -122,7 +122,7 @@ test('discard requires user-gated amendment', () => {
   const discard = (amendment?: string): Event => ({ type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2.', ...(amendment ? { amendment } : {}) } });
   assert.match(validateImplement(state.result.state, discard() as never) ?? '', /user-gated AMEND/);
   const removeT2 = [
-    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
     { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   const amend = (by?: { by: 'user'; quote: string }) => ({ type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', ...(by ? { by } : {}) }) as unknown as Event;
@@ -170,14 +170,14 @@ test('resolve refuses resolution delta outside involved tasks', () => {
 });
 
 test('resolve runs integration criterion on resolution paths', () => {
-  const sc4 = { ...AMEND_PLAN.criteria[0]!, id: 'SC4', title: 'Parts integrate', changes: ['src/b.ts', 'src/c.ts'], verify: [{ command: 'node --test tests/sc4.test.ts', final: false }], evidence: 'verify' as const, testRationale: 'pins integration.' };
+  const sc4 = { ...AMEND_PLAN.criteria[0]!, id: 'SC4', title: 'Parts integrate', changes: ['src/b.ts', 'src/c.ts'], verify: [{ command: 'node --test tests/part-4.test.ts', final: false }], evidence: 'verify' as const, testRationale: 'pins integration.' };
   const plan = { ...AMEND_PLAN, criteria: [...AMEND_PLAN.criteria, sc4] };
   const state = conflictedAfterT3(['src/b.ts'], plan);
-  state.failing.add('node --test tests/sc4.test.ts');
+  state.failing.add('node --test tests/part-4.test.ts');
   const from = state.trace.effects.length;
   const result = send(state, resolveDecision);
   const [verify] = verifies(state.trace, from);
-  assert.ok(verify?.commands.some((row) => row['command'] === 'node --test tests/sc4.test.ts'));
+  assert.ok(verify?.commands.some((row) => row['command'] === 'node --test tests/part-4.test.ts'));
   assert.equal(result.state.tag, 'integration-conflict');
 });
 
@@ -193,16 +193,16 @@ test('discard rejects unrelated user-gated amendment', () => {
 });
 
 test('repair reruns unresolved check outside its own delta', () => {
-  const sc4 = { ...AMEND_PLAN.criteria[0]!, id: 'SC4', title: 'Parts integrate', changes: ['src/a.ts'], verify: [{ command: 'node --test tests/sc4.test.ts', final: false }], evidence: 'verify' as const, testRationale: 'pins integration.' };
+  const sc4 = { ...AMEND_PLAN.criteria[0]!, id: 'SC4', title: 'Parts integrate', changes: ['src/a.ts'], verify: [{ command: 'node --test tests/part-4.test.ts', final: false }], evidence: 'verify' as const, testRationale: 'pins integration.' };
   const state = conflictedAfterT3([], { ...AMEND_PLAN, criteria: [...AMEND_PLAN.criteria, sc4] });
   state.sim.resolve = (input) => ({ revision: `r-${String(input['attempt'])}`, paths: input['attempt'] === 1 ? ['src/a.ts', 'src/b.ts'] : ['src/b.ts'] });
-  state.failing.add('node --test tests/sc4.test.ts');
+  state.failing.add('node --test tests/part-4.test.ts');
   send(state, resolveDecision);
   assert.equal(state.result.state.tag, 'integration-conflict');
   const from = state.trace.effects.length;
   const result = send(state, resolveDecision);
   const commands = verifies(state.trace, from).flatMap((effect) => effect.commands.map((row) => row['command']));
-  assert.ok(commands.includes('node --test tests/sc4.test.ts'), 'SC4 check still failing must rerun');
+  assert.ok(commands.includes('node --test tests/part-4.test.ts'), 'SC4 check still failing must rerun');
   assert.equal(result.state.tag, 'integration-conflict');
 });
 
@@ -247,7 +247,7 @@ test('resolve failure after commit recovers the committed resolution', () => {
 test('resolve rejected after amendment removes conflicting task', () => {
   const state = conflicted();
   const removeT2 = [
-    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
     { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   send(state, { type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', by: { by: 'user', quote: 'Drop part two.' } } as unknown as Event);
@@ -263,7 +263,7 @@ const NARROW_T2 = [
   { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/d.ts' },
 ];
 const REMOVE_T2 = [
-  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
   { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ];
 const discardAmend1 = { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2 work.', amendment: 'amend-1' } } as Event;
@@ -311,7 +311,7 @@ test('discard failure keeps the conflict and retries', () => {
 
 test('repair after scope-narrowing amendment refuses retained out-of-scope path', () => {
   const state = conflicted();
-  state.failing.add('node --test tests/sc1.test.ts');
+  state.failing.add('node --test tests/part-1.test.ts');
   send(state, resolveDecision);
   assert.equal(state.result.state.tag, 'integration-conflict');
   send(state, { type: 'AMEND', delta: NARROW_T2, notify: [], rationale: 'Move part two.', by: { by: 'user', quote: 'Move it.' } } as unknown as Event);

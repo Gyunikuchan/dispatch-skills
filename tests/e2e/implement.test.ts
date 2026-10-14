@@ -513,6 +513,7 @@ async function taskGraph(cap: number, independent = false) {
   - Verify: \`${nodeTest} tests/${file}.test.js\`
   - Evidence: ${index === 0 ? 'red' : 'verify'}
   - Pre-existing: no
+  - Retain: durable
   - Test rationale: Assert the exported value and prerequisite interface with executable Node tests.`).join('\n');
     const tasks = files.map((file, index) => `### T${index + 1} — ${names[index]}
 Deliver the ${file} interface and check its result${index && !(independent && index === 1) ? '; the shared contract must be accepted first' : ''}.
@@ -898,25 +899,25 @@ test('trims transient tests before final gate', async () => {
   try {
     const source = governedPlan('Deliver a checked value', [
       { id: 'SC1', title: 'Value is two', changes: ['src/a.ts'], verify: includes('src/a.ts', 'value = 2') },
-      { id: 'SC2', title: 'Scaffold check passes', changes: ['tests/scaffold.test.js'], verify: 'node tests/scaffold.test.js', extra: ['Retain: transient', 'Covered by: SC1'] },
+      { id: 'SC2', title: 'Scaffold check passes', changes: ['tests/scaffold.transient.test.js'], verify: 'node tests/scaffold.transient.test.js', extra: ['Retain: transient', 'Covered by: SC1'] },
     ], [
-      { id: 'T1', title: 'Checked value', criteria: ['SC1', 'SC2'], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Export value two.' }, { action: 'NEW', path: 'tests/scaffold.test.js', note: 'Check the value during delivery.' }] },
+      { id: 'T1', title: 'Checked value', criteria: ['SC1', 'SC2'], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Export value two.' }, { action: 'NEW', path: 'tests/scaffold.transient.test.js', note: 'Check the value during delivery.' }] },
     ]);
     let { run, frame } = await liveRun(f, 'transient', source, {});
     const scaffold = "import fs from 'node:fs';\nprocess.exit(fs.readFileSync('src/a.ts', 'utf8').includes('value = 2') ? 0 : 1);\n";
-    frame = await submitTask(f, run, frame, 'T1', { 'src/a.ts': 'export const value = 2;\n', 'tests/scaffold.test.js': scaffold }, ['SC1', 'SC2']);
+    frame = await submitTask(f, run, frame, 'T1', { 'src/a.ts': 'export const value = 2;\n', 'tests/scaffold.transient.test.js': scaffold }, ['SC1', 'SC2']);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
-    assert.equal(fs.existsSync(path.join(f.repo, 'tests/scaffold.test.js')), false, 'transient test is trimmed from the caller checkout');
+    assert.equal(fs.existsSync(path.join(f.repo, 'tests/scaffold.transient.test.js')), false, 'transient test is trimmed from the caller checkout');
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
     const pending = (frame.data['criteria'] as { id: string }[]).map((row) => row.id);
     assert.ok(!pending.includes('SC2'), JSON.stringify(frame));
     const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { type: string; data: { op?: string; purpose?: string; result?: { trimmed?: string[] } } });
     const trimAt = events.findIndex((event) => event.type === 'CHECKOUT_DONE' && event.data.op === 'trim');
     assert.ok(trimAt >= 0, 'trim ran');
-    assert.deepEqual(events[trimAt]!.data.result?.trimmed, ['tests/scaffold.test.js']);
+    assert.deepEqual(events[trimAt]!.data.result?.trimmed, ['tests/scaffold.transient.test.js']);
     const finalAt = events.findIndex((event, index) => index > trimAt && event.type === 'VERIFY_DONE' && event.data.purpose === 'final');
     assert.ok(finalAt > trimAt, 'final gate runs after the trim');
-    assert.doesNotMatch(JSON.stringify(events[finalAt]), /scaffold\.test\.js/);
+    assert.doesNotMatch(JSON.stringify(events[finalAt]), /scaffold\.transient\.test\.js/);
     frame = await f.reply(run, { type: 'EVIDENCE', criteria: Object.fromEntries(pending.map((id) => [id, { outcome: 'pass', evidence: 'The value check passed in the delivered tree.' }])) });
     assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
   } finally { f.cleanup(); }

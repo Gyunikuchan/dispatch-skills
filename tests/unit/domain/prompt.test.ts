@@ -92,3 +92,18 @@ test('review prompts: code and plan tag glosses name data-access and exposure ri
     }
   }
 });
+
+// SECTION: Durable test bar and plan-free naming
+
+test('review prompts: reviews hold retained tests to the durable bar', () => {
+  for (const kind of ['code', 'plan']) {
+    const tags = tagsBlock(kind);
+    for (const term of ['the durable bar in the plan template', 'rewrite', 'demote to transient', 'delete', ...(kind === 'plan' ? ['transient-named file'] : [])]) assert.ok(tags.includes(term), `${kind}: ${term}`);
+  }
+  assert.ok(tagsBlock('code').includes('rewrite to meet it'));
+});
+
+test('review prompts: prompts keep plan IDs out of tests', () => {
+  const tags = tagsBlock('code');
+  for (const term of ['test names, describe blocks, comments, section headers, or fixture names', 'criterion, task, or finding IDs']) assert.ok(tags.includes(term), term);
+});

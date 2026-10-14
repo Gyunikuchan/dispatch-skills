@@ -49,7 +49,7 @@ test('level-journal: task admission supplies its mixed production/test paths to 
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
   const admission = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
   assert.ok(admission?.kind === 'check-envelope');
-  if (admission?.kind === 'check-envelope') assert.deepEqual(admission.permitted, ['src/a.ts', 'tests/sc1.test.ts']);
+  if (admission?.kind === 'check-envelope') assert.deepEqual(admission.permitted, ['src/a.ts', 'tests/validation.test.ts']);
 });
 
 test('level-journal: repeated failures hit retry bound', () => {
@@ -306,15 +306,32 @@ const redCommand = (trace: Trace) => trace.effects.flatMap((effect) => effect.ki
 
 test('tasks: admission RED matrix requires one asserted failure row per active criterion on a declared test path', () => {
   const criteria = [PLAN.criteria[0]!];
-  assert.deepEqual(parseRedMatrix([RED_ROW], criteria).defects, []);
-  assert.ok(parseRedMatrix(['RED-MATRIX SC1 | src/a.ts:rejects bad input | exit 1 test:rejects bad input'], criteria).defects.some((defect) => /approved test file/.test(defect)));
-  assert.ok(parseRedMatrix([], criteria).defects.some((defect) => /Exactly one/.test(defect)));
-  assert.ok(parseRedMatrix([RED_ROW, RED_ROW.replace('rejects bad input', 'other')], criteria).defects.some((defect) => /Exactly one/.test(defect)));
+  assert.deepEqual(parseRedMatrix([RED_ROW], criteria, PLAN.planIds).defects, []);
+  assert.ok(parseRedMatrix(['RED-MATRIX SC1 | src/a.ts:rejects bad input | exit 1 test:rejects bad input'], criteria, PLAN.planIds).defects.some((defect) => /approved test file/.test(defect)));
+  assert.ok(parseRedMatrix([], criteria, PLAN.planIds).defects.some((defect) => /Exactly one/.test(defect)));
+  assert.ok(parseRedMatrix([RED_ROW, RED_ROW.replace('rejects bad input', 'other')], criteria, PLAN.planIds).defects.some((defect) => /Exactly one/.test(defect)));
 });
 
 test('tasks: RED matrix names control-character corruption from JSON-escaped backslashes', () => {
   const criteria = [PLAN.criteria[0]!];
-  assert.ok(parseRedMatrix([RED_ROW.replace('tests/sc1', 'tests\tsc1')], criteria).defects.some((defect) => /control character/.test(defect)));
+  assert.ok(parseRedMatrix([RED_ROW.replace('tests/validation', 'tests\tvalidation')], criteria, PLAN.planIds).defects.some((defect) => /control character/.test(defect)));
+});
+
+const planIdDefects = (row: string, planIds: readonly string[] = PLAN.planIds) => parseRedMatrix([row], [PLAN.criteria[0]!], planIds).defects.filter((defect) => /names plan ID/.test(defect));
+
+test('RED-MATRIX names stay plan-free: rejects a defined criterion ID in the leaf or a test name', () => {
+  assert.deepEqual(planIdDefects(RED_ROW.replace(':rejects bad input', ':sc1 rejects bad input')), ['RED-MATRIX SC1 test name sc1 rejects bad input names plan ID SC1; name the behavior instead.']);
+  assert.equal(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:rejects bad input; test:SC3 guards input')).length, 1, 'another task criterion ID');
+});
+
+test('RED-MATRIX names stay plan-free: exempts the leading criterion column', () => {
+  assert.deepEqual(planIdDefects(RED_ROW), []);
+});
+
+test('RED-MATRIX names stay plan-free: rejects a recorded finding ID and accepts undefined look-alikes', () => {
+  const ids = [...PLAN.planIds, 'R1-F001'];
+  assert.equal(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:R1-F001 rejects bad input'), ids).length, 1);
+  assert.deepEqual(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:SC10 and ESC1 reject bad input'), ids), []);
 });
 
 test('tasks: admission narrows RED to the matrix test file while keeping runner options', () => {
@@ -323,7 +340,7 @@ test('tasks: admission narrows RED to the matrix test file while keeping runner 
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
   const [narrowed] = redCommand(trace);
-  assert.match(narrowed ?? '', /--test-name-pattern="rejects bad input" --import=\.\/hook.ts "tests\/sc1.test.ts"$/);
+  assert.match(narrowed ?? '', /--test-name-pattern="rejects bad input" --import=\.\/hook.ts "tests\/validation.test.ts"$/);
   assert.doesNotMatch(narrowed ?? '', /tests\/all.test.ts/);
 });
 
@@ -335,8 +352,8 @@ test('tasks: admission fails a task whose RED command cannot be narrowed', () =>
 });
 
 test('tasks: admission refuses to narrow RED to a test path that could break its quoting', () => {
-  for (const unsafe of ['tests/sc1.test.ts\\', 'tests/"sc1".test.ts']) {
-    const swap = (path: string) => path === 'tests/sc1.test.ts' ? unsafe : path;
+  for (const unsafe of ['tests/validation.test.ts\\', 'tests/"validation".test.ts']) {
+    const swap = (path: string) => path === 'tests/validation.test.ts' ? unsafe : path;
     const base = withRed({ verify: [{ command: 'node --test tests/all.test.ts', final: false }] });
     const plan: ParsedPlan = {
       ...base,
@@ -344,7 +361,7 @@ test('tasks: admission refuses to narrow RED to a test path that could break its
       changes: base.changes.map((row) => ({ ...row, path: swap(row.path) })),
       tasks: base.tasks.map((row) => ({ ...row, paths: row.paths.map(swap) })),
     };
-    const envelope = (id: string) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.map((row) => row.replace('tests/sc1.test.ts', unsafe)) });
+    const envelope = (id: string) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.map((row) => row.replace('tests/validation.test.ts', unsafe)) });
     const sim: Sim = { plan, envelope };
     let { result, trace } = start(1, sim);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);

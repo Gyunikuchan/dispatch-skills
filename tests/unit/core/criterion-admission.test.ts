@@ -12,10 +12,11 @@ import { AMEND_PLAN, AMEND_TEXT, governedHash } from '../machines/fixtures/imple
 import { answer, launch, run, start, type Sim } from '../machines/fixtures/implement-tasks.ts';
 
 const criterion = (id: string) => `- [${id}] Added numeric criterion works
-  - Changes: src/a.ts, tests/sc1.test.ts
-  - Verify: \`node --test tests/sc1.test.ts\`
+  - Changes: src/a.ts, tests/part-1.test.ts
+  - Verify: \`node --test tests/part-1.test.ts\`
   - Evidence: red
   - Test rationale: discriminates the numeric admission behavior.
+  - Retain: durable
 `;
 const edits = (id: string): PlanEdit[] => [
   { kind: 'add', target: 'T1', current: '## Success Criteria\n', proposed: criterion(id) },
@@ -69,7 +70,7 @@ for (const method of ['replacement', 'AMEND']) test(`criterion-admission: ${meth
   assert.equal(revision.frame?.data['planRejection'], undefined);
   h.sim.envelope = () => ({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered numeric criterion.', evidence: [
     'CRITERION SC1 | src/a.ts | original behavior', 'CRITERION SC14 | src/a.ts | added behavior',
-    'RED-MATRIX SC14 | tests/sc1.test.ts:rejects bad input | exit 1 test:rejects bad input',
+    'RED-MATRIX SC14 | tests/part-1.test.ts:rejects bad input | exit 1 test:rejects bad input',
   ] });
   const slot = (revision.frame?.data['tasks'] as Record<string, unknown>[]).find((row) => row['task'] === 'T1')!;
   const submitted = await h.reply({ type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot['attempt'], signature: slot['signature'], handle: slot['handle'], model: slot['model'], envelopePath: slot['envelopePath'], briefHash: slot['briefHash'] });
@@ -102,8 +103,8 @@ for (const id of ['SC0', 'SC01', 'SC1a', 'SC14-extra', 'sc14']) test(`criterion-
     assert.ok(state.tag === 'implement' && 'c' in state.child && state.child.c);
     if (state.tag === 'implement' && 'c' in state.child && state.child.c) assert.deepEqual(state.child.c.tasks, records);
   }
-  const rows = [ `CRITERION ${id} | src/a.ts | wrong id`, `RED-MATRIX ${id} | tests/sc1.test.ts:rejects bad input | exit 1 test:rejects bad input` ];
+  const rows = [ `CRITERION ${id} | src/a.ts | wrong id`, `RED-MATRIX ${id} | tests/part-1.test.ts:rejects bad input | exit 1 test:rejects bad input` ];
   assert.deepEqual(criterionEvidenceRows(rows, [AMEND_PLAN.criteria[0]!]), ['SC1']);
-  assert.ok(parseRedMatrix(rows, []).defects.some((item) => item.startsWith('Malformed')));
+  assert.ok(parseRedMatrix(rows, [], []).defects.some((item) => item.startsWith('Malformed')));
   assert.equal(asParsedPlan({ ...AMEND_PLAN, criteria: AMEND_PLAN.criteria.map((row, index) => index ? row : { ...row, id }) }), null, 'Parsed event payload cannot bypass numeric admission.');
 });

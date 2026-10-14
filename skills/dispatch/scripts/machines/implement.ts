@@ -685,7 +685,9 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   const missing = criterionEvidenceRows(envelope.evidence, taskCriteria(plan, task));
   if (missing.length) return taskFailed(c, id, `Evidence is missing criterion rows for ${missing.join(', ')}.`);
   const redCriteriaOfTask = taskRedCriteria(plan, task);
-  const red = redCriteriaOfTask.length ? parseRedMatrix(envelope.evidence, redCriteriaOfTask) : { rows: [], defects: [] };
+  // Amendment overlays add criteria after parse, so their IDs join the recorded plan IDs.
+  const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
+  const red = redCriteriaOfTask.length ? parseRedMatrix(envelope.evidence, redCriteriaOfTask, planIds) : { rows: [], defects: [] };
   if (red.defects.length) return taskFailed(c, id, `RED matrix rejected: ${red.defects.join('; ')}`);
   const concerns = envelope.status === 'DONE_WITH_CONCERNS' ? (envelope.concerns ?? []).map((item) => `${id}: ${item}`) : [];
   const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: red.rows });

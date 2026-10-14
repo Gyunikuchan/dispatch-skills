@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, WriteEnvelope, PlanAmendment, Ports } from '../core/types.ts';
+import { isTestPath } from '../domain/plan.ts';
 import type { Git } from './git.ts';
 import { loadRecovery } from './recovery-manifest.ts';
 import { runOwnedPaths } from './snapshot.ts';
@@ -71,7 +72,6 @@ type ParsedEnvelope = {
 const STATUSES = ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'] as const;
 const TOP_FIELDS = new Set(['schemaVersion', 'status', 'stage', 'summary', 'evidence', 'concerns', 'missingContext', 'blockers', 'files', 'amendment']);
 const REPO_PATH = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const QUOTE = String.fromCharCode(34);
@@ -242,11 +242,11 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
     const changed = [...new Set(paths.map((file) => cleanRepoPath(file) ?? file))].sort();
     const outside = changed.filter((file) => !allowed.has(file));
     if (outside.length && testsOnly) defects.push(`Tests-only writer changed paths outside the approved scope: ${outside.join(', ')}.`);
-    if (testsOnly && changed.some((file) => !TEST_PATH.test(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !TEST_PATH.test(file)).join(', ')}.`);
+    if (testsOnly && changed.some((file) => !isTestPath(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !isTestPath(file)).join(', ')}.`);
     if (envelope?.files) for (const file of envelope.files) {
       const normalized = cleanRepoPath(file.path);
       if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
-      if (normalized !== null && envelope.stage === 'RED_READY' && !TEST_PATH.test(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
+      if (normalized !== null && envelope.stage === 'RED_READY' && !isTestPath(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
     }
     return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };

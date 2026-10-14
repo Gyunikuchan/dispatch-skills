@@ -12,7 +12,7 @@ import { host, launch, record, slots, start, type Result, type Sim, type Trace }
 
 /** Adds src/shared.ts to T1 and to SC1's Changes so the amended plan still lints. */
 const WIDEN_T1: PlanEdit[] = [
-  { kind: 'modify', target: 'SC1', current: '  - Changes: src/a.ts, tests/sc1.test.ts', proposed: '  - Changes: src/a.ts, tests/sc1.test.ts, src/shared.ts' },
+  { kind: 'modify', target: 'SC1', current: '  - Changes: src/a.ts, tests/part-1.test.ts', proposed: '  - Changes: src/a.ts, tests/part-1.test.ts, src/shared.ts' },
   { kind: 'add', target: 'src/shared.ts', current: '- Purpose: pins part one.\n', proposed: '#### [MODIFY] src/shared.ts\n- Changes: shared helper.\n' },
 ];
 const amend = (delta: readonly PlanEdit[], by?: { by: 'user'; quote: string }): Event =>

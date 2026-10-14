@@ -7,10 +7,10 @@ import type { ParsedPlan } from '../../../../skills/dispatch/scripts/domain/type
 
 const criterion = (n: number, files: string) => `- [SC${n}] Part ${n} works
   - Changes: ${files}
-  - Verify: \`node --test tests/sc${n}.test.ts\`
+  - Verify: \`node --test tests/part-${n}.test.ts\`
   - Evidence: verify
   - Test rationale: pins part ${n}.
-`;
+${/tests\//.test(files) ? '  - Retain: durable\n' : ''}`;
 
 /** Three independent tasks: T1 owns src/a.ts and its test, T2 src/b.ts, T3 src/c.ts. */
 export const AMEND_TEXT = `# Parts
@@ -32,7 +32,7 @@ Deliver part one.
 
 #### [MODIFY] src/a.ts
 - Changes: part one.
-#### [NEW] tests/sc1.test.ts
+#### [NEW] tests/part-1.test.ts
 - Purpose: pins part one.
 
 ### T2 — Part two
@@ -52,7 +52,7 @@ Deliver part three.
 - Changes: part three.
 
 ## Success Criteria
-${criterion(1, 'src/a.ts, tests/sc1.test.ts')}${criterion(2, 'src/b.ts')}${criterion(3, 'src/c.ts')}
+${criterion(1, 'src/a.ts, tests/part-1.test.ts')}${criterion(2, 'src/b.ts')}${criterion(3, 'src/c.ts')}
 ## Verification Plan
 ### Automated Tests
 - None: criterion commands cover the change.
@@ -87,4 +87,4 @@ export function replacementText(...swaps: readonly (readonly [string, string])[]
 }
 
 export const T2_SECTION = '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n';
-export const SC2_SECTION = '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';
+export const SC2_SECTION = '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';

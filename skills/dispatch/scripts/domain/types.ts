@@ -43,7 +43,7 @@ export type LintDefectCode =
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
-  | 'transient-coverage'
+  | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'plan-id-in-test-name'
   // Plan tasks
   | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
@@ -114,6 +114,8 @@ export type ParsedPlan = {
   traceability: Readonly<Record<string, string>> | null;
   /** Source without the driver-owned `## Task Map` and `## Review Findings & Resolutions` sections; the caller hashes it. */
   governedText: string;
+  /** Criterion IDs plus review finding IDs recorded in the plan, sorted and unique. */
+  planIds: readonly string[];
   /** Source from the start through the `## Task Map` section: the context every task writer shares. */
   sharedContext: string;
 };

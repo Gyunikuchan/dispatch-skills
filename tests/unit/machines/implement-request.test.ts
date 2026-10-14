@@ -88,7 +88,7 @@ test('amend reverifies changed accepted task', () => {
   const sc2 = { kind: 'modify', target: 'SC2', current: '[SC2] Part 2 works', proposed: '[SC2] Part 2 works fast' };
   result = host(result, amend([sc2]), sim, trace);
   const verify = trace.effects.slice(effects).filter((effect) => effect.kind === 'verify');
-  assert.deepEqual(verify.map((effect) => effect.kind === 'verify' && [effect.cwd, effect.commands.map((row) => row['command'])]), [['run/wt/integration', ['node --test tests/sc2.test.ts']]]);
+  assert.deepEqual(verify.map((effect) => effect.kind === 'verify' && [effect.cwd, effect.commands.map((row) => row['command'])]), [['run/wt/integration', ['node --test tests/part-2.test.ts']]]);
   assert.ok(!trace.effects.slice(effects).some((effect) => effect.kind === 'checkout' && effect.op === 'task'), 'no rebuild');
   assert.equal(record(result, 'T2')?.status, 'accepted');
   assert.equal(record(result, 'T2')?.integrated, accepted.integrated);
@@ -187,7 +187,7 @@ test('failure rejects root cause field', () => {
 // SECTION: Review fixes — parked capacity, removed writers, amendment paths
 
 const REMOVE_T2 = [
-  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
   { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ] as const;
 
@@ -281,7 +281,7 @@ function atAdmission(id: string): { result: Result; sim: Sim; trace: Trace } {
   return { result: { state: { tag: 'request-decision', c: { ...c, tasks, requestCount: 1 }, request, stage: 'orchestrator', orchestratorRationale: null }, effects: [] }, sim, trace };
 }
 const REMOVE_T3 = [
-  { kind: 'remove', target: 'SC3', current: '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/sc3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n' },
+  { kind: 'remove', target: 'SC3', current: '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n' },
   { kind: 'remove', target: 'T3', current: '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n' },
 ];
 

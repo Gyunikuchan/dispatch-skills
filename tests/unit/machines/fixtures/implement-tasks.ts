@@ -19,17 +19,17 @@ export const criterion = (id: string, file: string, evidence: 'red' | 'verify', 
 export const task = (id: string, paths: string[], criteria: string[], prerequisites: string[] = []): PlanTask => ({ id, title: id, summary: `Deliver ${id}`, line: 1, paths, criteria, prerequisites, generated: [], overlaps: [] });
 export const PLAN: ParsedPlan = {
   title: 'Tasks', box: { 'TL;DR': 'Deliver tasks' }, keyDecisions: [],
-  criteria: [criterion('SC1', 'src/a.ts', 'red', ['tests/sc1.test.ts']), criterion('SC2', 'src/b.ts', 'verify'), criterion('SC3', 'src/c.ts', 'verify')],
-  changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'a', command: null, line: 1 }, { action: 'NEW', path: 'tests/sc1.test.ts', note: 'tests', command: null, line: 2 }, { action: 'MODIFY', path: 'src/b.ts', note: 'b', command: null, line: 3 }, { action: 'MODIFY', path: 'src/c.ts', note: 'c', command: null, line: 4 }],
-  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks', sharedContext: '# Tasks', seams: [], warnings: [],
-  tasks: [task('T1', ['src/a.ts', 'tests/sc1.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
+  criteria: [criterion('SC1', 'src/a.ts', 'red', ['tests/validation.test.ts']), criterion('SC2', 'src/b.ts', 'verify'), criterion('SC3', 'src/c.ts', 'verify')],
+  changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'a', command: null, line: 1 }, { action: 'NEW', path: 'tests/validation.test.ts', note: 'tests', command: null, line: 2 }, { action: 'MODIFY', path: 'src/b.ts', note: 'b', command: null, line: 3 }, { action: 'MODIFY', path: 'src/c.ts', note: 'c', command: null, line: 4 }],
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks', planIds: ['SC1', 'SC2', 'SC3'], sharedContext: '# Tasks', seams: [], warnings: [],
+  tasks: [task('T1', ['src/a.ts', 'tests/validation.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
 };
 export const run = (concurrency: number, reviewRounds = 0): RunStartedEvent => ({
   type: 'RUN_STARTED', verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {},
   overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } },
   config: { 'write-concurrency': concurrency, 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: reviewRounds }, targets: { low: 1 } } } },
 });
-export const RED_ROW = 'RED-MATRIX SC1 | tests/sc1.test.ts:rejects bad input | exit 1 test:rejects bad input';
+export const RED_ROW = 'RED-MATRIX SC1 | tests/validation.test.ts:rejects bad input | exit 1 test:rejects bad input';
 
 // SECTION: Simulated driver — answers every effect, stopping at host awaits
 

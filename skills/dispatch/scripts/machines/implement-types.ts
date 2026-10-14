@@ -3,6 +3,7 @@
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask, PlanWarning } from '../domain/types.ts';
 import { CRITERION_ID_SOURCE, isCriterionId } from '../domain/criterion-id.ts';
+import { isTestPath, planIdPattern } from '../domain/plan.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord, type WriterConfig } from './types.ts';
 
@@ -77,12 +78,11 @@ export function failureAnswer(value: unknown): FailureAnswer | null {
   return { action: 'hotfix', mode, rationale: value['rationale'], external: external as { path: string; reason: string }[] };
 }
 const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 const NON_EMPTY = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const CRITERION_ROW = new RegExp(`^CRITERION\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*(.+)$`);
 const RED_ROW = new RegExp(`^RED-MATRIX\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*exit\\s+([1-9]\\d*)\\s+((?:test|error):.+)$`, 'i');
 
-export function isTestPath(value: string): boolean { return TEST_PATH.test(value); }
+export { isTestPath };
 
 /** Boundary guard for the domain parser's payload, which crosses the event journal as a generic payload. */
 export function asParsedPlan(value: unknown): ParsedPlan | null {
@@ -150,6 +150,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     seams: Array.isArray(value['seams']) ? value['seams'].filter(NON_EMPTY) : [],
     warnings: Array.isArray(value['warnings']) ? value['warnings'].filter((row): row is PlanWarning => isRecord(row) && row['kind'] === 'overlap' && NON_EMPTY(row['path']) && Array.isArray(row['tasks']) && row['tasks'].every(NON_EMPTY)).map((row) => ({ kind: 'overlap' as const, tasks: [...row.tasks], path: row.path })) : [],
     governedText: typeof value['governedText'] === 'string' ? value['governedText'] : '',
+    planIds: Array.isArray(value['planIds']) && value['planIds'].every((item) => typeof item === 'string') ? [...value['planIds'] as string[]] : criteria.map((criterion) => criterion.id),
     sharedContext: typeof value['sharedContext'] === 'string' ? value['sharedContext'] : '',
   };
 }
@@ -251,7 +252,8 @@ export function criterionEvidenceRows(evidence: readonly string[], criteria: rea
   return criteria.flatMap((criterion) => rows.some((row) => row.id === criterion.id && criterion.changes.includes(row.path) && row.behavior.length > 0) ? [] : [criterion.id]);
 }
 
-export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[]): { rows: RedMatrixRow[]; defects: string[] } {
+export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[], planIds: readonly string[]): { rows: RedMatrixRow[]; defects: string[] } {
+  const planId = planIdPattern(planIds);
   const source = evidence.filter((row) => row.startsWith('RED-MATRIX '));
   const rows: RedMatrixRow[] = [];
   const defects: string[] = [];
@@ -268,6 +270,11 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
     if (!isTestPath(file) || !leaf || !failureTests.length || failureTests.some((test) => !/^(?:test|error):\S/.test(test))) {
       defects.push(`RED-MATRIX ${match[1]} must name an approved test file, one leaf test, and test:<exact failing test name> entries joined by '; '.`);
       continue;
+    }
+    // The leading criterion column is exempt: it names the criterion, not the test.
+    for (const name of [leaf, ...failureTests.filter((test) => test.startsWith('test:')).map((test) => test.slice(5).trim())]) {
+      const id = planId?.exec(name)?.[0];
+      if (id) defects.push(`RED-MATRIX ${match[1]} test name ${name} names plan ID ${id.toUpperCase()}; name the behavior instead.`);
     }
     rows.push({ id: match[1] as string, path: file, leaf, exit: Number(match[3]), tests: failureTests });
   }

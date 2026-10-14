@@ -129,7 +129,7 @@ test('replacement-contract: new prerequisite of accepted work creates validation
 });
 
 test('replacement-contract: accepted consumer checks wait for its new producer and retain failed work', () => {
-  const revised = replacementText(T3_REQUIRES_T1, ['node --test tests/sc3.test.ts', 'node --test tests/sc3-revised.test.ts']);
+  const revised = replacementText(T3_REQUIRES_T1, ['node --test tests/part-3.test.ts', 'node --test tests/part-3-revised.test.ts']);
   let { result, sim, trace } = running(revised);
   result = submit(result, 'T3', sim, trace);
   const accepted = record(result, 'T3')!;
@@ -138,7 +138,7 @@ test('replacement-contract: accepted consumer checks wait for its new producer a
   assert.equal(result.state.tag, 'tasks');
   assert.deepEqual(ctx(result).reverifyQueue, ['T3']);
   assert.equal(trace.effects.slice(checks).some((effect) => effect.kind === 'verify'), false, 'unfinished producer blocks retained checks');
-  sim.verify = (_purpose, command) => ({ exit: command.includes('sc3-revised') ? 1 : 0 });
+  sim.verify = (_purpose, command) => ({ exit: command.includes('part-3-revised') ? 1 : 0 });
   result = submit(result, 'T1', sim, trace);
   assert.equal(result.state.tag, 'failure', 'failed retained checks need an explicit ruling');
   for (const key of ['status', 'attempt', 'failures', 'worktree', 'integrated', 'candidate'] as const) assert.equal(record(result, 'T3')![key], accepted[key], key);
@@ -153,14 +153,14 @@ test('replacement-contract: accepted consumer checks wait for its new producer a
 });
 
 test('replacement-contract: accepted producer checks precede retained consumer checks', () => {
-  const revised = replacementText(T3_REQUIRES_T1, ['node --test tests/sc3.test.ts', 'node --test tests/sc3-revised.test.ts'], ['node --test tests/sc1.test.ts', 'node --test tests/sc1-revised.test.ts']);
+  const revised = replacementText(T3_REQUIRES_T1, ['node --test tests/part-3.test.ts', 'node --test tests/part-3-revised.test.ts'], ['node --test tests/part-1.test.ts', 'node --test tests/part-1-revised.test.ts']);
   let { result, sim, trace } = running(revised);
   result = submit(result, 'T3', sim, trace);
   result = submit(result, 'T1', sim, trace);
   const checks = trace.effects.length;
   result = host(result, replace(HASH, summary({ retained: ['T2'], changed: ['T1', 'T3'] })), sim, trace);
   assert.equal(result.state.tag, 'tasks');
-  assert.deepEqual(trace.effects.slice(checks).flatMap((effect) => effect.kind === 'verify' ? effect.commands.map((row) => row['command']) : []), ['node --test tests/sc1-revised.test.ts', 'node --test tests/sc3-revised.test.ts']);
+  assert.deepEqual(trace.effects.slice(checks).flatMap((effect) => effect.kind === 'verify' ? effect.commands.map((row) => row['command']) : []), ['node --test tests/part-1-revised.test.ts', 'node --test tests/part-3-revised.test.ts']);
 });
 
 test('replacement-work: replay conflict binds active HEAD and resumes without ordinary task acceptance', () => {
@@ -186,7 +186,7 @@ test('replacement-work: replay conflict binds active HEAD and resumes without or
 });
 
 test('replacement-work: retired accepted owner resolves replay with retained scope and remapped history', () => {
-  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/sc3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
+  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
   const task3 = '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
   const revised = replacementText([sc3, ''], [task3, '']);
   let { result, sim, trace } = running(revised);
@@ -209,7 +209,7 @@ test('replacement-work: retired accepted owner resolves replay with retained sco
   assert.equal(refused.state.tag, 'integration-conflict');
   assert.deepEqual(ctx(refused).retiredTasks, c.retiredTasks);
   result = stepImplement(result.state, { type: 'CHECKOUT_DONE', effectId: resolveEffect.id, op: 'resolve', result: { revision: 'resolved', paths: ['src/c.ts'], retained: ['src/c.ts'] } });
-  assert.deepEqual(result.effects[0]?.kind === 'verify' && result.effects[0].commands.map((row) => row['command']), ['node --test tests/sc3.test.ts'], 'historical check tests retained work without restoring SC3');
+  assert.deepEqual(result.effects[0]?.kind === 'verify' && result.effects[0].commands.map((row) => row['command']), ['node --test tests/part-3.test.ts'], 'historical check tests retained work without restoring SC3');
   const verifyEffect = result.effects[0]!;
   const failedEvent = answer(result.state, verifyEffect, { ...sim, verify: () => ({ exit: 1 }) })!;
   const failed = stepImplement(result.state, failedEvent);
@@ -232,7 +232,7 @@ test('replacement-work: retired accepted owner resolves replay with retained sco
 });
 
 test('replacement-work: failed resolved retired replay resumes before delivery and preserves accepted records', () => {
-  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/sc3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
+  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
   const task3 = '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
   let { result, sim, trace } = running(replacementText([sc3, ''], [task3, '']));
   result = submit(result, 'T3', sim, trace);

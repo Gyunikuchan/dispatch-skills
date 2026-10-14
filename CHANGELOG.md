@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Reviews reject preference-only and tool-enforced findings, and check new code for existing equivalents.
+- Plans must state test retention; retained tests meet a durable quality bar, and transient tests live in their own trimmable files.
 
 ## [0.7.1] - 2026-10-11
 
