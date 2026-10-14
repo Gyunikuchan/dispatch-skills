@@ -9,6 +9,9 @@ import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtu
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 import { design, hash, run } from '../machines/fixtures/design.ts';
+import { descriptorHash } from '../../../skills/dispatch/scripts/core/effect-recovery.ts';
+
+const retryWave = { type: 'EFFECT_RECOVERY', effectId: 'fixture.wave.1', attempt: 1, descriptorHash: descriptorHash({ kind: 'wave', id: 'fixture.wave.1', round: 1, roster: [], timeoutMs: 1000 }), action: 'retry', rationale: 'The host checked the interrupted attempt and selected retry' };
 
 async function startAwaiting(ports: FakePorts) {
   const runDir = path.join(tempDir(), 'runs', '001-ask');
@@ -33,10 +36,11 @@ test('an effect with only non-terminal results is in flight', () => {
   assert.deepEqual(folded.inFlight, { effect: { kind: 'wave', id: 'fixture.wave.1', round: 1, roster: [], timeoutMs: 1000 }, attempt: 1 });
 });
 
-test('a started effect without a result relaunches as attempt 2 with exactly one terminal result', async () => {
+test('a started effect without a result waits for explicit retry before attempt 2', async () => {
   const ports = fakePorts();
   const runDir = waveJournal(ports, false);
-  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  assert.equal((await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports })).frame?.data['kind'], 'effect-recovery');
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports, rawEvent: retryWave });
   assert.equal(result.frame?.await, 'done');
   const lines = Array.from(readJournal(ports, runDir).records);
   const starts = lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
@@ -44,7 +48,7 @@ test('a started effect without a result relaunches as attempt 2 with exactly one
   assert.equal(lines.filter((line) => line.type === 'WAVE_DONE').length, 1);
 });
 
-test('a torn tail is dropped and its effect re-executed', async () => {
+test('a torn result tail admits actual sealed output without re-execution', async () => {
   const ports = fakePorts();
   const { runDir } = await startAwaiting(ports);
   await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
@@ -53,7 +57,7 @@ test('a torn tail is dropped and its effect re-executed', async () => {
   const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
   assert.equal(result.frame?.await, 'done');
   const starts = Array.from(readJournal(ports, runDir).records).filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
-  assert.deepEqual(starts, [1, 1, 2]);
+  assert.deepEqual(starts, [1, 1]);
 });
 
 
@@ -72,7 +76,7 @@ test('prune at done: worker claim, heartbeat, done and launch files leave each e
   const ports = fakePorts();
   const runDir = waveJournal(ports, false);
   const effect = seedWorkerFiles(runDir);
-  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports, rawEvent: retryWave });
   assert.equal(result.frame?.await, 'done');
   assert.deepEqual(fs.readdirSync(effect).sort(), ['codex-0.log', 'input.json']);
 });
@@ -82,7 +86,7 @@ test('prune at done: an unlink failure warns and keeps the done outcome', async 
   const runDir = waveJournal(ports, false);
   const effect = seedWorkerFiles(runDir);
   ports.fs.remove = () => { throw new Error('EBUSY'); };
-  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports, rawEvent: retryWave });
   assert.deepEqual([result.frame?.await, result.exitCode], ['done', 0]);
   assert.ok(ports.stderrLines.some((line) => /could not remove fixture\.wave\.1\/claim\.json: .*EBUSY/.test(line)));
   assert.ok(fs.existsSync(path.join(effect, 'claim.json')));

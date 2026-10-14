@@ -6,7 +6,29 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { fixture, until } from '../helpers/e2e.ts';
-import { recordedLaunches } from '../helpers/stub-provider.ts';
+import { completedLaunch, recordedLaunches } from '../helpers/stub-provider.ts';
+
+test('fixture cleanup preserves reused PIDs of completed providers and exact worker attempts', async (t) => {
+  const f = fixture();
+  let cleaned = false;
+  try {
+    const session = await f.initialize();
+    const effect = path.join(session, '.state/runs/cleanup-probe/wave.1'); fs.mkdirSync(effect, { recursive: true });
+    const reusedPid = process.pid, liveWorker = reusedPid + 1, liveProvider = reusedPid + 2, incompleteWorker = reusedPid + 3;
+    for (const [name, pid] of [['claim.json', reusedPid], ['claim.a2.json', reusedPid], ['claim.a3.json', liveWorker], ['claim.a4.json', incompleteWorker]] as const) fs.writeFileSync(path.join(effect, name), JSON.stringify({ pid }));
+    for (const name of ['done.json', 'done.a2.json']) fs.writeFileSync(path.join(effect, name), JSON.stringify({ at: 1, slots: 1 }));
+    fs.writeFileSync(path.join(effect, 'done.a4.json'), 'incomplete completion receipt');
+    for (const [index, pid] of [[0, reusedPid], [1, liveProvider]] as const) {
+      const dir = path.join(`${f.scenarioPath}.launches`, String(index)); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'launch.json'), JSON.stringify({ index, pid, prompt: 'fixture ownership probe' }));
+      fs.writeFileSync(path.join(dir, 'done.json'), JSON.stringify({ index, pid: index === 0 ? pid : pid + 1 }));
+    }
+    const killed: number[] = [];
+    t.mock.method(process, 'kill', (pid: number) => { killed.push(pid); return true; });
+    f.cleanup(); cleaned = true;
+    assert.deepEqual(killed.sort((a, b) => a - b), [liveWorker, liveProvider, incompleteWorker], 'completed history cannot signal a reused PID; unmatched attempts and invalid completion remain owned cleanup');
+  } finally { if (!cleaned) f.cleanup(); }
+});
 
 test('SC6: enabled concurrent runs preserve both histories and current session report links', async () => {
   const f = fixture({ responses: ['dispatch evidence'] });
@@ -88,6 +110,7 @@ test('concurrent provider stubs preserve every launch and allocate distinct resp
     assert.equal(new Set(launches.map((row) => row.pid)).size, count);
     assert.deepEqual(launches.map((row) => row.prompt).sort(), Array.from({ length: count }, (_, index) => `prompt-${index}`).sort());
     assert.deepEqual(results.sort(), Array.from({ length: count }, (_, index) => `response-${index}`).sort());
+    assert.ok(launches.every((launch) => completedLaunch(file, launch)), 'each completed stub publishes its own matching completion receipt');
     assert.equal(fs.readFileSync(file, 'utf8'), scenario);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -165,6 +188,8 @@ test('dry-run verdict: CLI prints one verdict line, exits 0 or 1, and leaves the
     const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
     assert.equal(frame.await, 'author', JSON.stringify(frame));
     const journal = path.join(run, 'events.jsonl'), before = fs.readFileSync(journal);
+    const snapshot = () => fs.readdirSync(run, { recursive: true, encoding: 'utf8' }).sort().map((name) => [name, fs.lstatSync(path.join(run, name)).isDirectory() ? null : fs.readFileSync(path.join(run, name))]);
+    const filesBefore = snapshot();
     const check = async (event: unknown) => {
       const file = path.join(f.dir, 'dry-run.event.json'); fs.writeFileSync(file, JSON.stringify(event));
       return f.launch(['send', '--run', run, '--event', `@${file}`, '--dry-run']).done;
@@ -173,9 +198,12 @@ test('dry-run verdict: CLI prints one verdict line, exits 0 or 1, and leaves the
     assert.deepEqual([valid.exit, valid.stdout], [0, '{"v":1,"valid":true}\n'], valid.stderr);
     const invalid = await check({ type: 'AUTHORED' });
     assert.equal(invalid.exit, 1, invalid.stderr);
-    assert.deepEqual(JSON.parse(invalid.stdout), { v: 1, valid: false, error: 'event.path: expected non-empty string, got nothing' });
+    const verdict = JSON.parse(invalid.stdout) as { v: number; valid: boolean; error: string; events: unknown[]; reply: string };
+    assert.deepEqual(verdict, { v: 1, valid: false, error: 'event.path: expected non-empty string, got nothing', events: frame.events, reply: frame.reply });
+    assert.ok(verdict.events.length, 'invalid dry-run returns the applicable validated author example');
     assert.equal(invalid.stdout.trim().split('\n').length, 1);
     assert.deepEqual(fs.readFileSync(journal), before);
+    assert.deepEqual(snapshot(), filesBefore, 'invalid dry-run creates no files or directories and changes no saved bytes');
   } finally { f.cleanup(); }
 });
 

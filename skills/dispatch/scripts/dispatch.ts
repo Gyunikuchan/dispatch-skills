@@ -14,6 +14,7 @@ import { createHandlers } from './effects/index.ts';
 import { writeCheckpoint } from './effects/checkout.ts';
 import { createGit } from './effects/git.ts';
 import { sessionDirOf } from './effects/handoff.ts';
+import { rebind } from './core/checkpoint.ts';
 import { listWorkerClaims, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
@@ -233,6 +234,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       rawEvent = fs.readFileSync(file, 'utf8');
     }
     const effectHandlers = handlers(repo, orchestrator);
+    if (command.command === 'rebind') {
+      const liveRepo = findRepoRoot(process.cwd());
+      if (!liveRepo || path.resolve(liveRepo) !== path.resolve(repo)) throw new Error('rebind-invalid: live repository binding mismatch');
+      const result = await rebind({ machine: dispatchMachine, handlers: effectHandlers, ports, runDir, runRel: path.relative(repo, runDir).replaceAll('\\', '/'), reason: textFlag(command, 'reason')!, ...(rawEvent !== undefined ? { rawEvent } : {}), repository: { ...repoData, root: liveRepo } });
+      if (result.frame) emit(result.frame); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
+    }
     const result = await send({ runDir, machine: dispatchMachine, handlers: effectHandlers, ports, runRel: path.relative(repo, runDir).replaceAll('\\', '/'), ...(rawEvent !== undefined ? { rawEvent } : {}), dryRun: command.command === 'status' || command.flags['dry-run'] === true, refreshConfig: command.flags['refresh-config'] === true, ...diagnosticOptions,
       configSource: () => {
         const next = loadConfig(SKILL_ROOT).config, problems = validateConfig(next);

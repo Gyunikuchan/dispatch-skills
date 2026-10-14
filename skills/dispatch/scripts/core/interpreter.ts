@@ -1,29 +1,38 @@
 // Interpreter: fold the journal through a machine, apply one host event, run pending effects (spec §4.4).
 // Generic journal loop plus the design-designated root-machine wiring choke point.
 
+import { validateReferences } from '../effects/checkpoint-references.ts';
+import { migrateReviewReferences } from '../effects/review-manifest.ts';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { governedDesignText } from '../domain/design.ts';
 import { governedPlanText } from '../domain/plan.ts';
 import { attemptOf, restoreSessionPaths, runPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
-import { effectivePlan } from '../machines/implement.ts';
-import { faultFrame, oneLine, projectFrame } from './frame.ts';
+import { dryRunGuidance, faultFrame, oneLine, projectFrame, recoveryFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, LayoutUnsupported, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
 import { HEARTBEAT_MS, milestone, writeProgress } from './progress.ts';
 import { JOURNAL_PROTOCOL_REVISION } from './types.ts';
 import type {
   Effect, Event, ExitCode, Frame, Handler, Handlers, HostEvent, JournalLine, Machine, Ports, ResultEvent,
-  ResultEventType, RunStartedEvent, TerminalResultMap, ExecutionConfigUpdated, DiagnosticNote,
+  ResultEventType, RunStartedEvent, TerminalResultMap, ExecutionConfigUpdated, DiagnosticNote, DryRunVerdict,
 } from './types.ts';
-import { HOST_EVENT_SHAPES, validateHostEvent, validateExecutionUpdate } from './validate.ts';
+import { HOST_EVENT_SHAPES, validateHostEvent, validateExecutionUpdate, validateRecoveryDisposition } from './validate.ts';
+import { probeEffect, descriptorHash, assertRecoveredResults, publishEffectResult } from './effect-recovery.ts';
+import type { EffectRecoveryDisposition } from './types.ts';
 import { applyExecutionConfig, executionDelta } from '../domain/execution-config.ts';
 import { validateConfig } from '../lib/config.ts';
 import { diagnosticPhases } from '../machines/diagnostics.ts';
 import { DIAGNOSTIC_LIMITS, rejectionReason } from '../domain/diagnostics.ts';
 import { diagnosticFrame, diagnosticWarning, renderSessionDiagnostics, USER_DECIDE_KINDS, type BuildIdentity, type DiagnosticReport, type FoldRun, type TimelineStep } from './diagnostics.ts';
-export { rootMachine as dispatchMachine } from '../machines/root.ts';
+import { loadCheckpoint, publishCheckpoint, sha256 } from './checkpoint.ts';
+import { runtimeIdentity } from '../lib/runtime-identity.ts';
+
+export const validateExecutionReferences = validateReferences;
+export const migrateExecutionReferences = migrateReviewReferences;
+/** Production wiring supplies runtime I/O; injected machines retain their own codec identity. */
+export const dispatchMachine: Machine<RootState> = { ...rootMachine, codec: { ...rootMachine.codec!, runtime: runtimeIdentity } };
 export { executionTopology } from '../domain/execution-config.ts';
 export const designRevision = (source: string): string => `sha256:${crypto.createHash('sha256').update(governedDesignText(source)).digest('hex')}`;
 /** Read-only receipt preview shares the emitted checker and the writer's captured baseline. */
@@ -33,11 +42,11 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
   let effect: Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
   if (child.tag === 'tasks') {
     const record = event.task ? child.c.tasks[event.task] : undefined;
-    const task = effectivePlan(child.c).tasks.find((item) => item.id === event.task);
+    const task = child.c.plan!.tasks.find((item) => item.id === event.task);
     if (!record?.worktree || !task || !record.baseline || event.task === undefined || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
   } else if (child.tag === 'hotfix-write') {
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...effectivePlan(child.c).changes.map((change) => change.path)])], since: child.before };
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...child.c.plan!.changes.map((change) => change.path)])], since: child.before };
   } else return null;
   const checker = handlers['check-envelope']; if (!checker) return 'Receipt checker is unavailable';
   const results = await checker(effect, ports, { runDir, attempt: 1 });
@@ -86,13 +95,20 @@ export interface Folder<S> {
   apply(event: Event): void;
 }
 
-export function createFolder<S>(machine: Machine<S>): Folder<S> {
+export function createFolder<S>(machine: Machine<S>, runDir?: string): Folder<S> {
   const folder: Folder<S> = {
     state: machine.initial(),
     queue: [],
     attempts: new Map(),
     open: new Set(),
     apply(event) {
+      if (event.type === 'RUNTIME_REBOUND' || event.type === 'LOCK_BROKEN') return;
+      if (event.type === 'EFFECT_RECOVERY') {
+        const effect = folder.queue.find((item) => item.id === event.effectId);
+        if (!effect || !folder.open.has(event.effectId) || validateRecoveryDisposition(event, effect.id, folder.attempts.get(effect.id)!, descriptorHash(effect, runDir))) throw new EngineFault('effect-recovery: stale effect identity');
+        if (event.action === 'retry') folder.open.delete(effect.id);
+        return;
+      }
       if (event.type === 'EXECUTION_CONFIG_UPDATED') {
         if (!machine.reconfigure) throw new EngineFault('execution-config-unavailable: machine cannot refresh configuration');
         folder.state = machine.reconfigure(folder.state, event);
@@ -135,7 +151,7 @@ export function toEvent(line: JournalLine, protocolRevision: number = JOURNAL_PR
 /** Folds journal lines; `inFlight` is the head effect when it started without a terminal result. */
 export function fold<S>(machine: Machine<S>, lines: Iterable<JournalLine>, sessionRoot?: string, observe?: (state: S, line: JournalLine) => void): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
   const protocolRevision = JOURNAL_PROTOCOL_REVISION;
-  const folder = createFolder(machine);
+  const folder = createFolder(machine, sessionRoot ? path.join(sessionRoot, '.state/runs/fold') : undefined);
   let revision = 0;
   let config: Record<string, unknown> | undefined;
   let first = true;
@@ -200,7 +216,7 @@ export interface SendResult {
   exitCode: ExitCode;
   message?: string;
   /** Event dry-run only: whether the event would be accepted, with the one-line refusal. */
-  verdict?: { valid: boolean; error?: string };
+  verdict?: DryRunVerdict;
 }
 
 /** Frames list suggested events as an array, so a one-element array sent verbatim unwraps; any other array is a usage error. */
@@ -275,10 +291,18 @@ function withDiagnostics<S>(options: SendOptions<S>, frame: Frame, enabled: bool
 }
 
 /** The collector's fold adapter; phases come from the root machine only, so other machines report none. */
-function timelineFold<S>(machine: Machine<S>, sessionRoot: string | undefined): FoldRun {
-  const root = machine === rootMachine as unknown as Machine<S>;
+export function timelineFold<S>(machine: Machine<S>, sessionRoot: string | undefined, ports?: Ports, runDir?: string): FoldRun {
+  const root = machine === rootMachine as unknown as Machine<S> || machine.codec?.name === 'dispatch-root';
   const bytes = (state: S): number => Buffer.byteLength(JSON.stringify(machine.project(state)));
-  return (lines) => {
+  return (lines, metadata, currentRunDir) => {
+    if (ports && runDir) {
+      // Consume the collector's tap so event facts and saved phase attribution share one journal scan.
+      const target = currentRunDir ?? runDir;
+      const read = metadata ?? readJournal(ports, target, true);
+      const loaded = loadExecution(machine, ports, target, read, runSession(target), false, lines);
+      const awaiting = machine.awaitOf(loaded.folder.state);
+      return { steps: loaded.timeline.steps, orchestratorBytes: loaded.timeline.orchestratorBytes + (awaiting !== null && loaded.folder.queue.length === 0 ? bytes(loaded.folder.state) : 0) };
+    }
     const steps: TimelineStep[] = [];
     let orchestratorBytes = 0, signature = '';
     let prior = undefined as { state: S } | undefined;
@@ -298,6 +322,62 @@ function timelineFold<S>(machine: Machine<S>, sessionRoot: string | undefined): 
   };
 }
 
+function observeTimeline<S>(machine: Machine<S>, folder: Folder<S>, line: JournalLine, timeline: { steps: TimelineStep[]; orchestratorBytes: number }, prior?: S): void {
+  if (line.type === 'DIAGNOSTIC_NOTE') return;
+  if (prior !== undefined && HOST_TYPES.has(line.type)) timeline.orchestratorBytes += Buffer.byteLength(JSON.stringify(machine.project(prior)));
+  const data = machine.project(folder.state).data, awaiting = machine.awaitOf(folder.state);
+  const step: TimelineStep = { seq: line.seq, phases: machine.codec?.name === 'dispatch-root' ? diagnosticPhases(folder.state as RootState) : [], awaiting, user: awaiting === 'decide' && USER_DECIDE_KINDS.has(String(data['kind'])), ...(awaiting === 'done' ? { outcome: String(data['outcome'] ?? 'partial') } : {}) };
+  const signature = ({ seq: _seq, ...value }: TimelineStep) => JSON.stringify(value);
+  if (!timeline.steps.length || signature(timeline.steps.at(-1)!) !== signature(step)) timeline.steps.push(step);
+}
+
+/** All execution and discovery entrypoints restore the same committed private prefix. */
+export function loadExecution<S>(machine: Machine<S>, ports: Ports, runDir: string, read = readJournal(ports, runDir, true), sessionRoot = runSession(runDir), mutation = false, source = read.records, migrateReview = false): { folder: Folder<S>; timeline: { steps: TimelineStep[]; orchestratorBytes: number }; read: JournalRead } {
+  const tail: JournalLine[] = [];
+  // Metadata must be filled even when a collector supplies its own one-pass tap.
+  let last: JournalLine | undefined;
+  for (const line of source) {
+    if (!last && line.type !== 'RUN_STARTED') throw new EngineFault('journal must start with RUN_STARTED');
+    if (line.type === 'RUN_STARTED' && line.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) {
+      if (Number(line.data['protocolRevision'] ?? 0) < JOURNAL_PROTOCOL_REVISION) throw new LayoutUnsupported();
+      throw new EngineFault('unsupported-journal-protocol');
+    }
+    if (line.checkpoint) tail.length = 0;
+    else tail.push(line);
+    last = line;
+  }
+  const saved = loadCheckpoint(ports, runDir, machine, read, sessionRoot, mutation, migrateReview);
+  const folder = createFolder(machine, runDir);
+  const timeline = { steps: saved ? [...saved.checkpoint.timeline.steps] : [], orchestratorBytes: saved?.checkpoint.timeline.orchestratorBytes ?? 0 };
+  if (saved) {
+    folder.state = saved.state;
+    folder.queue.push(...saved.queue);
+    for (const [id, attempt] of saved.attempts) folder.attempts.set(id, attempt);
+    for (const id of saved.open) folder.open.add(id);
+  }
+  let revision = saved?.checkpoint.execution?.revision ?? 0;
+  let config = saved?.checkpoint.execution?.config;
+  for (const line of tail) {
+    if (line.type === 'DIAGNOSTIC_NOTE') continue;
+    const prior = folder.state;
+    const event = toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line);
+    if (event.type === 'RUN_STARTED') config = event.config as Record<string, unknown>;
+    if (event.type === 'EXECUTION_CONFIG_UPDATED') {
+      if (event.revision !== ++revision || !config) throw new EngineFault('execution-config-invalid: revision sequence mismatch');
+      config = applyExecutionConfig(config, event.delta);
+      const errors = validateConfig(config);
+      if (errors.length) throw new EngineFault(`execution-config-invalid: ${errors.join('; ')}`);
+    }
+    folder.apply(event);
+    if (!['LOCK_BROKEN', 'RUNTIME_REBOUND'].includes(line.type)) {
+      validateExecutionReferences(folder.state, ports, runDir);
+      validateExecutionReferences(folder.queue, ports, runDir);
+    }
+    observeTimeline(machine, folder, line, timeline, prior);
+  }
+  return { folder, timeline, read };
+}
+
 export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
   const { runDir, machine, handlers, ports } = options;
   const runRel = options.runRel ?? runDir.replace(/\\/g, '/');
@@ -314,10 +394,11 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
   let baseline: { existed: boolean; bytes: number; count: number } | null = null;
   let enabled = false;
   let currentEffect: string | undefined;
+  let sendBoundarySeq: number | undefined;
   const render = (): DiagnosticReport | null => {
     let build: BuildIdentity = {};
     try { build = options.diagnosticBuild?.() ?? {}; } catch { warn(); }
-    return renderSessionDiagnostics(ports, runDir, build, timelineFold(machine, sessionRoot), warn);
+    return renderSessionDiagnostics(ports, runDir, build, timelineFold(machine, sessionRoot, ports, runDir), warn);
   };
   try {
     let broken: number | null;
@@ -329,25 +410,48 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     }
     locked = true;
     const read: JournalRead = readJournal(ports, runDir, true);
-    const folder = fold(machine, read.records, sessionRoot);
+    const { folder, timeline } = loadExecution(machine, ports, runDir, read, sessionRoot, true);
     if (read.tornTail) ports.fs.truncate(file, read.goodBytes);
     baseline = { existed: ports.fs.exists(file), bytes: read.goodBytes, count: read.count };
+    sendBoundarySeq = read.count;
     enabled = diagnosticsEnabled(options.diagnosticToggle, read.started, warn);
     const wasDone = machine.awaitOf(folder.state) === 'done';
     let recentLines: JournalLine[] = read.recent;
     let seq = read.count + 1;
+    let prefixHash = read.prefixHash ?? sha256('');
+    const prefixDigest = read.prefixHasher ?? crypto.createHash('sha256');
     const record = (event: Event): void => {
       const { type, ...data } = event;
       const stored = sessionRoot ? storeSessionPaths(data, sessionRoot) : data;
-      const line = appendEvent(ports, runDir, type, stored, seq++);
+      const line: JournalLine = { seq, v: 1, at: new Date(ports.clock.now()).toISOString(), type, data: stored };
+      const prior = folder.state;
+      folder.apply(sessionRoot ? restoreJournalPaths({ ...stored, type } as Event, sessionRoot) : event);
+      observeTimeline(machine, folder, line, timeline, prior);
+      if (event.type === 'EXECUTION_CONFIG_UPDATED' && read.execution) read.execution = { config: applyExecutionConfig(read.execution.config, event.delta), revision: event.revision };
+      const checkpoint = publishCheckpoint(ports, runDir, machine, folder, line, prefixHash, read, timeline, sessionRoot);
+      if (checkpoint) line.checkpoint = checkpoint;
+      const text = `${JSON.stringify(line)}\n`;
+      try { ports.fs.appendDurable(file, text); }
+      catch (error) {
+        // A post-append fault cannot revoke a complete reference that is already visible on disk.
+        if (checkpoint) {
+          const committed = readJournal(ports, runDir);
+          if (committed.checkpoint?.line.seq === line.seq && committed.checkpoint.line.checkpoint?.sha256 === checkpoint.sha256) baseline = { existed: true, bytes: committed.goodBytes, count: committed.count };
+        }
+        throw error;
+      }
+      seq++;
+      baseline = { existed: true, bytes: (baseline?.bytes ?? 0) + Buffer.byteLength(text), count: line.seq };
+      // Prefix hashing is incremental during a send; journal scanning verifies the raw committed bytes.
+      prefixDigest.update(text);
+      prefixHash = prefixDigest.copy().digest('hex');
       const boundary = event.type === 'LOCK_BROKEN' ? recentLines.filter((prior) => prior.type !== 'LOCK_BROKEN').at(-1) : undefined;
       recentLines = [...recentLines.filter((prior) => prior.type === 'RUN_STARTED' || prior.type === 'EXECUTION_CONFIG_UPDATED' || prior === boundary), line].slice(-RECENT_LINES);
-      folder.apply(sessionRoot ? restoreJournalPaths({ ...stored, type } as Event, sessionRoot) : event);
       machine.render?.(folder.state, ports, runDir);
     };
     // A note skips apply and render and never joins recentLines, so the reply boundary stays on the prior operational line.
     const recordNote = (note: NoteData): void => {
-      try { appendEvent(ports, runDir, 'DIAGNOSTIC_NOTE', note, seq); seq++; } catch { warn(); }
+      try { const line = appendEvent(ports, runDir, 'DIAGNOSTIC_NOTE', note, seq); seq++; baseline = { existed: true, bytes: ports.fs.size(file), count: line.seq }; prefixDigest.update(`${JSON.stringify(line)}\n`); prefixHash = prefixDigest.copy().digest('hex'); } catch { warn(); }
     };
 
     let refreshStatus: Record<string, unknown> | undefined;
@@ -358,7 +462,17 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
       if (refresh.event) record(refresh.event);
     }
     if (broken !== null) record({ type: 'LOCK_BROKEN', stalePid: broken });
-    if (options.rawEvent !== undefined) {
+    let recoveryReply = false;
+    if (options.rawEvent !== undefined && folder.queue[0] && folder.open.has(folder.queue[0].id)) {
+      const effect = folder.queue[0], parsed = parseRaw(options.rawEvent);
+      const value = parsed.ok ? parsed.value : null;
+      const error = validateRecoveryDisposition(value, effect.id, folder.attempts.get(effect.id)!, descriptorHash(effect, runDir));
+      if (error) return { frame: { ...recoveryFrame(machine, folder.state, runRel, effect, folder.attempts.get(effect.id)!, error, runDir), error }, exitCode: 0 };
+      const event = value as EffectRecoveryDisposition;
+      record(event); recoveryReply = true;
+      if (event.action === 'stop') record({ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'crash', detail: `Recovery stopped: ${event.rationale}` });
+    }
+    if (options.rawEvent !== undefined && !recoveryReply) {
       const checked = hostEventError(machine, folder, options.rawEvent, sessionRoot);
       if ('error' in checked) {
         // Validator text echoes submitted values and keys; the note keeps only the reduced class and allowlisted path.
@@ -371,6 +485,20 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     for (let steps = 1; folder.queue.length > 0; steps++) {
       if (steps > MAX_STEPS) throw new EngineFault(`MAX_STEPS (${MAX_STEPS}) exceeded in one send; a machine keeps emitting effects`);
       const effect = folder.queue[0] as Effect;
+      if (folder.open.has(effect.id)) {
+        const priorAttempt = folder.attempts.get(effect.id)!;
+        const proof = await probeEffect(effect, priorAttempt, handlers, ports, runDir);
+        if (proof.status === 'unresolved') return { frame: recoveryFrame(machine, folder.state, runRel, effect, priorAttempt, proof.evidence, runDir), exitCode: 0 };
+        if (proof.status === 'complete' || proof.status === 'live') {
+          currentEffect = effect.id;
+          const results = proof.status === 'complete' ? proof.results : await proof.resume();
+          assertRecoveredResults(effect, results, TERMINAL_RESULT[effect.kind]);
+          // Only terminal output is missing; earlier progress lines remain accepted.
+          record(results.at(-1)!); currentEffect = undefined;
+          continue;
+        }
+        record({ type: 'EFFECT_RECOVERY', effectId: effect.id, attempt: priorAttempt, descriptorHash: descriptorHash(effect, runDir), action: 'retry', rationale: 'Handler declares a deterministic read-only repeat' });
+      }
       const attempt = (folder.attempts.get(effect.id) ?? 0) + 1;
       currentEffect = effect.id;
       record({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt });
@@ -393,9 +521,9 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     let report: DiagnosticReport | null = null;
     if (baseline) {
       restoreJournal(ports, file, baseline);
-      // Appended after the rollback, so the fault adds only timing evidence and never replays a partial send.
+      // Retain every durable transition; remove only an uncommitted or torn suffix.
       if (locked && baseline.existed) {
-        const note: NoteData = { kind: 'fault', ...(currentEffect ? { effectId: currentEffect } : {}), cls: faultClass(error), sendStartedAt, failedAt: ports.clock.now() };
+        const note: NoteData = { kind: 'fault', ...(currentEffect ? { effectId: currentEffect } : {}), cls: faultClass(error), sendStartedAt, failedAt: ports.clock.now(), ...(sendBoundarySeq !== undefined ? { boundarySeq: sendBoundarySeq } : {}) };
         try { appendEvent(ports, runDir, 'DIAGNOSTIC_NOTE', note, baseline.count + 1); } catch { warn(); }
         if (enabled) report = render();
       }
@@ -449,7 +577,7 @@ function pruneWorkerFiles(ports: Ports, runDir: string): void {
   }
 }
 
-/** Truncates back to the pre-send length (fsync) so a fault appends nothing past the last good event. */
+/** Remove only bytes beyond the last durable transition. */
 function restoreJournal(ports: Ports, file: string, baseline: { existed: boolean; bytes: number }): void {
   if (!ports.fs.exists(file)) return;
   if (!baseline.existed) ports.fs.remove(file);
@@ -478,6 +606,7 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
   }
   const stray = results.find((result) => result.effectId !== effect.id);
   if (stray) throw new EngineFault(`handler for ${effect.id} returned ${stray.type} for ${stray.effectId}`);
+  publishEffectResult(effect, attempt, results, ports, runDir);
   return results;
 }
 
@@ -485,10 +614,20 @@ async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendR
   const { machine, ports, runDir } = options;
   const warn = diagnosticWarning(ports);
   try {
-    const read = readJournal(ports, runDir, true), lines = read.records;
-    const folder = fold(machine, lines, runSession(runDir));
+    const read = readJournal(ports, runDir, true);
+    const { folder } = loadExecution(machine, ports, runDir, read);
     const enabled = diagnosticsEnabled(options.diagnosticToggle, read.started, warn);
     const hint = (frame: Frame): Frame => withDiagnostics(options, findingsFrame(ports, runDir, frame, true), enabled, null, warn);
+    const open = folder.queue[0];
+    if (open && folder.open.has(open.id)) {
+      const attempt = folder.attempts.get(open.id)!;
+      if (options.rawEvent !== undefined) {
+        const parsed = parseRaw(options.rawEvent);
+        const error = parsed.ok ? validateRecoveryDisposition(parsed.value, open.id, attempt, descriptorHash(open, runDir)) : parsed.error;
+        return { frame: null, verdict: error ? { valid: false, error } : { valid: true }, exitCode: error ? 1 : 0 };
+      }
+      return { frame: hint(recoveryFrame(machine, folder.state, runRel, open, attempt, 'Read-only status preserves the open attempt; send probes completion', runDir)), exitCode: 0 };
+    }
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, read);
       return { frame: hint('error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(read.recent)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent)), refresh.status)), exitCode: 0 };
@@ -496,7 +635,7 @@ async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendR
     if (options.rawEvent === undefined) return { frame: hint(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(read.recent))), exitCode: 0 };
     const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
     const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
-    return error ? { frame: null, verdict: { valid: false, error }, exitCode: 1 } : { frame: null, verdict: { valid: true }, exitCode: 0 };
+    return error ? { frame: null, verdict: { valid: false, error, ...dryRunGuidance(machine, folder.state, runRel, hostBoundary(read.recent)) }, exitCode: 1 } : { frame: null, verdict: { valid: true }, exitCode: 0 };
   } catch (error) {
     if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };
@@ -518,8 +657,8 @@ const runSession = (runDir: string): string | undefined => {
   return root === runDir ? undefined : root;
 };
 /** Historical discovery skips legacy-layout runs, so they cannot block new runs in the same session. */
-function foldCurrent<S>(machine: Machine<S>, lines: Iterable<JournalLine>): Folder<S> | null {
-  try { return fold(machine, lines); } catch (error) { if (error instanceof LayoutUnsupported) return null; throw error; }
+function foldCurrent<S>(machine: Machine<S>, ports: Ports, runDir: string, read: JournalRead): Folder<S> | null {
+  try { return loadExecution(machine, ports, runDir, read).folder; } catch (error) { if (error instanceof LayoutUnsupported) return null; throw error; }
 }
 function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
   if (!ports.fs.exists(runsDir)) return undefined;
@@ -528,10 +667,9 @@ function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machin
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
     const read = readJournal(ports, runDir);
     const root = runSession(runDir) ?? runDir;
-    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
     const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'design') continue;
-    const folder = foldCurrent(machine, lines);
+    const folder = foldCurrent(machine, ports, runDir, read);
     if (!folder) continue;
     const projected = machine.project(folder.state).data;
     if (machine.awaitOf(folder.state) !== 'done' || projected['outcome'] !== 'complete') continue;
@@ -559,10 +697,9 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
     const read = readJournal(ports, runDir);
     const root = runSession(runDir) ?? runDir;
-    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
     const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
-    const folder = foldCurrent(machine, lines);
+    const folder = foldCurrent(machine, ports, runDir, read);
     if (!folder) continue;
     const finished = machine.awaitOf(folder.state) === 'done';
     const data = machine.project(folder.state).data;
@@ -601,7 +738,6 @@ export function findSettledPlan<S>(
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
     const read = readJournal(ports, runDir);
     const root = runSession(runDir) ?? runDir;
-    const lines = { *[Symbol.iterator]() { for (const line of read.records) yield restoreJournalPaths(line, root); } };
     const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
     if (!started || started.data['verb'] !== 'plan') continue;
     const authoredLine = read.authored ? restoreJournalPaths(read.authored, root) : undefined;
@@ -613,7 +749,7 @@ export function findSettledPlan<S>(
       ? authoredLine.data['path'] as string
       : planArg;
     if (designPathIdentity(path.resolve(repoRoot, planPath)) !== designPathIdentity(path.resolve(repoRoot, identity.path))) continue;
-    const folder = foldCurrent(machine, lines);
+    const folder = foldCurrent(machine, ports, runDir, read);
     if (!folder) continue;
     if (machine.awaitOf(folder.state) !== 'done') continue;
     const projected = machine.project(folder.state).data;
@@ -650,7 +786,16 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
   } else ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
   const { type, ...data } = { ...requested, protocolRevision: JOURNAL_PROTOCOL_REVISION, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
-  appendEvent(ports, runDir, type, runSession(runDir) ? storeSessionPaths(data, sessionDir) : data, 1);
+  const stored = runSession(runDir) ? storeSessionPaths(data, sessionDir) : data;
+  const line: JournalLine = { seq: 1, v: 1, at: new Date(ports.clock.now()).toISOString(), type, data: stored };
+  const folder = createFolder(options.machine);
+  folder.apply(runSession(runDir) ? restoreJournalPaths({ type, ...stored } as Event, sessionDir) : { type, ...data } as Event);
+  const timeline = { steps: [] as TimelineStep[], orchestratorBytes: 0 };
+  observeTimeline(options.machine, folder, line, timeline);
+  const initialRead: JournalRead = { records: [], count: 0, recent: [], tornTail: false, goodBytes: 0, started: line, execution: { config: requested.config as Record<string, unknown>, revision: 0 } };
+  const checkpoint = publishCheckpoint(ports, runDir, options.machine, folder, line, sha256(''), initialRead, timeline, runSession(runDir));
+  if (checkpoint) line.checkpoint = checkpoint;
+  ports.fs.appendDurable(journalPath(runDir), `${JSON.stringify(line)}\n`);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;
   if (options.configSource !== undefined) sendOptions.configSource = options.configSource;

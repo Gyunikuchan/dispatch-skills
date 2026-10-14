@@ -1,16 +1,16 @@
-import { loadRecovery, publishRecovery } from '../../../../skills/dispatch/scripts/effects/recovery-manifest.ts';
+import { loadRecovery, publishRecovery, publishEvidence } from '../../../../skills/dispatch/scripts/effects/recovery-manifest.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Effect, RecoveryManifest } from '../../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, RecoveryManifest, Ports } from '../../../../skills/dispatch/scripts/core/types.ts';
 import { nodeFs, nodePorts } from '../../../../skills/dispatch/scripts/core/ports.ts';
 import { createRestore } from '../../../../skills/dispatch/scripts/effects/restore.ts';
 import { createSnapshot, lineChanges, verifiedManifests } from '../../../../skills/dispatch/scripts/effects/snapshot.ts';
 import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
 
-export function stored(snapshot: RecoveryManifest, ports: ReturnType<typeof fakePorts>, runDir: string) {
+export function stored(snapshot: RecoveryManifest, ports: Ports, runDir: string) {
  const contents = Object.fromEntries(Object.entries(snapshot.contents).map(([file, bytes]) => {
   if (bytes === null) return [file, null];
   const hash = crypto.createHash('sha256').update(Buffer.from(bytes,'base64')).digest('hex');
@@ -34,4 +34,14 @@ export function fixture() {
   const invoke = () => createRestore({ cwd })(effect, ports, { runDir, attempt: 1 });
   const verify = () => { assert.equal(fs.readFileSync(path.join(cwd, 'dirty'), 'utf8'), 'caller dirt'); assert.deepEqual(fs.readFileSync(path.join(cwd, 'untracked')), binary); assert.equal(fs.existsSync(path.join(cwd, 'created')), false); assert.equal(fs.readFileSync(path.join(cwd, 'outside'), 'utf8'), 'caller outside edit'); };
   return { cwd, runDir, ports, effect, invoke, verify };
+}
+
+/** Publish real immutable checkpoint evidence before a reducer retains its reference. */
+export function checkpointProof(ports: Ports, runDir: string) {
+  const recovery = stored({ contentStore: 'recovery-contents', repoRoot: runDir, contents: { 'candidate.txt': Buffer.from('retained candidate').toString('base64') },
+    entries: { 'candidate.txt': { kind: 'file', mode: 0o600, linkTarget: null } }, taskStartFiles: ['candidate.txt'], callerDirty: [],
+    git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [],
+  }, ports, runDir);
+  const delta = publishEvidence(ports, runDir, { beforeHash: 'before', afterHash: 'after', paths: ['candidate.txt'] });
+  return { recovery, delta };
 }

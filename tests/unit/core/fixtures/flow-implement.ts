@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { send, start } from '../../../../skills/dispatch/scripts/core/interpreter.ts';
-import type { Effect, Handler, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, Handler, Ports, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 import type { Git } from '../../../../skills/dispatch/scripts/effects/git.ts';
 import { createHandlers } from '../../../../skills/dispatch/scripts/effects/index.ts';
 import { governedPlanText } from '../../../../skills/dispatch/scripts/domain/plan.ts';
@@ -55,7 +55,7 @@ Values are normalized before use so downstream comparisons agree.
 `;
 
 /** One completion flow through real handlers: binds a walkthrough and replays completion. */
-export async function completionFlow(planMode: 'external' | 'session' | 'objective'): Promise<void> {
+export async function completionFlow(planMode: 'external' | 'session' | 'objective', configurePorts?: (ports: Ports, runDir: string) => void): Promise<void> {
   const cwd = tempDir();
   const sessionRoot = path.join(cwd, 'chat');
   const runDir = path.join(sessionRoot, '.state', 'runs', 'run-1');
@@ -81,7 +81,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   const reviewed = { path: null as string | null };
   const wave: Handler<Extract<Effect, { kind: 'wave' }>> = async (effect) => {
     if (effect.roster[0]?.['review'] === 'code') {
-      const prompt = fs.readFileSync(String(effect.roster[0]['promptPath']), 'utf8');
+      const prompt = ports.fs.readText(String(effect.roster[0]['promptPath']));
       reviewed.path = /^- Walkthrough: (.+)$/m.exec(prompt)?.[1]?.trim() ?? null;
       assert.ok(reviewed.path); assert.ok(fs.existsSync(reviewed.path), reviewed.path);
       assert.match(fs.readFileSync(reviewed.path, 'utf8'), /## Verification/);
@@ -101,6 +101,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
     result: observe((effect.input as Record<string, unknown> | undefined)?.['observe']) ?? { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
   const handlers = { ...baseHandlers, checkout, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
   const ports = fakePorts();
+  configurePorts?.(ports, runDir);
   ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
   const commands: string[] = [];
   ports.spawn = { run: async (argv) => { commands.push(argv.at(-1) ?? ''); return { exit: 0, stdout: 'ok', stderr: '' }; } };
@@ -121,7 +122,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');
   changedPaths = ['src/value.ts'];
   revision = 1;
-  fs.writeFileSync(envelopePath, JSON.stringify({
+  ports.fs.writeAtomic(envelopePath, JSON.stringify({
     schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Values are normalized.',
     evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],

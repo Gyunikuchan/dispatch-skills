@@ -28,6 +28,9 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   }
   rows.push(['Governing outcome', render(input['governingOutcome'])]);
   if (input['task']) rows.push(['Task, graph, and worktree', render(input['task'])]);
+  // NOTE: a regenerated brief names what changed and the brief it supersedes, so a live writer can reconcile its draft.
+  if (input['revisionNotice']) rows.push(['Plan revision notices', render(input['revisionNotice'])]);
+  if (input['previousBriefs']) rows.push(['Previous brief provenance', render(input['previousBriefs'])]);
   rows.push(['Settled scope', render(input['settledScope'])]);
   rows.push(['Criteria', render(input['criteria'])]);
   if (input['designBinding']) rows.push(['Governing design and inherited contract', render(input['designBinding'])]);

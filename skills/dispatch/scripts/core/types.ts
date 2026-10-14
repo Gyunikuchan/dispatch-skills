@@ -4,7 +4,7 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'retro' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 8 as const;
+export const JOURNAL_PROTOCOL_REVISION = 9 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
   | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop';
@@ -31,23 +31,9 @@ export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type Level = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ClassifiedLevel = Extract<Level, 'low' | 'medium' | 'high'>;
 
-export type ScopeCriterionDefinition = {
-  id: string;
-  title: string;
-  changes: readonly string[];
-  verify: readonly { command: string; final: boolean }[];
-  evidence: 'red' | 'verify' | 'review' | null;
-  preExisting: boolean | null;
-  redException: string | null;
-  testRationale: string | null;
-  review: string | null;
-  enforcementInfeasibility: string | null;
-};
-
 export type ScopeDelta = {
   paths: readonly string[];
   criteria: readonly string[];
-  criterionDefinitions?: readonly ScopeCriterionDefinition[];
   obligations: readonly string[];
   commands: readonly string[];
   finalCommands?: readonly string[];
@@ -80,19 +66,14 @@ export type LevelGateScope = {
 
 export type LevelClassificationAnswer = { evaluatedLevel: ClassifiedLevel; rationale: string; gateScope: LevelGateScope };
 export type LevelRecommendationAnswer = { choice: 'adopt' | 'retain'; quote: string };
-export type ScopeDeviation =
-  | { requestId: string; source: 'task'; task: string; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta }
-  | { requestId: string; source: 'hotfix'; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta };
 /** Writer-proposed plan change on BLOCKED/NEEDS_CONTEXT; the orchestrator adjudicates and owns plan edits. */
 export type PlanAmendment = {
   finding: string;
   evidence: readonly string[];
   proposal: readonly { kind: 'modify' | 'remove' | 'add'; target: string; current?: string; proposed?: string; rationale: string }[];
 };
-export type RevisionScopeProposal =
-  | { requestId: string; source: 'plan-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedTasks: readonly string[]; rationale: string; delta: ScopeDelta }
-  | { requestId: string; source: 'design-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedIncrements: readonly string[]; rationale: string; delta: ScopeDelta };
-export type ScopeProposal = ScopeDeviation | RevisionScopeProposal;
+export type RevisionScopeProposal = { requestId: string; source: 'design-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedIncrements: readonly string[]; rationale: string; delta: ScopeDelta };
+export type ScopeProposal = RevisionScopeProposal;
 
 /** Orchestrator-owned rulings share one answer shape; `amendment` names the `AMEND` a ruling depends on (e.g. `discard`). */
 export type OrchestratorDecision<A extends string> = { by: 'orchestrator'; action: A; rationale: string; amendment?: string };
@@ -107,7 +88,7 @@ export type RequestUserDecision = { by: 'user'; requestId: string; choice: 'acce
 /** One plan edit inside an `AMEND` delta; `target` names a task, criterion, command, or path. */
 export type PlanEdit = { kind: 'modify' | 'remove' | 'add'; target: string; current?: string; proposed?: string };
 export type ScopeAdjustment = {
-  proposal: ScopeProposal;
+  proposal: RevisionScopeProposal;
   approvedBy: 'orchestrator' | 'user';
   rationale: string;
   quote?: string;
@@ -127,6 +108,7 @@ export type FindingId = string;
 export type Ruling = Payload;
 export type FixClusterResult = Payload;
 export type CriterionId = string;
+export type DryRunVerdict = { valid: boolean; error?: string; events?: readonly HostEvent[]; reply?: string };
 export type CriterionEvidence = Payload;
 export type DecisionAnswer = unknown;
 export type ParsedPlan = Payload;
@@ -148,11 +130,24 @@ export type CheckoutEffect =
   | { kind: 'checkout'; id: string; op: 'scope-rebase'; input: ScopeRebaseInput }
   | { kind: 'checkout'; id: string; op: Exclude<CheckoutOp, 'scope-rebase'>; input: Payload };
 export type RecoveryRef = { version: 1; sha256: string; bytes: number; path: string };
+export type ReviewManifestRef = { kind: 'review-manifest'; version: 1; sha256: string; bytes: number; path: string };
 export type ChangeNotice = {
   id: string; phase: string; pendingId: string; beforeHash: string; afterHash: string;
   rawDeltaRef: RecoveryRef; paths: readonly string[]; pathCount: number;
   relevance: 'expected' | 'irrelevant' | 'relevant' | 'unknown'; reason: string; affectedEvidence: readonly string[];
 };
+/** Advisory record of an ordinary change; it rides the next frame and never revokes work, evidence, or task state. */
+export type ChangeObservation = {
+  id: string; afterHash: string; beforeHash: string; phase: string; pendingId: string; rawDeltaRef: RecoveryRef;
+  paths: readonly string[]; pathCount: number; suggestedRelevance: ChangeNotice['relevance']; reason: string; suggestedEvidence: readonly string[];
+  disposition?: ChangeDisposition;
+};
+/** Optional host metadata on a normal reply: retain named evidence with a rationale, or refresh named criteria checks. */
+export type ChangeDisposition = { observationId: string; afterHash: string; rationale: string; retain?: readonly string[]; refresh?: readonly string[] };
+/** Host applicability selection for a review target change: reuse findings for the current target, or request a targeted or full review wave. */
+export type ReviewUse = { observationId: string; afterHash: string; action: 'reuse' | 'targeted' | 'full'; rationale: string; paths?: readonly string[] };
+/** A review target change; findings stay bound to the revision their wave reviewed. */
+export type ReviewObservation = { id: string; afterHash: string; beforeHash: string; round: number; paths: readonly string[]; pathCount: number; reason: string; rawDeltaRef: RecoveryRef; use?: ReviewUse & { round: number; launchedRound?: number } };
 export type DriftResolution = { by: 'orchestrator'; noticeId: string; afterHash: string; action: 'preserve' | 'refresh' | 'reconcile' | 'escalate'; rationale: string; evidenceIds: readonly string[] };
 /** Expanded metadata exists only in effect-local immutable manifests. */
 export type RecoveryManifest = {
@@ -207,6 +202,8 @@ export type ExecutionConfigUpdated = {
 };
 
 export type LifecycleEvent =
+  | RuntimeRebound
+  | EffectRecoveryDisposition
   | ExecutionConfigUpdated
   | RunStartedEvent
   | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
@@ -216,7 +213,7 @@ export type LifecycleEvent =
 /** Diagnostics-only journal line: never folded and never a reply boundary, so seq, reply paths, and replay are unchanged. */
 export type DiagnosticNote =
   | { type: 'DIAGNOSTIC_NOTE'; kind: 'event-rejected'; eventType: string; reason: string }
-  | { type: 'DIAGNOSTIC_NOTE'; kind: 'fault'; effectId?: string; cls: string; sendStartedAt: number; failedAt: number };
+  | { type: 'DIAGNOSTIC_NOTE'; kind: 'fault'; effectId?: string; cls: string; sendStartedAt: number; failedAt: number; boundarySeq?: number };
 
 /** Optional host-attested figures on native slots and task write receipts; best effort, never measured totals. */
 export type Attestation = { tokens?: number; durationMs?: number };
@@ -237,9 +234,21 @@ export type WriteReceiptStatus = WriteReceiptEvent['status'];
 /** A live writer's need outside its brief; the writer stays live until the orchestrator answers. */
 export type WriterRequestEvent = { type: 'REQUEST'; task: string; attempt: number; need: string; paths: string[]; rationale: string };
 /** Live plan amendment; only the `notify` writers are told, and gated deltas carry the user's quote in `by`. */
-export type AmendEvent = { type: 'AMEND'; delta: PlanEdit[]; notify: { task: string; notice: string }[]; rationale: string; by?: { by: 'user'; quote: string } };
+export type AmendEvent = { type: 'AMEND'; delta: PlanEdit[]; notify: { task: string; notice: string }[]; rationale: string; by?: { by: 'user'; quote: string }; reconciliation?: PlanReconciliation; retire?: WriterRetirement[] };
+/**
+ * Orchestrator account of a revised plan against current task records: every prior and new task id appears once. The
+ * booleans attest actual intent or external-dependency change; the driver never infers them from titles or manifests.
+ * `compensating` names added tasks approved to remove integrated bytes of retired work.
+ */
+export type PlanReconciliation = { retained: string[]; changed: string[]; added: string[]; retired: string[]; intentChanged: boolean; dependencyChanged: boolean; compensating?: string[] };
+/** Disposition of a live writer whose task a revision retires; its slot frees only at a terminal receipt. */
+export type WriterRetirement = { task: string; disposition: 'stop' | 'retain' };
+/** Complete replacement plan bound to the governed hash it replaces; the driver parses `path` and reconciles like `AMEND`. */
+export type ReplacePlanEvent = { type: 'REPLACE_PLAN'; path: string; expectedHash: string; rationale: string; notify: { task: string; notice: string }[]; reconciliation: PlanReconciliation; retire?: WriterRetirement[]; by?: { by: 'user'; quote: string } };
 
-export type HostEvent =
+/** `changeDispositions` may ride any host reply; the active child validates each binding before use. */
+export type HostEvent = HostEventBody & { changeDispositions?: ChangeDisposition[] };
+type HostEventBody =
   | { type: 'AUTHORED'; path: string }
   | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
   | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
@@ -247,13 +256,15 @@ export type HostEvent =
   | WriteReceiptEvent
   | WriterRequestEvent
   | AmendEvent
+  | ReplacePlanEvent
   | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence>; waiver?: { by: 'user'; quote: string } }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string }
-  | { type: 'RETRO'; observations: unknown[] };
+  | { type: 'RETRO'; observations: unknown[] }
+  | ({ type: 'REVIEW_USE' } & ReviewUse);
 
 export type ResultEvent =
-  | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
+  | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
   | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
   | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
@@ -277,7 +288,7 @@ export type ResultEventType = ResultEvent['type'];
 // SECTION: Effects
 
 export type Effect =
-  | { kind: 'check-review-target'; id: string; review: ReviewSpec; manifestPath: string; allowedPaths: readonly string[] }
+  | { kind: 'check-review-target'; id: string; review: ReviewSpec; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; allowedPaths: readonly string[] }
   | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
   | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
   | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
@@ -303,6 +314,16 @@ export interface JournalLine {
   at: string;
   type: EventType;
   data: Readonly<Record<string, unknown>>;
+  checkpoint?: CheckpointReference;
+}
+
+export interface CheckpointReference { path: string; sha256: string; bytes: number; schema: 1; seq: number }
+export interface StateCodec<S> {
+  name: string;
+  version: number;
+  runtime(): string;
+  encode(state: S): unknown;
+  decode(value: unknown): S;
 }
 
 export type FrameData = Readonly<Record<string, unknown>>;
@@ -326,6 +347,7 @@ export interface Transition { from: string; on: string; to: string }
 export interface StepResult<S> { state: S; effects: readonly Effect[] }
 
 export interface Machine<S> {
+  codec?: StateCodec<S>;
   initial(): S;
   step(state: S, event: Event): StepResult<S>;
   awaitOf(state: S): Await | null;
@@ -347,7 +369,15 @@ export type DiagnosticUsage = { input: number; output: number; cacheRead?: numbe
 export interface HandlerContext { runDir: string; attempt: number; diagnosticToggle?: () => boolean; ownedArtifacts?: readonly string[] }
 
 /** Returns zero or more non-terminal results followed by exactly one terminal result. */
-export type Handler<E extends Effect = Effect> = (effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>;
+export type Handler<E extends Effect = Effect> = ((effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>) & { recovery?: RecoveryCapability<E> };
+
+export type RuntimeRebound = { type: 'RUNTIME_REBOUND'; epoch: number; oldRuntime: string; newRuntime: string; reason: string; source: CheckpointReference; prefixHash: string; migration?: 'review-manifest-v1' };
+export type EffectRecoveryDisposition = { type: 'EFFECT_RECOVERY'; effectId: string; attempt: number; descriptorHash: string; action: 'retry' | 'stop'; rationale: string };
+export type RecoveryProbe =
+  | { status: 'complete'; effectId: string; attempt: number; descriptorHash: string; evidence: string; results: readonly ResultEvent[] }
+  | { status: 'live'; effectId: string; attempt: number; descriptorHash: string; handle: string; resume: () => Promise<readonly ResultEvent[]> }
+  | { status: 'unresolved'; evidence: string };
+export type RecoveryCapability<E extends Effect = Effect> = { repeat?: 'deterministic-read'; probe?: (effect: E, ports: Ports, ctx: HandlerContext) => Promise<RecoveryProbe> };
 
 export type Handlers = { readonly [K in EffectKind]?: Handler<Extract<Effect, { kind: K }>> };
 

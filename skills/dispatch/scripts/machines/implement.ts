@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, PlanAmendment, PlanEdit, ChangeNotice, DriftResolution, AmendEvent, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
@@ -8,11 +8,13 @@ import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, command
 import { beginReview, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
-import { bindingHash, evidenceAssessment, refreshEvidence, resolution } from './change-resolution.ts';
+import { applyDispositions, bindingHash, evidenceAssessment, observe, openObservations, refreshEvidence, resolution, suggestedCriteria, validateDispositions } from './change-resolution.ts';
+import type { EvidenceObligation } from './implement-types.ts';
 import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, slotTasks, amendTasks, checkpointPathOf, failureItems, initialTasks, rependTasks, readyTasks, taskCriteria, taskRedCriteria, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type TaskRecord, type Tasks } from './implement-tasks.ts';
-import { amendPlan } from './revision.ts';
+import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { amendPlan, replacementPlan, type RevisedPlan } from './revision.ts';
+import { reconcilePlan } from './plan-reconciliation.ts';
 import { slugOf } from './plan.ts';
 import type { DesignBinding } from './implement-types.ts';
 
@@ -41,6 +43,12 @@ export type Context = {
   acceptedBaseline: readonly string[];
   records: Readonly<Record<string, VerifyRecord>>;
   evidence: Readonly<Record<string, EvidenceRecord>>;
+  /** Evidence a refresh disposition superseded; retained for provenance, never relied on. */
+  evidenceHistory?: readonly EvidenceRecord[];
+  /** Criteria the orchestrator asked to re-verify; accepted work and attempts stay as recorded. */
+  obligations?: Readonly<Record<string, EvidenceObligation>>;
+  /** Advisory change observations; open ones ride every frame until a disposition names them. */
+  observations?: readonly ChangeObservation[];
   redMatrix: readonly RedMatrixRow[];
   concerns: readonly string[];
   approvedRedExceptions: readonly string[];
@@ -49,7 +57,10 @@ export type Context = {
   /** `tasks` from approval until verified delivery; caller checkout effects and drift checks apply outside it. */
   phase: 'setup' | 'tasks' | 'delivered';
   tasks: Tasks;
-  integration: { path: string; base: string; head: string; links: readonly string[]; ignored: readonly string[]; rewind?: boolean } | null;
+  integration: { path: string; base: string; head: string; links: readonly string[]; ignored: readonly string[] } | null;
+  archivedIntegrations?: readonly { archivedName: string; base: string; head: string }[];
+  /** An incomplete replay retains its original archive range until every accepted commit is reconciled. */
+  pendingReplay?: { input: { rebase: true; archivedName: string; replay: { base: string; head: string } }; sources: readonly string[]; conflict?: Conflict };
   approval: { by: string; quote: string } | null;
   changedPaths: readonly string[];
   finalGate: string;
@@ -72,6 +83,10 @@ export type Context = {
   rebriefQueue: readonly { task: string; notice: string }[];
   reverifyQueue: readonly string[];
   amendResume: AmendResume | null;
+  /** Tasks a revision retired; candidate and integration commits stay addressable and integrated bytes stay delivered. */
+  retiredTasks?: readonly RetiredTask[];
+  /** Latest rejected `REPLACE_PLAN`; every record stayed unchanged. */
+  planRejection?: { path: string; error: string } | null;
   requestCount: number;
   /** Git blob ids of the delivered revision; `trim` deletes a transient test only while the caller copy still matches. */
   deliveredBlobs: Readonly<Record<string, string>>;
@@ -84,14 +99,16 @@ export type Context = {
 /** The integrating task's conflict; `head` is the revision the next resolution attempt starts from. */
 /** `retry` binds a failed resolve's effect id and input for replay; `outside` lists recovered paths beyond the current scope. */
 /** `affected` accumulates every resolution delta and `failed` the unresolved check commands, so repairs re-verify both. */
-export type Conflict = { task: string; candidate: string; base: string; head: string; attempt: number; paths: readonly string[]; detail: string; evidence: readonly string[]; affected?: readonly string[]; failed?: readonly string[]; retry?: { id: string; input: Readonly<Record<string, unknown>> }; outside?: readonly string[] };
+type ReplayOwner = { task: string; paths: readonly string[]; commands: readonly string[] };
+export type Conflict = { task: string; candidate: string; base: string; head: string; attempt: number; paths: readonly string[]; detail: string; evidence: readonly string[]; replay?: { archivedName: string; base: string; head: string; owners?: readonly ReplayOwner[] }; affected?: readonly string[]; failed?: readonly string[]; retry?: { id: string; input: Readonly<Record<string, unknown>> }; outside?: readonly string[] };
 /** A live writer's need (`writer`) or a submitted candidate outside its amended scope (`admission`). */
 export type WriterRequest = { requestId: string; task: string; attempt: number; need: string; paths: readonly string[]; rationale: string; source: 'writer' | 'admission' };
 /** `text` is the amended governed plan; root render writes it to `path` so the plan file matches the bound hash. */
-export type AmendmentRecord = { id: string; delta: readonly PlanEdit[]; notify: readonly { task: string; notice: string }[]; rationale: string; by: { by: 'user'; quote: string } | null; beforeHash: string; afterHash: string; removed: readonly string[]; dropped: Readonly<Record<string, readonly string[]>>; path: string; text: string };
+/** `kind: 'replace'` binds a `REPLACE_PLAN` file at `path`; the prior plan file stays as written. */
+export type AmendmentRecord = { id: string; kind?: 'amend' | 'replace'; reconciliation?: PlanReconciliation; retire?: readonly WriterRetirement[]; delta: readonly PlanEdit[]; notify: readonly { task: string; notice: string }[]; rationale: string; by: { by: 'user'; quote: string } | null; beforeHash: string; afterHash: string; removed: readonly string[]; dropped: Readonly<Record<string, readonly string[]>>; path: string; text: string };
 type AmendResume = { kind: 'schedule' } | { kind: 'admit'; task: string } | { kind: 'conflict'; conflict: Conflict };
 
-type CheckoutStep = 'observe' | 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'resolve' | 'discard' | 'reset' | 'rewind' | 'deliver' | 'trim' | 'cleanup';
+type CheckoutStep = 'observe' | 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'resolve' | 'discard' | 'reset' | 'rebase' | 'deliver' | 'trim' | 'cleanup';
 
 export type ImplementState =
 
@@ -123,6 +140,7 @@ export type ImplementState =
   | { tag: 'task-brief'; c: Context; effectId: string; task: string; notice?: string }
   | { tag: 'task-prewrite-snapshot'; c: Context; effectId: string; task: string }
   | { tag: 'tasks'; c: Context }
+  | { tag: 'plan-replacement'; c: Context; origin: Extract<ImplementState, { tag: 'tasks' | 'request-decision' | 'integration-conflict' | 'failure' }>; event: ReplacePlanEvent; effectId: string }
   | { tag: 'task-envelope'; c: Context; effectId: string; task: string }
   | { tag: 'task-verify'; c: Context; effectId: string; task: string; purpose: 'red' | 'green' | 'integration' | 'resolution' | 'reverify'; previous: string | null; conflict?: Conflict }
   | { tag: 'delivered-snapshot'; c: Context; effectId: string }
@@ -208,7 +226,10 @@ function fail(c: Context | null, summary: string): S { return stay({ tag: 'faile
 function stop(c: Context, summary: string): S { return stay({ tag: 'stopped', c, summary }); }
 
 function reviewCtxCounters(review: ReviewState, fallback: Counters): Counters {
-  return 'c' in review ? review.c.counters : fallback;
+  if (!('c' in review)) return fallback;
+  // NOTE: host-boundary snapshots advance parent counters while a nested review retains its older copy.
+  return Object.fromEntries([...new Set([...Object.keys(fallback), ...Object.keys(review.c.counters)])]
+    .map((key) => [key, Math.max(fallback[key] ?? 0, review.c.counters[key] ?? 0)]));
 }
 
 export function planReviewContext(c: Context, invocationContext: string | null | undefined): string | null {
@@ -232,7 +253,7 @@ function fromPlanReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `plan review failed: ${review.detail}`);
     case 'escalated': case 'empty': return beginFailure(c, `plan review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'change-resolution': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
     default: return never(review, 'plan review state');
   }
 }
@@ -333,7 +354,7 @@ function finishLevelGate(c0: Context, assessment: LevelClassificationAnswer, cho
 function levelOf(value: string): number { return value === 'low' ? 0 : value === 'medium' ? 1 : value === 'high' ? 2 : 3; }
 
 function redCriteria(c: Context): PlanCriterion[] {
-  return effectivePlan(c).criteria.filter((criterion) => criterion.evidence === 'red');
+  return c.plan!.criteria.filter((criterion) => criterion.evidence === 'red');
 }
 
 function activeRedCriteria(c: Context): PlanCriterion[] { return redCriteria(c).filter((criterion) => !criterion.redException); }
@@ -347,8 +368,21 @@ function beginPostApproval(c: Context): S {
 // SECTION: Task scheduler
 
 function checkout(c0: Context, step: CheckoutStep, op: Exclude<CheckoutOp, 'scope-rebase'>, input: Readonly<Record<string, unknown>>, task: string | null = null, reason: string | null = null, conflict?: Conflict): S {
+  if (step === 'rebase') c0 = retainReplay(c0, input, conflict);
   const { c, id } = effectId(c0, 'checkout');
   return { state: { tag: 'task-checkout', c, effectId: id, step, task, reason, ...(conflict ? { conflict, input } : {}) }, effects: [{ kind: 'checkout', id, op, input }] };
+}
+
+function retainReplay(c: Context, input: Readonly<Record<string, unknown>>, conflict?: Conflict): Context {
+  const replay = input['replay'];
+  if (!isRecord(replay) || !nonEmpty(replay['base']) || !nonEmpty(replay['head']) || !nonEmpty(input['archivedName'])) return c;
+  const pendingReplay = c.pendingReplay ?? { input: { rebase: true as const, archivedName: input['archivedName'], replay: { base: replay['base'], head: replay['head'] } }, sources: [...new Set([...Object.values(c.tasks), ...(c.retiredTasks ?? [])].flatMap((record) => record.integrated ? [record.integrated] : []).concat(replay['head']))] };
+  return { ...c, pendingReplay: { ...pendingReplay, ...(conflict ? { conflict } : {}) } };
+}
+
+function resumeReplay(c: Context): S {
+  const pending = c.pendingReplay!;
+  return checkout(c, 'rebase', 'init', pending.input, null, pending.input.archivedName, pending.conflict);
 }
 
 function captureTaskBaseline(c0: Context, id: string, incrementAttempt: boolean): S {
@@ -393,72 +427,7 @@ function withTask(c: Context, id: string, patch: Partial<TaskRecord>): Context {
   return { ...c, tasks: { ...c.tasks, [id]: { ...c.tasks[id] as TaskRecord, ...patch } } };
 }
 
-function applicableScopeAdjustments(c: Context): ScopeAdjustment[] {
-  return c.scopeAdjustments.filter((adjustment) => {
-    const { proposal } = adjustment;
-    if (c.designBinding) {
-      if (proposal.source === 'design-revision') {
-        if (!proposal.affectedIncrements.includes(c.designBinding.increment)) return false;
-      } else if (adjustment.ownerIncrement !== c.designBinding.increment) return false;
-    } else if (adjustment.ownerIncrement !== undefined) return false;
-    return proposal.source === 'design-revision'
-      ? c.designBinding?.revision === proposal.proposedArtifactHash
-      : proposal.baseArtifactHash === c.planHash;
-  });
-}
-
-function planCriterion(definition: ScopeCriterionDefinition): PlanCriterion {
-  return {
-    retain: 'durable', coveredBy: null, ...definition, line: 0, verify: definition.verify.map((command) => ({ ...command })),
-  };
-}
-
-export function effectivePlan(c: Context): ParsedPlan {
-  const base = c.plan as ParsedPlan;
-  // NOTE: Revisions fold earlier overlays into their artifact; retain only overlays based on the current artifact.
-  const applicable = applicableScopeAdjustments(c);
-  const implementationAdjustments = applicable.filter(({ proposal }) => proposal.source !== 'design-revision');
-  const taskAdjustments = (id: string) => implementationAdjustments.filter(({ proposal }) =>
-    proposal.source === 'task' && proposal.task === id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(id));
-  const tasks = base.tasks.map((task) => {
-    const adjustments = taskAdjustments(task.id);
-    const paths = [...new Set([...task.paths, ...adjustments.flatMap(({ proposal }) => [
-      ...proposal.delta.paths,
-      ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.changes),
-    ])])].sort();
-    const criteria = [...new Set([...task.criteria, ...adjustments.flatMap(({ proposal }) => proposal.delta.criteria)])].sort();
-    const obligations = adjustments.flatMap(({ proposal }) => proposal.delta.obligations);
-    const summary = obligations.length ? `${task.summary}\nApproved obligations: ${obligations.join('; ')}` : task.summary;
-    return { ...task, paths, criteria, summary };
-  });
-  const definitions = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.criterionDefinitions ?? []);
-  const criteria = [...base.criteria];
-  for (const definition of definitions) {
-    const replacement = planCriterion(definition);
-    const index = criteria.findIndex((row) => row.id === replacement.id);
-    if (index < 0) criteria.push(replacement); else criteria[index] = replacement;
-  }
-  const extraPaths = [...new Set(applicable.flatMap(({ proposal }) => [
-    ...proposal.delta.paths,
-    ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.changes),
-  ]))];
-  const changes = [...base.changes, ...extraPaths.filter((file) => !base.changes.some((row) => row.path === file)).map((file) => ({ action: 'MODIFY' as const, path: file, note: 'Accepted implementation scope adjustment', command: null, line: 0 }))];
-  const commands = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.commands);
-  const finalCommands = implementationAdjustments.flatMap(({ proposal }) => [
-    ...(proposal.delta.finalCommands ?? []),
-    ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.verify.filter((item) => item.final).map((item) => item.command)),
-  ]);
-  const criterionCommands = definitions.flatMap((definition) => definition.verify.filter((item) => !item.final).map((item) => item.command));
-  const phaseDuties = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.phaseDuties);
-  const keyDecisions = [...base.keyDecisions, ...applicable.flatMap(({ proposal }) => proposal.delta.obligations)];
-  return {
-    ...base, tasks, criteria, changes, keyDecisions,
-    verification: { ...base.verification, automated: [...new Set([...base.verification.automated, ...commands, ...criterionCommands])], manual: [...new Set([...base.verification.manual, ...phaseDuties])] },
-    finalCommands: [...new Set([...base.finalCommands, ...finalCommands])],
-  };
-}
-
-function planTask(c: Context, id: string): PlanTask | undefined { return effectivePlan(c).tasks.find((task) => task.id === id); }
+function planTask(c: Context, id: string): PlanTask | undefined { return c.plan!.tasks.find((task) => task.id === id); }
 
 function taskWorktreeName(record: TaskRecord): string {
   return record.worktree?.split(/[\\/]/).at(-1) || worktreeName('task', record.id);
@@ -466,16 +435,19 @@ function taskWorktreeName(record: TaskRecord): string {
 
 /** Prepares the first ready task while a slot is free; otherwise waits on running writers, delivers, or asks once. */
 function schedule(c: Context): S {
+  if (c.pendingReplay) return resumeReplay(c);
+  const reverify = c.reverifyQueue.find((id) => planTask(c, id)?.prerequisites.every((dependency) => c.tasks[dependency]?.status === 'accepted' && !c.reverifyQueue.includes(dependency)));
+  if (reverify) {
+    const commands = taskVerifyCommands(c, reverify);
+    if (!commands.length) return schedule(transientEvidence({ ...c, reverifyQueue: c.reverifyQueue.filter((id) => id !== reverify) }, reverify, c.integration!.head));
+    const batch = beginVerify(c, 'scoped', commands, c.integration!.path);
+    return { state: { tag: 'task-verify', c: batch.c, effectId: batch.id, task: reverify, purpose: 'reverify', previous: null }, effects: [batch.effect] };
+  }
   if (c.pendingWriter && !activeTasks(c.tasks).length) {
     const { pendingWriter, ...bound } = c;
     c = { ...bound, writer: pendingWriter };
   }
-  const plan = effectivePlan(c);
-  // NOTE: a revision invalidated accepted work; once writers drain, rebuild integration from the baseline.
-  if (c.integration?.rewind) {
-    if (activeTasks(c.tasks).length) return stay({ tag: 'tasks', c });
-    return checkout({ ...c, tasks: rependTasks(c.tasks, plan) }, 'rewind', 'reset', { name: 'integration', revision: c.integration.base });
-  }
+  const plan = c.plan!;
   for (const record of Object.values(c.tasks)) {
     // NOTE: an amendment-added prerequisite holds a submission until that producer is accepted, then admits it on the new head.
     if (record.status === 'submitted' && record.parked && planTask(c, record.id)?.prerequisites.every((id) => c.tasks[id]?.status === 'accepted')) return checkEnvelope(withTask(c, record.id, { parked: null }), record.id, record.parked.envelopePath);
@@ -494,7 +466,7 @@ function schedule(c: Context): S {
       { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links, ignored: integration.ignored }, next.id);
   }
   if (slotTasks(c.tasks).length) return stay({ tag: 'tasks', c });
-  if (plan.tasks.every((task) => c.tasks[task.id]?.status === 'accepted')) {
+  if (!c.reverifyQueue.length && plan.tasks.every((task) => c.tasks[task.id]?.status === 'accepted')) {
     const integration = c.integration!;
     return checkout(c, 'deliver', 'deliver', { base: integration.base, revision: integration.head });
   }
@@ -529,7 +501,7 @@ function briefDesignBinding(c: Context): Readonly<Record<string, unknown>> | nul
 }
 
 function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readonly<Record<string, unknown>> {
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   const brief = selectTaskBrief(plan, record.id)!;
   const testPaths = taskTestPaths(plan, brief.task);
   return {
@@ -543,10 +515,11 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
       checkpoint: testPaths.length ? { root: record.worktree, paths: testPaths } : null,
       ...(notice ? { amendmentNotice: notice } : {}),
     },
-    settledScope: { paths: brief.task.paths, approvedPaths: brief.task.paths, changes: brief.changes, acceptedAdjustments: applicableScopeAdjustments(c).filter(({ proposal }) => proposal.source === 'task' && proposal.task === record.id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(record.id)).map(({ proposal, approvedBy }) => ({
-      requestId: proposal.requestId, source: proposal.source, ...(proposal.source === 'task' ? { task: proposal.task } : proposal.source === 'plan-revision' ? { affectedTasks: proposal.affectedTasks } : {}),
-      approvedBy, delta: proposal.delta,
-    })) },
+    settledScope: { paths: brief.task.paths, approvedPaths: brief.task.paths, changes: brief.changes },
+    ...(notice ? {
+      revisionNotice: { notice, revision: c.amendments.at(-1)?.id ?? null, rationale: c.amendments.at(-1)?.rationale ?? null },
+      previousBriefs: (record.briefs ?? []).map((row) => ({ path: row.path, sha256: row.sha256, scope: row.scope })),
+    } : {}),
     criteria: brief.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence, preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
     envelopeSchema: {
       schemaVersion: 1, stage: 'COMPLETE',
@@ -571,15 +544,7 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
 function taskVerifyCommands(c: Context, id: string): { command: string; mapping: CommandMapping }[] {
   const task = planTask(c, id);
   if (!task) return [];
-  const mappings = new Map(commandMappings(effectivePlan(c)).map((mapping) => [mapping.command, mapping]));
-  for (const adjustment of applicableScopeAdjustments(c)) {
-    const proposal = adjustment.proposal;
-    if (!(proposal.source === 'task' && proposal.task === id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(id))) continue;
-    for (const command of proposal.delta.commands) {
-      const old = mappings.get(command);
-      mappings.set(command, { command, criteria: [...new Set([...(old?.criteria ?? []), ...proposal.delta.criteria])], paths: [...new Set([...(old?.paths ?? []), ...proposal.delta.paths])], final: false });
-    }
-  }
+  const mappings = new Map(commandMappings(c.plan!).map((mapping) => [mapping.command, mapping]));
   return [...mappings.values()].filter((mapping) => !mapping.final && (!mapping.criteria.length || mapping.criteria.some((criterion) => task.criteria.includes(criterion)))).map((mapping) => ({ command: mapping.command, mapping }));
 }
 
@@ -612,7 +577,7 @@ function transientEvidence(c: Context, id: string, revision: string): Context {
   const task = planTask(c, id);
   if (!task) return c;
   const evidence = { ...c.evidence };
-  for (const criterion of taskCriteria(effectivePlan(c), task).filter((row) => row.retain === 'transient')) {
+  for (const criterion of taskCriteria(c.plan!, task).filter((row) => row.retain === 'transient')) {
     const redProvenance = criterion.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === criterion.id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const waiver = c.redExceptionRulings[criterion.id];
     if (redProvenance === 'waived' && !waiver) continue;
@@ -629,30 +594,62 @@ function transientCurrent(c: Context, id: string): boolean { return c.evidence[i
  * returned resolution delta rather than the original conflict paths; with nothing to run, the resolution is accepted.
  */
 function verifyResolution(c: Context, conflict0: Conflict, revision: string, delta: readonly string[]): S {
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   const paths = [...new Set([...(conflict0.affected ?? []), ...delta])].sort();
   const conflict: Conflict = { ...conflict0, affected: paths };
   // NOTE: checkout refuses resolutions outside the involved tasks' paths, so only involved tasks can be touched.
   const touched = involvedTasks(c, conflict);
   const commands = new Map<string, { command: string; mapping: CommandMapping }>();
-  for (const id of touched) for (const item of taskVerifyCommands(c, id)) commands.set(item.command, item);
+  if (!conflict.replay?.owners) for (const id of touched) for (const item of taskVerifyCommands(c, id)) commands.set(item.command, item);
+  for (const owner of conflict.replay?.owners ?? []) for (const command of owner.commands) {
+    if (!commands.has(command)) commands.set(command, { command, mapping: { command, criteria: [], paths: owner.paths, final: false } });
+  }
   // NOTE: Integration criteria belong to no task, so taskVerifyCommands never selects them; pick those whose Changes meet the resolution.
   const owned = new Set(plan.tasks.flatMap((task) => task.criteria));
-  const scope = new Set(touched.flatMap((id) => planTask(c, id)?.paths ?? []));
+  const scope = new Set(conflictScope(c, conflict));
   const integration = new Set(plan.criteria.filter((row) => !owned.has(row.id) && row.changes.some((file) => paths.includes(file) && scope.has(file))).map((row) => row.id));
   for (const mapping of commandMappings(plan)) if (!mapping.final && (mapping.criteria.some((id) => integration.has(id)) || conflict.failed?.includes(mapping.command))) commands.set(mapping.command, { command: mapping.command, mapping });
-  const next = withTask(c, conflict.task, { integrated: revision });
-  if (!commands.size) return accept(next, conflict.task, revision);
+  const next = conflict.replay ? { ...c, integration: { ...c.integration!, head: revision } } : withTask(c, conflict.task, { integrated: revision });
+  if (!commands.size) return completeResolution(next, { ...conflict, head: revision });
   const batch = beginVerify(next, 'scoped', [...commands.values()], c.integration!.path);
   return { state: { tag: 'task-verify', c: batch.c, effectId: batch.id, task: conflict.task, purpose: 'resolution', previous: null, conflict: { ...conflict, head: revision } }, effects: [batch.effect] };
 }
 
+function completeResolution(c: Context, conflict: Conflict): S {
+  if (!conflict.replay) return accept(c, conflict.task, conflict.head);
+  const { archivedName, base, head } = conflict.replay;
+  return checkout(c, 'rebase', 'init', { rebase: true, archivedName, replay: { base, head } }, null, archivedName, conflict);
+}
+
 /** False once an amendment removed the conflicting task from the plan or its task record. */
-function conflictLive(c: Context, conflict: Conflict): boolean { return !!planTask(c, conflict.task) && !!c.tasks[conflict.task]; }
+function conflictLive(c: Context, conflict: Conflict): boolean { return !!conflict.replay?.owners?.length || !!planTask(c, conflict.task) && !!c.tasks[conflict.task]; }
 
 /** The integrating task plus accepted tasks whose approved paths meet the conflict. */
 function involvedTasks(c: Context, conflict: Conflict): string[] {
+  if (conflict.replay?.owners) return [...new Set(conflict.replay.owners.map((owner) => owner.task))];
   return [conflict.task, ...Object.values(c.tasks).filter((record) => record.status === 'accepted' && record.id !== conflict.task && (planTask(c, record.id)?.paths ?? []).some((file) => conflict.paths.includes(file))).map((record) => record.id)];
+}
+
+function conflictScope(c: Context, conflict: Conflict): string[] {
+  return [...new Set(conflict.replay?.owners ? conflict.replay.owners.flatMap((owner) => owner.paths) : involvedTasks(c, conflict).flatMap((id) => planTask(c, id)?.paths ?? []))].sort();
+}
+
+/** Retired signatures retain their accepted contract; these checks preserve bytes without restoring requirements. */
+function replayOwnership(c: Context, candidate: string, candidatePaths: readonly string[], paths: readonly string[]): ReplayOwner[] | null {
+  const records = [...Object.values(c.tasks), ...(c.retiredTasks ?? [])].filter((record) => record.status === 'accepted');
+  const contracts = records.map((record) => {
+    let signature: Record<string, unknown>;
+    try { signature = JSON.parse(record.signature) as Record<string, unknown>; } catch { return null; }
+    if (!isRecord(signature) || !Array.isArray(signature['paths']) || !Array.isArray(signature['definitions'])) return null;
+    const retainedPaths = [...new Set([...signature['paths'], ...(record.candidatePaths ?? [])].filter((file): file is string => typeof file === 'string'))];
+    const commands = signature['definitions'].filter(isRecord).flatMap((row) => Array.isArray(row['verify']) ? row['verify'].filter(isRecord).flatMap((verify) => typeof verify['command'] === 'string' && verify['command'].trim() ? [verify['command']] : []) : []);
+    return { record, owner: { task: record.id, paths: retainedPaths, commands: [...new Set(commands)] } };
+  }).filter((row) => row !== null);
+  const primary = contracts.find(({ record }) => record.integrated === candidate || record.integratedHistory?.includes(candidate));
+  const affected = [...new Set([...candidatePaths, ...paths])];
+  const owners = contracts.filter((row) => row === primary || row.owner.paths.some((file) => affected.includes(file))).map((row) => row.owner);
+  if ((!primary && !candidatePaths.length) || !owners.length || affected.some((file) => !owners.some((owner) => owner.paths.includes(file)))) return null;
+  return primary ? [primary.owner, ...owners.filter((owner) => owner !== primary.owner)] : owners;
 }
 
 /** Paths of the brief the writer worked from; an amendment may have narrowed the current scope since. */
@@ -671,7 +668,7 @@ function checkEnvelope(c0: Context, id: string, envelopePath: string): S {
 }
 
 function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'ENVELOPE_CHECKED' }>): S {
-  const plan = effectivePlan(c), task = planTask(c, id), record = c.tasks[id] as TaskRecord;
+  const plan = c.plan!, task = planTask(c, id), record = c.tasks[id] as TaskRecord;
   if (!task) return taskFailed(c, id, 'Task is no longer in the governed plan.');
   const envelope = event.envelope;
   if (event.defects.length || !isWriterEnvelope(envelope)) return taskFailed(c, id, `Envelope rejected: ${event.defects.join('; ') || 'malformed envelope.'}`);
@@ -726,8 +723,14 @@ function continueAdmission(c: Context, id: string, admit: () => S): S {
   return schedule(withTask(c, id, { parked: { envelopePath } }));
 }
 
-function dropTask(c: Context, id: string): Context {
-  return { ...c, tasks: Object.fromEntries(Object.entries(c.tasks).filter(([key]) => key !== id)) };
+/** Moves a retired writer's record to the archive at its terminal receipt; the slot frees here. */
+function retireTask(c: Context, id: string, terminal: string): Context {
+  const record = c.tasks[id] as TaskRecord;
+  const by = [...c.amendments].reverse().find((row) => row.removed.includes(id))?.id ?? 'revision';
+  return {
+    ...c, tasks: Object.fromEntries(Object.entries(c.tasks).filter(([key]) => key !== id)),
+    retiredTasks: [...(c.retiredTasks ?? []), { ...record, handle: null, reason: terminal, retiredBy: by }],
+  };
 }
 
 type TaskReceipt = Extract<WriteReceiptEvent, { handle: string }>;
@@ -741,8 +744,9 @@ function taskReceipt(c: Context, event: TaskReceipt): S {
       return stay({ tag: 'tasks', c: drift.length ? { ...next, concerns: [...new Set([...next.concerns, `${id}: writer substitution, launched ${drift.join(', ')}; ${event.substitution ?? 'no reason given'}`])] } : next });
     }
     case 'submitted': {
-      // NOTE: a removed writer's submission raced its cancellation; keep its identity and envelope until `cancelled` confirms it.
-      if (record.removed) return stay({ tag: 'tasks', c: { ...withTask(c, id, { discardedSubmission: event.envelopePath }), concerns: [...new Set([...c.concerns, `${id}: removed writer submitted ${event.envelopePath} before cancellation; the submission is discarded.`])] } });
+      // NOTE: a retired writer's submission is kept as evidence and never admitted; `retain` ends here, `stop` waits for cancellation.
+      if (record.removed && record.retirement === 'retain') return schedule(retireTask(withTask(c, id, { retainedSubmission: event.envelopePath }), id, `retained submission ${event.envelopePath}`));
+      if (record.removed) return stay({ tag: 'tasks', c: { ...withTask(c, id, { retainedSubmission: event.envelopePath }), concerns: [...new Set([...c.concerns, `${id}: retired writer submitted ${event.envelopePath} before cancellation; the submission is retained, not admitted.`])] } });
       const entry = record.briefs?.find((row) => row.envelopePath === event.envelopePath);
       const brief = entry ? { path: entry.path, sha256: entry.sha256, envelopePath: entry.envelopePath, checkpointPath: entry.checkpointPath } : record.brief;
       const next = withTask(c, id, { status: 'submitted', brief });
@@ -751,78 +755,136 @@ function taskReceipt(c: Context, event: TaskReceipt): S {
       return checkEnvelope(next, id, event.envelopePath);
     }
     case 'failed': {
-      if (record.removed) return schedule(dropTask(c, id));
+      if (record.removed) return schedule(retireTask(c, id, `writer failed: ${event.detail}`));
       const reason = `${event.model}: ${event.detail}`;
       if (record.modelIndex + 1 >= (c.writer?.models.length ?? 0)) return taskFailed(c, id, `Writer cascade exhausted: ${reason}`);
       return checkout(withTask(c, id, { status: 'submitted', handle: null }), 'relaunch', 'reset', { name: taskWorktreeName(record), revision: record.input }, id, reason);
     }
-    case 'cancelled': return record.removed ? schedule(dropTask(c, id)) : taskFailed(c, id, 'Writer cancelled.');
+    case 'cancelled': return record.removed ? schedule(retireTask(c, id, 'cancellation attested')) : taskFailed(c, id, 'Writer cancelled.');
     default: return never(event, 'write receipt');
   }
 }
 
 type AmendOrigin = Extract<ImplementState, { tag: 'tasks' | 'request-decision' | 'integration-conflict' | 'failure' }>;
+type RevisionEvent = AmendEvent | ReplacePlanEvent;
 
-/** Validates an `AMEND` and rebinds the run to the amended plan; an open `conflict` blocks rewinds and reverification. */
-function prepareAmend(c: Context, event: AmendEvent, conflict: Conflict | null): { ok: true; c: Context } | { ok: false; error: string } {
-  const err = (error: string) => ({ ok: false as const, error });
-  if (c.phase !== 'tasks' || !c.plan || !c.planHash || !c.integration) return err('event.type: AMEND applies only during the task phase.');
-  if (!Array.isArray(event.delta) || !event.delta.length) return err('event.delta: list at least one exact-text edit.');
-  if (event.delta.some((edit) => !isRecord(edit) || !['modify', 'remove', 'add'].includes(String(edit.kind)) || !nonEmpty(edit.target))) return err('event.delta: each edit needs kind modify|remove|add and a target.');
-  if (!nonEmpty(event.rationale)) return err('event.rationale: explain the amendment.');
-  if (!Array.isArray(event.notify) || event.notify.some((row) => !isRecord(row) || !nonEmpty(row.task) || !nonEmpty(row.notice)) || new Set(event.notify.map((row) => row.task)).size !== event.notify.length) return err('event.notify: name each notified writer once with a non-empty notice.');
-  if (event.by !== undefined && (!isRecord(event.by) || event.by.by !== 'user' || !nonEmpty(event.by.quote))) return err('event.by: a gated amendment carries { by: "user", quote }.');
-  const amended = amendPlan(c.plan, event.delta);
-  if (!amended.ok) return err(`event.delta: ${amended.error}`);
-  if (c.designBinding) {
-    const defects = validateDesignTraceability(amended.plan, c.designBinding);
-    if (defects.length) return err(`event.delta: amended plan breaks design traceability: ${defects.join('; ')}`);
-  }
-  const before = effectivePlan(c);
-  const bound: Context = { ...c, plan: amended.plan, planHash: amended.hash };
-  const after = effectivePlan(bound);
-  const result = amendTasks(c.tasks, before, after, event.notify.map((row) => row.task));
-  if (!result.ok) return err(`event.delta: ${result.error}`);
-  const prerequisites = (plan: ParsedPlan) => [...(plan.tasks.find((task) => task.id === conflict?.task)?.prerequisites ?? [])].sort().join(',');
-  if (conflict && after.tasks.some((task) => task.id === conflict.task) && prerequisites(before) !== prerequisites(after)) return err(`event.delta: resolve or discard the open integration conflict before changing ${conflict.task} prerequisites.`);
-  if (conflict && (result.removedAccepted.length || result.reverify.length)) return err('event.delta: resolve or discard the open integration conflict before an amendment that rewinds or re-verifies accepted work.');
-  const removedWork = [...result.removedAccepted, ...result.discarded, ...result.removedRunning];
-  const gates = [...amended.gates, ...(removedWork.length ? [`discards work of ${removedWork.join(', ')}`] : [])];
-  if (gates.length && !event.by) return err(`event.by: this amendment needs the user's quote: ${gates.join('; ')}.`);
-  const id = `amend-${c.amendments.length + 1}`;
+/** Structural checks shared by `AMEND` and `REPLACE_PLAN`; summary checks run in `reconcilePlan`. */
+function revisionFieldsError(c: Context, event: RevisionEvent): string | null {
+  if (c.phase !== 'tasks' || !c.plan || !c.planHash || !c.integration) return `event.type: ${event.type} applies only during the task phase.`;
+  if (!nonEmpty(event.rationale)) return 'event.rationale: explain the revision.';
+  if (!Array.isArray(event.notify) || event.notify.some((row) => !isRecord(row) || !nonEmpty(row.task) || !nonEmpty(row.notice)) || new Set(event.notify.map((row) => row.task)).size !== event.notify.length) return 'event.notify: name each notified writer once with a non-empty notice.';
+  if (event.retire !== undefined && (!Array.isArray(event.retire) || new Set(event.retire.map((row) => row.task)).size !== event.retire.length)) return 'event.retire: name each retired writer once.';
+  if (event.by !== undefined && (!isRecord(event.by) || event.by.by !== 'user' || !nonEmpty(event.by.quote))) return 'event.by: a gated revision carries { by: "user", quote }.';
+  return null;
+}
+
+function revisionPlanPath(c: Context, id: string): string {
   const sessionDir = typeof c.run.overrides['sessionDir'] === 'string' ? c.run.overrides['sessionDir'].replace(/[\\/]+$/, '') : /[\\/]/.test(c.planPath) ? c.planPath.replace(/[\\/][^\\/]*$/, '') : '';
   // NOTE: design increments share one session directory; namespace by the governing plan and design revision so increments never share a file.
-  const origin = (c.amendments[0]?.path ?? c.planPath).replace(/^.*[\\/]/, '').replace(/\.plan\.md$/i, '').replace(/(?:\.r\d+)?\.amend-\d+$/, '');
+  const origin = (c.amendments.find((row) => row.kind !== 'replace')?.path ?? c.planPath).replace(/^.*[\\/]/, '').replace(/\.plan\.md$/i, '').replace(/(?:\.r\d+)?\.amend-\d+$/, '');
   const revision = c.designBinding ? `.r${c.designBinding.revisionIndex ?? 0}` : '';
   const file = `${origin}${revision}.${id}.plan.md`;
-  const planPath = sessionDir ? `${sessionDir}/${file}` : file;
+  return sessionDir ? `${sessionDir}/${file}` : file;
+}
+
+/**
+ * Binds the run to a revised plan through one reconcile operation. Work is never discarded: accepted tasks keep their
+ * integration, retired tasks move to the archive, changed criteria move their evidence to history, and accepted tasks
+ * that gained an unfinished prerequisite get pending validation obligations. An open `conflict` blocks rechecks.
+ */
+function commitRevision(c: Context, event: RevisionEvent, revised: Extract<RevisedPlan, { ok: true }>, conflict: Conflict | null): { ok: true; c: Context } | { ok: false; error: string } {
+  const err = (error: string) => ({ ok: false as const, error });
+  const field = event.type === 'AMEND' ? 'event.delta' : 'event.path';
+  if (c.designBinding) {
+    const defects = validateDesignTraceability(revised.plan, c.designBinding);
+    if (defects.length) return err(`${field}: revised plan breaks design traceability: ${defects.join('; ')}`);
+  }
+  const before = c.plan!;
+  const bound: Context = { ...c, plan: revised.plan, planHash: revised.hash };
+  const after = bound.plan!;
+  const kind = event.type === 'AMEND' ? 'amend' as const : 'replace' as const;
+  const id = `${kind}-${c.amendments.filter((row) => (row.kind ?? 'amend') === kind).length + 1}`;
+  const result = reconcilePlan({ tasks: c.tasks, before, after, reconciliation: event.reconciliation, notify: event.notify.map((row) => row.task), retire: event.retire ?? [], conflictTask: conflict?.task ?? null, revision: id });
+  if (!result.ok) return err(`${event.reconciliation ? 'event.reconciliation' : field}: ${result.error}`);
+  const prerequisites = (plan: ParsedPlan) => [...(plan.tasks.find((task) => task.id === conflict?.task)?.prerequisites ?? [])].sort().join(',');
+  if (conflict && after.tasks.some((task) => task.id === conflict.task) && prerequisites(before) !== prerequisites(after)) return err(`${field}: resolve or discard the open integration conflict before changing ${conflict.task} prerequisites.`);
+  if (result.gates.length && !event.by) return err(`event.by: this revision needs the user's quote: ${result.gates.join('; ')}.`);
+  const planPath = event.type === 'AMEND' ? revisionPlanPath(c, id) : event.path;
   const same = (a: PlanCriterion | undefined, b: PlanCriterion | undefined) => !!a && !!b && JSON.stringify({ ...a, line: 0 }) === JSON.stringify({ ...b, line: 0 });
-  const evidence = Object.fromEntries(Object.entries(c.evidence).flatMap(([key, row]) => same(before.criteria.find((item) => item.id === key), after.criteria.find((item) => item.id === key)) ? [[key, { ...row, planHash: amended.hash }]] : []));
-  // NOTE: a removed running task that never launched has no writer to cancel, so its record is dropped now.
-  const tasks = Object.fromEntries(Object.entries(result.tasks).filter(([, record]) => !(record.removed && !record.handle)));
-  const removed = Object.keys(c.tasks).filter((key) => !after.tasks.some((task) => task.id === key));
+  const kept = (key: string) => same(before.criteria.find((item) => item.id === key), after.criteria.find((item) => item.id === key));
+  const evidence = Object.fromEntries(Object.entries(c.evidence).flatMap(([key, row]) => kept(key) ? [[key, { ...row, planHash: revised.hash }]] : []));
+  // NOTE: changed or retired criteria keep their evidence as history; it is provenance, never relied on.
+  const superseded = Object.entries(c.evidence).filter(([key]) => !kept(key)).map(([, row]) => row);
+  // NOTE: a retired running task that never launched has no writer to cancel, so its record goes straight to the archive.
+  const unlaunched = Object.values(result.tasks).filter((row) => row.removed && !row.handle);
+  const tasks = Object.fromEntries(Object.entries(result.tasks).filter(([, row]) => !(row.removed && !row.handle)));
+  const removed = result.summary.retired;
   // NOTE: paths each surviving task lost; a conflict discard must bind to a recorded removal or one of these narrowings.
   const dropped = Object.fromEntries(after.tasks.flatMap((task) => {
     const lost = (before.tasks.find((row) => row.id === task.id)?.paths ?? []).filter((file) => !task.paths.includes(file));
     return lost.length ? [[task.id, lost]] : [];
   }));
-  const record: AmendmentRecord = { id, delta: event.delta, notify: event.notify, rationale: event.rationale, by: event.by ?? null, beforeHash: c.planHash, afterHash: amended.hash, removed, dropped, path: planPath, text: amended.text };
-  const next: Context = {
-    ...bound, planPath, tasks, evidence,
-    integration: result.removedAccepted.length ? { ...c.integration, rewind: true } : c.integration,
-    amendments: [...c.amendments, record], amended: [],
-    rebriefQueue: event.notify.filter((row) => result.rebrief.includes(row.task)), reverifyQueue: result.reverify,
-    revisions: [...c.revisions, { artifact: 'plan', reason: event.rationale, beforeHash: c.planHash, afterHash: amended.hash, rebind: { retained: Object.keys(tasks).filter((key) => tasks[key] === c.tasks[key]), pending: Object.keys(tasks).filter((key) => tasks[key]?.status === 'pending' && tasks[key] !== c.tasks[key]), removed } }],
+  const record: AmendmentRecord = {
+    id, kind, delta: event.type === 'AMEND' ? event.delta : [], notify: event.notify, rationale: event.rationale, by: event.by ?? null,
+    beforeHash: c.planHash!, afterHash: revised.hash, removed, dropped, path: planPath, text: revised.text, reconciliation: result.summary,
+    ...(event.retire?.length ? { retire: event.retire } : {}),
   };
+  let next: Context = {
+    ...bound, planPath, tasks, evidence, evidenceHistory: [...(c.evidenceHistory ?? []), ...superseded],
+    retiredTasks: [...(c.retiredTasks ?? []), ...result.archived, ...unlaunched.map((row) => ({ ...row, retiredBy: id }))],
+    planRejection: null,
+    amendments: [...c.amendments, record], amended: [],
+    rebriefQueue: event.notify.filter((row) => result.rebrief.includes(row.task)), reverifyQueue: [...new Set([...c.reverifyQueue.filter((id) => tasks[id]?.status === 'accepted'), ...result.validate, ...result.reverify])],
+    revisions: [...c.revisions, { artifact: 'plan', reason: event.rationale, beforeHash: c.planHash!, afterHash: revised.hash, rebind: { retained: result.summary.retained, pending: Object.keys(tasks).filter((key) => tasks[key]?.status === 'pending' && tasks[key] !== c.tasks[key]), removed } }],
+  };
+  // NOTE: a retained consumer of a new prerequisite stays accepted; its criteria are re-proved before delivery.
+  const consumers = [...new Set(result.validate.flatMap((task) => after.tasks.find((row) => row.id === task)?.criteria ?? []))];
+  if (consumers.length) next = refreshEvidence(next, consumers, id, `${id}: ${result.validate.join(', ')} gained an unfinished prerequisite; ${event.rationale}`);
   return { ok: true, c: next };
+}
+
+function prepareAmend(c: Context, event: AmendEvent, conflict: Conflict | null): { ok: true; c: Context } | { ok: false; error: string } {
+  const fields = revisionFieldsError(c, event);
+  if (fields) return { ok: false, error: fields };
+  if (!Array.isArray(event.delta) || !event.delta.length) return { ok: false, error: 'event.delta: list at least one exact-text edit.' };
+  if (event.delta.some((edit) => !isRecord(edit) || !['modify', 'remove', 'add'].includes(String(edit.kind)) || !nonEmpty(edit.target))) return { ok: false, error: 'event.delta: each edit needs kind modify|remove|add and a target.' };
+  const amended = amendPlan(c.plan!, event.delta);
+  if (!amended.ok) return { ok: false, error: `event.delta: ${amended.error}` };
+  return commitRevision(c, event, amended, conflict);
+}
+
+function revisionResume(state: AmendOrigin, c: Context): AmendResume {
+  // NOTE: a revision that retired the candidate under admission ends that admission; scheduling resumes instead.
+  if (state.tag === 'request-decision' && state.request.source === 'admission' && !c.tasks[state.request.task]) return { kind: 'schedule' };
+  return state.tag === 'integration-conflict' ? { kind: 'conflict', conflict: state.conflict }
+    : state.tag === 'request-decision' && state.request.source === 'admission' ? { kind: 'admit', task: state.request.task } : { kind: 'schedule' };
 }
 
 function applyAmend(state: AmendOrigin, event: AmendEvent): S {
   const prepared = prepareAmend(state.c, event, state.tag === 'integration-conflict' ? state.conflict : null);
   if (!prepared.ok) return stay(state);
-  const resume: AmendResume = state.tag === 'integration-conflict' ? { kind: 'conflict', conflict: state.conflict }
-    : state.tag === 'request-decision' && state.request.source === 'admission' ? { kind: 'admit', task: state.request.task } : { kind: 'schedule' };
-  return continueAmend({ ...prepared.c, amendResume: resume });
+  return continueAmend({ ...prepared.c, amendResume: revisionResume(state, prepared.c) });
+}
+
+/** Parses the replacement file; the prior plan file is never rewritten. */
+function beginReplacement(state: AmendOrigin, event: ReplacePlanEvent): S {
+  const { c, id } = effectId({ ...state.c, planRejection: null }, 'parse-artifact');
+  return { state: { tag: 'plan-replacement', c, origin: { ...state, c } as AmendOrigin, event, effectId: id }, effects: [{ kind: 'parse-artifact', id, path: event.path, artifact: 'plan' }] };
+}
+
+/** A rejected replacement returns to its origin with every record unchanged; the frame shows the reason. */
+function rejectReplacement(state: Extract<ImplementState, { tag: 'plan-replacement' }>, error: string): S {
+  return stay({ ...state.origin, c: { ...state.c, planRejection: { path: state.event.path, error } } } as AmendOrigin);
+}
+
+function applyReplacement(state: Extract<ImplementState, { tag: 'plan-replacement' }>, payload: Readonly<Record<string, unknown>>): S {
+  const revised = replacementPlan({ hash: String(payload['hash'] ?? ''), plan: payload['parsed'] ? asParsedPlan(payload['parsed']) : null, defects: Array.isArray(payload['defects']) ? payload['defects'] as { code?: unknown; message?: unknown }[] : [] });
+  if (!revised.ok) return rejectReplacement(state, revised.error);
+  if (revised.hash === state.event.expectedHash) return rejectReplacement(state, 'event.path: the replacement plan matches the current plan; send no revision.');
+  const origin = state.origin;
+  const committed = commitRevision(state.c, state.event, revised, origin.tag === 'integration-conflict' ? origin.conflict : null);
+  if (!committed.ok) return rejectReplacement(state, committed.error);
+  return continueAmend({ ...committed.c, amendResume: revisionResume(origin, committed.c) });
 }
 
 /** Regenerates notified briefs, re-verifies changed accepted tasks on the integration head, then resumes the origin. */
@@ -831,14 +893,6 @@ function continueAmend(c: Context): S {
   if (rebrief) {
     const { c: next, id } = effectId({ ...c, rebriefQueue: rest }, 'write-brief');
     return { state: { tag: 'task-brief', c: next, effectId: id, task: rebrief.task, notice: rebrief.notice }, effects: [{ kind: 'write-brief', id, stage: 'task', input: taskBriefInput(next, next.tasks[rebrief.task] as TaskRecord, rebrief.notice) }] };
-  }
-  const [reverify, ...others] = c.reverifyQueue;
-  if (reverify) {
-    const next = { ...c, reverifyQueue: others };
-    const commands = taskVerifyCommands(next, reverify);
-    if (!commands.length) return continueAmend(transientEvidence(next, reverify, c.integration!.head));
-    const batch = beginVerify(next, 'scoped', commands, c.integration!.path);
-    return { state: { tag: 'task-verify', c: batch.c, effectId: batch.id, task: reverify, purpose: 'reverify', previous: null }, effects: [batch.effect] };
   }
   const resume = c.amendResume ?? { kind: 'schedule' as const };
   const done = { ...c, amendResume: null };
@@ -849,12 +903,12 @@ function continueAmend(c: Context): S {
 function redReplay(c: Context, id: string): S {
   const record = c.tasks[id] as TaskRecord;
   if (!record.redRows.length) return greenVerify(c, id);
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, candidate: record.candidate, permitted: taskTestPaths(plan, planTask(c, id)!), links: c.integration!.links, ignored: c.integration!.ignored }, id);
 }
 
 function redCommands(c: Context, id: string): { command: string; mapping: CommandMapping | null }[] | string {
-  const plan = effectivePlan(c), rows = (c.tasks[id] as TaskRecord).redRows;
+  const plan = c.plan!, rows = (c.tasks[id] as TaskRecord).redRows;
   const mappings = commandMappings(plan);
   const commands = new Map<string, { command: string; mapping: CommandMapping | null }>();
   for (const criterion of taskRedCriteria(plan, planTask(c, id)!)) {
@@ -871,6 +925,10 @@ function redCommands(c: Context, id: string): { command: string; mapping: Comman
 }
 
 function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, event: Event): S {
+  if (state.step === 'rebase' && !state.c.pendingReplay) {
+    const source = state.conflict?.replay ?? { archivedName: state.reason!, base: state.c.integration!.base, head: state.c.integration!.head };
+    state = { ...state, c: retainReplay(state.c, { rebase: true, archivedName: source.archivedName, replay: { base: source.base, head: source.head } }, state.conflict) };
+  }
   if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) {
     const detail = `checkout ${state.step} failed: ${event.cls}: ${event.detail}`;
     // NOTE: a failed resolve may have committed; keep the conflict and retry the same effect so checkout replay recovers it.
@@ -927,7 +985,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       if (result['refused'] === 'out-of-scope' && list('retained').length) return stay({ tag: 'integration-conflict', c, conflict: { ...conflict, outside: [...new Set([...(conflict.outside ?? []), ...list('retained')])].sort(), evidence: [`Resolution attempt ${conflict.attempt + 1} refused (out-of-scope): earlier attempts committed ${list('retained').join(', ')} outside the current scope; discard it.`] } });
       if (nonEmpty(result['refused'])) return stay({ tag: 'integration-conflict', c, conflict: { ...conflict, evidence: [`Resolution attempt ${conflict.attempt + 1} refused (${String(result['refused'])}): ${text('detail')}${list('paths').length ? ` [${list('paths').join(', ')}]` : ''}`] } });
       if (!text('revision')) return beginFailure(c, 'Conflict resolution returned no revision.');
-      const scope = new Set(involvedTasks(c, conflict).flatMap((task) => planTask(c, task)?.paths ?? []));
+      const scope = new Set(conflictScope(c, conflict));
       // NOTE: check the whole retained delta from the pre-pick base; earlier attempts' commits stay in the tree.
       const outside = [...new Set([...list('paths'), ...list('retained')])].filter((file) => !scope.has(file)).sort();
       if (outside.length) return stay({ tag: 'integration-conflict', c, conflict: { ...conflict, attempt: conflict.attempt + 1, head: text('revision'), outside, evidence: [`Resolution attempt ${conflict.attempt + 1} at ${text('revision')} changes paths outside the current scope: ${outside.join(', ')}; discard it.`] } });
@@ -952,7 +1010,36 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       return { state: { tag: 'trim-snapshot', c: snap.c, effectId: snap.id }, effects: [{ kind: 'snapshot', id: snap.id, since: c.lastFingerprint }] };
     }
     case 'reset': return taskFailed(c, id, state.reason ?? 'Integration verification failed.');
-    case 'rewind': return schedule({ ...c, integration: { ...c.integration!, head: c.integration!.base, rewind: false } });
+    case 'rebase': {
+      // NOTE: a replay conflict leaves the caller tree untouched and the prior integration archived; no task is re-pended.
+      const manifest = isRecord(result['manifest']) ? result['manifest'] : {};
+      const names = (key: string): string[] => Array.isArray(manifest[key]) ? manifest[key].filter((item): item is string => typeof item === 'string') : [];
+      if (!text('base') || !text('head') || !text('path')) return beginFailure(c, 'Delivery rebase returned no revision.');
+      const integration = { path: text('path'), base: text('base'), head: text('head'), links: names('linked'), ignored: names('copiedIgnored') };
+      const sourceArchive = c.pendingReplay ? { archivedName: c.pendingReplay.input.archivedName, ...c.pendingReplay.input.replay } : state.conflict?.replay ?? { archivedName: state.reason!, base: c.integration!.base, head: c.integration!.head };
+      const archive = { archivedName: sourceArchive.archivedName, base: sourceArchive.base, head: sourceArchive.head };
+      const archivedIntegrations = [...(c.archivedIntegrations ?? []).filter((row) => row.archivedName !== archive.archivedName), archive];
+      if (result['conflict'] === true) {
+        const owners = replayOwnership(c, text('candidate'), list('candidatePaths'), list('paths'));
+        if (!owners) return stay({ tag: 'failed', c: { ...c, integration, archivedIntegrations }, summary: `Delivery replay retained ${text('candidate')} but its accepted ownership cannot be proved; preserve the active pick and archive for scoped reconciliation.` });
+        const replay = { ...archive, owners };
+        const task = owners[0]!.task;
+        const conflict: Conflict = { task, candidate: text('candidate'), base: integration.head, head: integration.head, attempt: 0, paths: list('paths'), detail: text('detail'), evidence: [], replay };
+        return stay({ tag: 'integration-conflict', c: { ...c, integration, archivedIntegrations, pendingReplay: { ...c.pendingReplay!, conflict } }, conflict });
+      }
+      const rows = Array.isArray(result['replayed']) ? result['replayed'] : [];
+      const valid = rows.every((row) => isRecord(row) && nonEmpty(row['from']) && nonEmpty(row['to']));
+      const replayed = new Map(valid ? rows.map((row) => [(row as Record<string, string>)['from']!, (row as Record<string, string>)['to']!]) : []);
+      if (!valid || replayed.size !== rows.length || c.pendingReplay!.sources.some((source) => !replayed.has(source)) || replayed.get(archive.head) !== integration.head) return beginFailure(c, 'Delivery replay returned an incomplete or inconsistent commit mapping; retry the retained archive.');
+      const remap = (record: TaskRecord) => {
+        const to = record.integrated ? replayed.get(record.integrated) : undefined;
+        return to ? { ...record, integrated: to, integratedHistory: [...(record.integratedHistory ?? []), record.integrated as string] } : record;
+      };
+      const tasks = Object.fromEntries(Object.entries(c.tasks).map(([key, record]) => [key, remap(record)]));
+      const retiredTasks = (c.retiredTasks ?? []).map((record) => ({ ...remap(record), retiredBy: record.retiredBy }));
+      const { pendingReplay: _completedReplay, ...completed } = c;
+      return schedule({ ...completed, tasks, retiredTasks, integration, archivedIntegrations, reverifyQueue: [...new Set([...c.reverifyQueue, ...Object.values(tasks).filter((record) => record.status === 'accepted').map((record) => record.id)])] });
+    }
     case 'deliver': {
       if (list('conflicts').length) {
         const next = effectId(c, 'snapshot');
@@ -960,7 +1047,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       }
       const delivered = [...list('transferred'), ...list('already')];
       const blobs = isRecord(result['blobs']) ? Object.fromEntries(Object.entries(result['blobs']).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {};
-      const names = [...new Set([...Object.entries(c.tasks).flatMap(([task, record]) => [worktreeName('task', task), worktreeName('red', task), ...(record.worktreeNames ?? []), ...(record.worktree ? [taskWorktreeName(record)] : [])]), 'integration'])];
+      const names = [...new Set([...[...Object.entries(c.tasks), ...(c.retiredTasks ?? []).map((record) => [record.id, record] as const)].flatMap(([task, record]) => [worktreeName('task', task), worktreeName('red', task), ...(record.worktreeNames ?? []), ...(record.worktree ? [taskWorktreeName(record)] : [])]), 'integration'])];
       return checkout({ ...markMutation(c, delivered), phase: 'delivered', deliveredBlobs: blobs, changedPaths: [...new Set([...c.changedPaths, ...delivered])].sort() }, 'cleanup', 'cleanup', { names, links: c.integration!.links });
     }
     case 'cleanup': {
@@ -971,7 +1058,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
   }
 }
 
-function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' | 'task-prewrite-snapshot' | 'task-envelope' | 'task-verify' | 'delivered-snapshot' }>, event: Event): S {
+function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replacement' | 'task-brief' | 'task-prewrite-snapshot' | 'task-envelope' | 'task-verify' | 'delivered-snapshot' }>, event: Event): S {
   switch (state.tag) {
     case 'task-prewrite-snapshot': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return taskFailed(state.c, state.task, `pre-write snapshot failed: ${event.cls}: ${event.detail}`);
@@ -985,7 +1072,7 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' 
       if (event.type !== 'BRIEF_READY' || !answers(event, state.effectId)) return stay(state);
       if (event.stage !== 'task' || !nonEmpty(event.path) || !/^sha256:[a-f0-9]{64}$/.test(event.sha256) || !nonEmpty(event.envelopePath)) return taskFailed(state.c, state.task, 'write-brief returned a mismatched stage, invalid hash, or missing envelope path.');
       const brief = { path: event.path, sha256: event.sha256, envelopePath: event.envelopePath, checkpointPath: checkpointPathOf(event.envelopePath) };
-      const entry: TaskBriefHistory = { ...brief, scope: taskScope(effectivePlan(state.c), planTask(state.c, state.task)!) };
+      const entry: TaskBriefHistory = { ...brief, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
       if (state.notice !== undefined) {
         // NOTE: a regenerated brief keeps the live writer; earlier briefs stay valid while their scope equals the current one.
         const record = state.c.tasks[state.task] as TaskRecord;
@@ -998,8 +1085,16 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' 
       if (event.type === 'WRITE_RECEIPT' && typeof event.task === 'string') return taskReceipt(state.c, event as TaskReceipt);
       if (event.type === 'REQUEST') return requestDecision(state.c, { task: event.task, attempt: event.attempt, need: event.need, paths: [...event.paths], rationale: event.rationale, source: 'writer' });
       if (event.type === 'AMEND') return applyAmend(state, event);
+      if (event.type === 'REPLACE_PLAN') return beginReplacement(state, event);
       return stay(state);
-    }    case 'task-envelope': {
+    }
+    case 'plan-replacement': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return rejectReplacement(state, `parse-artifact failed: ${event.cls}: ${event.detail}`);
+      if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId)) return stay(state);
+      if (event.kind !== 'plan') return rejectReplacement(state, 'event.path: the replacement artifact is not a plan.');
+      return applyReplacement(state, { hash: event.hash, parsed: event.parsed, defects: event.defects });
+    }
+    case 'task-envelope': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return taskFailed(state.c, state.task, `envelope check failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
       return admitEnvelope(state.c, state.task, event);
@@ -1010,8 +1105,9 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' 
       const rows = recordsFrom(resultEventRows(event), state.c, state.purpose === 'red' ? 'red' : 'scoped');
       if (!rows) return failVerify(state, `${state.purpose} verification returned malformed command results.`);
       if (state.purpose === 'resolution' || state.purpose === 'reverify') {
+        const task = state.task;
         const failing = rows.filter((row) => row.status === 'regression');
-        if (!failing.length) return state.purpose === 'resolution' ? accept(state.c, state.task, state.conflict!.head) : continueAmend(transientEvidence(state.c, state.task, state.c.integration!.head));
+        if (!failing.length) return state.purpose === 'resolution' ? completeResolution(state.c, state.conflict!) : continueAmend(transientEvidence({ ...state.c, reverifyQueue: state.c.reverifyQueue.filter((id) => id !== task) }, task, state.c.integration!.head));
         if (state.purpose === 'resolution') state = { ...state, conflict: { ...state.conflict!, failed: [...new Set([...(state.conflict!.failed ?? []), ...failing.map((row) => row.command)])] } };
         return failVerify(state, failing.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; '));
       }
@@ -1037,9 +1133,7 @@ function failVerify(state: Extract<ImplementState, { tag: 'task-verify' }>, reas
   // NOTE: a failed resolution check keeps the committed resolution; the next `resolve` repairs it as attempt n+1.
   if (state.purpose === 'resolution') return stay({ tag: 'integration-conflict', c: state.c, conflict: { ...state.conflict!, evidence: [`Resolution attempt ${state.conflict!.attempt} at ${state.conflict!.head} failed checks: ${reason}`] } });
   if (state.purpose === 'reverify') {
-    const record = state.c.tasks[state.task] as TaskRecord;
-    const c = withTask({ ...state.c, integration: { ...state.c.integration!, rewind: true } }, state.task, { status: 'failed', failures: record.failures + 1, reason: `Re-verification after amendment failed: ${reason}` });
-    return continueAmend(c);
+    return beginFailure(state.c, `Retained ${state.task} re-verification failed: ${reason}. Retry checks after repair; accepted history and writer attempts remain unchanged.`);
   }
   if (state.purpose !== 'integration' || !state.previous) return taskFailed(state.c, state.task, reason);
   return checkout(state.c, 'reset', 'reset', { name: 'integration', revision: state.previous }, state.task, reason);
@@ -1047,6 +1141,7 @@ function failVerify(state: Extract<ImplementState, { tag: 'task-verify' }>, reas
 
 /** Failure-decision retry: tasks phase re-pends retryable failed tasks; after delivery the final gates rerun. */
 function retryAfterFailure(c: Context): S {
+  if (c.pendingReplay) return resumeReplay(c);
   if (c.phase === 'delivered') return startGeneratedOrFinal(c);
   if (c.phase === 'setup') return !c.plan ? parsePlan(c, 'initial') : c.approval ? beginPostApproval(c) : beginBaseline(c);
   const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const, amendment: null, preserveDraft: record.worktree !== null } : record]));
@@ -1055,14 +1150,14 @@ function retryAfterFailure(c: Context): S {
 
 function markMutation(c: Context, paths: readonly string[]): Context {
   const epoch = c.mutationEpoch + 1;
-  const criteria = c.plan ? effectivePlan(c).criteria : [];
+  const criteria = c.plan ? c.plan!.criteria : [];
   const criterionMutation = { ...c.criterionMutation };
   for (const criterion of criteria) if (!paths.length || criterion.changes.some((file) => paths.includes(file))) criterionMutation[criterion.id] = epoch;
   return { ...c, mutationEpoch: epoch, criterionMutation };
 }
 
 function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generated', commands: readonly { command: string; mapping?: CommandMapping | null; reuse?: VerifyRecord | null }[], cwd?: string): { c: Context; id: string; effect: Effect } {
-  const mappings = commandMappings(effectivePlan(c0));
+  const mappings = commandMappings(c0.plan!);
   const prepared: VerifyCommand[] = commands.map((item) => {
     const mapping = item.mapping ?? mappings.find((row) => row.command === item.command) ?? null;
     const command = commandEffect(item.command, mapping, scopePaths(c0), environmentKey(c0));
@@ -1120,7 +1215,7 @@ function actualRedDefects(c: Context, rows: readonly RedMatrixRow[], records: re
 }
 
 function askEvidence(c0: Context, verify: readonly VerifyRecord[]): S {
-  const ids = effectivePlan(c0).criteria.filter((criterion) => {
+  const ids = c0.plan!.criteria.filter((criterion) => {
     if (transientCurrent(c0, criterion.id)) return false;
     const evidence = c0.evidence[criterion.id];
     return !evidence || evidence.planHash !== c0.planHash || evidence.mutationEpoch < (c0.criterionMutation[criterion.id] ?? 0);
@@ -1135,7 +1230,7 @@ function continueAfterDelivery(c: Context): S {
 function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
-  const plan = effectivePlan(c0);
+  const plan = c0.plan!;
   const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: plan.criteria.map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
   const baseContext = built.spec.context ?? c0.run.argument;
   const result = beginReview({ ...built.spec, governing, context: `${baseContext}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
@@ -1150,7 +1245,7 @@ function fromCodeReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `code review failed: ${review.detail}`);
     case 'escalated': return beginFailure(c, `code review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'change-resolution': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
     default: return never(review, 'code review state');
   }
 }
@@ -1161,7 +1256,7 @@ function startGeneratedOrFinal(c0: Context): S {
 }
 
 function runGeneratedOrFinal(c0: Context): S {
-  const generated = generatedCommands(effectivePlan(c0));
+  const generated = generatedCommands(c0.plan!);
   if (!generated.length) return beginTrimOrFinal(c0);
   const batch = beginVerify(c0, 'generated', generated.map((item) => ({ command: item.command, mapping: null })));
   const before = c0.lastFingerprint;
@@ -1174,7 +1269,7 @@ function runGeneratedOrFinal(c0: Context): S {
  * transient test an applied review fix changed rebinds trim to its verified post-review blob. Other trim bindings stay.
  */
 function observeReviewBoundary(c: Context, changed: readonly string[]): S {
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   const deleting = new Set(plan.changes.filter((row) => row.action === 'DELETE').map((row) => row.path));
   const durable = [...new Set(plan.criteria.filter((row) => row.retain !== 'transient').flatMap((row) => row.changes))].filter((file) => changed.includes(file) && !deleting.has(file));
   const fixed = new Set(c.reviewFixed ?? []);
@@ -1201,14 +1296,14 @@ function observedBoundary(c: Context, input: { durable: readonly string[]; rebin
 
 /** Test files listed only by transient criteria whose delivered blob is known; production paths are never trimmed. */
 function trimmable(c: Context): string[] {
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   const files = new Set(plan.criteria.flatMap((row) => row.changes.filter(isTestPath)));
   return [...files].filter((file) => !!c.deliveredBlobs[file] && plan.criteria.filter((row) => row.changes.includes(file)).every((row) => row.retain === 'transient')).sort();
 }
 
 /** Drops a command mapping only when every owning criterion is transient with all its test files trimmed; `[FINAL]` and durable commands stay. */
 function finalMappings(c: Context): CommandMapping[] {
-  const plan = effectivePlan(c), trimmed = new Set(c.trimmed ?? []);
+  const plan = c.plan!, trimmed = new Set(c.trimmed ?? []);
   const gone = (id: string): boolean => {
     const row = plan.criteria.find((item) => item.id === id);
     const tests = row?.changes.filter(isTestPath) ?? [];
@@ -1237,7 +1332,7 @@ function startFinalVerify(c0: Context): S {
 }
 
 function finishEvidence(c: Context, verify: readonly VerifyRecord[]): S {
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   const stale = plan.criteria.filter((criterion) => {
     if (transientCurrent(c, criterion.id)) return false;
     const item = c.evidence[criterion.id];
@@ -1256,13 +1351,14 @@ function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Rec
     if (!isRecord(value) || !(value['outcome'] === 'pass' || waiver && value['outcome'] === 'waived') || !nonEmpty(value['evidence'])) return null;
     const dependencies = value['dependencies'];
     if (dependencies !== undefined && (!isRecord(dependencies) || typeof dependencies['complete'] !== 'boolean' || !nonEmpty(dependencies['rationale']) || !Array.isArray(dependencies['inputs']) || !dependencies['inputs'].every((file) => typeof file === 'string' && file.length > 0 && !file.includes('\\') && !file.startsWith('/') && !file.includes(':') && !file.split('/').includes('..')))) return null;
-    const criterion = effectivePlan(c).criteria.find((criterion) => criterion.id === id);
+    const criterion = c.plan!.criteria.find((criterion) => criterion.id === id);
     const redProvenance = criterion?.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const attribution = waiver ?? c.redExceptionRulings[id];
     if (redProvenance === 'waived' && !attribution) return null;
     evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], ...(dependencies !== undefined ? { dependencies } : {}), planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion?.evidence ?? 'verify', redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
   }
-  return { ...c, evidence };
+  const obligations = Object.fromEntries(Object.entries(c.obligations ?? {}).filter(([id]) => !ids.includes(id)));
+  return { ...c, evidence, obligations };
 }
 
 function completeVerification(c0: Context, results: readonly VerifyRecord[]): S {
@@ -1389,21 +1485,23 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'integration-conflict': {
       if (event.type === 'AMEND') return applyAmend(state, event);
+      if (event.type === 'REPLACE_PLAN') return beginReplacement(state, event);
       if (event.type !== 'DECISION' || event.kind !== 'integration-conflict' || !isRecord(event.answer)) return stay(state);
       const answer = event.answer as unknown as ConflictDecision, conflict = state.conflict, c = state.c;
       if (answer.action === 'resolve') {
         const involved = involvedTasks(c, conflict);
-        const permitted = [...new Set(involved.flatMap((id) => planTask(c, id)?.paths ?? []))].sort();
+        const permitted = conflictScope(c, conflict);
         const input = { tasks: involved, candidate: conflict.candidate, attempt: conflict.attempt + 1, expected: conflict.head, base: conflict.base, permitted };
         const { retry, ...open } = conflict;
         // NOTE: replay the failed effect's own input so checkout recovers its commit; acceptance rechecks it against current scope.
         if (retry) return { state: { tag: 'task-checkout', c, effectId: retry.id, step: 'resolve', task: conflict.task, reason: null, conflict: open, input: retry.input }, effects: [{ kind: 'checkout', id: retry.id, op: 'resolve', input: retry.input }] };
         return checkout(c, 'resolve', 'resolve', input, conflict.task, null, conflict);
       }
-      return checkout(c, 'discard', 'reset', { name: 'integration', revision: conflict.base }, conflict.task, null, conflict);
+      return conflict.replay ? stay(state) : checkout(c, 'discard', 'reset', { name: 'integration', revision: conflict.base }, conflict.task, null, conflict);
     }
     case 'request-decision': {
       if (event.type === 'AMEND') return applyAmend(state, event);
+      if (event.type === 'REPLACE_PLAN') return beginReplacement(state, event);
       if (event.type !== 'DECISION' || !isRecord(event.answer)) return stay(state);
       if (state.stage === 'orchestrator' && event.kind === 'request') {
         const answer = event.answer as unknown as RequestDecision;
@@ -1423,7 +1521,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       return beginLevelGate(c, { kind: 'tasks' });
     }
     case 'task-checkout': return stepCheckout(state, event);
-    case 'tasks': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': return stepTasks(state, event);
+    case 'tasks': case 'plan-replacement': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': return stepTasks(state, event);
     case 'evidence': {
       if (event.type !== 'EVIDENCE') return stay(state);
       const c = recordEvidence(state.c, state.ids, event.criteria, event.waiver);
@@ -1452,7 +1550,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'VERIFY_DONE' || !answers(event, state.effectId) || event.purpose !== 'generated' || !isFingerprint(event.fingerprint)) return stay(state);
       const rows = recordsFrom(resultEventRows(event), state.c, 'generated');
       if (!rows || rows.some((row) => row.exit !== 0)) return beginFailure(state.c, `Generated command failed: ${rows?.filter((row) => row.exit !== 0).map((row) => `${row.command} (${row.logPath})`).join('; ') ?? 'invalid results'}`);
-      const paths = generatedCommands(effectivePlan(state.c)).map((item) => item.path);
+      const paths = generatedCommands(state.c.plan!).map((item) => item.path);
       const { c, id } = effectId({ ...state.c, lastFingerprint: event.fingerprint }, 'snapshot');
       return { state: { tag: 'generated-snapshot', c, effectId: id, before: state.before, paths }, effects: [{ kind: 'snapshot', id, since: state.before }] };
     }
@@ -1490,13 +1588,14 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'failure': {
       if (event.type === 'AMEND') return applyAmend(state, event);
+      if (event.type === 'REPLACE_PLAN') return beginReplacement(state, event);
       if (event.type !== 'DECISION' || event.kind !== 'failure') return stay(state);
       const answer = failureAnswer(event.answer);
       if (!answer) return stay(state);
       if (answer.action === 'stop') return stop(state.c, `Stopped after failure: ${state.reason}. Work preserved; changed paths: ${state.changedPaths.join(', ') || 'none reported'}.`);
       if (answer.action === 'retry') return retryAfterFailure({ ...state.c, retryContext: { rationale: answer.rationale, failure: state.reason } });
       if (answer.action === 'hotfix') return beginHotfix(state, answer);
-      const c = recordEvidence(state.c, effectivePlan(state.c).criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote });
+      const c = recordEvidence(state.c, state.c.plan!.criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote });
       const waived = c ? Object.values(c.evidence).filter((row) => row['outcome'] === 'waived').length : 0;
       return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion by user: ${answer.quote}` }, summary: `User manually completed implementation: ${Object.keys(c.evidence).length - waived} passed; ${waived} waived. ${answer.quote}` }) : stay(state);
     }
@@ -1508,14 +1607,21 @@ function applyImplement(state: ImplementState, event: Event): S {
 
 function redTestPaths(c: Context): string[] { return c.plan ? [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort() : []; }
 
-function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(effectivePlan(c)) : []])].sort(); }
+function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(c.plan!) : []])].sort(); }
 function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
-const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'EVIDENCE', 'DECISION', 'REVISE']);
+const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN', 'EVIDENCE', 'DECISION', 'REVISE', 'REVIEW_USE']);
 
 export function stepImplement(state: ImplementState, event: Event): S {
   if (state.tag === 'checking-host-event' || state.tag === 'assessing-host-event' || state.tag === 'drift') return stepRecovery(state, event);
   if (hostTypes.has(event.type) && 'c' in state && state.c && implementAwait(state) !== null && implementAwait(state) !== 'done') {
     if (validateImplement(state, event as HostEvent)) return stay(state);
+    const { changeDispositions, ...reply } = event as HostEvent;
+    if (changeDispositions) {
+      const c = applyDispositions(state.c, changeDispositions);
+      // A requested recheck at the evidence frame re-runs the selected checks before evidence is asked again.
+      if (state.tag === 'evidence' && changeDispositions.some((row) => row.refresh?.length)) return startFinalVerify(c);
+      return stepImplement(withContext(state, c), reply as Event);
+    }
     // NOTE: caller edits during the task phase are reconciled by delivery drift checks, not host-event snapshots.
     if (state.c.phase === 'tasks') return applyImplement(state, event);
     const { c, id } = effectId(state.c, 'snapshot');
@@ -1530,7 +1636,7 @@ export function stepImplement(state: ImplementState, event: Event): S {
 
 function applyParked(parent: ImplementState, c: Context, parked: Event): S {
   const updated = withContext(parent, c);
-  if (['AUTHORED', 'DECISION', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'EVIDENCE'].includes(parked.type) && validateImplement(updated, parked as HostEvent)) return beginFailure(c, 'Parked host event no longer matches its bound parent.');
+  if (['AUTHORED', 'DECISION', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN', 'EVIDENCE', 'REVIEW_USE'].includes(parked.type) && validateImplement(updated, parked as HostEvent)) return beginFailure(c, 'Parked host event no longer matches its bound parent.');
   return applyImplement(updated, parked);
 }
 
@@ -1546,11 +1652,11 @@ function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { ac
   }
   if (!c0.writer?.models[0] || !c0.stalled) return stay(origin);
   const { c, id } = effectId(c0, 'write-brief');
-  const plan = effectivePlan(c0);
+  const plan = c0.plan!;
   return { state: { tag: 'hotfix-brief', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'write-brief', id, stage: 'hotfix', input: {
     planPath: c0.planPath, planHash: c0.planHash, designBinding: briefDesignBinding(c0),
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c0.planPath },
-    settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes, acceptedAdjustments: applicableScopeAdjustments(c0).filter(({ proposal }) => proposal.source === 'hotfix').map(({ proposal, approvedBy }) => ({ requestId: proposal.requestId, source: proposal.source, approvedBy, delta: proposal.delta })) },
+    settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes },
     criteria: plan.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence })),
     envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string' },
     rules: { keyDecisions: plan.keyDecisions, repository: c0.run.repo, approval: c0.approval, writerStage: 'hotfix' },
@@ -1590,28 +1696,29 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       if (state.resolution && state.resolution.afterHash === event.afterHash) {
         if (state.resolution.action === 'escalate') return stop(state.c, `Changed intent requires a user decision. Evidence retained: ${event.notice.rawDeltaRef.path}`);
         if (state.resolution.action === 'reconcile') return beginFailure(state.c, `Changed inputs need plan reconciliation: ${state.resolution.rationale}. Evidence retained: ${event.notice.rawDeltaRef.path}`);
-        const c = state.resolution.action === 'refresh' ? refreshEvidence(state.c, event.notice) : state.c;
+        const c = state.resolution.action === 'refresh' ? refreshEvidence(state.c, suggestedCriteria(state.c, event.notice), event.notice.id, state.resolution.rationale) : state.c;
         const rebound = { ...c, lastFingerprint: state.fingerprint };
+        // NOTE: only a live delivery collision reaches a resolution; its refresh replays accepted integration commits onto the
+        // caller's newer base. Tasks, candidates, and prior commits stay as recorded; refreshed criteria wait as obligations.
         if (state.resolution.action === 'refresh' && state.parent.tag === 'task-checkout' && state.parent.step === 'deliver') {
-          const rebuilt = { ...rebound, tasks: rependTasks(rebound.tasks, effectivePlan(rebound)), integration: null };
-          return checkout(rebuilt, 'init', 'init', { rebase: true, archivedName: `integration-${bindingHash({ notice: event.notice.id, counters: rebuilt.counters }).slice(0, 16)}` });
+          const archivedName = `integration-${bindingHash({ notice: event.notice.id, counters: rebound.counters }).slice(0, 16)}`;
+          const replay = rebound.integration ? { replay: { base: rebound.integration.base, head: rebound.integration.head } } : {};
+          return checkout(rebound, 'rebase', 'init', { rebase: true, archivedName, ...replay }, null, archivedName);
         }
-        if (state.resolution.action === 'refresh' && state.parent.tag === 'baseline-snapshot') return runBaseline({ ...rebound, startFingerprint: state.fingerprint });
-        if (state.resolution.action === 'refresh' && (state.parent.tag === 'final-verify' || state.parent.tag === 'evidence')) return startFinalVerify(rebound);
-        if (state.resolution.action === 'refresh' && state.parent.tag === 'hotfix-verify') {
-          const next = effectId(rebound, 'verify');
-          return { state: { ...state.parent, c: next.c, effectId: next.id, before: state.fingerprint }, effects: [{ kind: 'verify', id: next.id, purpose: 'hotfix', commands: (rebound.stalled?.rows ?? []).map((row) => commandEffect(row.command, commandMappings(effectivePlan(rebound)).find((mapping) => mapping.command === row.command) ?? null, scopePaths(rebound), environmentKey(rebound))) }] };
-        }
-        if (state.resolution.action === 'refresh' && state.parent.tag === 'generated-snapshot') return startGeneratedOrFinal(rebound);
         return applyParked(state.parent, rebound, state.parked);
       }
-      if (event.notice.relevance === 'expected' || event.notice.relevance === 'irrelevant') {
-        const parent = state.parent.tag === 'final-verify' || state.parent.tag === 'hotfix-verify' ? { ...state.parent, before: state.fingerprint } : state.parent;
-        const parked = state.parked.type === 'VERIFY_DONE' ? { ...state.parked, fingerprint: state.fingerprint }
-          : state.parked.type === 'SNAPSHOT' && state.parent.tag === 'generated-snapshot' ? { ...state.parked, diff: { ...state.parked.diff, paths: diffPaths(state.parked).filter((file) => state.parent.tag === 'generated-snapshot' && state.parent.paths.includes(file)) } } : state.parked;
-        return applyParked(parent, { ...state.c, lastFingerprint: state.fingerprint, ...(state.parent.tag === 'baseline-snapshot' ? { startFingerprint: state.fingerprint } : {}) }, parked);
+      const collision = state.parked.type === 'CHECKOUT_DONE' && !!state.parked.result['collision'];
+      if (collision && event.notice.relevance !== 'expected' && event.notice.relevance !== 'irrelevant') {
+        return stay({ tag: 'drift', c: state.c, parent: state.parent, parked: state.parked, paths: event.notice.paths, fingerprint: state.fingerprint, notice: event.notice });
       }
-      return stay({ tag: 'drift', c: state.c, parent: state.parent, parked: state.parked, paths: event.notice.paths, fingerprint: state.fingerprint, notice: event.notice });
+      // Ordinary changes are advisory: record the observation, rebind the fingerprint, and apply the parked receipt once.
+      const observed = event.notice.relevance === 'expected' ? state.c : observe(state.c, event.notice);
+      const parked = state.parked.type === 'VERIFY_DONE' ? { ...state.parked, fingerprint: state.fingerprint }
+        : state.parked.type === 'SNAPSHOT' && state.parent.tag === 'generated-snapshot' ? { ...state.parked, diff: { ...state.parked.diff, paths: diffPaths(state.parked).filter((file) => state.parent.tag === 'generated-snapshot' && state.parent.paths.includes(file)) } } : state.parked;
+      // NOTE: a generated snapshot with only outside changes rebinds its baseline, or it would reassess the same change forever.
+      const quietGenerated = state.parent.tag === 'generated-snapshot' && parked.type === 'SNAPSHOT' && !diffPaths(parked).length;
+      const parent = state.parent.tag === 'final-verify' || state.parent.tag === 'hotfix-verify' || quietGenerated ? { ...state.parent, before: state.fingerprint } as ImplementState : state.parent;
+      return applyParked(parent, { ...observed, lastFingerprint: state.fingerprint, ...(state.parent.tag === 'baseline-snapshot' ? { startFingerprint: state.fingerprint } : {}) }, parked);
     }
     case 'drift': {
       if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
@@ -1655,7 +1762,7 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       const changedPaths = event.notice.paths;
       const c0 = markMutation({ ...state.c, lastFingerprint: state.fingerprint, stalled, finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, event.notice.pathCount > changedPaths.length ? [] : changedPaths);
       const { c, id } = effectId(c0, 'verify');
-      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: state.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(effectivePlan(c)).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
+      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: state.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(c.plan!).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
     }
     case 'hotfix-verify': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
@@ -1695,7 +1802,7 @@ export function implementAwait(state: ImplementState): Await | null {
     case 'evidence': return 'evidence';
     case 'complete': case 'stopped': case 'failed': return 'done';
     case 'booting': case 'starting': case 'parsing': case 'baseline-preflight': case 'baseline': case 'baseline-snapshot':
-    case 'task-checkout': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': case 'post-review-snapshot': case 'trim-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
+    case 'task-checkout': case 'plan-replacement': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': case 'post-review-snapshot': case 'trim-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
     case 'checking-host-event': case 'assessing-host-event': case 'hotfix-brief': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-assessment': case 'hotfix-verify': return null;
     default: return never(state, 'implement state');
   }
@@ -1703,25 +1810,43 @@ export function implementAwait(state: ImplementState): Await | null {
 
 /** Briefs and criteria of each task a conflict involves, so the orchestrator resolves against both intents. */
 function conflictTasks(c: Context, conflict: Conflict): readonly Readonly<Record<string, unknown>>[] {
-  const plan = effectivePlan(c);
+  if (conflict.replay?.owners) return conflict.replay.owners.map((owner) => ({ task: owner.task, status: 'accepted', paths: owner.paths, criteria: [], retainedVerification: owner.commands }));
+  const plan = c.plan!;
   return involvedTasks(c, conflict).map((id) => {
     const record = c.tasks[id], task = planTask(c, id);
     return { task: id, status: record?.status ?? null, briefPath: record?.brief?.path ?? null, briefHash: record?.brief?.sha256 ?? null, paths: task?.paths ?? [], criteria: task ? taskCriteria(plan, task).map((row) => ({ id: row.id, title: row.title, verify: row.verify.map((item) => item.command) })) : [] };
   });
 }
 
+/** Every frame carries open observations so the orchestrator can dispose of them on its normal reply. */
 export function implementData(state: ImplementState): Readonly<Record<string, unknown>> {
+  const data = stateData(state);
+  const open = 'c' in state && state.c && state.tag !== 'drift' ? openObservations(state.c) : [];
+  return open.length ? { ...data, observations: open.map(({ disposition: _disposition, ...row }) => row) } : data;
+}
+
+function stateData(state: ImplementState): Readonly<Record<string, unknown>> {
+  const data = frameData(state);
+  // NOTE: a rejected REPLACE_PLAN returns to its origin frame; the reason rides that frame until the next revision.
+  const rejection = (state.tag === 'tasks' || state.tag === 'request-decision' || state.tag === 'integration-conflict' || state.tag === 'failure') ? state.c.planRejection : null;
+  return rejection ? { ...data, planRejection: rejection } : data;
+}
+
+function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
     case 'author': return { artifact: 'plan', path: state.c.planPath, template: IMPLEMENT_TEMPLATE, ...(state.defects.length ? { defects: state.defects } : {}) };
     case 'plan-review': case 'code-review': return reviewData(state.review);
     case 'tasks': return {
       stage: 'task', effort: state.c.writer?.effort, concurrency: writeConcurrency(state.c.run.config), settledLevel: state.c.run.level,
+      // NOTE: a REPLACE_PLAN binds this hash as `expectedHash`, so a stale revision is rejected before any effect.
+      planPath: state.c.planPath, planHash: state.c.planHash,
       levelAssessment: state.c.levelAssessment, levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
       tasks: activeTasks(state.c.tasks).filter((record) => record.status === 'running').map((record) => ({
-        task: record.id, action: record.removed ? 'cancel' : record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt, signature: record.signature,
+        task: record.id, action: record.removed ? record.retirement === 'retain' ? 'running' : 'cancel' : record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt, signature: record.signature,
         model: activeModel(state.c, record), briefPath: record.brief?.path, briefSha256: record.brief?.sha256, briefHash: record.brief?.sha256,
         envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath, worktree: record.worktree, paths: planTask(state.c, record.id)?.paths ?? [],
-        ...(record.discardedSubmission ? { discardedSubmission: record.discardedSubmission } : {}),
+        ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
+        ...(record.retirement ? { retirement: record.retirement } : {}),
       })),
       amended: state.c.amended,
     };
@@ -1731,7 +1856,7 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     case 'integration-conflict': {
       const conflict = state.conflict;
       return {
-        ...(conflictLive(state.c, conflict) && !conflict.outside?.length
+        ...(conflict.replay ? decideData('integration-conflict', 'Delivery replay retained the conflicted pick and archived accepted integration. Resolve in the active integration worktree, then resume the remaining picks and delivery checks.', ['resolve']) : conflictLive(state.c, conflict) && !conflict.outside?.length
           ? decideData('integration-conflict', `Integrating ${conflict.task} conflicts with accepted work. Resolve the conflict in the integration worktree, or discard the work after a user-gated AMEND removed it.`, ['resolve', 'discard'])
           : decideData('integration-conflict', `A user-gated AMEND removed ${conflict.task}; discard its conflicted integration naming that amendment.`, ['discard'])),
         task: conflict.task, paths: conflict.paths, candidate: conflict.candidate, head: conflict.head, base: conflict.base, attempt: conflict.attempt,
@@ -1748,20 +1873,13 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     case 'needs-user': return decideData('needs-user', `Rule on RED exceptions for ${state.ids.join(', ')} before production work.`, ['accept', 'stop'], state.ids);
     case 'concerns': return decideData('concerns', 'Resolve the writer concerns before code review.', ['accept', 'stop'], state.items);
     case 'failure': return state.c.phase === 'tasks'
-      ? { ...decideData('failure', state.reason, ['retry', 'stop'], [{ tasks: state.c.plan ? failureItems(effectivePlan(state.c), state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }]), amend: 'AMEND may change the plan first; changed failed tasks re-pend.' }
+      ? { ...decideData('failure', state.reason, ['retry', 'stop'], [{ tasks: state.c.plan ? failureItems(state.c.plan!, state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }]), amend: 'AMEND may change the plan first; changed failed tasks re-pend.' }
       : decideData('failure', state.reason, ['hotfix', 'retry', 'manual-complete', 'stop'], [{ changedPaths: state.changedPaths, workPreserved: true, hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.phase === 'delivered' ? 'delivered' : 'baseline') }]);
     case 'drift': return { ...decideData('drift', 'Resolve the recorded change before applying the parked event.', ['preserve', 'refresh', 'reconcile', 'escalate']), notice: state.notice };
     case 'hotfix-write': {
-      const acceptedHotfixAdjustments = applicableScopeAdjustments(state.c).filter(({ proposal }) => proposal.source === 'hotfix');
-      const scopeNotice = state.c.scopeNotice && acceptedHotfixAdjustments.some(({ proposal }) => proposal.requestId === state.c.scopeNotice?.requestId)
-        ? state.c.scopeNotice : null;
       return {
       stage: 'hotfix', singleShot: true, model: state.c.writer?.models[0], models: state.c.writer?.models.slice(0, 1),
       briefPath: state.brief.path, briefSha256: state.brief.sha256, envelopePath: state.brief.envelopePath, rationale: state.answer.rationale,
-      scopeNotice,
-      acceptedAdjustments: acceptedHotfixAdjustments.map(({ proposal, approvedBy, rationale, quote }) => ({
-        requestId: proposal.requestId, approvedBy, rationale, ...(quote ? { quote } : {}), delta: proposal.delta,
-      })),
       limits: { files: HOTFIX_MAX_FILES, lines: HOTFIX_MAX_LINES },
       };
     }
@@ -1770,8 +1888,8 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
       waiver: 'Only for a criterion the user explicitly waived: outcome "waived" plus top-level waiver { by: "user", quote: <user words> }.',
       summary: state.verify.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, diagnostic: row.diagnostic, status: row.status, failureId: row.failureId })),
       criteria: state.ids.map((id) => {
-        const criterion = effectivePlan(state.c).criteria.find((entry) => entry.id === id);
-        return { id, title: criterion?.title ?? id, evidenceClass: criterion?.evidence, planHash: state.c.planHash, mutationEpoch: state.c.mutationEpoch };
+        const criterion = state.c.plan!.criteria.find((entry) => entry.id === id);
+        return { id, title: criterion?.title ?? id, evidenceClass: criterion?.evidence, planHash: state.c.planHash, mutationEpoch: state.c.mutationEpoch, ...(state.c.obligations?.[id] ? { obligation: state.c.obligations[id] } : {}) };
       }),
     };
     case 'complete': return { outcome: 'complete', summary: state.summary, completion: completionData(state.c) };
@@ -1788,7 +1906,8 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
     settledLevel: c.run.level, levelSource: c.run.levelSource, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice, gateScope: c.gateScope, scopeAdjustments: c.scopeAdjustments,
     finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
-    criteria: (c.plan ? effectivePlan(c).criteria : []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
+    criteria: (c.plan ? c.plan!.criteria : []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0, ...(c.obligations?.[criterion.id] ? { obligation: c.obligations[criterion.id] } : {}) })),
+    observations: c.observations ?? [],
     review: review['completion'] ?? review, limitations: [...c.concerns, ...Object.values(c.evidence).filter((item) => item['outcome'] === 'waived').map((item) => `${item.id}: user-waived criterion; ${item['evidence']}`)], finalGate: c.finalGate,
   };
 }
@@ -1810,13 +1929,13 @@ function validateTaskEvent(c: Context, event: HostEvent): string | null {
     }
     if (receipt.handle !== record.handle) return 'event.handle: echo the launched handle.';
     if (receipt.status === 'failed' && receipt.model !== activeModel(c, record)) return 'event.model: name the active writer model.';
-    if (receipt.status === 'submitted' && record.removed) return record.discardedSubmission ? `event.status: ${receipt.task} already submitted after removal; confirm its cancellation.` : null;
+    if (receipt.status === 'submitted' && record.removed) return record.retainedSubmission ? `event.status: ${receipt.task} already submitted after retirement; confirm its cancellation.` : null;
     if (receipt.status !== 'submitted') return null;
     const entry = record.briefs?.find((row) => row.envelopePath === receipt.envelopePath);
     if (!entry) return 'event.envelopePath: name the envelope path of a brief issued to this attempt.';
     if (receipt.briefHash !== entry.sha256) return 'event.briefHash: echo the hash of the brief the writer worked from.';
     const task = planTask(c, receipt.task);
-    if (entry !== record.briefs?.at(-1) && (!task || entry.scope !== taskScope(effectivePlan(c), task))) return `event.briefHash: stale brief; an amendment changed the paths or criteria of ${receipt.task}. Resubmit against brief ${record.brief?.sha256 ?? 'current'}.`;
+    if (entry !== record.briefs?.at(-1) && (!task || entry.scope !== taskScope(c.plan!, task))) return `event.briefHash: stale brief; an amendment changed the paths or criteria of ${receipt.task}. Resubmit against brief ${record.brief?.sha256 ?? 'current'}.`;
     return null;
   }
   if (event.type === 'REQUEST') {
@@ -1832,11 +1951,25 @@ function decisionAnswer(event: HostEvent, kind: string): Record<string, unknown>
 }
 
 export function validateImplement(state: ImplementState, event: HostEvent): string | null {
+  if (event.changeDispositions) {
+    const error = 'c' in state && state.c ? validateDispositions(state.c, event.changeDispositions) : 'event.changeDispositions: no change observation is open.';
+    if (error) return error;
+  }
   if (event.type === 'REVISE') return 'event.type: Inside implement runs AMEND replaces REVISE; send AMEND with an exact-text delta against the governed plan.';
   if (event.type === 'AMEND') {
     if ((state.tag !== 'tasks' && state.tag !== 'request-decision' && state.tag !== 'integration-conflict' && state.tag !== 'failure')) return 'event.type: AMEND is accepted only in the task phase at a write, request, conflict, or failure frame.';
     const prepared = prepareAmend(state.c, event, state.tag === 'integration-conflict' ? state.conflict : null);
     return prepared.ok ? null : prepared.error;
+  }
+  if (event.type === 'REPLACE_PLAN') {
+    if ((state.tag !== 'tasks' && state.tag !== 'request-decision' && state.tag !== 'integration-conflict' && state.tag !== 'failure')) return 'event.type: REPLACE_PLAN is accepted only in the task phase at a write, request, conflict, or failure frame.';
+    const fields = revisionFieldsError(state.c, event);
+    if (fields) return fields;
+    // NOTE: a stale revision is rejected before any effect, so work and the bound plan stay unchanged.
+    if (event.expectedHash !== state.c.planHash) return `event.expectedHash: the run is bound to ${state.c.planHash}; reconcile against the current plan revision.`;
+    if (!nonEmpty(event.path) || event.path === state.c.planPath || event.path === planPathFromRun(state.c.run) || state.c.amendments.some((row) => row.path === event.path)) return 'event.path: name a new replacement plan file; earlier plan revisions stay immutable.';
+    if (!isRecord(event.reconciliation)) return 'event.reconciliation: list retained, changed, added, and retired tasks with intentChanged and dependencyChanged.';
+    return null;
   }
   if (event.type === 'REQUEST' && state.tag !== 'tasks') return 'event.type: REQUEST is accepted only at the task write frame.';
   if (event.type === 'WRITE_RECEIPT' && state.tag !== 'tasks' && state.tag !== 'hotfix-write') return 'event.type: write receipts are accepted only at a write frame.';
@@ -1853,6 +1986,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
   if (state.tag === 'integration-conflict') {
     const answer = decisionAnswer(event, 'integration-conflict');
     if (!answer || answer['by'] !== 'orchestrator' || !['resolve', 'discard'].includes(String(answer['action'])) || !nonEmpty(answer['rationale'])) return 'event.answer: rule on the conflict with { by: "orchestrator", action: resolve|discard, rationale }.';
+    if (state.conflict.replay && answer['action'] !== 'resolve') return 'event.answer.action: delivery replay preserves accepted work; resolve is the only continuation.';
     if (answer['action'] === 'resolve' && state.conflict.outside?.length) return `event.answer.action: the recovered resolution changes ${state.conflict.outside.join(', ')} outside the current scope; discard is the only continuation.`;
     if (answer['action'] === 'resolve' && !conflictLive(state.c, state.conflict)) return `event.answer.action: ${state.conflict.task} is no longer in the plan; discard is the only continuation.`;
     if (answer['action'] === 'discard') {
@@ -1893,7 +2027,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     return null;
   }
   if (state.tag === 'code-review' && event.type === 'FIXES_APPLIED') {
-    const durable = new Set(effectivePlan(state.c).criteria.filter((row) => row.retain !== 'transient').flatMap((row) => row.changes));
+    const durable = new Set(state.c.plan!.criteria.filter((row) => row.retain !== 'transient').flatMap((row) => row.changes));
     const deleted = event.clusters.flatMap((cluster) => Array.isArray(cluster['deletedPaths']) ? cluster['deletedPaths'].filter((file): file is string => typeof file === 'string') : []);
     const durableDeleted = deleted.filter((file) => durable.has(file));
     if (durableDeleted.length) return `event.clusters: a fix may not delete files of durable criteria: ${durableDeleted.join(', ')}.`;
@@ -1914,13 +2048,13 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     if (!answer) return 'event.answer: failure requires { by: "orchestrator", action: stop|retry, rationale }, hotfix with mode inline|writer and rationale, or user manual-complete with quote and criteria; unknown fields such as rootCause are rejected.';
     if (state.c.phase === 'tasks' && (answer.action === 'hotfix' || answer.action === 'manual-complete')) return 'event.answer: task-phase failures accept retry or stop; hotfix and manual completion apply after delivery.';
     if (state.c.phase === 'tasks' && answer.action === 'retry' && Object.values(state.c.tasks).some((task) => task.status === 'failed') && !Object.values(state.c.tasks).some((task) => task.status === 'failed' && task.failures < MAX_WRITE_ATTEMPTS)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-failure limit; send AMEND or stop.`;
-    if (answer.action === 'manual-complete' && !recordEvidence(state.c, effectivePlan(state.c).criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
+    if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan!.criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
   }
   if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria, event.waiver)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}; outcome "waived" needs event.waiver { by: "user", quote }.`;
   return null;
 }
 
-const HOST_EVENTS = ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'DECISION', 'EVIDENCE'] as const;
+const HOST_EVENTS = ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN', 'DECISION', 'EVIDENCE'] as const;
 const TASK_EXITS = ['task-checkout', 'task-brief', 'task-envelope', 'task-verify', 'tasks', 'request-decision', 'integration-conflict', 'failure-snapshot'] as const;
 
 export const implementTransitions = [
@@ -1940,6 +2074,8 @@ export const implementTransitions = [
   { from: 'approval', on: 'DECISION', to: 'task-checkout' }, { from: 'needs-user', on: 'DECISION', to: 'task-checkout' }, { from: 'failure', on: 'DECISION', to: 'task-checkout' },
   { from: 'failure', on: 'DECISION', to: 'tasks' }, { from: 'failure', on: 'DECISION', to: 'post-review-snapshot' }, { from: 'failure', on: 'DECISION', to: 'failure-snapshot' },
   ...TASK_EXITS.map((to) => ({ from: 'failure', on: 'AMEND', to })),
+  ...['tasks', 'request-decision', 'integration-conflict', 'failure'].flatMap((from) => [{ from, on: 'REPLACE_PLAN', to: 'plan-replacement' }]),
+  ...['tasks', 'request-decision', 'integration-conflict', 'failure', ...TASK_EXITS].flatMap((to) => [{ from: 'plan-replacement', on: 'ARTIFACT_PARSED', to }, { from: 'plan-replacement', on: 'EFFECT_FAILED', to }]),
   ...['task-checkout', 'task-brief', 'tasks', 'task-verify', 'task-envelope', 'integration-conflict', 'request-decision', 'delivered-snapshot', 'trim-snapshot', 'generated-verify', 'final-verify', 'failure-snapshot'].map((to) => ({ from: 'task-checkout', on: 'CHECKOUT_DONE', to })),
   ...['task-checkout', 'tasks', 'failure-snapshot'].map((to) => ({ from: 'task-checkout', on: 'EFFECT_FAILED', to })),
   ...TASK_EXITS.flatMap((to) => [{ from: 'task-brief', on: 'BRIEF_READY', to }, { from: 'task-brief', on: 'EFFECT_FAILED', to }]),
@@ -1991,7 +2127,7 @@ export function implementWalkthrough(state: ImplementState): WalkthroughView | n
   if (state.tag !== 'complete' && state.tag !== 'stopped' && state.tag !== 'failed' && state.tag !== 'code-review') return null;
   if (!state.c || !state.c.plan) return null;
   const c = state.c;
-  const plan = effectivePlan(c);
+  const plan = c.plan!;
   if (!plan) return null;
   const status = state.tag === 'code-review' ? 'review pending' : state.tag;
   const planRounds = c.planReview && 'c' in c.planReview ? resolutionRounds(c.planReview.c) : [];

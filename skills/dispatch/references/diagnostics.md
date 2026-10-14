@@ -1,6 +1,6 @@
 # Dispatch retro
 
-Name up to 3 ways dispatch instructions, the driver, or routing made this run slower, costlier, or wrong, beyond measured time, tokens, failures, and rounds.
+Name up to 3 dispatch instruction, driver or routing defects beyond measured time, tokens, failures and rounds.
 
 Reply `RETRO` with `observations`: `[{id,component,category,evidence,impact,proposedFix}]`; `[]` means no friction.
 
@@ -9,4 +9,6 @@ Reply `RETRO` with `observations`: `[{id,component,category,evidence,impact,prop
 - `category`: `correctness`, `token-economy`, `speed`, `review-convergence`, `instruction-clarity` (the contract misled), or `information-access` (context you had to rediscover).
 - `evidence`, `impact`, `proposedFix`: one line each, at most 512 bytes; cite the instruction and its observed effect.
 
-Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine; prefer a deterministic driver check over prose. Use dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.
+Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine. Use dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.
+
+Checkpoint phase history preserves timing attribution. H6 elapsed time needs evidence of internal activities.

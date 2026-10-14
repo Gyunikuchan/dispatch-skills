@@ -103,13 +103,12 @@ function deliver(c: DesignContext): S {
   const built = reviewSpecFromRun(c.run, 'code', 'report', '');
   if (!built.ok) return failed(c, built.error);
   const offset = c.integrationRound;
-  const result = beginReview({ ...built.spec, context: JSON.stringify({ integration: { baseline: c.baseline, ownership, revision: c.hash }, objective: c.design.box['TL;DR'] }) }, 'design.integration', c.counters);
-  if ('c' in result.state) result.state = { ...result.state, c: { ...result.state.c, round: result.state.c.round + offset } };
+  const result = beginReview({ ...built.spec, context: JSON.stringify({ integration: { baseline: c.baseline, ownership, revision: c.hash }, objective: c.design.box['TL;DR'] }) }, 'design.integration', c.counters, offset);
   if (result.state.tag === 'skipped') {
     const next = nextId(c.counters, 'design.integration', 'prepare-review');
     return { state: { tag: 'integration', c: { ...c, counters: next.counters }, review: result.state, scopeEffectId: next.id }, effects: [{ kind: 'prepare-review', id: next.id, review: { ...built.spec, roster: [] }, round: 1, scope: { scope: 'full', carried: [], integration: { baseline: c.baseline, ownership, revision: c.hash } } }] };
   }
-  result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, round: effect.round + offset, scope: { ...effect.scope, integration: { baseline: c.baseline, ownership, revision: c.hash } } } : effect);
+  result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, scope: { ...effect.scope, integration: { baseline: c.baseline, ownership, revision: c.hash } } } : effect);
   return reviewed(c, result, true);
 }
 function incrementResult(c0: DesignContext, increment: string, result: Step<ImplementState>): S {

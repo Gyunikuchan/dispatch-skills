@@ -4,7 +4,9 @@ import { scanOverlay, type FileTable } from './scan.ts';
 
 // Audit subprocess fixtures need audit-tooling.test.ts and audit-probe.test.ts (probe termination/capture flows).
 // The approved observation-boundary plan adds one real-Git fixture file.
-export const E2E_CAP = 6;
+// The approved plan-replacement plan adds tests/e2e/plan-replacement.test.ts for real-Git retirement and replay.
+// The approved authority/continuation plan adds two real-main and real-Git fixture files.
+export const E2E_CAP = 9;
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));

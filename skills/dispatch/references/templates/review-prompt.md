@@ -27,6 +27,7 @@ Verification evidence comes from the orchestrator; run no test or build commands
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
 reviewed paths, and flag violations as `standards`.
 <<slot:inspection>>
+Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope

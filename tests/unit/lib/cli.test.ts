@@ -4,6 +4,12 @@ import { ALIASES, parseCommand, parseInvocation } from '../../../skills/dispatch
 import { LEVELS, normalizeProvider, parsePins } from '../../../skills/dispatch/scripts/policy/roster.ts';
 const policy = { levels: LEVELS, pins: parsePins, provider: (text: string) => ['codex', 'claude', 'agy', 'opencode', 'copilot'].includes(normalizeProvider(text)) ? normalizeProvider(text) : null };
 const start = ['start', 'ask', '--session-dir', 'chat', '--orchestrator', 'codex'];
+
+test('rebind grammar requires run reason and an optional input file while checkpoint retains RED semantics', () => {
+  assert.equal(parseCommand(['rebind', '--run', 'run', '--reason', 'Parser repair', '--event', '@event.json'], policy).command, 'rebind');
+  for (const args of [['rebind', '--run', 'run'], ['rebind', '--reason', 'repair'], ['rebind', '--run', 'run', '--reason', ' '], ['rebind', '--run', 'run', '--reason', 'repair', '--event', '{}'], ['rebind', '--run', 'run', '--reason', 'repair', '--root', 'repo']]) assert.throws(() => parseCommand(args, policy));
+  assert.deepEqual(parseCommand(['checkpoint', '--root', 'repo', '--out', 'red.json', '--', 'a.test.ts'], policy).paths, ['a.test.ts']);
+});
 test('grammar-default-ask: default routes question; level and pins precede explicit verbs', () => {
   assert.deepEqual(parseInvocation('Why is this slow?', policy), { verb: 'ask', argument: 'Why is this slow?', level: null, pins: null });
   assert.deepEqual(parseInvocation('max (3) review: src/a.ts', policy), { verb: 'review', argument: 'src/a.ts', level: 'max', pins: '(3)' });

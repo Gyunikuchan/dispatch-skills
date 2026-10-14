@@ -92,7 +92,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Older sessions and provider-specific settings
 
-Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. If an older run reports `unsupported-journal-protocol`, preserve its folder and start a new run. Older implementation journals without task records and plans without task ownership require explicit reauthor/restart; automatic migration is not available.
+Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. Finish active runs before upgrading, or preserve their folders for a handoff. If an older run reports `unsupported-journal-protocol`, see [Recovery and upgrades](troubleshooting.md#continue-after-a-local-driver-fix). Automatic migration is not available. For older plans without file ownership, ask your host to rewrite the plan and start a new run.
 
 <details>
 <summary>Advanced provider settings</summary>

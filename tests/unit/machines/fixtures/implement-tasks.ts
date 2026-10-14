@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Effect, Event, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { effectivePlan, implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskSignature } from '../../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 
 // SECTION: Fixture plan — T1 (RED) and T2 are independent; T3 depends on T1.
@@ -36,6 +36,7 @@ export const RED_ROW = 'RED-MATRIX SC1 | tests/sc1.test.ts:rejects bad input | e
 export type Outcome = { exit: number; failedTests?: string[]; loadError?: boolean };
 export type Sim = {
   plan?: ParsedPlan;
+  planHash?: string;
   reviewRounds?: number;
   envelope?: (id: string) => Record<string, unknown>;
   diff?: (id: string) => string[];
@@ -43,6 +44,8 @@ export type Sim = {
   conflict?: string[];
   redDefects?: string[];
   resolve?: (input: Record<string, unknown>) => Record<string, unknown>;
+  /** Parse results for `REPLACE_PLAN` files, keyed by path; other parses return the run plan. */
+  replacements?: Record<string, { plan: ParsedPlan; hash: string; defects?: Record<string, unknown>[] }>;
 };
 export type Result = { state: ImplementState; effects: readonly Effect[] };
 export type Trace = { effects: Effect[]; events: Event[] };
@@ -56,7 +59,11 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
   const id = taskOf(state), plan = sim.plan ?? PLAN;
   switch (effect.kind) {
     case 'snapshot': return { type: 'SNAPSHOT', effectId: effect.id, fingerprint: FP, diff: { paths: [] } };
-    case 'parse-artifact': return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: sim.plan ?? PLAN, defects: [] };
+    case 'parse-artifact': {
+      const replacement = sim.replacements?.[effect.path];
+      if (replacement) return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: replacement.hash, parsed: replacement.plan, defects: (replacement.defects ?? []) as never };
+      return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: sim.planHash ?? HASH, parsed: sim.plan ?? PLAN, defects: [] };
+    }
     case 'write-brief': return { type: 'BRIEF_READY', effectId: effect.id, stage: 'task', path: `run/${id}.brief.md`, sha256: briefSha(effect.id), envelopePath: `run/${id}-${effect.id}.outcome.json` };
     case 'check-envelope': return { type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: sim.envelope ? sim.envelope(id!) : defaultEnvelope(id!, plan), defects: [], diff: { paths: sim.diff ? sim.diff(id!) : pathsOf(id!, plan) } };
     case 'verify': return {
@@ -114,7 +121,9 @@ export function classify(result: Result, sim: Sim, trace: Trace): Result {
 
 export function start(concurrency: number, sim: Sim = {}): { result: Result; trace: Trace } {
   const trace: Trace = { effects: [], events: [] };
-  let result = pump(stepImplement(initialImplement(), run(concurrency, sim.reviewRounds)), sim, trace);
+  const started = run(concurrency, sim.reviewRounds);
+  if (sim.planHash) started.overrides = { ...started.overrides, settledPlan: { path: 'x.plan.md', hash: sim.planHash, outcome: 'settled' } };
+  let result = pump(stepImplement(initialImplement(), started), sim, trace);
   assert.equal(result.state.tag, 'approval');
   result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
   result = classify(result, sim, trace);

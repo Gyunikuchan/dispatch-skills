@@ -7,7 +7,7 @@ import type { OsId } from '../lib/platform.ts';
 import type { ProviderId } from '../providers/types.ts';
 import type { Git } from './git.ts';
 import fs from 'node:fs';
-import { createCheckout, type CheckoutDeps } from './checkout.ts';
+import { createCheckout, checkoutRecovery, type CheckoutDeps } from './checkout.ts';
 import { createCheckEnvelope, changedPaths, pathHashes } from './check-envelope.ts';
 import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
@@ -15,11 +15,11 @@ import { runPaths } from '../lib/session.ts';
 import { createPrepareReview } from './prepare-review.ts';
 import { createCheckReviewTarget } from './check-review-target.ts';
 import { createSnapshot } from './snapshot.ts';
-import { createRestore } from './restore.ts';
+import { createRestore, restoreRecovery } from './restore.ts';
 import { createAssessRecovery } from './assess-recovery.ts';
 import { loadRecovery } from './recovery-manifest.ts';
 import { createVerify } from './verify.ts';
-import { createWaveStartHandler, createWaveFinishHandler, createWaveHandler, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
+import { createWaveStartHandler, createWaveFinishHandler, createWaveHandler, waveRecovery, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
 import { isNativeRoster, nativeWave } from './wave-native.ts';
 import { createWriteBrief } from './write-brief.ts';
 
@@ -66,7 +66,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     ? deps.wave
     : createWaveHandler({ ...deps.wave, context: (effect) => waveContext(effect as WaveEffect, deps) });
   const wave: Handler<WaveEffect> = (effect, ports, ctx) => (isNativeRoster(effect.roster) ? nativeWave(effect, ports) : cli(effect, ports, ctx));
-  return {
+  const handlers: Handlers = {
     'parse-artifact': parseArtifact,
     'prepare-review': createPrepareReview(deps),
     'check-review-target': createCheckReviewTarget(deps),
@@ -118,4 +118,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     handoff: createHandoff(deps),
     checkout: createCheckout({ cwd: deps.cwd, links: deps.links ?? nodeLinks }),
   };
+  for (const kind of ['parse-artifact', 'check-review-target', 'check-envelope', 'assess-recovery', 'snapshot'] as const) handlers[kind]!.recovery = { repeat: 'deterministic-read' };
+  handlers.checkout!.recovery = checkoutRecovery({ cwd: deps.cwd, links: deps.links ?? nodeLinks });
+  handlers.restore!.recovery = restoreRecovery(deps);
+  if (typeof deps.wave !== 'function') {
+    const worker = { ...deps.wave, context: (effect: Parameters<WaveDeps['context']>[0]) => waveContext(effect, deps) };
+    handlers.wave!.recovery = waveRecovery(worker);
+    handlers['wave-start']!.recovery = waveRecovery(worker);
+    handlers['wave-finish']!.recovery = waveRecovery(worker);
+  }
+  return handlers;
 }

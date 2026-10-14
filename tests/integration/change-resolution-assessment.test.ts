@@ -9,7 +9,7 @@ import { createAssessRecovery } from '../../skills/dispatch/scripts/effects/asse
 import type { RecoveryManifest } from '../../skills/dispatch/scripts/core/types.ts';
 
 
-test('phase adapter: real assessment preserves proven independent evidence and classifies disjoint coverage', async () => {
+test('phase adapter: real assessment suggests affected evidence and an advisory observation never revokes it', async () => {
   const ports = fakePorts(), runDir = tempDir();
   const manifest: RecoveryManifest = { repoRoot: '/repo', contentStore: 'recovery-contents', contents: { 'src/a.ts': null }, entries: { 'src/a.ts': { kind: 'symlink', mode: 0o777, linkTarget: 'b25l' } }, taskStartFiles: [], callerDirty: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
   const before = { ...FP, recovery: publishRecovery(ports, runDir, manifest) }, after = { ...FP, worktree: 'new', recovery: publishRecovery(ports, runDir, { ...manifest, entries: { 'src/a.ts': { kind: 'symlink', mode: 0o777, linkTarget: 'dHdv' } } }) };
@@ -22,8 +22,10 @@ test('phase adapter: real assessment preserves proven independent evidence and c
   const receipt = (await createAssessRecovery()(effect, ports, { runDir, attempt: 1 }))[0]!;
   assert.equal(receipt.type, 'RECOVERY_ASSESSED'); if (receipt.type !== 'RECOVERY_ASSESSED') return;
   assert.deepEqual(receipt.notice.affectedEvidence, ['SC1']);
-  const rebound = refreshEvidence(c, receipt.notice); assert.deepEqual(rebound.evidence['SC2'], c.evidence.SC2); assert.equal(rebound.evidence['SC1'], undefined);
-  assert.equal(stepImplement(assessing.state, receipt).state.tag, 'drift');
+  const rebound = refreshEvidence(c, receipt.notice.affectedEvidence, receipt.notice.id, 'recheck'); assert.deepEqual(rebound.evidence['SC2'], c.evidence.SC2); assert.equal(rebound.evidence['SC1'], undefined);
+  const advanced = stepImplement(assessing.state, receipt).state;
+  assert.notEqual(advanced.tag, 'drift');
+  assert.ok('c' in advanced && advanced.c); if ('c' in advanced && advanced.c) { assert.deepEqual(advanced.c.evidence, c.evidence); assert.deepEqual(advanced.c.observations?.[0]?.suggestedEvidence, ['SC1']); }
   const independent = await createAssessRecovery()({ ...effect, input: { ...effect.input, inputs: [], evidenceDependencies: { SC1: row('SC1', ['src/b.ts']).dependencies, SC2: row('SC2', ['src/b.ts']).dependencies } } }, ports, { runDir, attempt: 1 });
   assert.equal(independent[0]?.type === 'RECOVERY_ASSESSED' && independent[0].notice.relevance, 'irrelevant');
   assert.notEqual(stepImplement(assessing.state, independent[0]!).state.tag, 'drift');

@@ -1,15 +1,15 @@
-// Live plan amendments: an `AMEND` delta is a list of exact text edits on the governed plan text, applied in order,
-// then parsed and linted like any authored plan. Pure: the caller journals the delta, so replay recomputes the result.
+// Live plan revisions: an `AMEND` delta (exact text edits on the governed plan text) and a `REPLACE_PLAN` file both
+// normalize to one revised plan, which the reconciliation operation binds to current work. Pure: the caller journals
+// the input, so replay recomputes the result.
 
 import crypto from 'node:crypto';
 import type { PlanEdit } from '../core/types.ts';
 import { parsePlan } from '../domain/plan.ts';
 import type { ParsedPlan } from '../domain/types.ts';
 
-export type AmendedPlan = { ok: true; plan: ParsedPlan; hash: string; text: string; gates: string[] } | { ok: false; error: string };
-
-/** Manifests whose new or changed entry adds an external dependency or runtime prerequisite; such a delta needs a user quote. */
-const MANIFESTS = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'requirements.txt', 'pyproject.toml', 'poetry.lock', 'Pipfile', 'Pipfile.lock', 'Cargo.toml', 'Cargo.lock', 'go.mod', 'go.sum', 'Gemfile', 'Gemfile.lock', 'composer.json', 'composer.lock', 'pom.xml', 'build.gradle', 'build.gradle.kts']);
+/** A revised plan ready for reconciliation; semantic approval comes from the orchestrator's attestation, never from this text. */
+export type RevisedPlan = { ok: true; plan: ParsedPlan; hash: string; text: string } | { ok: false; error: string };
+export type AmendedPlan = RevisedPlan;
 
 function occurrences(text: string, needle: string): number {
   let count = 0;
@@ -28,7 +28,6 @@ function knownTargets(plan: ParsedPlan): Set<string> {
  * Applies `delta` to `before.governedText`: `modify` replaces the single occurrence of `current` with `proposed`;
  * `remove` deletes the single occurrence of `current`; `add` inserts `proposed` right after the single anchor `current`.
  * Every `target` must name a task, criterion, command, or change path of the plan before or after the edit.
- * `gates` lists the reasons the delta needs a user quote (intent change or a new or changed dependency manifest).
  */
 export function amendPlan(before: ParsedPlan, delta: readonly PlanEdit[]): AmendedPlan {
   let text = before.governedText;
@@ -49,11 +48,12 @@ export function amendPlan(before: ParsedPlan, delta: readonly PlanEdit[]): Amend
   const known = new Set([...knownTargets(before), ...knownTargets(after)]);
   const unknown = delta.filter((edit) => !known.has(edit.target)).map((edit) => edit.target);
   if (unknown.length) return { ok: false, error: `delta target names no task, criterion, command, or path: ${[...new Set(unknown)].join(', ')}.` };
-  const gates: string[] = [];
-  if (after.title !== before.title || after.box['TL;DR'] !== before.box['TL;DR'] || JSON.stringify(after.keyDecisions) !== JSON.stringify(before.keyDecisions)) gates.push('intent change (title, TL;DR, or Key Decisions)');
-  // NOTE: a changed note on an already planned manifest can add a dependency too, so any changed manifest entry gates.
-  const work = (change: ParsedPlan['changes'][number]): string => JSON.stringify([change.action, change.note, change.command]);
-  const manifests = [...new Set(after.changes.filter((change) => MANIFESTS.has(change.path.split('/').at(-1) ?? '') && !before.changes.some((prior) => prior.path === change.path && work(prior) === work(change))).map((change) => change.path))];
-  if (manifests.length) gates.push(`new external dependency (${manifests.join(', ')})`);
-  return { ok: true, plan: after, hash: `sha256:${crypto.createHash('sha256').update(after.governedText).digest('hex')}`, text: after.governedText, gates };
+  return { ok: true, plan: after, hash: `sha256:${crypto.createHash('sha256').update(after.governedText).digest('hex')}`, text: after.governedText };
+}
+
+/** Normalizes a parsed replacement file; parser defects (malformed sections, cycles, unknown prerequisites) reject it. */
+export function replacementPlan(parsed: { hash: string; plan: ParsedPlan | null; defects: readonly { code?: unknown; message?: unknown }[] }): RevisedPlan {
+  if (parsed.defects.length) return { ok: false, error: `Replacement plan fails lint: ${parsed.defects.map((defect) => `${String(defect.code ?? 'defect')}: ${String(defect.message ?? '')}`).join('; ')}` };
+  if (!parsed.plan || !/^sha256:[a-f0-9]{64}$/.test(parsed.hash)) return { ok: false, error: 'Replacement plan parser returned an invalid payload or governed hash.' };
+  return { ok: true, plan: parsed.plan, hash: parsed.hash, text: parsed.plan.governedText };
 }

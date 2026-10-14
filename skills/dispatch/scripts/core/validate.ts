@@ -164,6 +164,10 @@ const ruling = (actions: readonly string[], extra: Readonly<Record<string, Valid
   obj({ by: lit('orchestrator'), action: lit(...actions), rationale: nonBlank, amendment: opt(nonBlank), ...extra });
 const decision = (kind: string, answer: Validator<unknown>) => obj({ type: lit('DECISION'), kind: lit(kind), answer });
 const planEdit = obj({ kind: lit('modify', 'remove', 'add'), target: nonBlank, current: opt(nonBlank), proposed: opt(nonBlank) });
+const notice = obj({ task: str, notice: nonBlank });
+const userQuote = obj({ by: lit('user'), quote: nonBlank });
+const reconciliation = obj({ retained: strings, changed: strings, added: strings, retired: strings, intentChanged: lit(true, false), dependencyChanged: lit(true, false), compensating: opt(strings) });
+const retirement = obj({ task: nonBlank, disposition: lit('stop', 'retain') });
 
 export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Record<string, unknown>> } = {
   AUTHORED: obj({ type: lit('AUTHORED'), path: str }),
@@ -184,7 +188,8 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
     cancelled: receipt('cancelled', { ...identity, ...attestation }),
   }),
   REQUEST: obj({ type: lit('REQUEST'), task: str, attempt: positiveInt, need: nonBlank, paths: strings, rationale: nonBlank }),
-  AMEND: obj({ type: lit('AMEND'), delta: nonEmptyArr(planEdit), notify: arr(obj({ task: str, notice: nonBlank })), rationale: nonBlank, by: opt(obj({ by: lit('user'), quote: nonBlank })) }),
+  AMEND: obj({ type: lit('AMEND'), delta: nonEmptyArr(planEdit), notify: arr(notice), rationale: nonBlank, by: opt(userQuote), reconciliation: opt(reconciliation), retire: opt(arr(retirement)) }),
+  REPLACE_PLAN: obj({ type: lit('REPLACE_PLAN'), path: nonBlank, expectedHash: nonBlank, rationale: nonBlank, notify: arr(notice), reconciliation, retire: opt(arr(retirement)), by: opt(userQuote) }),
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
     obj({ type: lit('DECISION'), kind: lit('drift'), answer: obj({ by: lit('orchestrator'), noticeId: nonBlank, afterHash: nonBlank, action: lit('preserve', 'refresh', 'reconcile', 'escalate'), rationale: nonBlank, evidenceIds: strings }) }),
@@ -205,18 +210,22 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
   REVISE: obj({ type: lit('REVISE'), artifact: lit('plan', 'design'), reason: str, evidence: str }),
   // Per-item gating (≤3 items, dispatch-owned component, redaction) happens at render time, so a bad item never blocks completion.
   RETRO: obj({ type: lit('RETRO'), observations: arr(any) }),
+  REVIEW_USE: obj({ type: lit('REVIEW_USE'), observationId: nonBlank, afterHash: nonBlank, action: lit('reuse', 'targeted', 'full'), rationale: nonBlank, paths: opt(strings) }),
 };
 
+const CHANGE_DISPOSITIONS = nonEmptyArr(obj({ observationId: nonBlank, afterHash: nonBlank, rationale: nonBlank, retain: opt(strings), refresh: opt(strings) }));
+
+// NOTE: REVIEW_USE records an optional review applicability choice at any review await; the machine hook rejects it elsewhere.
 // NOTE: REVISE is accepted at every live await but `write`, where AMEND changes the plan without draining writers;
 // the machine's validate hook narrows both (spec §5.7).
 export const AWAIT_ACCEPTS: { readonly [K in Await]: readonly HostEventType[] } = {
   author: ['AUTHORED', 'REVISE'],
-  native: ['NATIVE_RESULTS', 'REVISE'],
-  rule: ['RULINGS', 'REVISE'],
-  fix: ['FIXES_APPLIED', 'REVISE'],
-  write: ['WRITE_RECEIPT', 'REQUEST', 'AMEND'],
+  native: ['NATIVE_RESULTS', 'REVISE', 'REVIEW_USE'],
+  rule: ['RULINGS', 'REVISE', 'REVIEW_USE'],
+  fix: ['FIXES_APPLIED', 'REVISE', 'REVIEW_USE'],
+  write: ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN'],
   evidence: ['EVIDENCE', 'REVISE'],
-  decide: ['DECISION', 'AMEND', 'REVISE'],
+  decide: ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE'],
   retro: ['RETRO'],
   done: [],
 };
@@ -234,9 +243,23 @@ export function validateHostEvent(current: Await, raw: unknown, check?: (event: 
   if (!accepted.includes(type)) {
     return { ok: false, error: `event.type: ${type} is not accepted at await ${current}; expected ${accepted.length ? accepted.join('|') : 'no event'}` };
   }
-  const shape = HOST_EVENT_SHAPES[type](raw, 'event');
+  // NOTE: dispositions are metadata shared by every reply, so they are checked apart from the strict event shape.
+  const { changeDispositions, ...body } = raw;
+  if (changeDispositions !== undefined) {
+    const dispositions = CHANGE_DISPOSITIONS(changeDispositions, 'event.changeDispositions');
+    if (!dispositions.ok) return dispositions;
+  }
+  const shape = HOST_EVENT_SHAPES[type](body, 'event');
   if (!shape.ok) return shape;
   const event = raw as HostEvent;
   const context = check?.(event) ?? null;
   return context === null ? ok(event) : { ok: false, error: context };
+}
+export function validateRecoveryDisposition(value: unknown, effectId: string, attempt: number, descriptorHash: string): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'effect-recovery: expected a disposition object';
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => !['type', 'effectId', 'attempt', 'descriptorHash', 'action', 'rationale'].includes(key))) return 'effect-recovery: result assertions and extra fields are forbidden';
+  if (item['type'] !== 'EFFECT_RECOVERY' || item['effectId'] !== effectId || item['attempt'] !== attempt || item['descriptorHash'] !== descriptorHash) return 'effect-recovery: stale effect identity';
+  if (!['retry', 'stop'].includes(String(item['action'])) || typeof item['rationale'] !== 'string' || !item['rationale'].trim()) return 'effect-recovery: retry or stop requires rationale';
+  return null;
 }

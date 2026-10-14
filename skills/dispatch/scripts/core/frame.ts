@@ -2,7 +2,16 @@
 
 import { runPaths } from '../lib/session.ts';
 import { validateHostEvent } from './validate.ts';
-import type { Await, Frame, HostEvent, Machine } from './types.ts';
+import type { Await, DryRunVerdict, Frame, HostEvent, Machine } from './types.ts';
+import type { Effect } from './types.ts';
+import { descriptorHash } from './effect-recovery.ts';
+
+export function recoveryFrame<S>(machine: Machine<S>, state: S, runRel: string, effect: Effect, attempt: number, evidence: string, runDir = runRel): Frame {
+  const frame = projectFrame(machine, state, runRel);
+  return { ...frame, at: `${frame.at} › effect recovery`, await: 'decide', events: [], data: { ...frame.data, kind: 'effect-recovery', effect, attempt, evidence,
+    limits: 'No terminal result can be asserted. Retry can duplicate an external effect; stop retains artifacts and records failure.',
+    recoveryReply: { type: 'EFFECT_RECOVERY', effectId: effect.id, attempt, descriptorHash: descriptorHash(effect, runDir), action: 'retry|stop', rationale: '<completion evidence and disposition rationale>' } } };
+}
 
 /** With a boundary seq, names `events/<seq>-<await>.json`; a rejected event and diagnostics notes keep the seq, so a rewrite reuses the path. */
 export function replyTemplate(runRel: string, boundary?: { seq: number; awaiting: string }): string {
@@ -15,14 +24,22 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   const { at, data } = machine.project(state);
   const awaiting = machine.awaitOf(state) ?? 'done';
   const frame: Frame = { v: 1, run: runRel, at, await: awaiting, data, reply: replyTemplate(runRel, seq !== undefined && awaiting !== 'done' ? { seq, awaiting } : undefined) };
-  const events = (awaitEnvelopes(frame.await, data) ?? []).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
+  const events = [...awaitEnvelopes(frame.await, data), ...reviewUseExamples(data)].filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
   if (events.length) frame.events = events;
   // NOTE: intent examples default to `needs-user`; alternative rulings require actual authority evidence.
   if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: 'needs-user; { ruling: accept|reject, quote: <user words> }; { ruling: accept|reject, by: orchestrator, reason: <settled decision> }' };
   if (frame.await === 'rule') frame.data = { ...frame.data, fixScope: 'Example locus paths are suggestions. Declare every production, test, fixture, helper edit and verification-generated output before sending RULINGS.' };
+  // NOTE: observations are advisory; the hint shows the optional metadata a normal reply may carry.
+  if (frame.await !== 'done' && rows(data['observations']).length) frame.data = { ...frame.data, changeDispositions: 'Optional on this reply: [{ observationId, afterHash, rationale, retain?: [criterion ids], refresh?: [criterion ids] }]. Observations never block progress.' };
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };
   if (error !== undefined) frame.error = error;
   return frame;
+}
+
+/** Read-only guidance uses the same validated examples and boundary path as live rejection. */
+export function dryRunGuidance<S>(machine: Machine<S>, state: S, runRel: string, seq?: number): Pick<DryRunVerdict, 'events' | 'reply'> {
+  const frame = projectFrame(machine, state, runRel, undefined, seq);
+  return { events: frame.events ?? [], reply: frame.reply };
 }
 
 const placeholder = (value: unknown): boolean => typeof value === 'string' ? /^<.*>$/.test(value)
@@ -49,6 +66,24 @@ const amendExample = (task: string): HostEvent => ({
   type: 'AMEND', delta: [{ kind: 'modify', target: '<task, criterion, command, or path>', current: '<current text>', proposed: '<proposed text>' }],
   notify: [{ task, notice: '<what changed for this writer>' }], rationale: '<why the plan changes>',
 });
+
+// NOTE: a whole-file revision names the bound plan hash and every task's reconciliation, so the driver never infers intent.
+const replaceExample = (task: string): HostEvent => ({
+  type: 'REPLACE_PLAN', path: '<new plan file in the session folder>', expectedHash: '<bound plan hash>', rationale: '<why the plan changes>',
+  notify: [{ task, notice: '<what changed for this writer>' }],
+  reconciliation: { retained: ['<unchanged task>'], changed: [task], added: [], retired: [], intentChanged: false, dependencyChanged: false },
+});
+
+/** Optional applicability selection for the first unassessed review observation; the host supplies the rationale. */
+function reviewUseExamples(data: Row): HostEvent[] {
+  const open = rows(data['reviewObservations']).find((row) => !row['use']);
+  if (!open) return [];
+  const binding = { observationId: String(open['id']), afterHash: String(open['afterHash']) };
+  return [
+    { type: 'REVIEW_USE', ...binding, action: 'reuse', rationale: '<why the recorded findings apply to the current target>' },
+    { type: 'REVIEW_USE', ...binding, action: 'targeted', rationale: '<why these paths need review>', paths: ['<changed path to review>'] },
+  ];
+}
 
 /** Fill runtime paths/ids from the current frame; quotes and observations require actual host evidence. */
 export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
@@ -79,7 +114,7 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       const launches = rows(data['tasks']).filter((task) => task['action'] === 'launch' && typeof task['task'] === 'string' && typeof task['signature'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0);
       for (const task of launches) events.push({ type: 'WRITE_RECEIPT', status: 'launched', task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>', model: String(task['model'] ?? '<actual launched model>'), ...effort });
       // Only live writers can be told about an amendment, so the example needs one to notify.
-      if (candidates.length) events.push(amendExample(String(candidates[0]!['task'])));
+      if (candidates.length) events.push(amendExample(String(candidates[0]!['task'])), replaceExample(String(candidates[0]!['task'])));
       return events;
     }
     case 'evidence': return [{ type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), { outcome: 'pass', evidence: '<observed criterion evidence>' }])) }];

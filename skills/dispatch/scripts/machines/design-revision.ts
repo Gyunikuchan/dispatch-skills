@@ -130,9 +130,9 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   const built = reviewSpecFromRun(state.c.run, 'design', 'fix', state.workingPath);
   if (!built.ok) return stay({ ...state, tag: 'refused', error: built.error });
   const offset = state.c.revisionReviewRound;
-  const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, 'design.revision.review', state.c.counters);
-  if ('c' in result.state) result.state = { ...result.state, c: { ...result.state.c, round: result.state.c.round + offset, scope: 'delta' } };
-  result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, round: effect.round + offset, scope: { ...effect.scope, scope: 'delta', sinceHash: state.c.hash, priorTarget: state.c.path } } : effect);
+  const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, 'design.revision.review', state.c.counters, offset);
+  if ('c' in result.state) result.state = { ...result.state, c: { ...result.state.c, scope: 'delta' } };
+  result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, scope: { ...effect.scope, scope: 'delta', sinceHash: state.c.hash, priorTarget: state.c.path } } : effect);
   return reviewed(state, result);
 }
 export function designRevisionAwait(state: DesignRevisionState) {

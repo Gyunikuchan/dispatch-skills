@@ -7,6 +7,7 @@ import { appendEvent, journalPath } from '../../../skills/dispatch/scripts/core/
 import { LOCK_FILE } from '../../../skills/dispatch/scripts/core/lock.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, fakeHandlers, neverAwaitingMachine, RUN_STARTED } from './fixtures/machines.ts';
 
 async function startAwaiting(ports: FakePorts) {
@@ -16,41 +17,38 @@ async function startAwaiting(ports: FakePorts) {
 }
 
 const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
-/** A fault rolls the journal back to its baseline, then appends exactly one fault note at the next seq. */
-function assertFaultNote(runDir: string, journal: Buffer): void {
-  const after = bytes(runDir);
+/** A later fault preserves the accepted prefix and appends one fault note. */
+function assertFaultNote(runDir: string, journal: Buffer, after = bytes(runDir)): void {
   assert.deepEqual(after.subarray(0, journal.length), journal);
   const added = after.subarray(journal.length).toString('utf8').trim().split('\n').map((line) => JSON.parse(line) as { seq: number; type: string; data: Record<string, unknown> });
   const count = journal.toString('utf8').trim().split('\n').length;
-  assert.deepEqual(added.map((line) => [line.seq, line.type, line.data['kind']]), [[count + 1, 'DIAGNOSTIC_NOTE', 'fault']]);
+  assert.equal(added.at(-1)?.type, 'DIAGNOSTIC_NOTE');
+  assert.equal(added.at(-1)?.data['kind'], 'fault');
+  assert.equal(added.filter((line) => line.type === 'DIAGNOSTIC_NOTE').length, 1);
+  assert.deepEqual(added.map((line) => line.seq), added.map((_, index) => count + index + 1));
 }
 
 // Split from interpreter.test.ts to stay under the 1 s per-file budget: replay, recovery, and engine faults.
 
-test('a never-awaiting machine faults at MAX_STEPS with exit 2, the baseline journal plus one fault note, and no lock', async () => {
+test('a never-awaiting machine faults at MAX_STEPS with exit 2, retaining committed effects and one fault note', async () => {
   const ports = fakePorts();
   const runDir = tempDir();
+  memoryRunFs(ports, runDir);
   appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
-  const journal = bytes(runDir);
-  // NOTE: the loop guard needs journal semantics, while journal.test.ts covers physical writes.
-  const file = journalPath(runDir), real = { ...ports.fs };
-  let buffered = journal;
-  ports.fs.appendDurable = (target, text) => target === file ? void (buffered = Buffer.concat([buffered, Buffer.from(text)])) : real.appendDurable(target, text);
-  ports.fs.readChunks = function* (target, size) { if (target === file) yield buffered; else yield* real.readChunks(target, size); };
-  ports.fs.size = (target) => target === file ? buffered.length : real.size(target);
-  ports.fs.truncate = (target, length) => target === file ? void (buffered = buffered.subarray(0, length)) : real.truncate(target, length);
+  const journal = Buffer.from(ports.fs.readText(journalPath(runDir)));
   const result = await send({ runDir, machine: neverAwaitingMachine, handlers: fakeHandlers, ports });
-  fs.writeFileSync(file, buffered);
+  const buffered = Buffer.from(ports.fs.readText(journalPath(runDir)));
   assert.equal(result.exitCode, 2);
   assert.equal(result.frame?.await, 'done');
   assert.deepEqual(result.frame?.data, { outcome: 'fault' });
   assert.match(result.frame?.error ?? '', new RegExp(`MAX_STEPS \\(${MAX_STEPS}\\)`));
-  assertFaultNote(runDir, journal);
-  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
+  assertFaultNote(runDir, journal, buffered);
+  assert.equal(buffered.toString().split('\n').filter((line) => line.includes('"type":"SNAPSHOT"')).length, MAX_STEPS);
+  assert.equal(ports.fs.exists(path.join(runDir, LOCK_FILE)), false);
   assert.equal(ports.timers, 0);
 });
 
-test('a handler exception faults with the baseline journal plus one fault note and no lock', async () => {
+test('a handler exception preserves its accepted host event and open attempt with one fault note', async () => {
   const ports = fakePorts();
   const { runDir } = await startAwaiting(ports);
   const journal = bytes(runDir);
@@ -59,6 +57,8 @@ test('a handler exception faults with the baseline journal plus one fault note a
   assert.equal(result.exitCode, 2);
   assert.match(result.frame?.error ?? '', /boom/);
   assertFaultNote(runDir, journal);
+  assert.match(bytes(runDir).toString(), /"type":"AUTHORED"/);
+  assert.match(bytes(runDir).toString(), /"kind":"verify","attempt":1/);
   assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
 });
 

@@ -12,6 +12,12 @@ export function recordedLaunches(file: string): StubLaunch[] {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
   });
 }
+export function completedLaunch(file: string, launch: StubLaunch): boolean {
+  try {
+    const receipt = JSON.parse(fs.readFileSync(path.join(`${file}.launches`, String(launch.index), 'done.json'), 'utf8')) as { index?: unknown; pid?: unknown };
+    return receipt.index === launch.index && receipt.pid === launch.pid;
+  } catch { return false; }
+}
 export async function stub(file: string, args: readonly string[]): Promise<void> {
   if (args[0] === 'debug') {
     process.stdout.write(JSON.stringify(args[1] === 'config' ? [] : [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }]) + '\n'); return;
@@ -32,6 +38,8 @@ export async function stub(file: string, args: readonly string[]): Promise<void>
   fs.renameSync(path.join(recordDir, 'launch.tmp'), path.join(recordDir, 'launch.json'));
   if (scenario.delayMs) await new Promise<void>((resolve) => setTimeout(resolve, scenario.delayMs));
   const output = scenario.responses[Math.min(index, scenario.responses.length - 1)];
-  process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`);
+  await new Promise<void>((resolve, reject) => process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`, (error) => error ? reject(error) : resolve()));
+  fs.writeFileSync(path.join(recordDir, 'done.tmp'), JSON.stringify({ index, pid: process.pid }));
+  fs.renameSync(path.join(recordDir, 'done.tmp'), path.join(recordDir, 'done.json'));
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await stub(process.argv[2]!, process.argv.slice(3));

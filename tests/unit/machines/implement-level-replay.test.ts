@@ -56,7 +56,7 @@ test('level-journal: inherited gate data stays out of later plan review and brie
   const rawScope = implementData(result.state)['gateScope'] as Record<string, unknown>;
   const delta = { paths: ['src/extra.ts'], criteria: [], obligations: ['private obligation'], commands: [], phaseDuties: [], increments: [] };
   const adjustment: ScopeAdjustment = {
-    proposal: { requestId: 'private-scope-request', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'private writer rationale', delta },
+    proposal: { requestId: 'private-scope-request', source: 'design-revision', affectedIncrements: ['I01'], baseArtifactHash: HASH, proposedArtifactHash: HASH, rationale: 'private writer rationale', delta },
     approvedBy: 'user', rationale: 'private orchestrator rationale', quote: 'private scope quote', ownerIncrement: 'I01',
   };
   const binding = {
@@ -78,7 +78,9 @@ test('level-journal: inherited gate data stays out of later plan review and brie
   for (const privateText of ['private assessment rationale', 'private level quote', 'private scope quote', 'private notice quote', 'private writer rationale', 'private orchestrator rationale']) assert.equal(renderedInput.includes(privateText), false, privateText);
   assert.match(renderedInput, /Preserve stored values/);
   assert.match(renderedInput, /"settledLevel":"low"/);
-  assert.match(renderedInput, /"delta":\{"paths":\["src\/extra\.ts"\]/);
+  assert.equal(renderedInput.includes('src/extra.ts'), false, 'Design history cannot grant implementation write scope.');
+  assert.deepEqual(context.scopeAdjustments, [adjustment], 'Design approval history remains private and intact.');
+  assert.deepEqual(briefEffect.input['settledScope'], { paths: context.plan!.tasks[0]!.paths, approvedPaths: context.plan!.tasks[0]!.paths, changes: context.plan!.changes.filter((change) => context.plan!.tasks[0]!.paths.includes(change.path)) });
   const reviewContext = JSON.parse(planReviewContext(context, 'the original invocation context') as string) as Record<string, unknown>;
   assert.deepEqual(reviewContext, { invocationContext: 'the original invocation context', invocationLevel: 'low', invocationLevelSource: 'explicit' });
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, PlanEdit } from '../../../skills/dispatch/scripts/core/types.ts';
-import { amendPlan } from '../../../skills/dispatch/scripts/machines/revision.ts';
+import { amendPlan, replacementPlan } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { implementData, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { AMEND_PLAN } from './fixtures/implement-amend.ts';
@@ -35,7 +35,7 @@ test('amend plan applies exact text edits and relints', () => {
   if (!amended.ok) return;
   assert.ok(amended.plan.tasks.find((task) => task.id === 'T1')!.paths.includes('src/shared.ts'));
   assert.match(amended.hash, /^sha256:[a-f0-9]{64}$/);
-  assert.deepEqual(amended.gates, []);
+  assert.equal(amended.text, amended.plan.governedText);
 });
 
 test('amend plan rejects ambiguous or missing current text', () => {
@@ -50,29 +50,24 @@ test('amend plan rejects unknown targets', () => {
   assert.ok(!result.ok && /T9/.test(result.error));
 });
 
-test('amend plan gates an objective change', () => {
+test('amend plan infers no gate from objective or manifest text', () => {
   const intent = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'T1', current: 'deliver three parts.', proposed: 'deliver four parts.' }]);
-  assert.ok(intent.ok && intent.gates.some((gate) => /intent change/.test(gate)));
+  assert.ok(intent.ok && !('gates' in intent), 'semantic approval comes from the reconciliation attestation');
 });
 
-test('amend plan gates a newly added dependency manifest', () => {
-  const manifest = amendPlan(AMEND_PLAN, [
-    { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/b.ts, package.json' },
-    { kind: 'add', target: 'package.json', current: '- Changes: part two.\n', proposed: '#### [MODIFY] package.json\n- Changes: add a dependency.\n' },
-  ]);
-  assert.ok(manifest.ok && manifest.gates.some((gate) => /new external dependency \(package\.json\)/.test(gate)), manifest.ok ? manifest.gates.join() : manifest.error);
+// SECTION: replacementPlan
+
+test('replacement plan accepts a parsed plan with its governed hash', () => {
+  const hash = `sha256:${'a'.repeat(64)}`;
+  const revised = replacementPlan({ hash, plan: AMEND_PLAN, defects: [] });
+  assert.ok(revised.ok && revised.hash === hash && revised.text === AMEND_PLAN.governedText);
 });
 
-test('amend plan gates changed work on a planned manifest', () => {
-  const planned = amendPlan(AMEND_PLAN, [
-    { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/b.ts, package.json' },
-    { kind: 'add', target: 'package.json', current: '- Changes: part two.\n', proposed: '#### [MODIFY] package.json\n- Changes: bump the version.\n' },
-  ]);
-  assert.ok(planned.ok, planned.ok ? '' : planned.error);
-  const changed = amendPlan(planned.plan, [{ kind: 'modify', target: 'package.json', current: '- Changes: bump the version.', proposed: '- Changes: add the left-pad dependency.' }]);
-  assert.ok(changed.ok && changed.gates.some((gate) => /external dependency \(package\.json\)/.test(gate)), changed.ok ? changed.gates.join() : changed.error);
-  const untouched = amendPlan(planned.plan, [{ kind: 'modify', target: 'T1', current: '- Changes: part two.', proposed: '- Changes: part two, tidied.' }]);
-  assert.ok(untouched.ok && !untouched.gates.some((gate) => /dependency/.test(gate)), untouched.ok ? untouched.gates.join() : untouched.error);
+test('replacement plan rejects lint defects and invalid hashes', () => {
+  const defective = replacementPlan({ hash: `sha256:${'a'.repeat(64)}`, plan: AMEND_PLAN, defects: [{ code: 'cycle', message: 'T1 -> T2 -> T1' }] });
+  assert.ok(!defective.ok && /cycle/.test(defective.error));
+  const hashless = replacementPlan({ hash: 'nope', plan: AMEND_PLAN, defects: [] });
+  assert.ok(!hashless.ok && /hash/.test(hashless.error));
 });
 
 // SECTION: In-run revision arrives as AMEND

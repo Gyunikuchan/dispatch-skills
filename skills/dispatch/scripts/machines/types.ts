@@ -56,7 +56,7 @@ export type AskSpec = { kind: 'ask'; target: string; breadth: number | 'all'; co
 
 export type CarriedRejection = { id: FindingId; slot: SlotId | null; locus: string; defect: string; reason: string };
 /** A prior-round finding whose ruling stands; `ruling` is the rendered status label. */
-export type SettledRow = { id: FindingId; locus: string; defect: string; ruling: string; reason: string };
+export type SettledRow = { id: FindingId; locus: string; defect: string; ruling: string; reason: string; revision?: string };
 export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; settled?: readonly SettledRow[]; sinceHash?: string; priorManifest?: string };
 
 // SECTION: Rulings and findings
@@ -86,7 +86,8 @@ export type FindingStatus =
   | 'open' | 'accepted' | 'downgraded' | 'fixed' | 'rejected' | 'pending-rejection' | 'needs-user'
   | 'closed-by-reviewer' | 'closed-by-orchestrator' | 'superseded' | 'duplicate';
 
-export type ReviewFinding = Finding & { round: number; status: FindingStatus; resolution?: string };
+/** `revision` is the target binding the finding's wave reviewed; later target changes never rebind it. */
+export type ReviewFinding = Finding & { round: number; status: FindingStatus; resolution?: string; revision?: string };
 
 export const isAccepted = (finding: ReviewFinding): boolean => finding.status === 'accepted' || finding.status === 'downgraded';
 

@@ -13,6 +13,7 @@ import { implementAwait, implementData, implementMachine, renderImplementWalkthr
 import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
 import { executionBindingDeferred, reconfigureRoot } from './execution-config.ts';
 import { refreshedRun } from '../domain/execution-config.ts';
+import { rootStateCodec } from './checkpoint.ts';
 import { beginDesign, stepDesign, designAwait, designData, validateDesign, type DesignState } from './design.ts';
 
 export type RunInfo = { verb: Verb; argument: string; slug: string; defaults?: RunStartedEvent };
@@ -214,6 +215,10 @@ function project(state: RootState): { at: string; data: Readonly<Record<string, 
 }
 
 function validate(state: RootState, event: HostEvent): string | null {
+  // NOTE: only an active implementation child consumes dispositions; suspended children cannot receive them.
+  if (event.changeDispositions && state.tag !== 'implement' && !(state.tag === 'design' && state.child.tag === 'increment' && !(event.type === 'REVISE' && event.artifact === 'design'))) return 'event.changeDispositions: this run has no change observation to dispose.';
+  // NOTE: only an active review frame lists review observations; elsewhere a selection would be silently dropped.
+  if (event.type === 'REVIEW_USE' && !Array.isArray(project(state).data['reviewObservations'])) return 'event.type: REVIEW_USE needs an active review frame with a target change observation.';
   switch (state.tag) {
     case 'design': return validateDesign(state.child, event);
     case 'ask': return validateAsk(state.child, event);
@@ -347,6 +352,7 @@ export const rootTransitions = [
 ] as const;
 
 export const rootMachine: Machine<RootState> = {
+  codec: rootStateCodec,
   initial: () => ({ tag: 'booting' }),
   step: stepRoot,
   awaitOf,

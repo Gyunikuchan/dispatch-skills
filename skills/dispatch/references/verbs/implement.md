@@ -12,7 +12,7 @@ Each task uses one continuous writer invocation from inspection through envelope
 
 ## Decision and receipt contract
 
-For changed observed inputs, verification mutation or a delivery collision, follow [change handling](../change-handling.md). Resolve the recorded notice as the orchestrator, refresh affected evidence, and retain approved write scope and attempt identities.
+For changed observed inputs, verification mutation or a delivery collision, follow [change handling](../change-handling.md). Select affected obligations as the orchestrator and retain approved write scope and attempt identities.
 
 Send each decision through `DECISION` with its exact `kind` and an `answer` matching the pending frame:
 
@@ -41,23 +41,34 @@ When a live writer needs work outside its task scope, reply `REQUEST` with `{ ta
 - `decline`, then tell the writer to continue within its scope.
 - `escalate` when you disagree with the writer or the need changes intent; the user answers with `request-user`.
 
-The driver raises the same decision when an amendment narrowed a task after its brief and the submitted candidate touches the dropped paths; `approve` admits the candidate.
+A submission against an older brief must still pass current scope admission. A writer notice grants no additional paths.
 
 ### Amendments
 
 `AMEND` `{ delta, notify, rationale, by? }` changes the plan live at a write, request, conflict, or failure frame; it replaces `REVISE` in implement runs. `delta` lists exact-text `modify`, `remove`, or `add` edits. Writers not named keep running. Name in `notify` each running writer whose paths or criteria change, with a notice; the driver regenerates its brief and the write frame relays the notice with the new brief path and hash. Relay both to the writer; when the host cannot message a live writer, deliver them at its next request or receipt. A `submitted` receipt with a stale `briefHash` is accepted only when the amendment left that task's paths and criteria unchanged.
 
-Minor deltas need no user. Attach `by: { by: "user", quote }` when the delta changes intent, adds an external dependency, or discards work (removes an accepted task or a running task's attempt). Reconciliation:
+`REPLACE_PLAN` supplies a complete parsed plan, bound to the previous governed `expectedHash`. It uses the same reconciliation operation as `AMEND`. Account for all task IDs once in `retained`, `changed`, `added` and `retired`; attest actual `intentChanged` and external `dependencyChanged`. Title/manifest edits do not infer those decisions. Stale hashes or invalid graphs reject safely with prior work retained.
 
-- Pending tasks re-pend with the new signature.
-- A submitted candidate is admitted against the new scope.
-- An accepted task with changed paths or criteria keeps its integration and re-verifies its criteria on the integration head.
-- A removed accepted task rewinds integration; a removed running task needs its `cancelled` receipt.
-- A new prerequisite parks a running task's submission until that prerequisite is accepted. An accepted task cannot gain an unaccepted prerequisite.
+```json
+{"type":"REPLACE_PLAN","path":"replacement.plan.md","expectedHash":"sha256:previous-governed-hash","rationale":"Retire the obsolete reporting requirement.","notify":[],"reconciliation":{"retained":["T1"],"changed":[],"added":[],"retired":["T2"],"intentChanged":false,"dependencyChanged":false}}
+```
+
+- Changed tasks keep candidates, integration, attempts, handles and previous brief provenance. Regenerate affected briefs and relay each notice; current scope governs admission. Evidence refresh changes obligations, not accepted history.
+- An accepted consumer gaining an unfinished prerequisite keeps its implementation and gains validation/delivery obligations on the combined candidate. Accept the producer and complete its required rechecks before checking the consumer. Failed retained checks keep acceptance history, attempts, failure counters and worktree references; an explicit failure retry repeats checks after repair.
+- Retirement archives work references and retains integrated bytes. Removing those bytes requires an approved scoped compensating task, named in `reconciliation.compensating`, with `by: { by: "user", quote }`.
+- A retired live writer requires `retire: [{ task, disposition: "stop" | "retain" }]`; a `stop` disposition requires a user quote. Its slot remains occupied until a cancelled/terminal receipt. Retain its handle and submission history.
+
+Attach a user quote for actual changed intent, a new external dependency/runtime prerequisite or work disposal. Ordinary requirement retirement alone does not discard work. See [change handling](../change-handling.md) for evidence dispositions and durable continuation.
 
 ### Integration conflicts
 
 When a candidate conflicts with accepted work, the driver keeps the conflict in the integration worktree. Resolve the conflict markers there within the involved tasks' paths, against both tasks' intent and criteria, then reply `integration-conflict` `resolve`; the driver commits the resolution and verifies affected criteria, and a refused or failing attempt returns the frame with evidence. To drop the candidate instead, first send a user-gated `AMEND` that records the discarded work, then reply `discard` naming that amendment. An open conflict blocks amendments that rewind or re-verify accepted work.
+
+For a delivery replay conflict, the frame offers `resolve` only. Keep the archived accepted integration and resolve the retained pick in the active worktree. The driver verifies the resolution, resumes remaining archived commits in order, rechecks accepted tasks and repeats all-path delivery preflight. Recovery uses recorded commit provenance to avoid duplicate picks. Task acceptance and writer attempts stay unchanged.
+
+If replay fails after a resolved pick, use the failure frame's explicit `retry` decision. The saved continuation keeps the original archive range through checkpoints and rebind. Retry resumes that range before task checks or delivery; completion requires mappings for all retained accepted commits. Repeated failures preserve the same source and acceptance history.
+
+Retired accepted work retains its recorded paths and verification contract for replay resolution. Repair within that retained scope; the checks test preserved work without restoring retired requirements or widening a live writer's scope. Replay remaps live and retired integration references while keeping original commits in history.
 
 Independent branches continue after task failure; descendants remain blocked. Keep running handles and completed receipts across status/resume. At a consolidated failure decision, verify each failed task's `amendment` against plan intent, invariants, and code, treating `unresolvedTargets` as unverified; then retry with clarified context, send `AMEND` citing the amendment, or stop with artifacts retained. Preservation does not claim repair or retry.
 

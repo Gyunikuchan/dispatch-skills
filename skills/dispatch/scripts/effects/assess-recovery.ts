@@ -31,6 +31,7 @@ export function createAssessRecovery(): Handler<Assessment> {
       const coveredInputs = coverage.flatMap(({ value }) => complete(value) ? value.inputs : []);
       const classified = classifyChange({ paths, expectedPaths: strings(effect.input['expectedPaths']), ownedPaths: [...strings(effect.input['ownedPaths']), ...managed], inputs: [...strings(effect.input['inputs']), ...coveredInputs], dependenciesComplete: ids.length > 0 && coverage.every(({ value }) => complete(value)), identityChanged });
       const material = classified.paths.filter((file) => ![...strings(effect.input['expectedPaths']), ...strings(effect.input['ownedPaths']), ...managed].includes(file));
+      // NOTE: relevance and affected evidence are suggestions for the orchestrator; consumers never revoke work from them.
       const affectedEvidence = classified.relevance === 'expected' || classified.relevance === 'irrelevant' ? [] : coverage.filter(({ value }) => identityChanged || !complete(value) || value.inputs.some((file) => material.includes(file))).map(({ id }) => id);
       const judgement = effect.purpose === 'hotfix' ? judgeHotfix({ repoRoot: before.repoRoot, changed: after.changed, external: (effect.input['external'] ?? []) as { path: string; reason: string }[], before: before.git, after: after.git,
         taskStartFiles: before.taskStartFiles, preRed: effect.input['preRed'] === true, productionPaths: strings(effect.input['productionPaths']), failureIdentityBefore: null, failureIdentityAfter: null }) : undefined;

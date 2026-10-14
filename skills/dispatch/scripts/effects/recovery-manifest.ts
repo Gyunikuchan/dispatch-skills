@@ -1,3 +1,4 @@
+import { artifactPath } from '../lib/immutable-artifact.ts';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Ports, RecoveryRef, RecoveryManifest } from '../core/types.ts';
@@ -10,18 +11,7 @@ export function isRecoveryRef(value: unknown): value is RecoveryRef {
   return record(value) && value['version'] === 1 && typeof value['sha256'] === 'string' && /^[a-f0-9]{64}$/.test(value['sha256'])
     && Number.isSafeInteger(value['bytes']) && Number(value['bytes']) > 0 && value['path'] === `recovery-manifests/${value['sha256']}.json`;
 }
-export function artifactPath(ports: Ports, runDir: string, relative: string): string {
-  if (!safe(relative)) throw new Error('Invalid recovery artifact path.');
-  const root = ports.fs.inspectPath(runDir);
-  if (root?.kind !== 'directory' || !root.realPath) throw new Error('Invalid recovery run directory.');
-  let current = runDir;
-  for (const part of relative.split('/')) {
-    current = path.join(current, part);
-    const info = ports.fs.inspectPath(current);
-    if (info?.kind === 'symlink' || info?.realPath && (path.relative(root.realPath, info.realPath).startsWith('..') || path.isAbsolute(path.relative(root.realPath, info.realPath)))) throw new Error('Recovery artifact path escape.');
-  }
-  return current;
-}
+export { artifactPath } from '../lib/immutable-artifact.ts';
 export function publishEvidence(ports: Ports, runDir: string, value: unknown, directory = 'recovery-deltas'): RecoveryRef {
   const text = JSON.stringify(canonical(value)), sha256 = digest(text), relative = `${directory}/${sha256}.json`;
   const file = artifactPath(ports, runDir, relative);

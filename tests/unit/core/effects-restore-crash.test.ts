@@ -3,6 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture } from './fixtures/restore.ts';
+import { restoreRecovery } from '../../../skills/dispatch/scripts/effects/restore.ts';
+
+test('restore completion proof reads matching target bytes without duplicate overwrites and refuses new caller bytes', async () => {
+  const f = fixture(); await f.invoke(); f.verify();
+  let writes = 0; f.ports.fs.writeBase64Atomic = () => { writes++; };
+  const probe = restoreRecovery({ cwd: f.cwd }).probe!;
+  assert.equal((await probe(f.effect, f.ports, { runDir: f.runDir, attempt: 1 })).status, 'complete');
+  assert.equal(writes, 0);
+  fs.writeFileSync(path.join(f.cwd, 'dirty'), 'new caller content');
+  assert.equal((await probe(f.effect, f.ports, { runDir: f.runDir, attempt: 1 })).status, 'unresolved');
+  assert.equal((await f.invoke())[0]?.type, 'EFFECT_FAILED');
+  assert.equal(writes, 0);
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'dirty'), 'utf8'), 'new caller content');
+});
 
 test('restore retries preserve the original binary patch after publication and mutation crashes', async () => {
   for (const failure of ['patch write', 'after patch before sidecar', 'after sidecar', 'mid-restore'] as const) {

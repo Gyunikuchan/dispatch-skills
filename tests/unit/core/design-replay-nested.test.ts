@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -5,6 +6,7 @@ import { appendEvent } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { findDesignDelivery, start, send } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { run, hash, design } from '../machines/fixtures/design.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
@@ -14,6 +16,7 @@ const launched = (slot: Record<string, unknown>) => ({ launcherModel: slot['mode
 
 test('level-journal: nested design replay classifies before its first writer and retains full scope across increments', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, runDir);
   const fingerprint = { head: 'a'.repeat(40), index: 'i', worktree: 'w' };
   let writes = 0, delivering = '';
   const handlers: Handlers = {
@@ -22,14 +25,14 @@ test('level-journal: nested design replay classifies before its first writer and
       const file = increment === 'I01' ? 'src/a.ts' : 'src/b.ts';
       if (effect.artifact === 'plan') delivering = file;
       const plan = { title: increment, box: { 'TL;DR': design.details[increment as 'I01' | 'I02'].Outcome }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: file, note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [{ id: 'T1', title: increment, summary: 'Deliver', line: 1, prerequisites: [], criteria: [], paths: [file], generated: [] }], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment as 'I01' | 'I02'].Outcome }, governedText: '# Plan' };
-      return [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: effect.artifact, hash, parsed: effect.artifact === 'design' ? design : plan, defects: [] }];
+      return [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: effect.artifact, hash: effect.artifact === 'design' ? hash : `sha256:${crypto.createHash('sha256').update(plan.governedText).digest('hex')}`, parsed: effect.artifact === 'design' ? design : plan, defects: [] }];
     },
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint, diff: { paths: [] } }],
     verify: async (effect) => [{ type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, results: [], fingerprint }],
     'write-brief': async (effect) => { writes++; return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: 'brief', sha256: hash, envelopePath: `${effect.id}.outcome.json` }]; },
     'check-envelope': async (effect) => [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered', evidence: [] }, defects: [], diff: { paths: [effect.id.includes('i02') ? 'src/b.ts' : 'src/a.ts'] } }],
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts', 'src/b.ts'] }, promptPaths: { 'codex[0]': 'prompt' } }],
-    'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 0, roster: effect.roster, native: effect.id === 'design.integration.wave.1' ? [{ sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' }] : [], early: [], claimPath: null, inputPath: 'input' }],
+    'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: effect.roster.some((slot) => !slot['native'] && !slot['reserve']) ? 1 : 0, roster: effect.roster, native: effect.id === 'design.integration.wave.1' ? [{ sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' }] : [], early: [], claimPath: null, inputPath: 'input' }],
     'wave-finish': async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     wave: async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: effect.id === 'design.integration.wave.1' ? [{ slot: 'codex[0]', state: 'native', descriptor: { sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' } }] : [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     handoff: async (effect) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: '/handoff', warning: null }],
@@ -68,6 +71,7 @@ test('level-journal: nested design replay classifies before its first writer and
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}`, model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) } });
     const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string; briefHash: string; model: string }[];
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath, briefHash: slot!.briefHash, model: slot!.model } });
+    assert.equal(result.exitCode, 0, JSON.stringify(result.frame));
     if (increment === 'I01') {
       assert.deepEqual((result.frame?.data['levelAssessment'] as { gateScope: unknown } | undefined)?.gateScope, capturedGateScope);
       assert.equal(result.frame?.data['settledLevel'], 'low');

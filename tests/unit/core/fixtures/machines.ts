@@ -3,6 +3,17 @@
 import { nextEffectId, type EffectCounters } from '../../../../skills/dispatch/scripts/core/effect-id.ts';
 import type { Effect, Event, Handlers, Machine, ResultEvent, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../../../skills/dispatch/scripts/core/types.ts';
+import { decodePrivate, encodePrivate } from '../../../../skills/dispatch/scripts/core/checkpoint.ts';
+import type { StateCodec } from '../../../../skills/dispatch/scripts/core/types.ts';
+
+const codec = <S>(name: string, tags: string[] = []): StateCodec<S> => ({
+  name: `fixture-${name}`, version: 1, runtime: () => 'fixture-runtime-1', encode: encodePrivate,
+  decode(value) {
+    const state = decodePrivate(value);
+    if (!state || typeof state !== 'object' || Array.isArray(state) || tags.length && !tags.includes(String((state as Record<string, unknown>)['tag']))) throw new Error('fixture checkpoint state is invalid');
+    return state as S;
+  },
+});
 
 export const RUN_STARTED: RunStartedEvent = {
   type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'ask', argument: 'fixture', level: 'low', levelSource: 'explicit', pins: null, fix: false,
@@ -31,6 +42,7 @@ export type AwaitingState =
   | { tag: 'done'; counters: EffectCounters; path: string };
 
 export const awaitingMachine: Machine<AwaitingState> = {
+  codec: codec<AwaitingState>('awaiting', ['new', 'snapshotting', 'authoring', 'verifying', 'done']),
   initial: () => ({ tag: 'new', counters: {} }),
   step(state, event) {
     if (event.type === 'RUN_STARTED' && state.tag === 'new') {
@@ -63,6 +75,7 @@ export const awaitingMachine: Machine<AwaitingState> = {
 export type LoopState = { counters: EffectCounters };
 
 export const neverAwaitingMachine: Machine<LoopState> = {
+  codec: codec<LoopState>('loop'),
   initial: () => ({ counters: {} }),
   step(state, event: Event) {
     if (event.type !== 'RUN_STARTED' && event.type !== 'SNAPSHOT') return { state, effects: [] };
@@ -79,6 +92,7 @@ export const neverAwaitingMachine: Machine<LoopState> = {
 export type WaveState = { tag: 'new' | 'waving' | 'done' };
 
 export const waveMachine: Machine<WaveState> = {
+  codec: codec<WaveState>('wave', ['new', 'waving', 'done']),
   initial: () => ({ tag: 'new' }),
   step(state, event) {
     if (event.type === 'RUN_STARTED') {
@@ -104,6 +118,7 @@ function enterChild(state: NestedState, round: number): { state: NestedState; ef
 }
 
 export const nestedMachine: Machine<NestedState> = {
+  codec: codec<NestedState>('nested', ['child', 'author', 'done']),
   initial: () => ({ tag: 'child', round: 0, counters: {}, child: { tag: 'settled' } }),
   step(state, event) {
     if (event.type === 'RUN_STARTED') return enterChild(state, 1);

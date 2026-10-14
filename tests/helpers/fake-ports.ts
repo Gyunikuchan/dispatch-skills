@@ -41,6 +41,11 @@ export function fakePorts(): FakePorts {
       writeAtomic: (file, text) => { ensureDir(file); fs.writeFileSync(file, text); },
       // Keeps exclusive-create semantics (lock contention) without the fsync.
       writeExclusive: (file, text) => { ensureDir(file); fs.writeFileSync(file, text, { flag: 'wx' }); },
+      publishExclusive: (file, text) => {
+        ensureDir(file);
+        try { fs.writeFileSync(file, text, { flag: 'wx' }); return true; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
+      },
     },
     spawn: { run: () => { throw new Error('fake ports: spawn is not available in tiers 1-5'); } },
     git: { run: () => { throw new Error('fake ports: git is not available in tiers 1-5'); } },

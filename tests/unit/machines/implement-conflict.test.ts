@@ -109,7 +109,7 @@ test('discard requires user-gated amendment', () => {
     { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   const amend = (by?: { by: 'user'; quote: string }) => ({ type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', ...(by ? { by } : {}) }) as unknown as Event;
-  assert.match(validateImplement(state.result.state, amend() as never) ?? '', /user's quote: discards work of T2/);
+  assert.match(validateImplement(state.result.state, amend() as never) ?? '', /user's quote: discards conflicted integration of T2/);
   send(state, amend({ by: 'user', quote: 'Drop part two.' }));
   assert.equal(state.result.state.tag, 'integration-conflict');
   const result = send(state, discard('amend-1'));

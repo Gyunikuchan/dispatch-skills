@@ -50,11 +50,13 @@ test('amend notifies only named writers', () => {
   assert.equal(slot(result, 'T1').handle, 'agent-T1-1');
 });
 
-test('amend rejects intent change without user quote', () => {
+test('amend gates an attested intent change, not objective text', () => {
   const { result } = running();
   const intent = { kind: 'modify', target: 'T1', current: 'deliver three parts.', proposed: 'deliver four parts.' };
-  assert.match(validateImplement(result.state, amend([intent]) as never) ?? '', /user's quote: intent change/);
-  assert.equal(validateImplement(result.state, amend([intent], [], { by: 'user', quote: 'Make it four.' }) as never), null);
+  assert.equal(validateImplement(result.state, amend([intent]) as never), null, 'objective text alone infers no gate');
+  const attested = { ...(amend([intent]) as object), reconciliation: { retained: ['T1', 'T2', 'T3'], changed: [], added: [], retired: [], intentChanged: true, dependencyChanged: false } };
+  assert.match(validateImplement(result.state, attested as never) ?? '', /user's quote: attested intent change/);
+  assert.equal(validateImplement(result.state, { ...attested, by: { by: 'user', quote: 'Make it four.' } } as never), null);
 });
 
 test('amend rejects changed running task without notice', () => {
@@ -124,11 +126,13 @@ test('added prerequisite parks running submission', () => {
   assert.equal(record(result, 'T3')?.status, 'accepted');
 });
 
-test('amend rejects unaccepted prerequisite on accepted task', () => {
+test('amend turns an unaccepted prerequisite of accepted work into a validation obligation', () => {
   let { result, sim, trace } = running();
   result = submit(result, 'T3', sim, trace);
   assert.equal(record(result, 'T3')?.status, 'accepted');
-  assert.match(validateImplement(result.state, amend([T3_REQUIRES_T1]) as never) ?? '', /unaccepted prerequisite T1 to accepted task T3/);
+  result = host(result, amend([T3_REQUIRES_T1]), sim, trace);
+  assert.equal(record(result, 'T3')?.status, 'accepted');
+  assert.deepEqual('c' in result.state && result.state.c ? Object.keys(result.state.c.obligations ?? {}) : [], ['SC3']);
 });
 
 // SECTION: SC18 — request escalation and failure decisions
@@ -187,24 +191,57 @@ test('parked submission frees writer slot', () => {
   assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
-test('removing launched writer requires user quote', () => {
+const retireT2 = (disposition: 'stop' | 'retain', by?: { by: 'user'; quote: string }): Event =>
+  ({ ...(amend([...REMOVE_T2], [], by) as object), retire: [{ task: 'T2', disposition }] }) as unknown as Event;
+const retired = (result: Result) => 'c' in result.state && result.state.c ? result.state.c.retiredTasks ?? [] : [];
+
+test('replacement-writer: retiring a live writer needs a disposition', () => {
   const { result } = running();
-  assert.match(validateImplement(result.state, amend([...REMOVE_T2]) as never) ?? '', /user's quote: discards work of T2/);
-  assert.equal(validateImplement(result.state, amend([...REMOVE_T2], [], { by: 'user', quote: 'Drop part two.' }) as never), null);
+  assert.match(validateImplement(result.state, amend([...REMOVE_T2]) as never) ?? '', /retire: name a stop or retain disposition for live writer T2/);
+  assert.equal(validateImplement(result.state, retireT2('retain') as never), null, 'retain discards nothing, so it needs no quote');
 });
 
-test('submission racing cancellation waits for cancelled receipt', () => {
+test('replacement-writer: a stop disposition needs the user quote', () => {
+  const { result } = running();
+  assert.match(validateImplement(result.state, retireT2('stop') as never) ?? '', /user's quote: stops live writer T2/);
+  assert.equal(validateImplement(result.state, retireT2('stop', { by: 'user', quote: 'Drop part two.' }) as never), null);
+});
+
+test('replacement-writer: retirement retains the handle until cancellation is attested', () => {
   let { result, sim, trace } = running();
   const t2 = slot(result, 'T2');
-  result = host(result, amend([...REMOVE_T2], [], { by: 'user', quote: 'Drop part two.' }), sim, trace);
-  assert.equal(slot(result, 'T2').action, 'cancel');
+  result = host(result, retireT2('stop', { by: 'user', quote: 'Drop part two.' }), sim, trace);
+  assert.deepEqual([slot(result, 'T2').action, slot(result, 'T2').handle], ['cancel', t2.handle]);
   result = host(result, submitWith(result, t2), sim, trace);
-  assert.ok(!trace.effects.some((effect) => effect.kind === 'check-envelope'));
-  assert.equal(record(result, 'T2')?.discardedSubmission, t2.envelopePath);
+  assert.ok(!trace.effects.some((effect) => effect.kind === 'check-envelope'), 'a retired submission is never admitted');
+  assert.equal(record(result, 'T2')?.retainedSubmission, t2.envelopePath);
   assert.equal(slot(result, 'T2').action, 'cancel');
-  assert.match('c' in result.state && result.state.c ? result.state.c.concerns.join(' ') : '', /T2: removed writer submitted/);
+  assert.match('c' in result.state && result.state.c ? result.state.c.concerns.join(' ') : '', /T2: retired writer submitted .* retained, not admitted/);
   result = host(result, { type: 'WRITE_RECEIPT', status: 'cancelled', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: t2.handle!, model: t2.model } as Event, sim, trace);
   assert.equal(record(result, 'T2'), undefined);
+  assert.deepEqual(retired(result).map((row) => [row.id, row.retiredBy, row.retainedSubmission, row.reason]), [['T2', 'amend-1', t2.envelopePath, 'cancellation attested']]);
+});
+
+test('replacement-writer: a retained writer receipt keeps the submission as evidence', () => {
+  let { result, sim, trace } = running();
+  const t2 = slot(result, 'T2');
+  result = host(result, retireT2('retain'), sim, trace);
+  assert.deepEqual([slot(result, 'T2').action, (slot(result, 'T2') as unknown as Record<string, unknown>)['retirement']], ['running', 'retain']);
+  result = host(result, submitWith(result, t2), sim, trace);
+  assert.ok(!trace.effects.some((effect) => effect.kind === 'check-envelope'));
+  assert.equal(record(result, 'T2'), undefined, 'the submitted receipt is terminal and frees the slot');
+  assert.deepEqual(retired(result).map((row) => [row.id, row.retainedSubmission, row.status]), [['T2', t2.envelopePath, 'running']]);
+});
+
+test('replacement-writer: notified writer brief carries the notice and prior brief provenance', () => {
+  let { result, sim, trace } = running();
+  const old = slot(result, 'T1');
+  result = host(result, amend([SC1_TITLE], [{ task: 'T1', notice: 'SC1 now requires speed.' }]), sim, trace);
+  const brief = writeEffects(trace).at(-1);
+  const input = brief?.kind === 'write-brief' ? brief.input as Record<string, unknown> : {};
+  assert.deepEqual(input['revisionNotice'], { notice: 'SC1 now requires speed.', revision: 'amend-1', rationale: 'Plan changed mid-run.' });
+  assert.deepEqual((input['previousBriefs'] as { sha256: string }[]).map((row) => row.sha256), [old.briefHash]);
+  assert.equal(slot(result, 'T1').handle, old.handle, 'the live writer keeps its handle');
 });
 
 test('amendment paths are namespaced per plan', () => {

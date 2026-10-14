@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { bindingHash } from '../../../../skills/dispatch/scripts/machines/change-resolution.ts';
 import assert from 'node:assert/strict';
 import type { Event, RunStartedEvent, TreeFingerprint } from '../../../../skills/dispatch/scripts/core/types.ts';
@@ -5,7 +6,7 @@ import { JOURNAL_PROTOCOL_REVISION } from '../../../../skills/dispatch/scripts/c
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { artifactRelative, type VerifyRecord } from '../../../../skills/dispatch/scripts/machines/implement-types.ts';
 
-export const HASH = `sha256:${'a'.repeat(64)}`;
+export const HASH = `sha256:${crypto.createHash('sha256').update('original governed text').digest('hex')}`;
 export const FP: TreeFingerprint = { head: 'h', index: 'i', worktree: 'w', repoRoot: '', recovery: { version: 1, sha256: 'a'.repeat(64), bytes: 300, path: `recovery-manifests/${'a'.repeat(64)}.json` } };
 export const PLAN = { title: 'Feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], criteria: [{ id: 'SC1', title: 'works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'check', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'feature', command: null, line: 1 }], verification: { automated: ['check'], none: null, manual: [] }, tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1'], paths: ['src/a.ts'], generated: [] }], finalCommands: [], traceability: null, governedText: 'original governed text' };
 export const RUN: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {}, overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } };

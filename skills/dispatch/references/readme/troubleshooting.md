@@ -2,9 +2,22 @@
 
 Start with the diagnostic or decision Dispatch provides. Keep the session folder until the work is complete; it contains the artifacts and logs needed to understand or resume a run.
 
-Dispatch observes tracked files and non-ignored untracked files. Tracked files remain observed even when an ignore pattern matches. Ignored dependency and secret changes are outside automatic drift detection; required checks still run. Review [change handling](../change-handling.md) for notice resolution and evidence refresh.
+Dispatch notices changes to tracked files and non-ignored untracked files. These notices help your host agent decide what to recheck; they do not discard completed work. Required checks still run. Ignored untracked files are outside automatic change detection.
 
-Recovery manifests and content blobs are immutable files linked by the journal. Preserve the entire run when moving or recovering it. Missing/corrupt references are errors. Protocol 7 requires a new run for older live journals; their files remain preserved. A delivery/restore collision requires rebuilding or rebinding the candidate before retry, followed by live destination preflight.
+Preserve the whole session folder when moving or recovering a run. Missing or corrupt recovery files can prevent continuation. If delivery conflicts with newer changes in your checkout, ask your host agent to resolve the conflict before retrying.
+
+## Continue after a local driver fix
+
+Ask your host agent to inspect the saved run before resuming it. A compatible driver fix can preserve completed work. For manual recovery, run from the skill folder:
+
+```text
+node scripts/dispatch.ts rebind --run <dir> --reason "Continue after a compatible driver fix"
+node scripts/dispatch.ts send --run <dir>
+```
+
+If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
+
+Before upgrading, finish and deliver live old-protocol runs with the version that started them. If that is impossible, preserve their whole folders and ask your host to use the saved work in a new run. An `unsupported-journal-protocol` error requires a new run; there is no automatic migration.
 
 ## Run a configuration check
 

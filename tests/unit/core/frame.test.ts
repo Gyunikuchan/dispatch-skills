@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { faultFrame, projectFrame, replyTemplate, replyEvent, awaitEnvelopes } from '../../../skills/dispatch/scripts/core/frame.ts';
+import { dryRunGuidance, faultFrame, projectFrame, replyTemplate, replyEvent, awaitEnvelopes } from '../../../skills/dispatch/scripts/core/frame.ts';
 import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +26,13 @@ test('a projected frame carries the host envelope and optional error', () => {
     data: { artifact: 'plan', path: 'plan.md' }, events: [{ type: 'AUTHORED', path: 'plan.md' }], reply: replyTemplate('runs/001'),
   });
   assert.equal(projectFrame(awaitingMachine, { tag: 'authoring', counters: {} }, 'r', 'event.path: bad').error, 'event.path: bad');
+});
+
+test('read-only rejection guidance uses projected validated examples and the same reply boundary', () => {
+  const state = { tag: 'authoring' as const, counters: {} };
+  const frame = projectFrame(awaitingMachine, state, 'runs/001', undefined, 3);
+  assert.deepEqual(dryRunGuidance(awaitingMachine, state, 'runs/001', 3), { events: frame.events, reply: frame.reply });
+  for (const event of frame.events ?? []) assert.equal(validateHostEvent(frame.await, event, (item) => awaitingMachine.validate!(state, item)).ok, true);
 });
 
 test('a fault frame is a done frame with outcome fault and a one-line error', () => {

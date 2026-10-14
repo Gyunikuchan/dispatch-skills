@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { hashes } from '../../scripts/generate-hashes.ts';
 import type { Frame } from '../../skills/dispatch/scripts/core/types.ts';
-import { recordedLaunches, type Scenario } from './stub-provider.ts';
+import { completedLaunch, recordedLaunches, type Scenario } from './stub-provider.ts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const STUB = path.resolve(ROOT, 'tests/helpers/stub-provider.ts');
 export const CLEAN = { status: 'CLEAN', findings: [] };
@@ -34,6 +34,12 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete (env as Record<string, string | undefined>)[key];
   const entry = path.join(skill, 'scripts/dispatch.ts');
   const running = new Set<ReturnType<typeof spawn>>();
+  function failGitOnce(args: readonly string[]) {
+    const marker = path.join(dir, 'git-fault.json'), preload = path.join(dir, 'git-fault.mjs');
+    fs.writeFileSync(marker, JSON.stringify(args));
+    fs.writeFileSync(preload, `import cp from 'node:child_process';\nimport fs from 'node:fs';\nimport path from 'node:path';\nimport { syncBuiltinESMExports } from 'node:module';\nconst marker = ${JSON.stringify(marker)}, original = cp.execFile;\ncp.execFile = function(file, args, ...rest) {\n  if (path.basename(file).replace(/\\.exe$/i, '') === 'git' && fs.existsSync(marker) && JSON.parse(fs.readFileSync(marker, 'utf8')).every(value => args.includes(value))) {\n    fs.unlinkSync(marker);\n    return original.call(this, process.execPath, ['-e', 'process.stderr.write("Injected Git failure");process.exit(1)'], ...rest);\n  }\n  return original.call(this, file, args, ...rest);\n};\nsyncBuiltinESMExports();\n`);
+    env.NODE_OPTIONS = `--import=${pathToFileURL(preload).href}`;
+  }
   const ownedSessions = new Set<string>();
   // Hosts write each reply where the frame names it, so replies follow the latest frame per run.
   const eventFiles = new Map<string, string>();
@@ -63,20 +69,33 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     return cli(['send', '--run', run, '--event', `@${eventPath}`, ...(dryRun ? ['--dry-run'] : [])]);
   };
   const launches = () => recordedLaunches(scenarioPath);
+  const rebind = async (run: string, reason: string, event?: unknown) => {
+    const eventPath = path.join(dir, 'rebind-event.json');
+    if (event !== undefined) fs.writeFileSync(eventPath, JSON.stringify(event));
+    const result = await launch(['rebind', '--run', run, '--reason', reason, ...(event !== undefined ? ['--event', `@${eventPath}`] : [])]).done;
+    return { ...result, frame: result.stdout.trim() ? JSON.parse(result.stdout) as Frame : null };
+  };
   function cleanup() {
     for (const child of running) child.kill('SIGKILL');
     const workerPids = new Set<number>();
     for (const session of ownedSessions) if (fs.existsSync(session)) for (const relative of fs.readdirSync(session, { recursive: true })) {
       if (!/(^|[\\/])claim(\.a\d+)?\.json$/.test(String(relative))) continue;
-      try { const claim = JSON.parse(fs.readFileSync(path.join(session, String(relative)), 'utf8')) as { pid?: number }; if (claim.pid) workerPids.add(claim.pid); } catch { /* incomplete claim */ }
+      const claimPath = path.join(session, String(relative));
+      // NOTE: completed attempts retain historical PIDs that Windows can assign to another fixture's process.
+      const donePath = path.join(path.dirname(claimPath), path.basename(claimPath).replace(/^claim(\.a\d+)?\.json$/, 'done$1.json'));
+      try {
+        const done = JSON.parse(fs.readFileSync(donePath, 'utf8')) as { at?: unknown; slots?: unknown };
+        if (typeof done.at === 'number' && Number.isFinite(done.at) && typeof done.slots === 'number' && Number.isSafeInteger(done.slots) && done.slots >= 0) continue;
+      } catch { /* incomplete attempt */ }
+      try { const claim = JSON.parse(fs.readFileSync(claimPath, 'utf8')) as { pid?: number }; if (claim.pid) workerPids.add(claim.pid); } catch { /* incomplete claim */ }
     }
     for (const pid of workerPids) try { process.kill(pid, 'SIGKILL'); } catch { /* completed */ }
-    for (const row of launches()) try { process.kill(row.pid, 'SIGKILL'); } catch { /* completed */ }
+    for (const row of launches()) if (!completedLaunch(scenarioPath, row)) try { process.kill(row.pid, 'SIGKILL'); } catch { /* completed */ }
     for (const session of ownedSessions) if (fs.existsSync(session) && !session.startsWith(dir)) fs.rmSync(session, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     // Fixture roots are isolated and owned by this harness.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
-  return { dir, repo, overlay, skill, entry, git, config, scenarioPath, cli, launch, initialize, begin, reply, launches, cleanup, absoluteRun: (run: string) => path.resolve(repo, run) };
+  return { dir, repo, overlay, skill, entry, git, config, scenarioPath, cli, launch, rebind, initialize, begin, reply, launches, failGitOnce, cleanup, absoluteRun: (run: string) => path.resolve(repo, run) };
 }
 export async function until(check: () => boolean, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

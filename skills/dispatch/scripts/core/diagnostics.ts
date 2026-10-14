@@ -3,7 +3,7 @@
 
 import path from 'node:path';
 import { normalizeUsage, rejectionReason, renderDiagnostics, type InvocationFacts, type Phase, type PhaseFacts, type ReviewFacts, type RunFacts } from '../domain/diagnostics.ts';
-import { JOURNAL_FILE, readJournal } from './journal.ts';
+import { JOURNAL_FILE, readJournal, type JournalRead } from './journal.ts';
 import type { Frame, JournalLine, Ports } from './types.ts';
 import { HOST_EVENT_SHAPES } from './validate.ts';
 
@@ -11,7 +11,7 @@ import { HOST_EVENT_SHAPES } from './validate.ts';
 export type TimelineStep = { seq: number; phases: readonly Phase[]; awaiting: string | null; user: boolean; outcome?: string };
 /** `orchestratorBytes` sums the projected frame bytes at every host await. */
 export type TimelineFacts = { steps: readonly TimelineStep[]; orchestratorBytes: number };
-export type FoldRun = (lines: Iterable<JournalLine>) => TimelineFacts;
+export type FoldRun = (lines: Iterable<JournalLine>, read?: JournalRead, runDir?: string) => TimelineFacts;
 export type BuildIdentity = { version?: string; build?: string; os?: string };
 export type DiagnosticReport = { path: string; findings: number; top?: string };
 
@@ -84,7 +84,7 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
   const kept: JournalLine[] = [];
   const read = readJournal(ports, runDir, true);
   const tap = { *[Symbol.iterator]() { for (const line of read.records) { kept.push(compact(line)); yield line; } } };
-  const timeline = foldRun(tap);
+  const timeline = foldRun(tap, read, runDir);
   const steps = timeline.steps;
   let pointer = -1;
   // Steps and lines both ascend by seq, so a forward pointer finds the step in force at any later seq.
@@ -128,15 +128,18 @@ export function collectRunFacts(ports: Ports, runDir: string, build: BuildIdenti
       if (line.data['kind'] === 'event-rejected') facts.rejectedEvents.push({ eventType: HOST_TYPES.has(String(line.data['eventType'])) ? String(line.data['eventType']) : 'UNKNOWN', reason: rejectionReason(line.data['reason']) });
       if (line.data['kind'] === 'fault') {
         const started = count(line.data['sendStartedAt']), failed = count(line.data['failedAt']);
-        const boundary = cursor ? stepAt(cursor.seq) : undefined;
-        const hostWaitMs = cursor && started !== undefined ? Math.max(0, started - cursor.at) : undefined;
+        const boundarySeq = count(line.data['boundarySeq']);
+        const original = boundarySeq === undefined ? undefined : kept.find((prior) => prior.seq === boundarySeq);
+        const boundary = original ? [...steps].reverse().find((step) => step.seq <= original.seq) : cursor ? stepAt(cursor.seq) : undefined;
+        const hostWaitMs = started !== undefined && (original || cursor) ? Math.max(0, started - (original ? Date.parse(original.at) : cursor!.at)) : undefined;
         const driverMs = started !== undefined && failed !== undefined ? Math.max(0, failed - started) : undefined;
-        // The rolled-back reply is gone, so only the boundary step can mark the wait as a person's.
+        // The saved send boundary retains wait attribution after later transitions were committed.
         const waitBy = hostWaitMs === undefined ? undefined : boundary?.user ? 'user' as const : 'host' as const;
-        if (hostWaitMs !== undefined && waitBy === 'user') add(activeKey(boundary), 'userMs', hostWaitMs);
-        else if (hostWaitMs !== undefined) { add(activeKey(boundary), 'hostMs', hostWaitMs); facts.hostGaps.push({ await: boundary?.awaiting ?? '—', ms: hostWaitMs }); }
-        if (driverMs !== undefined) add(activeKey(boundary), 'driverMs', driverMs);
-        // The failed send's appends were rolled back, so the next interval starts where it failed.
+        const accepted = !!original && !!cursor && cursor.seq > original.seq;
+        if (!accepted && hostWaitMs !== undefined && waitBy === 'user') add(activeKey(boundary), 'userMs', hostWaitMs);
+        else if (!accepted && hostWaitMs !== undefined) { add(activeKey(boundary), 'hostMs', hostWaitMs); facts.hostGaps.push({ await: boundary?.awaiting ?? '—', ms: hostWaitMs }); }
+        if (driverMs !== undefined) add(activeKey(boundary), 'driverMs', accepted && cursor && failed !== undefined ? Math.max(0, failed - cursor.at) : driverMs);
+        // The next interval begins at failure; accepted intervals have already been counted.
         if (cursor && failed !== undefined) cursor = { at: failed, seq: cursor.seq };
         facts.fault = { ...opt('effectId', text(line.data['effectId'])), cls: String(line.data['cls'] ?? '—'), ...opt('hostWaitMs', hostWaitMs), ...opt('waitBy', waitBy), ...opt('driverMs', driverMs) };
       }

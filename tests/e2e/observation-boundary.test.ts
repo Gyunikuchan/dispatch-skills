@@ -59,8 +59,9 @@ test('observation boundary: non-ignored session outputs remain quiet while unrel
       assert.equal(frame.await, 'rule', JSON.stringify(frame));
       if (material) fs.writeFileSync(unrelated, 'second input edit');
       const next = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Intentional condition with existing evidence.' } } });
-      assert.equal(next.await, material ? 'decide' : 'done', JSON.stringify(next));
-      if (material) assert.equal(next.data['kind'], 'drift');
+      assert.equal(next.await, 'done', JSON.stringify(next));
+      const coverage = (next.data['completion'] as Record<string, unknown> | undefined)?.['coverage'] as { unassessed: { paths: string[] }[] } | undefined;
+      assert.deepEqual(coverage?.unassessed.flatMap((row) => row.paths) ?? [], material ? ['.scratch/input.txt'] : [], JSON.stringify(next));
     } finally { f.cleanup(); }
   }
 });

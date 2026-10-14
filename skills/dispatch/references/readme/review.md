@@ -39,3 +39,7 @@ Name what you want reviewed. For code, no range means uncommitted changes; provi
 ```
 
 The `.plan.md` and `.design.md` extensions let Dispatch infer the target type; other paths default to code review. Your host agent evaluates findings against the work's intended outcome. See [review rules](../review-rules.md) for how findings are assessed and resolved.
+
+## When the target changes
+
+Existing findings remain available when files change. Your host agent decides whether they still apply or whether another review is needed. The report distinguishes what reviewers inspected from later changes the host judged safe to reuse.

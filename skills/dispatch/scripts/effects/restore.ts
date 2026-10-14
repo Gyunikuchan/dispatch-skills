@@ -1,11 +1,14 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, RecoveryManifest, Ports, FileEntry } from '../core/types.ts';
+import type { Effect, Handler, RecoveryManifest, Ports, FileEntry, RecoveryCapability } from '../core/types.ts';
+import { effectDigest } from '../domain/effect-digest.ts';
+import { portableEffect } from '../lib/portable-effect.ts';
 import { snapshotContent } from './snapshot.ts';
 import { runPaths } from '../lib/session.ts';
 import { loadRecovery } from './recovery-manifest.ts';
 import { stableValue } from '../domain/stable-value.ts';
 
+type Row = Readonly<Record<string, unknown>>;
 type RestoreEffect = Extract<Effect, { kind: 'restore' }>;
 export type RestoreDeps = { cwd: string };
 const digest = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
@@ -32,6 +35,31 @@ function checkAncestors(cwd: string, file: string, ports: Ports): void {
     if (!info) continue;
     if (info.kind !== 'directory' || !info.realPath || path.relative(root, info.realPath).startsWith('..') || path.isAbsolute(path.relative(root, info.realPath))) throw new Error(`Restore ancestor escape: ${file}`);
   }
+}
+
+export function restoreRecovery(deps: RestoreDeps): RecoveryCapability<RestoreEffect> {
+  return { async probe(effect, ports, ctx) {
+    const unresolved = { status: 'unresolved' as const, evidence: 'Restore is incomplete; explicit retry retains all-path collision checks' };
+    if (!effect.paths.every(safePath) || new Set(effect.paths).size !== effect.paths.length) throw new Error('Invalid restore recovery paths.');
+    const snapshot = loadRecovery(ports, ctx.runDir, effect.to['recovery']);
+    if (path.resolve(snapshot.repoRoot) !== path.resolve(deps.cwd)) throw new Error('Recovery repository binding mismatch.');
+    const patchPath = runPaths(ctx.runDir).restore(effect.id);
+    if (!ports.fs.exists(patchPath) || !ports.fs.exists(`${patchPath}.sha256`)) return unresolved;
+    const original = ports.fs.readText(patchPath), patch = JSON.parse(original) as Row;
+    const paths = [...effect.paths].sort(), binding = digest(JSON.stringify({ paths, to: effect.to }));
+    if (ports.fs.readText(`${patchPath}.sha256`) !== digest(original) || patch['version'] !== 1 || patch['effectId'] !== effect.id || patch['binding'] !== binding) throw new Error('Restore completion proof binding mismatch.');
+    const target = Object.fromEntries(paths.map((file) => [file, { content: snapshotContent(snapshot, file, ports, ctx.runDir), entry: snapshot.entries[file] }]));
+    if (JSON.stringify(target) !== JSON.stringify(patch['target'])) throw new Error('Restore completion target mismatch.');
+    for (const file of paths) {
+      checkAncestors(deps.cwd, file, ports);
+      const value = target[file]!;
+      if (!validEntry(value.entry, value.content)) throw new Error('Invalid restore completion entry.');
+      const info = ports.fs.inspectPath(path.resolve(deps.cwd, file));
+      const live = { content: info?.kind === 'file' ? ports.fs.readBase64(path.resolve(deps.cwd, file)) : null, entry: info ? { kind: info.kind, mode: info.mode, linkTarget: info.linkTarget } : null };
+      if (stableValue(live) !== stableValue(value)) return unresolved;
+    }
+    return { status: 'complete', effectId: effect.id, attempt: ctx.attempt, descriptorHash: effectDigest(portableEffect(effect, ctx.runDir)), evidence: `${patchPath}.sha256 and matching live target bytes`, results: [{ type: 'RESTORED', effectId: effect.id, paths, patchPath }] };
+  } };
 }
 
 /** The published patch is an immutable target, never regenerated from a partially restored tree. */

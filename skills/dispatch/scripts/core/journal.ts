@@ -1,15 +1,13 @@
 // Append-only run journal `<run>/events.jsonl` (spec §4.1).
 
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { EventType, JournalLine, Ports, ExecutionConfigUpdated } from './types.ts';
 import { applyExecutionConfig } from '../domain/execution-config.ts';
+import { EngineFault } from '../domain/engine-fault.ts';
 
+export { EngineFault } from '../domain/engine-fault.ts';
 export const JOURNAL_FILE = 'events.jsonl';
-
-/** Invariant breach that aborts a send with exit 2 (spec §12). */
-export class EngineFault extends Error {
-  override name = 'EngineFault';
-}
 
 /** A run whose RUN_STARTED predates the effect-folder layout; resuming it would split files across layouts. */
 export class LayoutUnsupported extends Error {
@@ -27,6 +25,9 @@ export interface JournalRead {
   tornTail: boolean;
   /** Byte length of the valid prefix (excludes a torn tail). */
   goodBytes: number;
+  prefixHash?: string;
+  prefixHasher?: crypto.Hash;
+  checkpoint?: { line: JournalLine; priorHash: string; prefixHash: string; bytes: number };
 }
 
 export function journalPath(runDir: string): string {
@@ -43,14 +44,18 @@ function parseLine(text: string): JournalLine | null {
     if (!isRecord(value)) return null;
     const { seq, v, at, type, data } = value;
     if (typeof seq !== 'number' || typeof at !== 'string' || typeof type !== 'string' || !isRecord(data)) return null;
-    return { seq, v: v as 1, at, type: type as EventType, data };
-  } catch {
+    const checkpoint = value['checkpoint'];
+    if (checkpoint !== undefined && (!isRecord(checkpoint) || checkpoint['schema'] !== 1 || checkpoint['seq'] !== seq || typeof checkpoint['path'] !== 'string' || !/^checkpoints\/[a-f0-9]{64}\.json$/.test(checkpoint['path']) || typeof checkpoint['sha256'] !== 'string' || !/^[a-f0-9]{64}$/.test(checkpoint['sha256']) || !Number.isSafeInteger(checkpoint['bytes']) || Number(checkpoint['bytes']) < 1)) throw new EngineFault('checkpoint-reference-invalid');
+    return { seq, v: v as 1, at, type: type as EventType, data, ...(checkpoint ? { checkpoint: checkpoint as unknown as NonNullable<JournalLine['checkpoint']> } : {}) };
+  } catch (error) {
+    if (error instanceof EngineFault) throw error;
     return null;
   }
 }
 
 function* scan(ports: Ports, file: string, metadata: JournalRead): Generator<JournalLine> {
   if (!ports.fs.exists(file)) return;
+  const digest = crypto.createHash('sha256');
   let pieces: Buffer[] = [], physical = 0, pending: { bytes: number; text: string; invalidUtf8?: boolean } | null = null;
   const accept = (row: { bytes: number; text: string; invalidUtf8?: boolean }, final: boolean): JournalLine | null => {
     physical++;
@@ -61,7 +66,11 @@ function* scan(ports: Ports, file: string, metadata: JournalRead): Generator<Jou
     }
     if (line.v !== 1) throw new EngineFault(`journal ${file}: line ${physical} has v=${String(line.v)}; only v=1 is supported`);
     if (line.seq !== physical) throw new EngineFault(`journal ${file}: seq gap at line ${physical} (found ${line.seq})`);
+    const priorHash = digest.copy().digest('hex');
+    digest.update(`${row.text}\n`);
+    metadata.prefixHash = digest.copy().digest('hex');
     metadata.goodBytes += row.bytes; metadata.count++;
+    if (line.checkpoint) metadata.checkpoint = { line, priorHash, prefixHash: metadata.prefixHash, bytes: metadata.goodBytes };
     return line;
   };
   for (const raw of ports.fs.readChunks(file)) {
@@ -81,6 +90,7 @@ function* scan(ports: Ports, file: string, metadata: JournalRead): Generator<Jou
   const tail = pieces.some((piece) => piece.length > 0);
   if (pending) { const line = accept(pending, !tail); if (line) yield line; }
   if (tail) metadata.tornTail = true;
+  metadata.prefixHasher = digest.copy();
 }
 
 export function readJournal(ports: Ports, runDir: string, defer = false): JournalRead {

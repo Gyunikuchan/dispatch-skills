@@ -186,10 +186,13 @@ test('review-target transitions table matches step', () => {
   const checking = reviewMachine.step(launch.state, completed);
   if (checking.state.tag !== 'target-check') throw new Error('target check');
   const changed: Event = { type: 'REVIEW_TARGET_CHECKED', effectId: checking.state.effectId, manifestPath: 'changed.json', result: 'changed', notice };
-  const resolving = reviewMachine.step(checking.state, changed);
-  const answer = { by: 'orchestrator', noticeId: notice.id, afterHash: notice.afterHash, action: 'refresh' as const, rationale: 'Refresh changed input', evidenceIds: [] };
-  const rechecking = reviewMachine.step(resolving.state, { type: 'DECISION', kind: 'drift', answer });
-  if (rechecking.state.tag !== 'target-check') throw new Error('target recheck');
+  const observedCtx = { ...checking.state.c, observations: [{ id: notice.id, afterHash: notice.afterHash, beforeHash: notice.beforeHash, round: 1, paths: notice.paths, pathCount: 1, reason: notice.reason, rawDeltaRef: notice.rawDeltaRef }] };
+  const use: Event = { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'reuse', rationale: 'Findings still apply' };
+  const cluster = { clusterId: 'C1', findingIds: ['R1-F001'], paths: ['a'], verification: [], attemptBudget: 3, parentId: null, dependsOnClusters: [], members: [{ id: 'R1-F001', paths: ['a'], dependencies: [], verification: [] }] };
+  const selections: (readonly [ReviewState, Event])[] = ([
+    { tag: 'native', c: observedCtx, slots: [] }, { tag: 'rule', c: observedCtx }, { tag: 'fix', c: observedCtx, clusters: [cluster], pass: 'main', defects: [] },
+    { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } }, { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
+  ] as ReviewState[]).map((state) => [state, use] as const);
   const emptyParent: ReviewState = { tag: 'prepare', c: { ...checking.state.c, effectId: 'prepare' } };
   const emptyPrepared = reviewMachine.step(emptyParent, { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: true }, promptPaths: {} });
   if (emptyPrepared.state.tag !== 'target-check') throw new Error('empty target check');
@@ -222,9 +225,7 @@ test('review-target transitions table matches step', () => {
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
   ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }],
-    [checking.state, changed], [resolving.state, { type: 'DECISION', kind: 'drift', answer }],
-    [rechecking.state, { ...changed, effectId: rechecking.state.effectId }],
-    [{ ...rechecking.state, c: { ...rechecking.state.c, findings: [{ id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: 'a', defect: 'd', requiredChange: 'r', sources: ['codex[0]'], scope: 'in', round: 1, status: 'pending-rejection', resolution: 'no' }] } }, { ...changed, effectId: rechecking.state.effectId }],
+    [checking.state, changed], ...selections,
     [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
 });
 

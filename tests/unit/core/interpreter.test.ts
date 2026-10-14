@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { appendEvent, journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { LOCK_FILE } from '../../../skills/dispatch/scripts/core/lock.ts';
+import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
+import { rejectionReason } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 
@@ -16,6 +18,38 @@ async function startAwaiting(ports: FakePorts) {
 
 const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
 const types = (ports: FakePorts, runDir: string) => Array.from(readJournal(ports, runDir).records).map((line) => line.type);
+
+test('dry-run-guidance: invalid rulings returns validated examples without mutation', async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+  const options = { ports, runDir, runRel: 'runs/001-review', machine: transportMachine, handlers: fakeHandlers };
+  await start({ ...options, runStarted: RUN_STARTED });
+  const snapshot = () => fs.readdirSync(runDir, { recursive: true, withFileTypes: true }).map((entry) => {
+    const file = path.join(entry.parentPath, entry.name);
+    return [path.relative(runDir, file), entry.isDirectory() ? 'directory' : fs.readFileSync(file, 'utf8')];
+  }).sort(([left], [right]) => left!.localeCompare(right!));
+  const before = snapshot();
+  const result = await send({ ...options, dryRun: true, rawEvent: { type: 'RULINGS', rulings: { F1: 1 } } });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.verdict?.error ?? '', /event.rulings.F1/);
+  const guidance = result.verdict as { valid: boolean; events?: unknown[]; reply?: string };
+  assert.ok(guidance.events?.length);
+  for (const event of guidance.events) assert.equal(validateHostEvent('rule', event).ok, true);
+  assert.match(guidance.reply ?? '', /send --run runs\/001-review --event @runs\/001-review\/events\/1-rule.json/);
+  assert.deepEqual(snapshot(), before);
+  const rejected = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { F1: 1 } } });
+  assert.deepEqual(rejected.frame?.events, guidance.events);
+  assert.equal(rejected.frame?.reply, guidance.reply);
+});
+
+test('dry-run-guidance: new authority and recovery fields retain privacy-safe diagnostic paths', () => {
+  for (const field of ['changeDispositions[0].rationale', 'reconciliation.compensating[0]', 'retire[0].disposition', 'observationId', 'afterHash', 'paths[0]', 'boundarySeq', 'effectId', 'attempt', 'descriptorHash', 'oldRuntime', 'newRuntime', 'source.sha256', 'epoch']) {
+    const reason = rejectionReason(`event.${field}: expected valid input, got "private rationale C:/Users/private"`);
+    assert.equal(reason, `invalid-value at event.${field}`);
+    assert.equal(reason.includes('private'), false);
+  }
+  assert.equal(rejectionReason('event.privateRationale: expected string, got "secret"'), 'invalid-value at event.*');
+  assert.equal(rejectionReason('event.criterionDefinitions[0].id: expected string, got "secret"'), 'invalid-value at event.*');
+});
 
 test('start drives the machine to its await and returns one frame', async () => {
   const ports = fakePorts();
@@ -75,7 +109,9 @@ test('dry-run verdict reports validity with exit 0 for a valid event and 1 for a
   assert.deepEqual([malformed.frame, malformed.verdict?.valid, malformed.exitCode], [null, false, 1]);
   assert.match(malformed.verdict?.error ?? '', /^event[.:]/);
   const bad = await send({ ...options, rawEvent: { type: 'AUTHORED', path: 1 } });
-  assert.deepEqual(bad, { frame: null, verdict: { valid: false, error: 'event.path: expected non-empty string, got number' }, exitCode: 1 });
+  assert.deepEqual([bad.frame, bad.verdict?.valid, bad.verdict?.error, bad.exitCode], [null, false, 'event.path: expected non-empty string, got number', 1]);
+  assert.deepEqual(bad.verdict?.events, [{ type: 'AUTHORED', path: 'plan.md' }]);
+  assert.match(bad.verdict?.reply ?? '', /--event @.*3-author.json$/);
   const replay = await send(options);
   assert.equal(replay.frame?.await, 'author');
   assert.equal(replay.verdict, undefined);

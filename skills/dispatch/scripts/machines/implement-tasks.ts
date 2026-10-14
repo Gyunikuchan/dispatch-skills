@@ -36,21 +36,27 @@ export type TaskRecord = {
   parked?: { envelopePath: string } | null;
   /** Paths the committed candidate changed; admission compares them with the current scope. */
   candidatePaths?: readonly string[];
-  /** An amendment removed this running task; the record is dropped at its `cancelled` receipt. */
+  /** A revision retired this running task; the record moves to the archive at its terminal receipt. */
   removed?: boolean;
-  /** Envelope a removed writer submitted before its cancellation was confirmed; kept as terminal evidence, never admitted. */
-  discardedSubmission?: string | null;
+  /** Host disposition for a retired live writer: `stop` waits for cancellation, `retain` keeps its submission as evidence. */
+  retirement?: 'stop' | 'retain';
+  /** Envelope a retired writer submitted; kept as terminal evidence, never admitted. */
+  retainedSubmission?: string | null;
+  /** Earlier integration commits of this task, kept addressable after a delivery rebase. */
+  integratedHistory?: readonly string[];
 };
+/** A retired task record; its candidate and integrated commits stay addressable and integrated bytes stay delivered. */
+export type RetiredTask = TaskRecord & { retiredBy: string };
 export type TaskBriefHistory = TaskBriefPaths & { scope: string };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
-/** Paths, criterion definitions, and prerequisites define a task's work; any change re-pends it and its descendants. */
+/** Paths, criterion definitions, and prerequisites define a task's work; reconciliation reports a changed signature as `changed`. */
 export function taskSignature(plan: ParsedPlan, task: PlanTask): string {
   const criteria = taskCriteria(plan, task).map(({ line: _line, ...criterion }) => criterion).sort((a, b) => a.id.localeCompare(b.id));
   return JSON.stringify({ paths: [...task.paths].sort(), criteria: [...task.criteria].sort(), definitions: criteria, summary: task.summary, prerequisites: [...task.prerequisites].sort() });
 }
 
-function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {
+export function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {
   return { id: task.id, status: 'pending', attempt: 0, failures: 0, signature: taskSignature(plan, task), input: null, worktree: null, worktreeNames: [], handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
 }
 
@@ -70,18 +76,6 @@ export function initialTasks(plan: ParsedPlan): Tasks {
   return Object.fromEntries(plan.tasks.map((task) => [task.id, fresh(plan, task)]));
 }
 
-/** Rewinds integrated work without reusing an earlier writer identity or replenishing failure budget. */
-export function rependTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
-  return Object.fromEntries(plan.tasks.map((task) => {
-    const old = tasks[task.id];
-    return [task.id, {
-      ...fresh(plan, task), attempt: old?.attempt ?? 0, failures: old?.failures ?? 0,
-      worktreeNames: old?.worktreeNames ?? [],
-      ...(old?.preserveDraft && old.worktree ? { worktree: old.worktree, input: old.input, preserveDraft: true, reason: old.reason } : {}),
-    }];
-  }));
-}
-
 function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
   const out = new Set(ids);
   for (let grew = true; grew;) {
@@ -91,11 +85,9 @@ function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
   return out;
 }
 
-/** Observation refresh preserves attempts, failure budgets, and live writer identities. */
-export function invalidateTaskEvidence(tasks: Tasks, plan: ParsedPlan, affected: ReadonlySet<string>): Tasks {
-  const invalid = descendants(plan, new Set(plan.tasks.filter((task) => task.criteria.some((id) => affected.has(id))).map((task) => task.id)));
-  const pending = rependTasks(tasks, plan);
-  return Object.fromEntries(Object.entries(tasks).map(([id, old]) => [id, !invalid.has(id) || old.status === 'running' || old.status === 'submitted' ? old : pending[id]! ]));
+/** Tasks that own the named criteria; refresh obligations list them without changing work or acceptance. */
+export function criterionTasks(plan: ParsedPlan, criteria: ReadonlySet<string>): string[] {
+  return plan.tasks.filter((task) => task.criteria.some((id) => criteria.has(id))).map((task) => task.id);
 }
 
 /** Rebinds records to a revised plan: unchanged tasks keep their records; changed, new, and dependent tasks re-pend. */
@@ -106,63 +98,6 @@ export function reconcileTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
     const old = tasks[task.id];
     return [task.id, !old ? fresh(plan, task) : repend.has(task.id) ? { ...fresh(plan, task), attempt: old.attempt, failures: old.signature === taskSignature(plan, task) ? old.failures : 0, worktreeNames: old.worktreeNames ?? [] } : old];
   }));
-}
-
-/** `removedRunning` lists launched writers an amendment removes; they discard live work, so the amendment is user-gated. */
-export type AmendResult = { ok: true; tasks: Tasks; rebrief: string[]; reverify: string[]; removedAccepted: string[]; discarded: string[]; removedRunning: string[] } | { ok: false; error: string };
-
-/**
- * Rebinds records to an amended plan without draining writers: pending and failed tasks re-pend on a changed signature;
- * running tasks keep their launch identity and need a notice when their scope changes; submitted candidates wait for
- * admission against the new scope; accepted tasks with a changed scope are re-verified on the integration head.
- */
-export function amendTasks(tasks: Tasks, before: ParsedPlan, after: ParsedPlan, notify: readonly string[]): AmendResult {
-  const next: Record<string, TaskRecord> = {};
-  const rebrief: string[] = [], reverify: string[] = [], removedAccepted: string[] = [], discarded: string[] = [], removedRunning: string[] = [];
-  for (const task of after.tasks) {
-    const old = tasks[task.id];
-    const prior = before.tasks.find((row) => row.id === task.id);
-    if (!old || !prior) { next[task.id] = fresh(after, task); continue; }
-    const signature = taskSignature(after, task);
-    const scopeChanged = taskScope(before, prior) !== taskScope(after, task);
-    const unaccepted = task.prerequisites.filter((id) => !prior.prerequisites.includes(id) && tasks[id]?.status !== 'accepted');
-    switch (old.status) {
-      case 'pending': case 'failed':
-        next[task.id] = signature === old.signature ? old : { ...fresh(after, task), attempt: old.attempt, worktreeNames: old.worktreeNames ?? [] };
-        break;
-      case 'running':
-        if (scopeChanged && !notify.includes(task.id)) return { ok: false, error: `AMEND changes running task ${task.id}; name it in notify so its brief is regenerated.` };
-        if (notify.includes(task.id)) rebrief.push(task.id);
-        next[task.id] = old;
-        break;
-      case 'submitted':
-        next[task.id] = old;
-        break;
-      case 'accepted':
-        if (unaccepted.length) return { ok: false, error: `AMEND adds unaccepted prerequisite ${unaccepted.join(', ')} to accepted task ${task.id}; reorder the tasks or discard the accepted work with a user-gated amendment.` };
-        if (scopeChanged) reverify.push(task.id);
-        next[task.id] = { ...old, signature };
-        break;
-      default: return { ok: false, error: `Unknown task status for ${task.id}.` };
-    }
-  }
-  for (const [id, old] of Object.entries(tasks)) {
-    if (after.tasks.some((task) => task.id === id)) continue;
-    if (old.status === 'running') {
-      if (old.handle && !old.removed) removedRunning.push(id);
-      next[id] = { ...old, removed: true };
-      continue;
-    }
-    if (old.status === 'accepted') removedAccepted.push(id);
-    if (old.status === 'submitted') discarded.push(id);
-  }
-  for (const id of notify) if (!next[id] || next[id]!.status !== 'running' || next[id]!.removed) return { ok: false, error: `notify names ${id}, which is not a live writer in the amended plan.` };
-  return { ok: true, tasks: next, rebrief, reverify, removedAccepted, discarded, removedRunning };
-}
-
-/** Accepted work is already integrated; losing any accepted record means integration must be rebuilt. */
-export function invalidatesIntegration(before: Tasks, after: Tasks): boolean {
-  return Object.values(before).some((record) => record.status === 'accepted' && after[record.id]?.status !== 'accepted');
 }
 
 export function readyTasks(plan: ParsedPlan, tasks: Tasks, maxFailures: number): PlanTask[] {

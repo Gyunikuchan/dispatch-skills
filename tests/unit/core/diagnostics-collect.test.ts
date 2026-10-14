@@ -1,3 +1,4 @@
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,6 +100,7 @@ const WAVE_SLOTS = [
 async function flowRun() {
   const { ports, advance } = steppedPorts();
   const runDir = path.join(tempDir(), '.state/runs/001-plan');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   const handlers: Handlers = {
     snapshot: async (effect) => { advance(1_000); return [snapshotResult(effect.id)]; },
     wave: async (effect) => { advance(20_000); return [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: WAVE_SLOTS, findings: [{ id: 'F1' }, { id: 'F2' }] }]; },
@@ -124,8 +126,9 @@ async function flowRun() {
 
 // SECTION: Review flow and host machine — the interpreter's toggle and retro wiring.
 
-function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-review') {
-  const ports = fakePorts(), runDir = path.join(session, '.state/runs', id);
+function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-review', shared?: FakePorts) {
+  const ports = shared ?? fakePorts(), runDir = path.join(session, '.state/runs', id);
+  if (!shared) memoryRunFs(ports, path.join(session, '.state'));
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: [], empty: true }, promptPaths: {} }],
     handoff: createHandoff({ tempRoot: session, workspaceRoot: path.dirname(session) }),
@@ -147,6 +150,7 @@ type HandoffHandler = NonNullable<Handlers['handoff']>;
 /** A real code review through dispatchMachine with one codex finding per round; diagnostics on, so it ends at retro. */
 function codeReview(finding: (round: number) => Record<string, unknown>, rounds: number, ports: FakePorts = fakePorts(), wrapHandoff = (handoff: HandoffHandler): HandoffHandler => handoff) {
   const session = tempDir(), runDir = path.join(session, '.state/runs/001-review');
+  memoryRunFs(ports, path.join(session, '.state'));
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts'] }, promptPaths: { 'codex[0]': 'p0.md' } }],
     'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 1, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: 'input.json' }],
@@ -233,6 +237,7 @@ describe('completed flow diagnostics', () => {
 
 test('SC10 native receipt records launched model and effort', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-host');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   const descriptor = { sourceKey: 'claude[0]', substitutesFor: null, outputPath: 'native/claude-0.md', model: 'claude-opus-5-5', reasoningEffort: 'high' };
   const mapping = { configuredModel: 'claude-opus-5-5', launcherModel: 'claude-sonnet-5', launcherEffort: 'medium', substitution: 'opus quota exhausted; launched sonnet at medium', provider: 'anthropic' };
   const receipt = { slot: 'claude[0]', sourceKey: 'claude[0]', outputPath: 'native/claude-0.md', mapping, tokens: 4_200, durationMs: 90_000 };
@@ -264,10 +269,10 @@ test('SC10 later run-end render replaces older snapshot', async () => {
   await first.begin();
   await first.reply({ type: 'RETRO', observations: [OBSERVATION] });
   assert.match(read(report), /- Runs: 1 · /);
-  const second = reviewRun(toggle, session, '002-review');
+  const second = reviewRun(toggle, session, '002-review', first.ports);
   await second.begin();
   assert.match(read(report), /- Runs: 1 · /, 'a run paused at retro does not render');
-  const third = reviewRun(toggle, session, '003-review');
+  const third = reviewRun(toggle, session, '003-review', first.ports);
   await third.begin();
   await third.reply({ type: 'RETRO', observations: [] });
   let text = read(report);
@@ -302,6 +307,7 @@ const roundsMachine: Machine<RoundsState> = {
 
 test('heuristic precision collector carries review cap', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-review');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   const handlers: Handlers = { wave: async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [], findings: [] }] };
   const base = { ports, runDir, machine: roundsMachine, handlers };
   await start({ ...base, runStarted: RUN_STARTED });
@@ -332,6 +338,7 @@ test('heuristic precision production phases carry review cap', async () => {
 
 test('heuristic precision omits a run whose journal fails to fold', async () => {
   const session = tempDir(), ports = fakePorts();
+  memoryRunFs(ports, path.join(session, '.state'));
   const runDir = (id: string) => path.join(session, '.state/runs', id);
   const base = (id: string) => ({ ports, runDir: runDir(id), machine: hostMachine, handlers: {} });
   await start({ ...base('001-host'), runStarted: RUN_STARTED });
@@ -350,6 +357,7 @@ test('heuristic precision omits a run whose journal fails to fold', async () => 
 
 test('SC3 rejected event canaries never reach the report', async () => {
   const session = tempDir(), ports = fakePorts(), runDir = path.join(session, '.state/runs/001-host');
+  memoryRunFs(ports, path.join(session, '.state'));
   const base = { ports, runDir, machine: hostMachine, handlers: {}, diagnosticToggle: () => true };
   await start({ ...base, runStarted: RUN_STARTED });
   await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });

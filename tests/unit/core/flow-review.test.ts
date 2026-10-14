@@ -1,3 +1,5 @@
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
+import { fixtureReference } from './fixtures/review-manifest.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +31,7 @@ function setup(fix: boolean) {
   const commands: string[] = [];
   ports.spawn = { run: async (argv) => { commands.push(argv.join(' ')); return { exit: 0, stdout: 'ok', stderr: '' }; } };
   const runDir = path.join(tmp, 'run');
+  memoryRunFs(ports, runDir);
   const runStarted: RunStartedEvent = {
     type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null, fix,
     orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {},
@@ -43,7 +46,7 @@ test('review-report-only-default: standalone report mode renders <slug>.report.m
   assert.deepEqual([rule.frame?.at, rule.frame?.await], ['review › rule', 'rule']);
   const done = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } } });
   assert.deepEqual([done.frame?.at, done.frame?.await, done.frame?.data['outcome']], ['review › done', 'done', 'complete']);
-  const report = fs.readFileSync(path.join(runDir, 'main-head.report.md'), 'utf8');
+  const report = options.ports.fs.readText(path.join(runDir, 'main-head.report.md'));
   assert.match(report, /R1-F001/);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
 });
@@ -67,8 +70,8 @@ test('rewrite SC2 prompt preserves comparison independently of context', async (
   const { options, runStarted, runDir } = setup(false);
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Check the boundary' } } });
   assert.equal(result.frame?.await, 'rule', JSON.stringify(result));
-  const file = fs.readdirSync(runDir, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt = fs.readFileSync(path.join(runDir, file), 'utf8');
+  const file = options.ports.fs.listFiles(runDir).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt = options.ports.fs.readText(path.join(runDir, file));
   assert.match(prompt, /main\.\.HEAD/);
   assert.match(prompt, /src\/a\.ts/);
   assert.match(prompt, /Check the boundary/);
@@ -82,16 +85,18 @@ test('rewrite SC3 incompatible journals fail explicitly', () => {
 
 test('rewrite SC2 later delta remains within manifest and accepted fix paths', async () => {
   const ports = fakePorts(); const runDir = tempDir(); const priorPath = path.join(runDir, 'prior.json'); const snapshot = { head: 'a', target: 'main..HEAD', comparison: 'a', index: {}, working: {}, untracked: {}, governedPaths: ['src/a.ts'] };
+  memoryRunFs(ports, runDir);
   ports.fs.writeAtomic(priorPath, JSON.stringify(snapshot));
   const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], reviewSnapshot: async () => snapshot, reviewDelta: async () => ({ paths: ['src/a.ts', 'src/new.ts', 'unrelated.ts'], staged: [], unstaged: [], untracked: [], deleted: [] }) };
   const handler = createPrepareReview({ cwd: '/repo', skillRoot: SKILL_ROOT, git });
-  const events = await handler({ kind: 'prepare-review', id: 'round2', round: 2, review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: priorPath, affectedPaths: ['src/new.ts'] } }, ports, { runDir, attempt: 1 });
+  const events = await handler({ kind: 'prepare-review', id: 'round2', round: 2, review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: priorPath, priorManifestRef: fixtureReference(ports, runDir, priorPath), affectedPaths: ['src/new.ts'] } }, ports, { runDir, attempt: 1 });
   const prepared = events[0]; assert.equal(prepared?.type, 'REVIEW_PREPARED');
   if (prepared?.type === 'REVIEW_PREPARED') assert.deepEqual(prepared.scope['paths'], ['src/a.ts', 'src/new.ts']);
 });
 
 test('review-target retried prepare refreshes its manifest and later round reuses one capture', async () => {
   const runDir = tempDir(), ports = fakePorts(); let head = 'first'; let names = ['src/a.ts']; const requests: (readonly string[] | undefined)[] = [];
+  memoryRunFs(ports, runDir);
   const git = { ...createGit({ run: async () => '' }), diffNames: async () => names,
     reviewSnapshot: async (_cwd: string, _target: string, paths?: readonly string[]) => { requests.push(paths); return { head, target: '', comparison: head, index: {}, working: {}, untracked: {} }; },
     reviewDelta: async (_cwd: string, _prior: unknown, current?: unknown) => { assert.ok(current); return { paths: names, staged: [], unstaged: [], untracked: [], deleted: [] }; } };
@@ -103,7 +108,7 @@ test('review-target retried prepare refreshes its manifest and later round reuse
   const manifestPath = String(second.scope['manifestPath']); const manifest = JSON.parse(ports.fs.readText(manifestPath));
   assert.equal(manifest.head, 'second'); assert.deepEqual(manifest.governedPaths, names);
   const before = requests.length;
-  const event = (await handler({ ...effect, id: 'round2', round: 2, scope: { scope: 'delta', priorManifest: manifestPath } }, ports, { runDir, attempt: 1 }))[0];
+  const event = (await handler({ ...effect, id: 'round2', round: 2, scope: { scope: 'delta', priorManifest: manifestPath, priorManifestRef: second.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(event?.type, 'REVIEW_PREPARED'); assert.equal(requests.length - before, 1); assert.deepEqual(requests.at(-1), names);
 });
 
@@ -117,6 +122,7 @@ test('binds changed sections for artifact re-review', async () => {
   const tmp = tempDir();
   const runDir = tempDir();
   const ports = fakePorts();
+  memoryRunFs(ports, runDir);
   const git = createGit({ run: async () => '' });
   const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
   const planPath = path.join(tmp, 'test.plan.md');
@@ -139,14 +145,14 @@ test('binds changed sections for artifact re-review', async () => {
   ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\nupdated changes\n');
 
   // Round 2 full re-review binds changed sections as context
-  const r2Full = (await handler({ kind: 'prepare-review', id: 'p2-full', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full', priorManifest: r1Manifest } }, ports, { runDir, attempt: 1 }))[0];
+  const r2Full = (await handler({ kind: 'prepare-review', id: 'p2-full', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2Full?.type, 'REVIEW_PREPARED');
   assert.deepEqual(r2Full?.scope['paths'], ['Proposed Changes']);
   const r2FullPrompt = ports.fs.readText(r2Full?.promptPaths['codex[0]']!);
   assert.match(r2FullPrompt, /Re-review round 2 \(full artifact\) — review the whole artifact; changed sections for context: Proposed Changes/);
 
   // Round 2 delta re-review binds changed sections and restricts scope
-  const r2Delta = (await handler({ kind: 'prepare-review', id: 'p2-delta', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest } }, ports, { runDir, attempt: 1 }))[0];
+  const r2Delta = (await handler({ kind: 'prepare-review', id: 'p2-delta', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2Delta?.type, 'REVIEW_PREPARED');
   assert.deepEqual(r2Delta?.scope['paths'], ['Proposed Changes']);
   const r2DeltaPrompt = ports.fs.readText(r2Delta?.promptPaths['codex[0]']!);
@@ -157,6 +163,7 @@ test('delta review attributes changes inside fenced code blocks with heading syn
   const tmp = tempDir();
   const runDir = tempDir();
   const ports = fakePorts();
+  memoryRunFs(ports, runDir);
   const git = createGit({ run: async () => '' });
   const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
   const planPath = path.join(tmp, 'fenced.plan.md');
@@ -169,7 +176,7 @@ test('delta review attributes changes inside fenced code blocks with heading syn
 
   // Update inside the fenced block under Proposed Changes
   ports.fs.writeAtomic(planPath, '# Plan\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\n```markdown\n## Execution Status\nupdated status inside fence\n```\n');
-  const r2 = (await handler({ kind: 'prepare-review', id: 'p2', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest } }, ports, { runDir, attempt: 1 }))[0];
+  const r2 = (await handler({ kind: 'prepare-review', id: 'p2', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2?.type, 'REVIEW_PREPARED');
   // Changes remain attributed to 'Proposed Changes', not swallowed by ignored 'Execution Status'
   assert.deepEqual(r2?.scope['paths'], ['Proposed Changes']);
@@ -179,8 +186,8 @@ test('flow-review-context: start review forwards --context into run spec context
   const { options, runStarted, runDir } = setup(false);
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Semantic intent from chat' } } });
   assert.equal(result.frame?.await, 'rule');
-  const file = fs.readdirSync(runDir, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt = fs.readFileSync(path.join(runDir, file), 'utf8');
+  const file = options.ports.fs.listFiles(runDir).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt = options.ports.fs.readText(path.join(runDir, file));
   assert.match(prompt, /- Task: Semantic intent from chat/);
   assert.match(prompt, /- Focus: Semantic intent from chat/);
 });
@@ -195,10 +202,11 @@ test('flow-review-discovery: discovers unique session deliverables and respects 
   // 1. Unique candidates discovered through RUN_STARTED event and reviewSpecFromRun
   const { options, runStarted } = setup(false);
   const runDir1 = path.join(sessionDir, '.state/runs/001-code-review');
+  memoryRunFs(options.ports, runDir1);
   const r1 = await start({ ...options, runDir: runDir1, runStarted });
   assert.equal(r1.frame?.await, 'rule');
-  const file1 = fs.readdirSync(runDir1, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt1 = fs.readFileSync(path.join(runDir1, file1), 'utf8');
+  const file1 = options.ports.fs.listFiles(runDir1).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt1 = options.ports.fs.readText(path.join(runDir1, file1));
   const expectedPlan = path.join(sessionDir, 'feat.plan.md').replace(/\\/g, '/');
   const expectedWalkthrough = path.join(sessionDir, 'feat.walkthrough.md').replace(/\\/g, '/');
   assert.match(prompt1, new RegExp(`- Plan: ${expectedPlan.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
@@ -208,32 +216,35 @@ test('flow-review-discovery: discovers unique session deliverables and respects 
   const emptyDir = path.join(tmp, 'empty-session');
   fs.mkdirSync(emptyDir, { recursive: true });
   const runDirEmpty = path.join(emptyDir, '.state/runs/001-code-review');
+  memoryRunFs(options.ports, runDirEmpty);
   const r2 = await start({ ...options, runDir: runDirEmpty, runStarted });
   assert.equal(r2.frame?.await, 'rule');
-  const file2 = fs.readdirSync(runDirEmpty, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt2 = fs.readFileSync(path.join(runDirEmpty, file2), 'utf8');
+  const file2 = options.ports.fs.listFiles(runDirEmpty).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt2 = options.ports.fs.readText(path.join(runDirEmpty, file2));
   assert.match(prompt2, /- Plan: None/);
   assert.match(prompt2, /- Walkthrough: None/);
 
   // 3. Ambiguity: multiple plan candidates in sessionDir -> leaves Plan as None
   fs.writeFileSync(path.join(sessionDir, 'other.plan.md'), '# Other Plan');
   const runDirAmbig = path.join(sessionDir, '.state/runs/002-code-review');
+  memoryRunFs(options.ports, runDirAmbig);
   const r3 = await start({ ...options, runDir: runDirAmbig, runStarted });
   assert.equal(r3.frame?.await, 'rule');
-  const file3 = fs.readdirSync(runDirAmbig, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt3 = fs.readFileSync(path.join(runDirAmbig, file3), 'utf8');
+  const file3 = options.ports.fs.listFiles(runDirAmbig).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt3 = options.ports.fs.readText(path.join(runDirAmbig, file3));
   assert.match(prompt3, /- Plan: None/);
   assert.match(prompt3, new RegExp(`- Walkthrough: ${expectedWalkthrough.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
 
   // 4. Explicit path preserved over discovered or ambiguous
   const runDirExplicit = path.join(sessionDir, '.state/runs/003-code-review');
+  memoryRunFs(options.ports, runDirExplicit);
   const r4 = await start({
     ...options, runDir: runDirExplicit,
     runStarted: { ...runStarted, overrides: { governing: { planPath: 'docs/explicit.plan.md', walkthroughPath: 'docs/explicit.walkthrough.md' } } },
   });
   assert.equal(r4.frame?.await, 'rule');
-  const file4 = fs.readdirSync(runDirExplicit, { recursive: true, encoding: 'utf8' }).find((name) => name.endsWith('.prompt.md'))!;
-  const prompt4 = fs.readFileSync(path.join(runDirExplicit, file4), 'utf8');
+  const file4 = options.ports.fs.listFiles(runDirExplicit).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt4 = options.ports.fs.readText(path.join(runDirExplicit, file4));
   assert.match(prompt4, /- Plan: docs\/explicit\.plan\.md/);
   assert.match(prompt4, /- Walkthrough: docs\/explicit\.walkthrough\.md/);
 });

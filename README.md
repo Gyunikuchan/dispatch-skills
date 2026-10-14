@@ -161,6 +161,8 @@ For work too big for one pass, `design:` creates and reviews an increment graph.
 > [!NOTE]
 > Nothing is ever committed, pushed, or opened as a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
 
+For help resuming interrupted work or upgrading Dispatch, see [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md).
+
 ## License
 
 MIT © [Gyunikuchan](https://github.com/Gyunikuchan). See [LICENSE](LICENSE).

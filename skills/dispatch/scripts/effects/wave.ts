@@ -10,7 +10,10 @@
 //   <slot>[.a<n>].outcome.json one SlotFinal per roster slot
 //   done[.a<n>].json          written last
 
-import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect } from '../core/types.ts';
+import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, RecoveryCapability } from '../core/types.ts';
+import { effectDigest } from '../domain/effect-digest.ts';
+import { portableEffect } from '../lib/portable-effect.ts';
+import { stableValue } from '../domain/stable-value.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
 import { collectFindings, parseReport, type ReportFailureKind } from '../domain/report.ts';
 import { sanitizeText } from '../domain/sanitize.ts';
@@ -441,7 +444,7 @@ const outputOf = (paths: SlotPaths, key: string): string => `${paths.logPath}.${
  * Starts the CLI worker and returns descriptors for the host: `nativeSubagentsOnly` slots, plus an early fallback
  * (position 0) for each CLI slot on the orchestrator platform so a native capture is ready if the CLI fails.
  */
-export function startWave(effect: WaveEffect, ctx: HandlerContext, deps: WaveDeps): WaveStart {
+export function startWave(effect: WaveEffect, ctx: HandlerContext, deps: WaveDeps, knownAttempt?: number): WaveStart {
   const roster = effect.roster.map(asRosterSlot);
   const context = deps.context(effect);
   const describe = (slot: RosterSlot, substitutes: boolean): NativeDescriptor[] => {
@@ -457,8 +460,33 @@ export function startWave(effect: WaveEffect, ctx: HandlerContext, deps: WaveDep
   const progress: ResultEvent[] = roster.filter((slot) => !slot.reserve)
     .map((slot) => ({ type: 'WAVE_PROGRESS', effectId: effect.id, slot: slot.slot, status: slot.native ? 'native-pending' : 'launched' }));
   const cli = roster.filter((slot) => !slot.native);
-  const attempt = cli.some((slot) => !slot.reserve) ? Promise.resolve(prepareWorker(effect, cli, deps, ctx)) : Promise.resolve(0);
+  const attempt = knownAttempt !== undefined ? Promise.resolve(knownAttempt) : cli.some((slot) => !slot.reserve) ? Promise.resolve(prepareWorker(effect, cli, deps, ctx)) : Promise.resolve(0);
   return { native, early, progress, attempt };
+}
+
+export function waveRecovery<E extends Extract<Effect, { kind: 'wave' | 'wave-start' | 'wave-finish' }>>(deps: WaveDeps): RecoveryCapability<E> {
+  return { async probe(effect, _ports, ctx) {
+    if (effect.kind === 'wave-finish') {
+      const handler = createWaveFinishHandler(deps);
+      return { status: 'live', effectId: effect.id, attempt: ctx.attempt, descriptorHash: effectDigest(portableEffect(effect, ctx.runDir)), handle: `${effect.waveKey}:a${effect.attempt}`, resume: () => handler(effect, _ports, ctx) };
+    }
+    const input = readJson<WaveInput>(deps.fs, runPaths(ctx.runDir).input(effect.id));
+    const n = latestAttempt(deps.fs, ctx.runDir, effect.id);
+    const unresolved = { status: 'unresolved' as const, evidence: 'Worker launch fence exists without a matching live claim or completed outcome' };
+    if (!input || n !== ctx.attempt || input.effectId !== effect.id || input.round !== effect.round || input.timeoutMs !== effect.timeoutMs || stableValue(input.roster) !== stableValue(effect.roster.map(asRosterSlot).filter((slot) => !slot.native))) return unresolved;
+    const claim = readClaim(deps, ctx.runDir, effect.id, n, effect.timeoutMs);
+    const done = deps.fs.readText(runPaths(ctx.runDir).done(effect.id, n)) !== null;
+    if (!done && claim.kind !== 'live') return unresolved;
+    const resume = async (): Promise<readonly ResultEvent[]> => {
+      if (!done) await deps.awaitWorker(ctx.runDir, effect.id, n);
+      if (effect.kind === 'wave-start') {
+        const started = startWave(effect, ctx, deps, n);
+        return [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: n, roster: effect.roster, native: started.native, early: started.early, claimPath: runPaths(ctx.runDir).claim(effect.id, n), inputPath: runPaths(ctx.runDir).input(effect.id) }];
+      }
+      return waveDone(effect, readFinals(deps, ctx.runDir, effect.id, n, effect.roster.map(asRosterSlot)));
+    };
+    return { status: 'live', effectId: effect.id, attempt: ctx.attempt, descriptorHash: effectDigest(portableEffect(effect, ctx.runDir)), handle: `${effect.id}:a${n}`, resume };
+  } };
 }
 
 type Capture = { sourceKey: string; text: string };

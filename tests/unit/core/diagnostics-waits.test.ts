@@ -80,6 +80,13 @@ function codeReview(finding: (round: number) => Record<string, unknown>, rounds:
   return {
     report: () => read(path.join(session, 'diagnostics.md')),
     begin: async () => (await start({ ...base, runStarted })).frame?.await,
+    retryRecovery: async () => {
+      const status = await send({ ...base, dryRun: true });
+      assert.equal(status.frame?.data['kind'], 'effect-recovery');
+      const reply = status.frame!.data['recoveryReply'] as Record<string, unknown>;
+      const result = await send({ ...base, rawEvent: { ...reply, action: 'retry', rationale: 'The fake handoff failed before publication; retry the retained descriptor.' } });
+      return result.frame?.error ?? result.frame?.await;
+    },
     /** The next await, or the frame error for a rejected event or a fault. */
     reply: async (rawEvent: unknown) => { const result = await send({ ...base, rawEvent }); return result.frame?.error ?? result.frame?.await; },
   };
@@ -151,15 +158,15 @@ test('SC10 needs-user wait then failing send counts the wait as user time', asyn
   advance(60_000);
   assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' } } }), 'decide');
   advance(7_200_000);
-  assert.match(String(await review.reply(needsUser)), /^PortTimeout/, 'the send faults and rolls back the needs-user reply');
+  assert.match(String(await review.reply(needsUser)), /^PortTimeout/, 'the send faults after committing the needs-user reply');
   advance(60_000);
   failing = false;
-  assert.equal(await review.reply(needsUser), 'retro');
+  assert.equal(await review.retryRecovery(), 'retro');
   advance(5_000);
   assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
   const report = review.report();
   assert.ok(report.includes('- Run 1 fault: `port-timeout` in `root.handoff.1`; user wait 2h 0m 0s; driver <1s.'), report);
-  assert.match(report, /\| code review \| [a-z-]+ \| 2h 2m 5s \| <1s \| 1m 5s \| 2h 1m 0s \|/, 'both the rolled-back wait and the retry wait are user time');
+  assert.match(report, /\| code review \| [a-z-]+ \| 2h 2m 5s \| 1m 0s \| 1m 5s \| 2h 0m 0s \|/, 'the accepted user wait and pending-effect recovery interval retain their attribution');
   assert.doesNotMatch(report, /H6/, 'no host gap holds the user wait');
 });
 
@@ -176,8 +183,8 @@ test('SC10 fault report names fault class and timing without detail', async () =
   const fault = await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
   assert.equal(fault.exitCode, 2);
   const lines = [...readJournal(ports, runDir).records];
-  assert.deepEqual(lines.map((line) => line.type), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT', 'DIAGNOSTIC_NOTE'], 'the failed send rolls back and leaves one note');
-  assert.deepEqual(lines[3]?.data, { kind: 'fault', effectId: 'fixture.verify.1', cls: 'port-timeout', sendStartedAt: FIXED_NOW + 121_000, failedAt: FIXED_NOW + 124_000 });
+  assert.deepEqual(lines.map((line) => line.type), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT', 'AUTHORED', 'EFFECT_STARTED', 'DIAGNOSTIC_NOTE'], 'the failed send retains accepted transitions and one note');
+  assert.deepEqual(lines[5]?.data, { kind: 'fault', effectId: 'fixture.verify.1', cls: 'port-timeout', sendStartedAt: FIXED_NOW + 121_000, failedAt: FIXED_NOW + 124_000, boundarySeq: 3 });
   const report = read(path.join(session, 'diagnostics.md'));
   assert.ok(report.includes('- Run 1 fault: `port-timeout` in `fixture.verify.1`; host wait 2m 0s; driver 3s.'));
   assert.doesNotMatch(report, /alice|secret|timed out/);
@@ -191,17 +198,18 @@ test('SC10 long host wait then short failing effect splits host and driver time'
     snapshot: async (effect) => { advance(1_000); return [snapshotResult(effect.id)]; },
     verify: async (effect) => { advance(failing ? 500 : 2_000); if (failing) throw portTimeout(); return verifyDone(effect); },
   };
+  handlers.verify!.recovery = { repeat: 'deterministic-read' };
   const base = { ports, runDir, machine: awaitingMachine, handlers };
   await start({ ...base, runStarted: RUN_STARTED });
   advance(7_200_000);
   assert.equal((await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } })).exitCode, 2);
   advance(60_000);
   failing = false;
-  assert.equal((await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } })).frame?.await, 'done');
+  assert.equal((await send(base)).frame?.await, 'done');
   const facts = collectRunFacts(ports, runDir, {}, testFold(awaitingMachine, askPhases));
   assert.deepEqual(facts.fault, { effectId: 'fixture.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, waitBy: 'host', driverMs: 500 });
-  assert.deepEqual(facts.hostGaps, [{ await: 'author', ms: 7_200_000 }, { await: 'author', ms: 60_000 }], 'the retry wait starts at the failure, so the long wait counts once');
-  assert.deepEqual(facts.phases, [{ key: 'plan', name: 'plan', outcome: 'complete', wallMs: 7_263_500, driverMs: 3_500, hostMs: 7_260_000, userMs: 0 }]);
+  assert.deepEqual(facts.hostGaps, [{ await: 'author', ms: 7_200_000 }], 'the accepted host wait counts once; recovery resumes the pending effect');
+  assert.deepEqual(facts.phases, [{ key: 'plan', name: 'plan', outcome: 'complete', wallMs: 7_263_500, driverMs: 63_500, hostMs: 7_200_000, userMs: 0 }]);
   assert.equal(facts.outcome, 'complete');
 });
 
@@ -210,6 +218,7 @@ test('SC10 long approval wait then failing send counts the wait as user time', a
   const runDir = path.join(tempDir(), '.state/runs/001-gate');
   let failing = true;
   const handlers: Handlers = { verify: async (effect) => { if (failing) { advance(500); throw portTimeout(); } return verifyDone(effect); } };
+  handlers.verify!.recovery = { repeat: 'deterministic-read' };
   const base = { ports, runDir, machine: gateMachine, handlers };
   const approval = { type: 'DECISION', kind: 'approval', answer: { approved: true } };
   await start({ ...base, runStarted: RUN_STARTED });
@@ -217,10 +226,10 @@ test('SC10 long approval wait then failing send counts the wait as user time', a
   assert.equal((await send({ ...base, rawEvent: approval })).exitCode, 2);
   advance(60_000);
   failing = false;
-  assert.equal((await send({ ...base, rawEvent: approval })).frame?.await, 'done');
+  assert.equal((await send(base)).frame?.await, 'done');
   const facts = collectRunFacts(ports, runDir, {}, testFold(gateMachine, (state) => [state.tag === 'done' ? closed(IMPL) : IMPL], (state) => state.tag === 'approve'));
   assert.deepEqual(facts.fault, { effectId: 'gate.verify.1', cls: 'port-timeout', hostWaitMs: 7_200_000, waitBy: 'user', driverMs: 500 });
-  assert.deepEqual(facts.phases, [{ key: 'impl', name: 'implementation', outcome: 'complete', wallMs: 7_260_500, driverMs: 500, hostMs: 0, userMs: 7_260_000 }]);
+  assert.deepEqual(facts.phases, [{ key: 'impl', name: 'implementation', outcome: 'complete', wallMs: 7_260_500, driverMs: 60_500, hostMs: 0, userMs: 7_200_000 }]);
   assert.deepEqual(facts.hostGaps, [], 'a user wait is never a host gap');
   assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H6'), []);
 });

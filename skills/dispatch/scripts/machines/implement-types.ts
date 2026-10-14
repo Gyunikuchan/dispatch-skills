@@ -2,6 +2,7 @@
 
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask, PlanWarning } from '../domain/types.ts';
+import { CRITERION_ID_SOURCE, isCriterionId } from '../domain/criterion-id.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord, type WriterConfig } from './types.ts';
 
@@ -36,6 +37,8 @@ export type VerifyRecord = {
   status: VerificationStatus;
 };
 export type EvidenceRecord = CriterionEvidence & { id: string; planHash: string; mutationEpoch: number; source: string };
+/** A requested recheck: the criterion needs fresh evidence while its tasks, candidates and integration stay accepted. */
+export type EvidenceObligation = { id: string; observationId: string; rationale: string; tasks: readonly string[]; mutationEpoch: number };
 export type RedMatrixRow = { id: string; path: string; leaf: string; exit: number; tests: readonly string[] };
 export type WriterEnvelope = WriteEnvelope & {
   schemaVersion: 1;
@@ -76,6 +79,8 @@ export function failureAnswer(value: unknown): FailureAnswer | null {
 const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 const NON_EMPTY = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+const CRITERION_ROW = new RegExp(`^CRITERION\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*(.+)$`);
+const RED_ROW = new RegExp(`^RED-MATRIX\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*exit\\s+([1-9]\\d*)\\s+((?:test|error):.+)$`, 'i');
 
 export function isTestPath(value: string): boolean { return TEST_PATH.test(value); }
 
@@ -85,8 +90,9 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
   if (!Array.isArray(value['verification']['automated']) || !Array.isArray(value['finalCommands'])) return null;
   const criteria: PlanCriterion[] = [];
   for (const [index, item] of value['criteria'].entries()) {
-    if (!isRecord(item) || !NON_EMPTY(item['id']) || !Array.isArray(item['changes']) || !item['changes'].every(NON_EMPTY)
+    if (!isRecord(item) || !isCriterionId(item['id']) || !Array.isArray(item['changes']) || !item['changes'].every(NON_EMPTY)
       || !Array.isArray(item['verify']) || !['red', 'verify', 'review'].includes(String(item['evidence']))) return null;
+    if (typeof item['coveredBy'] === 'string' && item['coveredBy'] !== 'FINAL' && !isCriterionId(item['coveredBy'])) return null;
     const verify: PlanCommand[] = [];
     for (const command of item['verify']) {
       if (!isRecord(command) || !NON_EMPTY(command['command']) || typeof command['final'] !== 'boolean') return null;
@@ -116,7 +122,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
   for (const item of value['tasks']) {
     if (!isRecord(item) || !NON_EMPTY(item['id']) || !Array.isArray(item['generated'])) return null;
     const prerequisites = strings(item['prerequisites']), taskCriteria = strings(item['criteria']), paths = strings(item['paths']);
-    if (!prerequisites || !taskCriteria || !paths) return null;
+    if (!prerequisites || !taskCriteria || !taskCriteria.every(isCriterionId) || !paths) return null;
     const generated: { path: string; inputs: string[] }[] = [];
     for (const entry of item['generated']) {
       const inputs = isRecord(entry) ? strings(entry['inputs']) : null;
@@ -238,7 +244,7 @@ export function isWriterEnvelope(value: unknown): value is WriterEnvelope {
 
 export function criterionEvidenceRows(evidence: readonly string[], criteria: readonly PlanCriterion[]): string[] {
   const rows = evidence.flatMap((row) => {
-    const match = /^CRITERION\s+(SC[1-9]\d*)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row);
+    const match = CRITERION_ROW.exec(row);
     return match ? [{ id: match[1] as string, path: match[2]?.trim() ?? '', behavior: match[3]?.trim() ?? '' }] : [];
   });
   return criteria.flatMap((criterion) => rows.some((row) => row.id === criterion.id && criterion.changes.includes(row.path) && row.behavior.length > 0) ? [] : [criterion.id]);
@@ -251,8 +257,8 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
   for (const line of source) {
     // NOTE: a Windows path written into JSON as `tests\tooling` decodes `\t` to a tab; name the cause instead of a vague mismatch.
     if (/[\u0000-\u001f]/.test(line)) { defects.push(`RED-MATRIX row contains a control character (a JSON-escaped backslash such as \\t?); use forward-slash paths: ${redactOneLine(line)}`); continue; }
-    const match = /^RED-MATRIX\s+(SC[1-9]\d*)\s*\|\s*([^|]+?)\s*\|\s*exit\s+([1-9]\d*)\s+((?:test|error):.+)$/i.exec(line);
-    if (!match) { defects.push(`Malformed RED-MATRIX row: ${line}`); continue; }
+    const match = RED_ROW.exec(line);
+    if (!match || !isCriterionId(match[1])) { defects.push(`Malformed RED-MATRIX row: ${line}`); continue; }
     const target = match[2]?.trim() ?? '';
     const split = target.lastIndexOf(':');
     const file = split === -1 ? target : target.slice(0, split);

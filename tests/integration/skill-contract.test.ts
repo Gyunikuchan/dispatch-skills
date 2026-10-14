@@ -171,9 +171,9 @@ test('task execution guidance describes graph ownership, continuous writers and 
   assert.doesNotMatch(implement, /Tests-only RED evidence precedes production/);
   const config = read('skills/dispatch/references/readme/configuration.md');
   assert.match(config, /write-concurrency/); assert.match(config, /positive safe integer/); assert.match(config, /omission defaults to one/);
-  assert.match(config, /explicit reauthor\/restart/);
+  assert.match(config, /older plans without file ownership.*rewrite the plan and start a new run/);
   const concepts = read('skills/dispatch/references/readme/concepts.md');
-  for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'retained handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
+  for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
   assert.match(read('skills/dispatch/README.md'), /task summaries/);
   assert.match(read('skills/dispatch/references/readme/design.md'), /increments in order/);
 });
@@ -189,5 +189,10 @@ test('amendment: writers propose plan changes on BLOCKED and the orchestrator ad
 });
 
 test('run-loop: long-running work runs as background tasks', () => {
-  assert.match(read(`skills/dispatch/${contractName}`), /`start`, subagents, and long checks as separate background tasks; act on completion notices/);
+  assert.match(read(`skills/dispatch/${contractName}`), /`start`, subagents, and long checks as background tasks; act on completion notices/);
+});
+
+test('Await decide retains the decision fabrication guard', () => {
+  const contract = fs.readFileSync(path.join(OVERLAY_ROOT, 'skills/dispatch/SKILL.md'), 'utf8');
+  assert.match(contract.split('## Await decide')[1]!.split('## Await retro')[0]!, /Never invent decisions\./);
 });

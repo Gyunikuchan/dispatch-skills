@@ -129,6 +129,8 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 
 See [Workspaces and results](references/readme/concepts.md) for session files and verification.
 
+Changes to your repository or plan preserve completed work. Your host agent decides what needs another check; approve code removal separately. See [Changing requirements](references/readme/implement.md#when-requirements-change).
+
 ## Troubleshooting
 
 | Problem | What to check |

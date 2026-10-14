@@ -247,3 +247,59 @@ test('trim binds review-fixed transient test', () => {
   assert.equal(result.state.tag, 'evidence');
   assert.deepEqual(trims(trace).filter((input) => input['files']).map((input) => input['files']), [[{ path: 'tests/a.test.ts', hash: 'blob-fixed' }]]);
 });
+
+// SECTION: Orchestrator evidence authority
+
+const OBSERVATION = { id: 'obs-1', afterHash: 'after-1', beforeHash: 'before-1', phase: 'approval', pendingId: 'DECISION', rawDeltaRef: { version: 1 as const, sha256: 'c'.repeat(64), bytes: 20, path: 'recovery-deltas/c.json' }, paths: ['README.md'], pathCount: 1, suggestedRelevance: 'unknown' as const, reason: 'Dependency coverage is incomplete.', suggestedEvidence: ['SC1'] };
+const passed = (c: ReturnType<typeof approvalState>['c']) => ({ id: 'SC1', outcome: 'pass' as const, evidence: 'checked earlier', planHash: c.planHash!, mutationEpoch: 0, source: 'verify', redProvenance: 'not-required' as const });
+function accepted() {
+  const c0 = approvalState().c;
+  const T1 = { ...c0.tasks['T1'] ?? { id: 'T1', signature: '', input: null, worktree: null, handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, redRows: [], reason: null, failures: 0 }, status: 'accepted' as const, attempt: 2, candidate: 'candidate-1', integrated: 'integrated-1' };
+  return { ...c0, phase: 'tasks' as const, tasks: { T1 } as typeof c0.tasks, integration: { path: 'integration', base: 'base', head: 'integrated-1', links: [], ignored: [] }, evidence: { SC1: passed(c0) },
+    records: { check: { command: 'check', exit: 0, logPath: 'check.log', failureId: null, failedTests: [], diagnostic: '', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'pass' as const } }, observations: [OBSERVATION] };
+}
+const bind = { observationId: 'obs-1', afterHash: 'after-1', rationale: 'README edits cannot affect the SC1 check.' };
+
+test('authority-evidence: reasoned reuse retains evidence despite incomplete dependencies', () => {
+  const c = accepted();
+  const state = { tag: 'evidence' as const, c: { ...c, phase: 'delivered' as const }, purpose: 'final' as const, ids: [] as string[], verify: [] };
+  const result = host(state, { type: 'EVIDENCE', criteria: {}, changeDispositions: [{ ...bind, retain: ['SC1'] }] });
+  assert.ok('c' in result.state && result.state.c);
+  if (!('c' in result.state) || !result.state.c) return;
+  assert.deepEqual(result.state.c.evidence['SC1'], c.evidence.SC1);
+  assert.equal(result.state.c.observations?.[0]?.disposition?.rationale, bind.rationale);
+  assert.deepEqual(result.state.c.tasks, c.tasks);
+});
+
+test('authority-evidence: refresh preserves the accepted candidate', () => {
+  const c = accepted();
+  const state = { tag: 'evidence' as const, c: { ...c, phase: 'delivered' as const }, purpose: 'final' as const, ids: ['SC1'], verify: [] };
+  const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'reused' } }, changeDispositions: [{ ...bind, refresh: ['SC1'] }] });
+  assert.equal(result.state.tag, 'final-verify');
+  if (result.state.tag !== 'final-verify') return;
+  const effect = result.effects[0];
+  assert.equal(effect?.kind, 'verify');
+  assert.deepEqual(result.state.c.tasks, c.tasks);
+  assert.deepEqual(result.state.c.integration, c.integration);
+  assert.equal(result.state.c.evidence['SC1'], undefined);
+  assert.deepEqual(result.state.c.evidenceHistory, [c.evidence.SC1]);
+  assert.deepEqual(result.state.c.obligations?.['SC1']?.tasks, ['T1']);
+  assert.equal(result.state.c.records['check'], undefined);
+});
+
+test('authority-evidence: a pending obligation clears only with fresh evidence', () => {
+  const c = accepted();
+  const state = { tag: 'evidence' as const, c: { ...c, phase: 'delivered' as const, evidence: {}, obligations: { SC1: { id: 'SC1', observationId: 'obs-1', rationale: 'recheck', tasks: ['T1'], mutationEpoch: 1 } } }, purpose: 'final' as const, ids: ['SC1'], verify: [] };
+  const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'fresh run' } } });
+  assert.equal(result.state.tag, 'complete');
+  if (result.state.tag === 'complete') assert.deepEqual(result.state.c.obligations, {});
+});
+
+test('authority-evidence: reuse cannot pass a failed required gate', () => {
+  const base = approvalState().c;
+  const failing = { ...base.records, check: { command: 'check', exit: 1, logPath: 'check.log', failureId: 'f', failedTests: ['test:a'], diagnostic: 'failed', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' as const } };
+  const state = { tag: 'failure' as const, c: { ...base, phase: 'delivered' as const, records: failing, evidence: { SC1: passed(base) }, observations: [OBSERVATION] }, reason: 'Final verification failed: check', changedPaths: [] };
+  const event = { type: 'DECISION' as const, kind: 'failure' as const, answer: { by: 'orchestrator', action: 'retry', rationale: 'retry' }, changeDispositions: [{ ...bind, retain: ['SC1'] }] };
+  assert.match(validateImplement(state, event) ?? '', /failed required checks/);
+  assert.deepEqual(stepImplement(state, event).state, state);
+});

@@ -53,3 +53,16 @@ test('SC8 no legacy diagnostics text remains', () => {
     .flatMap((file) => legacy.filter((pattern) => pattern.test(file.text)).map((pattern) => `${file.path}: ${pattern.source}`));
   assert.deepEqual(hits, []);
 });
+
+test('checkpoint diagnostics retain phase attribution and partial usage proof without private recovery data', () => {
+  const instruction = read('skills/dispatch/references/diagnostics.md');
+  assert.match(instruction, /Checkpoint phase history preserves timing attribution/);
+  assert.match(instruction, /H6 elapsed time needs evidence of internal activities/);
+  const recovery = read('skills/dispatch/references/change-handling.md');
+  assert.match(recovery, /saved diagnostic phase history/);
+  const human = read('skills/dispatch/references/readme/troubleshooting.md');
+  assert.match(human, /unavailable value, not zero/);
+  assert.match(human, /Measured totals exclude `~` figures/);
+  assert.match(human, /Review `diagnostics.md` before sharing it/);
+  assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
+});

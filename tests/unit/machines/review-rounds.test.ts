@@ -192,3 +192,89 @@ test('round two scope carries settled rulings', () => {
     { id: 'R1-F003', locus: 'src/c.ts:L9', defect: 'defect R1-F003', ruling: 'Accepted', reason: 'valid gap; report only' },
   ]);
 });
+
+// SECTION: Change observations and the round cap
+
+const capConfig = (cap: number) => ({ ...CONFIG, phases: { 'code-review': { rounds: { low: cap }, targets: { low: 2 } } } });
+const capNotice = (id: string) => ({ id, phase: 'review', pendingId: 'check', beforeHash: 'before', afterHash: `after-${id}`, rawDeltaRef: { version: 1 as const, sha256: 'a'.repeat(64), bytes: 1, path: `recovery-deltas/${id}.json` }, paths: ['src/a.ts'], pathCount: 1, relevance: 'relevant' as const, reason: 'Reviewed content changed.', affectedEvidence: [] });
+/** Steps one event; a target check it issues is answered `changed` with `notice` when given, else `unchanged`. */
+function stepTarget(from: { state: ReviewState; effects: readonly Effect[] }, event: Event, notice?: ReturnType<typeof capNotice>) {
+  const next = reviewMachine.step(from.state, event);
+  const check = next.effects.find((effect) => effect.kind === 'check-review-target');
+  if (!check) return next;
+  return reviewMachine.step(next.state, notice ? { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: `${notice.id}.json`, result: 'changed', notice } : { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'same.json', result: 'unchanged' });
+}
+/** Drives a report review to `rule` while the target changes before the in-flight wave result is consumed. */
+function observedRule(cap: number, findings: unknown[] = [finding('R1-F001')]) {
+  let driven: { state: ReviewState; effects: readonly Effect[] } = reviewMachine.step(reviewMachine.initial(), started({ config: capConfig(cap) }));
+  driven = stepTarget(driven, { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { manifestPath: 'm1.json' }, promptPaths: { 'codex[0]': 'p0', 'agy[0]': 'p1' } });
+  assert.equal(driven.state.tag, 'wave');
+  const wave = driven.effects.find((effect) => effect.kind === 'wave-start')!;
+  driven = stepTarget(driven, { type: 'WAVE_DONE', effectId: wave.id, round: 1, slots: rows, findings: findings as never }, capNotice('second'));
+  return driven;
+}
+
+test('review-cap: observations spend no round and cap preserves findings', () => {
+  const ruled = observedRule(1);
+  assert.equal(ruled.state.tag, 'rule'); if (ruled.state.tag !== 'rule') return;
+  assert.equal(ruled.state.c.round, 1);
+  assert.equal(ruled.state.c.rounds.length, 1);
+  assert.deepEqual(ruled.state.c.observations?.map((row) => row.id), ['second']);
+  const use = { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action: 'targeted', rationale: 'Recheck the edited file', paths: ['src/a.ts'] } as const;
+  assert.match(reviewMachine.validate!(ruled.state, use) ?? '', /cap/);
+  assert.equal(reviewMachine.validate!(ruled.state, { ...use, action: 'reuse' }), null);
+  const settled = stepTarget(ruled, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }, capNotice('third'));
+  assert.equal(settled.state.tag, 'settled'); if (settled.state.tag !== 'settled') return;
+  assert.equal(settled.state.c.round, 1);
+  const kept = settled.state.c.findings.find((row) => row.id === 'R1-F001');
+  assert.equal(kept?.status, 'accepted');
+  assert.equal(kept?.revision, 'm1.json', 'the finding stays bound to the revision its wave reviewed');
+  const coverage = (reviewMachine.project(settled.state).data['completion'] as Record<string, unknown>)['coverage'] as Record<string, unknown>;
+  assert.deepEqual((coverage['unassessed'] as { id: string }[]).map((row) => row.id), ['second', 'third']);
+});
+
+for (const action of ['targeted', 'full'] as const) test(`review-cap: selected ${action} review spends a round only when launched`, () => {
+  const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
+  if (ruled.state.tag !== 'rule') throw new Error('rule');
+  const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Edited lines need review', paths: ['src/a.ts'] });
+  assert.equal(selected.state.tag, 'rule'); assert.deepEqual(selected.effects, []);
+  if (selected.state.tag !== 'rule') return;
+  assert.equal(selected.state.c.round, 1);
+  assert.match(reviewMachine.validate!(selected.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action: 'full', rationale: 'Again' }) ?? '', /already/);
+  const launched = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  assert.equal(launched.state.tag, 'prepare'); if (launched.state.tag !== 'prepare') return;
+  assert.equal(launched.state.c.round, 1);
+  const effect = launched.effects.find((row) => row.kind === 'prepare-review');
+  assert.ok(effect?.kind === 'prepare-review');
+  assert.equal(effect.scope['scope'], action === 'full' ? 'full' : 'delta');
+  assert.ok((effect.scope['affectedPaths'] as string[]).includes('src/a.ts'));
+  assert.equal(launched.state.c.findings.find((row) => row.id === 'R1-F001')?.status, 'accepted', 'prior rulings stay');
+  assert.equal(launched.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, undefined);
+  const wave = stepTarget(launched, { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false }, promptPaths: { 'codex[0]': 'selected.prompt.md' } });
+  assert.equal(wave.state.tag, 'wave'); if (wave.state.tag !== 'wave') return;
+  assert.equal(wave.state.c.round, 2);
+  assert.equal(wave.state.c.requested, undefined);
+  assert.equal(wave.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, 2);
+});
+
+for (const action of ['targeted', 'full'] as const) for (const outcome of ['failed', 'empty'] as const) test(`review-cap: ${action} preparation ${outcome} retains an unlaunched selection`, () => {
+  const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
+  const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Review selected code', paths: ['src/a.ts'] });
+  const preparing = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  const effect = preparing.effects.find((item) => item.kind === 'prepare-review')!;
+  const result = stepTarget(preparing, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
+  assert.equal(result.state.tag, outcome);
+  assert.ok('c' in result.state); if (!('c' in result.state)) return;
+  assert.equal(result.state.c.round, 1);
+  assert.equal(result.state.c.requested, 'second');
+  assert.equal(result.state.c.observations![0]!.use?.launchedRound, undefined);
+  assert.equal(result.state.c.rounds.length, 1);
+});
+
+for (const outcome of ['failed', 'empty'] as const) test(`review-cap: first preparation ${outcome} spends no round`, () => {
+  const preparing = reviewMachine.step(reviewMachine.initial(), started());
+  const effect = preparing.effects[0]!;
+  const result = reviewMachine.step(preparing.state, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
+  assert.equal(result.state.tag, outcome);
+  assert.ok('c' in result.state && result.state.c.round === 0);
+});

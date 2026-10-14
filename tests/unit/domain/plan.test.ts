@@ -63,6 +63,18 @@ const defects = (source: string) => {
 const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
 const parsed = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result.plan; };
 
+test('numeric criterion grammar stays shared across headings task mappings and transient coverage', () => {
+  const numeric = PLAN.replaceAll('SC1', 'SC14').replaceAll('SC2', 'SC205');
+  assert.deepEqual(parsed(numeric).criteria.map((row) => row.id), ['SC14', 'SC205']);
+  const transient = numeric.replace('  - Evidence: red', '  - Evidence: red\n  - Retain: transient\n  - Covered by: SC205');
+  assert.equal(parsed(transient).criteria[0]?.coveredBy, 'SC205');
+  for (const id of ['SC0', 'SC01', 'SC14a']) {
+    assert.ok(defects(numeric.replaceAll('SC14', id)).includes('criterion-id'));
+    assert.ok(defects(numeric.replace('Criteria: SC14, SC205', `Criteria: ${id}, SC205`)).includes('task-criteria'));
+    assert.ok(defects(transient.replace('Covered by: SC205', `Covered by: ${id}`)).includes('transient-coverage'));
+  }
+});
+
 // SECTION: Readable plan syntax
 
 test('readable plan syntax: nested and mixed entries preserve executable contracts and source lines', () => {

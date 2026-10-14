@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { parsePlan } from '../../../../skills/dispatch/scripts/domain/plan.ts';
 import type { ParsedPlan } from '../../../../skills/dispatch/scripts/domain/types.ts';
 
@@ -69,3 +70,21 @@ export function parsed(text: string): ParsedPlan {
 }
 
 export const AMEND_PLAN = parsed(AMEND_TEXT);
+
+// SECTION: Replacement plans — a REPLACE_PLAN file is the amended text, parsed with its governed hash.
+
+export const governedHash = (plan: ParsedPlan): string => `sha256:${createHash('sha256').update(plan.governedText).digest('hex')}`;
+
+/** Applies exact `[current, proposed]` text swaps to AMEND_TEXT and parses the result. */
+export function replacementText(...swaps: readonly (readonly [string, string])[]): { text: string; plan: ParsedPlan; hash: string } {
+  let text = AMEND_TEXT;
+  for (const [current, proposed] of swaps) {
+    assert.equal(text.split(current).length, 2, `swap source must occur once: ${current}`);
+    text = text.replace(current, proposed);
+  }
+  const plan = parsed(text);
+  return { text, plan, hash: governedHash(plan) };
+}
+
+export const T2_SECTION = '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n';
+export const SC2_SECTION = '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/sc2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';

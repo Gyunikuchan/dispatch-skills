@@ -16,6 +16,7 @@ import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import { reviewArtifactText } from './check-review-target.ts';
 import type { IntegrationScope } from '../core/types.ts';
 import { dispatchWorkspaceOf, runOwnedPaths } from './snapshot.ts';
+import { publishReviewManifest, readReviewManifest, reviewManifestRef } from './review-manifest.ts';
 
 const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -95,18 +96,19 @@ export function carriedSection(carried: readonly Carried[], slot: string): strin
   return `\n\n### Pending rejections\nRe-raise a finding below only with new evidence; omitting it accepts the rejection.\n${rows.join('\n')}\n`;
 }
 
-type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string };
+type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string };
 
 function settledOf(scope: Row): Settled[] {
   const list = Array.isArray(scope['settled']) ? scope['settled'] : [];
-  return list.filter(isRecord).map((entry) => ({ id: text(entry['id']), locus: text(entry['locus']), defect: text(entry['defect']), ruling: text(entry['ruling']), reason: text(entry['reason']) }));
+  return list.filter(isRecord).map((entry) => ({ id: text(entry['id']), locus: text(entry['locus']), defect: text(entry['defect']), ruling: text(entry['ruling']), reason: text(entry['reason']), ...(typeof entry['revision'] === 'string' ? { revision: entry['revision'] } : {}) }));
 }
 
 /** Prior-round rulings, so reviewers do not re-argue settled points without new evidence. */
-export function settledSection(settled: readonly Settled[]): string {
+// NOTE: a host-selected re-review after a target change names each ruling's reviewed revision, since the target moved since.
+export function settledSection(settled: readonly Settled[], revisions = false): string {
   if (!settled.length) return '';
   const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;
-  const rows = settled.map((entry) => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}`);
+  const rows = settled.map((entry) => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : ''}`);
   return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${rows.join('\n')}\n`;
 }
 
@@ -120,8 +122,8 @@ export function askPrompt(question: string, context: string): string {
   ].join('\n');
 }
 
-function reviewScopeText(round: number, scope: string, changed: readonly string[], target: string): string {
-  const what = changed.length ? `changed paths: ${changed.join(', ')}` : 'no recorded changes';
+function reviewScopeText(round: number, scope: string, changed: readonly string[], target: string, targeted = false): string {
+  const what = changed.length ? `${targeted ? 'review' : 'changed'} paths: ${changed.join(', ')}` : 'no recorded changes';
   return `Review round ${round} (${scope}): ${what}; comparison: ${target || 'working tree against HEAD'}`;
 }
 
@@ -192,7 +194,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     const scope = effect.scope;
     const carried = carriedOf(scope);
     // Round 1 has no prior rulings; skipping it keeps first-round prompts byte-identical.
-    const settled = effect.round > 1 ? settledSection(settledOf(scope)) : '';
+    const settled = effect.round > 1 ? settledSection(settledOf(scope), isRecord(scope['requested'])) : '';
     const results: ResultEvent[] = [];
     let changed: string[] = [];
     let manifestPath: string | undefined;
@@ -232,7 +234,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           bindingChanges = (integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed]).filter(inScope);
           let prior: ReviewSnapshot | undefined;
           if (typeof scope['priorManifest'] === 'string') {
-            const raw = ports.fs.readText(scope['priorManifest']);
+            const raw = readReviewManifest(ports, ctx.runDir, scope['priorManifest'], scope['priorManifestRef']);
             if (!raw || !deps.git.reviewDelta) throw new Error('review-round-binding-unavailable');
             prior = JSON.parse(raw) as ReviewSnapshot;
             governedPaths = [...new Set([...(prior.governedPaths ?? changed), ...(Array.isArray(scope['affectedPaths']) ? scope['affectedPaths'].filter((p): p is string => typeof p === 'string') : [])])];
@@ -244,13 +246,23 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             if (scope['scope'] === 'delta') { const owned = integrationBound ? new Set(Object.values(integrationBound.ownership).flat()) : null; changed = owned ? delta.paths.filter((p) => owned.has(p)) : delta.paths.filter((p) => governedPaths!.includes(p)); }
           }
           if (scope['scope'] === 'disputes-only') changed = [...new Set(carried.map((row) => row.locus.replace(/:L\d+.*$/, '')))];
+          if (isRecord(scope['requested']) && scope['requested']['action'] === 'targeted') {
+            const selected = Array.isArray(scope['requested']['paths']) ? scope['requested']['paths'].filter((p): p is string => typeof p === 'string') : [];
+            const mandatory = Array.isArray(scope['affectedPaths']) ? scope['affectedPaths'].filter((p): p is string => typeof p === 'string') : [];
+            const owned = integrationBound ? new Set(Object.values(integrationBound.ownership).flat()) : null;
+            const paths = [...new Set([...selected, ...mandatory, ...carried.map((row) => row.locus.replace(/:L\d+.*$/, ''))])];
+            if (paths.some((file) => !inScope(file) || (owned && !owned.has(file)))) throw new Error('Targeted review paths exceed the governed review scope.');
+            changed = [...new Set([...(scope['scope'] === 'full' ? changed : []), ...paths])];
+            governedPaths = changed;
+            snapshot = bindingSnapshot ? scopedSnapshot(bindingSnapshot, governedPaths) : undefined;
+          }
           if (deps.git.reviewSnapshot) {
-            manifestPath = runPaths(ctx.runDir).scope(effect.id);
+            manifestPath = (runPaths(ctx.runDir).scope(effect.id) + (ctx.attempt > 1 ? '.a' + ctx.attempt + '.json' : ''));
             snapshot ??= scopedSnapshot(bindingSnapshot!, governedPaths ?? changed);
-            ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...bindingSnapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
+            publishReviewManifest(ports, ctx.runDir, manifestPath, { ...bindingSnapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed });
           }
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
-          scopeText = reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']));
+          scopeText = reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']), isRecord(scope['requested']) && scope['requested']['action'] === 'targeted');
         } else {
           const target = text(spec['target']);
           const targetFile = ports.fs.readText(target) !== null ? target : path.resolve(deps.cwd, target);
@@ -259,7 +271,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           if (effect.round > 1 || typeof scope['priorManifest'] === 'string' || typeof scope['priorTarget'] === 'string') {
             let priorText: string | null = null;
             if (typeof scope['priorManifest'] === 'string') {
-              const raw = ports.fs.readText(scope['priorManifest']);
+              const raw = readReviewManifest(ports, ctx.runDir, scope['priorManifest'], scope['priorManifestRef']);
               if (!raw) throw new Error('review-round-binding-unavailable');
               let prior: { text?: string };
               try { prior = JSON.parse(raw); } catch { throw new Error('review-round-binding-unavailable'); }
@@ -275,8 +287,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
               throw new Error('review-round-binding-unavailable');
             }
           }
-          manifestPath = runPaths(ctx.runDir).scope(effect.id);
-          ports.fs.writeAtomic(manifestPath, JSON.stringify({ kind, target, text: currentText, hash: sha256(currentText), identityHash: sha256(reviewArtifactText(currentText)) }));
+          manifestPath = (runPaths(ctx.runDir).scope(effect.id) + (ctx.attempt > 1 ? '.a' + ctx.attempt + '.json' : ''));
+          publishReviewManifest(ports, ctx.runDir, manifestPath, { kind, target, text: currentText, hash: sha256(currentText), identityHash: sha256(reviewArtifactText(currentText)) });
           const scopeKind = text(scope['scope'], 'full');
           if (effect.round === 1 && !changed.length) {
             scopeText = 'Full review';
@@ -311,10 +323,10 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     }
     let bindingPath: string | undefined;
     if (kind === 'code' && bindingSnapshot) {
-      bindingPath = `${runPaths(ctx.runDir).scope(effect.id)}.binding.json`;
-      ports.fs.writeAtomic(bindingPath, JSON.stringify({ ...bindingSnapshot, changeSet: bindingChanges, ...(integrationBound ? { changeBaseline: integrationBound.baseline } : {}) }));
+      bindingPath = `${(runPaths(ctx.runDir).scope(effect.id) + (ctx.attempt > 1 ? '.a' + ctx.attempt + '.json' : ''))}.binding.json`;
+      publishReviewManifest(ports, ctx.runDir, bindingPath, { ...bindingSnapshot, changeSet: bindingChanges, ...(integrationBound ? { changeBaseline: integrationBound.baseline } : {}) });
     }
-    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full'), ...(manifestPath ? { manifestPath } : {}), ...(bindingPath ? { bindingPath } : {}) }, promptPaths });
+    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full'), ...(manifestPath ? { manifestPath, manifestRef: reviewManifestRef(ports, ctx.runDir, manifestPath) } : {}), ...(bindingPath ? { bindingPath, bindingRef: reviewManifestRef(ports, ctx.runDir, bindingPath) } : {}) }, promptPaths });
     return results;
   };
 }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { publishEvidence } from './recovery-manifest.ts';
+import { publishReviewManifest, readReviewManifest } from './review-manifest.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import path from 'node:path';
 import type { Effect, Handler } from '../core/types.ts';
@@ -19,7 +20,7 @@ const manifestEntries = (value: unknown, nullable: boolean): boolean => value !=
 export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handler<Check> {
   return async (effect, ports, ctx) => {
     try {
-      const raw = ports.fs.readText(effect.manifestPath);
+      const raw = readReviewManifest(ports, ctx.runDir, effect.manifestPath, effect.manifestRef);
       if (!raw) throw new Error('binding evidence unavailable');
       const prior = JSON.parse(raw) as Record<string, unknown>;
       const target = String(effect.review['target'] ?? '');
@@ -73,15 +74,15 @@ export function createCheckReviewTarget(deps: { cwd: string; git: Git }): Handle
         if (source === null || reviewArtifactText(prior['text']) !== reviewArtifactText(source)) { pathsChanged.push(target); if (!allowed || source === null) unexpected.push(target); }
         current = { kind: effect.review['kind'], target, text: source ?? '', ...(source === null ? { missing: true } : {}) };
       }
-      const manifestPath = runPaths(ctx.runDir).scope(effect.id);
-      ports.fs.writeAtomic(manifestPath, JSON.stringify(current));
+      const manifestPath = runPaths(ctx.runDir).scope(effect.id) + (ctx.attempt > 1 ? '.a' + ctx.attempt + '.json' : '');
+      const manifestRef = publishReviewManifest(ports, ctx.runDir, manifestPath, current);
       const identity = (value: Record<string, unknown>) => effect.review['kind'] === 'code' ? value : { target: value['target'], text: reviewArtifactText(String(value['text'])), ...(value['missing'] ? { missing: true } : {}) };
       const beforeHash = bindingHash(identity(prior)), afterHash = bindingHash(identity(current));
       const paths = [...new Set(pathsChanged)].sort();
       const rawDeltaRef = publishEvidence(ports, ctx.runDir, { version: 1, beforeHash, afterHash, paths, identityChanged });
       const changed = unexpected.length > 0 || identityChanged;
       const notice = { id: bindingHash({ beforeHash, afterHash, phase: 'review' }), phase: 'review', pendingId: effect.id, beforeHash, afterHash, rawDeltaRef, paths: paths.slice(0,20), pathCount: paths.length, relevance: changed ? 'relevant' as const : 'expected' as const, reason: identityChanged ? 'Comparison identity changed.' : changed ? 'Reviewed content changed.' : 'Unchanged or valid scoped fix.', affectedEvidence: [] };
-      return [{ type: 'REVIEW_TARGET_CHECKED', effectId: effect.id, manifestPath, result: changed ? 'changed' : paths.length ? 'expected' : 'unchanged', notice }];
+      return [{ type: 'REVIEW_TARGET_CHECKED', effectId: effect.id, manifestPath, manifestRef, result: changed ? 'changed' : paths.length ? 'expected' : 'unchanged', notice }];
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'integrity', detail: `target-changed: ${error instanceof Error ? error.message : String(error)}; binding evidence retained` }];
     }

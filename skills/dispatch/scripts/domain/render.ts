@@ -48,6 +48,11 @@ export function renderResolutionSection(rounds: readonly ResolutionRound[]): str
     });
     out.push(`- Reviewers: ${reviewers.join(', ') || 'none'}`);
     if (round.failed.length) out.push(`- Failed: ${round.failed.map((target) => `${target.slot} (${sanitizeText(target.reason)})`).join(', ')}`);
+    if (round.revision) out.push(`- Reviewed target: ${line(round.revision)}`);
+    for (const row of round.applicability ?? []) {
+      const choice = row.action ? `${row.action}${row.paths?.length ? ` (${row.paths.map(line).join(', ')})` : ''} — ${sanitizeText(row.rationale ?? '')}${row.launchedRound ? `; review round ${row.launchedRound}` : ''}` : 'not assessed';
+      out.push(`- Target changed after review: ${line(row.afterHash)} (${sanitizeText(row.reason)}). Host applicability: ${choice}`);
+    }
     if (!round.entries.length) out.push('- No findings.');
     for (const entry of round.entries) {
       out.push('', `#### ${entry.id}`, '',

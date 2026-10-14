@@ -1,7 +1,7 @@
 // Leaf command grammar; callers inject policy validation.
 export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type CliPolicy = { levels: readonly string[]; pins(text: string): unknown; provider(text: string): string | null };
-export type Command = { command: 'start' | 'send' | 'status' | 'doctor' | 'session' | 'wave-worker' | 'checkpoint'; verb?: Verb; action?: string; argument: string; paths?: string[]; flags: Record<string, string | boolean> };
+export type Command = { command: 'start' | 'send' | 'status' | 'doctor' | 'session' | 'wave-worker' | 'checkpoint' | 'rebind'; verb?: Verb; action?: string; argument: string; paths?: string[]; flags: Record<string, string | boolean> };
 export class UsageError extends Error {}
 export const ALIASES: Readonly<Record<string, string>> = {
   'dispatch-code-review': 'start review --kind code', 'dispatch-plan': 'start plan', 'dispatch-implement': 'start implement',
@@ -12,12 +12,13 @@ const FLAGS: Readonly<Record<string, readonly string[]>> = {
   send: ['run', 'event', 'dry-run', 'refresh-config'], status: ['run'], doctor: ['level', 'json'],
   session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
   checkpoint: ['root', 'out'],
+  rebind: ['run', 'reason', 'event'],
 };
 const BOOLEANS = new Set(['fix', 'verbose', 'dry-run', 'json', 'refresh-config']);
 
 export function parseCommand(argv: readonly string[], policy: CliPolicy): Command {
   const args = [...argv], command = args.shift();
-  if (!command || !Object.hasOwn(FLAGS, command)) throw new UsageError('Expected start, send, status, doctor, session, checkpoint, or internal wave-worker');
+  if (!command || !Object.hasOwn(FLAGS, command)) throw new UsageError('Expected start, send, status, doctor, session, checkpoint, rebind, or internal wave-worker');
   const out: Command = { command: command as Command['command'], argument: '', flags: {} };
   if (command === 'start') {
     const verb = args.shift();
@@ -64,6 +65,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
   if (command === 'send' || command === 'status' || command === 'wave-worker') need('run');
   if (command === 'wave-worker') { need('effect'); need('attempt'); if (!Number.isSafeInteger(Number(out.flags['attempt'])) || Number(out.flags['attempt']) < 1) throw new UsageError('Invalid worker attempt'); }
   if (command === 'checkpoint') { need('root'); need('out'); if (!out.paths?.length) throw new UsageError('checkpoint requires repository paths after --'); }
+  if (command === 'rebind') { need('run'); need('reason'); if (!String(out.flags['reason']).trim() || out.argument || out.paths) throw new UsageError('rebind requires a reason and no positional paths'); if (out.flags['event'] !== undefined && !/^@.+/.test(String(out.flags['event']))) throw new UsageError('rebind --event requires @path'); }
   if (command === 'session') { if (out.action === 'init') need('objective'); else need('session-dir'); }
   return out;
 }

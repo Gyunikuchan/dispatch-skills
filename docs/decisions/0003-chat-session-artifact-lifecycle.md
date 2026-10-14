@@ -3,6 +3,8 @@
 - **Status**: Accepted; updated for [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-28
 
+> Recovery execution policy is superseded by the [current checkpoint/continuation contract](../../skills/dispatch/references/change-handling.md#checkpoints-and-runtime-continuation). Historical rationale below is retained.
+
 ## Context
 
 Dispatch produces two audiences of files: deliverables a person reads (specs, designs, plans,

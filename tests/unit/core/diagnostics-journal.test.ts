@@ -14,6 +14,17 @@ import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/
 import type { DelegateRequest, Invocation, LaunchRequest, ModeId, ProcessResult, ProviderId, ProviderSpec, RunOutcome, RunResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
+import { rebind } from '../../../skills/dispatch/scripts/core/checkpoint.ts';
+
+test('rebind provenance keeps historical diagnostics without disclosing its rationale', async () => {
+  const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-rebind');
+  await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
+  const changed = { ...awaitingMachine, codec: { ...awaitingMachine.codec!, runtime: () => 'fixed-runtime' } };
+  assert.equal((await rebind({ ports, runDir, machine: changed, handlers: fakeHandlers, reason: 'PRIVATE_RATIONALE_17' })).exitCode, 0);
+  const facts = collectRunFacts(ports, runDir, {}, (lines) => { fold(changed, lines); return { steps: [], orchestratorBytes: 0 }; });
+  assert.ok(!JSON.stringify(facts).includes('PRIVATE_RATIONALE_17'));
+  assert.ok(!renderDiagnostics([facts]).text.includes('PRIVATE_RATIONALE_17'));
+});
 
 const CLEAN = JSON.stringify({ status: 'CLEAN', findings: [] });
 const ok = (text = CLEAN): RunOutcome => ({ status: 'ok', text, sessionId: null, resume: null });

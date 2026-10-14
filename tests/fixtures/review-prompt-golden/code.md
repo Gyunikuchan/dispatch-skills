@@ -29,6 +29,7 @@ Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to 
 Read complete inline history in the governing artifacts. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
+Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope

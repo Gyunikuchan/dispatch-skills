@@ -43,3 +43,9 @@ Describe the change you want, or pass the path to an approved plan or design.
 ```
 
 Implementation follows the artifact's prerequisites and recorded decisions. Independent tasks may run concurrently when `write-concurrency` is above one. The task flow uses a RED checkpoint before production edits; the contract does not require a separate refactor stage. If the host platform has no configured writer, see [Configure Dispatch](configuration.md).
+
+## When requirements change
+
+Ask your host agent to update the plan when requirements change. Completed work is preserved, and the host decides which checks to repeat. A new prerequisite can require another check after that prerequisite finishes.
+
+Removing a task from the plan does not remove its code. For example, dropping a completed reporting task keeps the report code until you approve its removal. See [Troubleshooting](troubleshooting.md) if work cannot continue.

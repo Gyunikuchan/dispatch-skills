@@ -21,7 +21,7 @@ The default concurrency is one. Increasing it lets independent tasks overlap, bu
 
 When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host agent decide what can proceed independently.
 
-After a task finishes, the host agent checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
+After a task finishes, the host agent checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
 
 ## Session folder
 

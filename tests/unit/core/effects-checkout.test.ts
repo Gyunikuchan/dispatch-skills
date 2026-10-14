@@ -6,6 +6,33 @@ import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/
 import { createCheckout, worktreePath } from '../../../skills/dispatch/scripts/effects/checkout.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
+test('delivery replay: interrupted completed pick retries provenance without reset or duplicate pick', async () => {
+  const cwd = tempDir(), runDir = tempDir(), root = worktreePath(runDir, 'integration'), ports = fakePorts();
+  fs.mkdirSync(root, { recursive: true }); fs.mkdirSync(worktreePath(runDir, 'integration-archive'), { recursive: true });
+  const completed: string[] = [], picks: string[] = []; let interrupted = false, resets = 0;
+  ports.git.run = async (argv) => {
+    if (argv[0] === 'reset' || argv[0] === 'clean') { resets++; return ''; }
+    if (argv[0] === 'rev-list' && argv.some((arg) => arg.startsWith('--grep='))) return 'newbase';
+    if (argv[0] === 'rev-list') return argv.includes('oldbase..oldhead') ? 'first\nsecond\nthird' : completed.join('\n');
+    if (argv[0] === 'log') return argv.at(-1) === 'newbase' ? 'dispatch baseline\n\nDispatch-Baseline: {}' : `(cherry picked from commit ${argv.at(-1)!.replace('new-', '')})`;
+    if (argv[0] === 'rev-parse') { if (argv.includes('CHERRY_PICK_HEAD')) throw new Error('no active pick'); return completed.at(-1) ?? 'newbase'; }
+    if (argv.includes('cherry-pick')) {
+      const candidate = argv.at(-1)!; picks.push(candidate); completed.push(`new-${candidate}`);
+      if (candidate === 'second' && !interrupted) { interrupted = true; throw new Error('result lost after completed commit'); }
+      return '';
+    }
+    return '';
+  };
+  const effect: Extract<Effect, { kind: 'checkout' }> = { kind: 'checkout', id: 'replay.1', op: 'init', input: { rebase: true, archivedName: 'integration-archive', replay: { base: 'oldbase', head: 'oldhead' } } };
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const interruptedResult = (await handler(effect, ports, { runDir, attempt: 1 }))[0]!;
+  assert.equal(interruptedResult.type, 'EFFECT_FAILED', 'an absent active pick needs explicit effect recovery, not conflict resolution');
+  const resumed = (await handler(effect, ports, { runDir, attempt: 2 }))[0]!;
+  assert.equal(resumed.type, 'CHECKOUT_DONE');
+  if (resumed.type === 'CHECKOUT_DONE') assert.deepEqual(resumed.result['replayed'], ['first', 'second', 'third'].map((from) => ({ from, to: `new-${from}` })));
+  assert.deepEqual(picks, ['first', 'second', 'third']); assert.equal(resets, 0);
+});
+
 test('delivery uses Git filemode default when the config key is absent', async () => {
   const cwd = tempDir(), runDir = tempDir(), ports = fakePorts(); let queried = false;
   ports.git.run = async (argv) => {

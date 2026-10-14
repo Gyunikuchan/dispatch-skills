@@ -64,11 +64,11 @@ const files = (dir: string, names: string, ext: string) => names.split(' ').map(
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
   'scripts/dispatch.ts',
-  ...files('scripts/core', 'diagnostics effect-id frame interpreter journal lock ports progress types validate', '.ts'),
-  ...files('scripts/domain', 'design diagnostics execution-config fix-clustering plan prompt render report sanitize stable-value types', '.ts'),
-  ...files('scripts/effects', 'artifacts assess-recovery check-envelope check-review-target checkout git handoff index parse-artifact prepare-review recovery-manifest restore snapshot verify wave-native wave write-brief', '.ts'),
-  ...files('scripts/lib', 'cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform session', '.ts'),
-  ...files('scripts/machines', 'ask change-resolution design-revision design diagnostics execution-config implement-tasks implement-types implement plan review revision root types', '.ts'),
+  ...files('scripts/core', 'checkpoint effect-recovery diagnostics effect-id frame interpreter journal lock ports progress types validate', '.ts'),
+  ...files('scripts/domain', 'effect-digest engine-fault private-state criterion-id design diagnostics execution-config fix-clustering plan prompt render report sanitize stable-value types', '.ts'),
+  ...files('scripts/effects', 'checkpoint-references artifacts assess-recovery check-envelope check-review-target checkout git handoff index parse-artifact prepare-review recovery-manifest review-manifest restore snapshot verify wave-native wave write-brief', '.ts'),
+  ...files('scripts/lib', 'immutable-artifact portable-effect runtime-identity cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform session', '.ts'),
+  ...files('scripts/machines', 'ask change-resolution checkpoint design-revision design diagnostics execution-config implement-tasks implement-types implement plan plan-reconciliation review revision root types', '.ts'),
   ...files('scripts/policy', 'cascade drift hotfix roster rounds', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
   ...files('references', 'change-handling diagnostics glossary providers review-rules worktree-cleanup', '.md'),
@@ -130,11 +130,14 @@ const EVENT_FIELDS: ReadonlySet<string> = new Set((
   'type path slots rulings clusters tasks task attempt signature handle model effort substitution envelopePath kind reason tokens durationMs '
   + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScope '
   + 'choice request ruling requestId source baseArtifactHash writerRationale delta proposedArtifactHash affectedTasks affectedIncrements paths '
-  + 'obligations commands finalCommands phaseDuties increments criterionDefinitions id prerequisites acceptance title changes verify command final '
+  + 'obligations commands finalCommands phaseDuties increments id prerequisites acceptance title changes verify command final '
   + 'preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
   + 'baselineEvidence phaseObligations writer remainingIncrements design status exit inputFingerprint priority outcome dependencies hash fields '
   + 'slot sourceKey outputPath mapping configuredModel launcherModel launcherEffort provider clusterId affectedPaths fix dependsOn verification '
-  + 'severity decision selected ids hotfix mode rootCause status briefHash detail need notify notice delta current proposed target amendment external'
+  + 'severity decision selected ids hotfix mode rootCause status briefHash detail need notify notice delta current proposed target amendment external '
+  + 'changeDispositions observationId retain refresh expectedHash reconciliation retained changed added retired intentChanged dependencyChanged compensating '
+  + 'retire disposition round revision scope afterHash beforeHash phase pendingId rawDeltaRef pathCount suggestedRelevance suggestedEvidence '
+  + 'boundarySeq effectId descriptorHash checkpoint protocolRevision codecVersion epoch oldRuntime newRuntime prefixHash sha256 bytes seq reason'
 ).split(' '));
 const MAX_SEGMENTS = 8;
 

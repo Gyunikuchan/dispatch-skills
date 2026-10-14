@@ -161,13 +161,13 @@ test('accepts generic orchestrator decision', () => {
 });
 
 test('write await accepts receipt request amend', () => {
-  assert.deepEqual(AWAIT_ACCEPTS.write, ['WRITE_RECEIPT', 'REQUEST', 'AMEND']);
+  assert.deepEqual(AWAIT_ACCEPTS.write, ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN']);
   assert.deepEqual(validateHostEvent('write', { type: 'REVISE', artifact: 'plan', reason: 'r', evidence: 'e' }),
-    { ok: false, error: 'event.type: REVISE is not accepted at await write; expected WRITE_RECEIPT|REQUEST|AMEND' });
+    { ok: false, error: 'event.type: REVISE is not accepted at await write; expected WRITE_RECEIPT|REQUEST|AMEND|REPLACE_PLAN' });
 });
 
 test('decide await accepts amend', () => {
-  assert.deepEqual(AWAIT_ACCEPTS.decide, ['DECISION', 'AMEND', 'REVISE']);
+  assert.deepEqual(AWAIT_ACCEPTS.decide, ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE']);
   assert.deepEqual(validateHostEvent('decide', AMEND), { ok: true, value: AMEND });
   assert.equal(validateHostEvent('decide', { type: 'REQUEST', task: 'T1', attempt: 1, need: 'n', paths: [], rationale: 'r' }).ok, false);
 });

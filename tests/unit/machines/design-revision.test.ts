@@ -8,12 +8,54 @@ import type { DesignState } from '../../../skills/dispatch/scripts/machines/desi
 import { createFolder, fold } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import type { Event, JournalLine } from '../../../skills/dispatch/scripts/core/types.ts';
+import { threshold } from '../../../skills/dispatch/scripts/policy/rounds.ts';
 
 function revisionParsing() {
   const author = beginDesignRevision(approval('implement').c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'User constraint: keep the existing public API.' }).state;
   const parse = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath });
   return { author, parse, event: { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash, parsed: design, defects: [] as Record<string, unknown>[] } };
 }
+
+test('review-cap: successive design revisions launch cumulative rounds and finding IDs', () => {
+  let c = approval('implement').c;
+  c = { ...c, run: { ...c.run, config: { ...c.run.config, phases: { ...(c.run.config['phases'] as Record<string, unknown>), 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } } } };
+  for (const round of [1, 2]) {
+    const revisionHash = `sha256:${String(round).repeat(64)}`;
+    const author = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'Preserve the objective.' }).state;
+    const parsed = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath });
+    const prepared = stepDesignRevision(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: revisionHash, parsed: design, defects: [] });
+    assert.equal(prepared.state.tag, 'review');
+    if (prepared.state.tag !== 'review') throw new Error('Expected revision review.');
+    assert.ok('c' in prepared.state.review);
+    assert.equal(prepared.state.review.c.round, round - 1);
+    assert.equal(prepared.effects[0]!.kind, 'prepare-review');
+    const launched = stepDesignRevision(prepared.state, { type: 'REVIEW_PREPARED', effectId: prepared.effects[0]!.id, scope: { empty: false }, promptPaths: {} });
+    assert.equal(launched.state.tag, 'review');
+    if (launched.state.tag !== 'review') throw new Error('Expected launched review.');
+    assert.ok('c' in launched.state.review);
+    assert.equal(launched.state.review.c.round, round);
+    const wave = launched.effects[0]!;
+    assert.equal(wave.kind, 'wave-start');
+    if (wave.kind !== 'wave-start') throw new Error('Expected review wave.');
+    assert.equal(wave.round, round);
+    const id = `R${wave.round}-F001`;
+    const ruled = stepDesignRevision(launched.state, { type: 'WAVE_DONE', effectId: wave.id, round, slots: [{ slot: 'codex', state: 'success' }], findings: [{ id, severity: 'CONSIDER', category: 'correctness', defect: 'Check compatibility', requiredChange: 'Preserve compatibility.', locus: 'src/a.ts', sources: ['codex'] }] });
+    assert.equal(ruled.state.tag, 'review');
+    if (ruled.state.tag !== 'review') throw new Error('Expected rulings.');
+    assert.ok('c' in ruled.state.review);
+    assert.equal(ruled.state.review.c.findings[0]!.id, id);
+    assert.equal(ruled.state.review.c.spec.cap, 2);
+    assert.equal(ruled.state.review.c.round, round);
+    assert.equal(threshold(round, ruled.state.review.c.spec.cap), round === 1 ? 'SHOULD' : 'MUST');
+    const settled = stepDesignRevision(ruled.state, { type: 'RULINGS', rulings: { [id]: { ruling: 'reject', reason: 'No defect.' } } });
+    assert.equal(settled.state.tag, 'parse');
+    const resumed = stepDesignRevision(settled.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: settled.effects[0]!.id, hash: revisionHash, parsed: design, defects: [] });
+    assert.equal(resumed.state.tag, 'resume');
+    if (resumed.state.tag !== 'resume') throw new Error('Expected resumed revision.');
+    assert.equal(resumed.state.c.revisionReviewRound, round);
+    c = { ...resumed.state.c, hash: resumed.state.hash, design: resumed.state.design };
+  }
+});
 
 // SECTION: Revision author handoff
 

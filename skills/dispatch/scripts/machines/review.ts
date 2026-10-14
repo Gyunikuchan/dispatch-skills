@@ -1,8 +1,7 @@
 // Reusable review sub-machine (spec §5.5, §7): prepare → wave → [native] → rule → [fix → fix-verify] → next?.
 // Pure reducer; rounds policy lives in policy/rounds.ts. Parents embed `ReviewState` and forward events via `stepReview`.
 
-import type { ChangeNotice, DriftResolution, Effect, Event, FindingId, HostEvent, Level, Machine, RunStartedEvent } from '../core/types.ts';
-import { resolution } from './change-resolution.ts';
+import type { ChangeNotice, ReviewManifestRef, Effect, Event, FindingId, HostEvent, Level, Machine, ReviewObservation, ReviewUse, RunStartedEvent } from '../core/types.ts';
 import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
 import { statusLabel } from '../domain/render.ts';
@@ -129,7 +128,7 @@ export function validateNativeResults(slots: readonly unknown[], descriptors: re
 
 // SECTION: State
 
-export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly (string | ReviewerView)[]; failed: readonly { slot: string; reason: string }[] };
+export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly (string | ReviewerView)[]; failed: readonly { slot: string; reason: string }[]; revision?: string };
 
 export type ReviewCtx = {
   pendingSpec?: ReviewSpec;
@@ -138,6 +137,7 @@ export type ReviewCtx = {
   counters: Counters;
   effectId: string | null;
   round: number;
+  preparedRound?: number;
   scope: RoundScope;
   carried: readonly CarriedRejection[];
   findings: readonly ReviewFinding[];
@@ -150,19 +150,27 @@ export type ReviewCtx = {
   rows: readonly Row[];
   drafts: readonly Finding[];
   priorManifest?: string;
+  priorManifestRef?: ReviewManifestRef | undefined;
   targetManifest?: string;
+  targetManifestRef?: ReviewManifestRef | undefined;
   reviewedRevision?: string;
   findingBindings?: Readonly<Record<string, string>>;
   fixCandidate?: string;
+  fixCandidateRef?: ReviewManifestRef | undefined;
   waveBinding?: { waveKey: string; attempt: number; roster: readonly Row[] };
+  /** Target binding the current wave launched against; its findings stay bound to it even if the target changes before receipt. */
+  waveRevision?: string;
+  /** Target changes seen during the review; each may carry the host's applicability selection. */
+  observations?: readonly ReviewObservation[];
+  /** Observation whose targeted or full review launches at the next round boundary. */
+  requested?: string;
 };
 
 export type Pass = 'main' | 'opt-in';
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly FindingId[] };
 
 export type ReviewState =
-  | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' | 'change-resolution' }>; pending: Event; effectId: string; resolution?: DriftResolution }
-  | { tag: 'change-resolution'; c: ReviewCtx; check: Extract<ReviewState, { tag: 'target-check' }>; notice: ChangeNotice }
+  | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' }>; pending: Event; effectId: string }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'prepare'; c: ReviewCtx }
   | { tag: 'wave'; c: ReviewCtx; phase: 'cli' | 'native' }
@@ -193,13 +201,13 @@ function withEffect(c: ReviewCtx, kind: Effect['kind'], build: (id: string) => E
 // SECTION: Entry
 
 /** Starts a review at `path` (e.g. `review`, `plan.review`); `cap = 0` → `skipped` with no effect. */
-export function beginReview(spec: ReviewSpec, path: string, counters: Counters): S {
+export function beginReview(spec: ReviewSpec, path: string, counters: Counters, cumulativeOffset = 0): S {
   const c: ReviewCtx = {
-    spec, path, counters, effectId: null, round: 0, scope: 'full', carried: [], findings: [], history: [], rounds: [], fixes: [],
+    spec, path, counters, effectId: null, round: cumulativeOffset, scope: 'full', carried: [], findings: [], history: [], rounds: [], fixes: [],
     optInAsked: false, promptPaths: {}, rows: [], drafts: [],
   };
   if (spec.cap <= 0) return stay({ tag: 'skipped', c });
-  return prepare(c, 1, 'full', []);
+  return prepare(c, cumulativeOffset + 1, 'full', []);
 }
 
 /** Statuses whose ruling stands; pending, superseded, and duplicate findings are not settled decisions. */
@@ -208,18 +216,32 @@ const SETTLED: readonly ReviewFinding['status'][] = ['accepted', 'downgraded', '
 /** Prior-round rulings that reviewers re-raise only with new evidence. */
 function settledRows(findings: readonly ReviewFinding[], round: number): SettledRow[] {
   return findings.filter((finding) => finding.round < round && SETTLED.includes(finding.status))
-    .map((finding) => ({ id: finding.id, locus: finding.locus, defect: finding.defect, ruling: statusLabel(statusOf(finding)), reason: finding.resolution ?? '' }));
+    .map((finding) => ({ id: finding.id, locus: finding.locus, defect: finding.defect, ruling: statusLabel(statusOf(finding)), reason: finding.resolution ?? '', ...(finding.revision ? { revision: finding.revision } : {}) }));
 }
 
-function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[]): S {
+function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[], requested?: ReviewUse): S {
   const { pendingSpec, ...bound } = c0;
-  const base = { ...bound, spec: pendingSpec ?? c0.spec, round, scope, carried, rows: [], drafts: [], promptPaths: {} };
+  const base = { ...bound, spec: pendingSpec ?? c0.spec, preparedRound: round, scope, carried, rows: [], drafts: [], promptPaths: {} };
   const settled = settledRows(base.findings, round);
-  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, ...(settled.length ? { settled } : {}), affectedPaths: [...new Set(base.findings.flatMap((finding) => finding.fix?.paths ?? []))], ...(base.priorManifest ? { priorManifest: base.priorManifest } : {}) } }));
+  const affectedPaths = [...new Set([...base.findings.filter((finding) => finding.round === c0.round && finding.status === 'fixed').flatMap((finding) => finding.fix?.paths ?? []), ...(requested?.paths ?? [])])];
+  const selection = requested ? { requested: { observationId: requested.observationId, afterHash: requested.afterHash, action: requested.action, paths: [...(requested.paths ?? [])] } } : {};
+  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, ...(settled.length ? { settled } : {}), affectedPaths, ...selection, ...(base.priorManifest ? { priorManifest: base.priorManifest, priorManifestRef: base.priorManifestRef } : {}) } }));
   return { state: { tag: 'prepare', c }, effects: [effect] };
 }
 
-function launchWave(c0: ReviewCtx, roster: readonly Row[], phase: 'cli' | 'native'): S {
+/** Current target binding: the latest checked revision, else the prepared manifest. */
+const liveRevision = (c: ReviewCtx): string | undefined => c.reviewedRevision ?? c.targetManifest;
+
+function launchWave(c1: ReviewCtx, roster: readonly Row[], phase: 'cli' | 'native'): S {
+  const { preparedRound, ...bound } = c1;
+  const launched = phase === 'cli' && preparedRound !== undefined;
+  const round = launched ? preparedRound : c1.round;
+  const selected = launched && c1.requested;
+  const ready: ReviewCtx = { ...bound, round, ...(selected ? { observations: (c1.observations ?? []).map((row) => row.id === selected && row.use ? { ...row, use: { ...row.use, launchedRound: round } } : row) } : {}) };
+  if (selected) delete ready.requested;
+  // NOTE: the native second wave completes the same round, so it keeps the first wave's launch revision.
+  const revision = phase === 'cli' ? liveRevision(ready) : undefined;
+  const c0 = revision ? { ...ready, waveRevision: revision } : ready;
   const { c, effect } = withEffect(c0, 'wave', (id) => ({ kind: phase === 'native' ? 'wave' : 'wave-start', id, round: c0.round, roster: [...roster], timeoutMs: c0.spec.timeoutMs }));
   return { state: { tag: 'wave', c, phase }, effects: [effect] };
 }
@@ -291,8 +313,10 @@ function afterWave(c0: ReviewCtx): S {
     ...c0.rows.filter((row) => row['state'] === 'failed').map((row) => ({ slot: String(row['slot']), reason: failureReasonOf(row) })),
     ...c0.rows.filter((row) => row['state'] === 'reserve').map((row) => ({ slot: String(row['slot']), reason: failureReasonOf(row) })),
   ];
-  const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate' }));
-  const c1: ReviewCtx = { ...c0, findingBindings: { ...c0.findingBindings, ...Object.fromEntries(fresh.map((row) => [row.id, c0.reviewedRevision ?? c0.targetManifest ?? 'unbound'])) }, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed }] };
+  const revision = c0.waveRevision ?? liveRevision(c0);
+  const bound = revision ? { revision } : {};
+  const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate', ...bound }));
+  const c1: ReviewCtx = { ...c0, findingBindings: { ...c0.findingBindings, ...Object.fromEntries(fresh.map((row) => [row.id, revision ?? 'unbound'])) }, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed, ...bound }] };
   const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot || row['by'] === entry.slot));
   if (!reviewers.length || uncovered.length) return stay({ tag: 'failed', c: c1, detail: `reviewer-coverage: ${uncovered.length ? `responsible reviewer unavailable for ${uncovered.map((entry) => entry.id).join(', ')}` : 'no usable reviewer capture'}` });
   const verdict = convergence(fresh.filter((finding) => finding.status === 'open').map(matchKey), c0.history);
@@ -371,22 +395,6 @@ function afterRulings(c: ReviewCtx): S {
     if (batch.length) return enterFix(c, batch, 'main');
   }
   return decideNext(c);
-}
-
-/**
- * A target change met while consuming `RULINGS` is the fix in progress, not drift, when every ruling accepts and every
- * changed path lies in the fix paths those rulings admit (the reviewed file for artifact reviews).
- */
-function preRulingFix(c: ReviewCtx, rulings: Readonly<Record<string, unknown>>, notice: ChangeNotice): boolean {
-  // NOTE: a HEAD/comparison-identity change invalidates the reviewed baseline, so it always needs a drift decision.
-  if (c.spec.mode !== 'fix' || notice.reason === 'Comparison identity changed.' || !notice.paths.length || notice.pathCount !== notice.paths.length) return false;
-  const ruled = roundOpen(c).map((finding) => ({ finding, ruling: asRuling(rulings[finding.id]) }));
-  if (!ruled.length || ruled.some(({ ruling }) => ruling?.ruling !== 'accept')) return false;
-  const batch = ruled.map(({ finding, ruling }): ReviewFinding => ({ ...finding, status: 'accepted', ...(ruling?.fix ? { fix: ruling.fix } : {}) })).filter(fixable);
-  // NOTE: notices carry repo-relative forward-slash paths; rulings may spell them with `./` or backslashes.
-  const relative = (file: string) => file.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '');
-  const allowed = new Set(batch.flatMap((finding) => fixPaths(c, finding)).map(relative));
-  return notice.paths.every((file) => allowed.has(relative(file)));
 }
 
 // SECTION: Fix
@@ -521,16 +529,22 @@ function decideNext(c0: ReviewCtx): S {
     ...findings.filter((finding) => finding.round === c0.round && (finding.status === 'fixed' || finding.status === 'pending-rejection'))
       .map((finding): HistoryEntry => ({ ...matchKey(finding), id: finding.id, status: finding.status === 'fixed' ? 'applied' : 'pending-rejection', reraises: 0 })),
   ];
-  const c = { ...c0, findings, history };
-  const next = nextRound({ round: c.round, cap, findings: roundView(c) });
-  if (!next.run) return settleOrOptIn(c);
+  const c1 = { ...c0, findings, history };
+  const next = nextRound({ round: c1.round, cap, findings: roundView(c1) });
+  const selected = c1.requested && c1.round < cap ? c1.observations?.find((row) => row.id === c1.requested)?.use : undefined;
+  if (!next.run && !selected) return settleOrOptIn(c1);
+  // NOTE: a host-selected review launches at this boundary and spends the round it starts; full scope wins over policy scope.
+  const round = c1.round + 1;
+  const c: ReviewCtx = c1;
+  const scope: RoundScope = !selected ? (next as Extract<typeof next, { run: true }>).scope : selected.action === 'full' || (next.run && next.scope === 'full') ? 'full' : 'delta';
+  if (!next.run) return prepare(c, round, scope, [], selected);
   const carriedIds = new Set(next.carry);
   const pending = findings.filter((finding) => carriedIds.has(finding.id));
   const affinity = assignAffinity(pending.map((finding) => ({ id: finding.id, source: String(c.rows.find((row) => row['by'] === finding.sources[0])?.['slot'] ?? finding.sources[0] ?? '') })), c.spec.roster.filter((slot) => !slot.reserve));
   const carried = pending.map((finding): CarriedRejection => ({
     id: finding.id, slot: affinity[finding.id] ?? null, locus: finding.locus, defect: finding.defect, reason: finding.resolution ?? '',
   }));
-  return prepare(c, next.round, next.scope, carried);
+  return prepare(c, next.round, scope, carried, selected);
 }
 
 const optInItems = (c: ReviewCtx): FindingId[] => c.findings
@@ -544,6 +558,17 @@ function settleOrOptIn(c: ReviewCtx): S {
     if (items.length) return stay({ tag: 'decide-opt-in', c: { ...c, optInAsked: true }, items });
   }
   return settle(c);
+}
+
+/** Review evidence and its actual coverage: finding revisions, the live target, and changes no host selection assessed. */
+export function reviewCoverage(c: ReviewCtx): Readonly<Record<string, unknown>> {
+  const observations = c.observations ?? [];
+  return {
+    reviewed: [...new Set(c.findings.flatMap((finding) => finding.revision ? [finding.revision] : []))], current: liveRevision(c) ?? 'unbound',
+    unassessed: observations.filter((row) => !row.use).map(({ id, afterHash, round, paths, reason }) => ({ id, afterHash, round, paths, reason })),
+    assessed: observations.filter((row) => row.use).map(({ id, afterHash, use }) => ({ id, afterHash, use })),
+    ...(c.requested ? { unlaunched: c.requested } : {}),
+  };
 }
 
 function settle(c: ReviewCtx): S {
@@ -597,6 +622,10 @@ const DECIDE_KIND = { 'decide-escalation': 'escalation', 'decide-needs-user': 'n
 
 export function validateReview(state: ReviewState, event: HostEvent): string | null {
   if (event.type === 'REVISE') return 'event.type: REVISE is unavailable in standalone review; author a new artifact and start a new run';
+  if (event.type === 'REVIEW_USE') {
+    const awaiting = reviewAwait(state);
+    return 'c' in state && awaiting !== null && awaiting !== 'done' ? validateUse(state.c, event) : 'event.type: REVIEW_USE is accepted only at a live review frame.';
+  }
   switch (state.tag) {
     case 'rule': return event.type === 'RULINGS' ? validateRulings(state.c, event.rulings) : null;
     case 'native': return event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots, state.slots) : null;
@@ -619,7 +648,6 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
       }
       return null;
     }
-    case 'change-resolution': return event.type === 'DECISION' && event.kind === 'drift' && resolution(event.answer, state.notice) ? null : 'event.answer: bind the current change notice and evidence.';
     case 'target-check': return 'event: review target check is pending';
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty':
       return null;
@@ -630,49 +658,39 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
 // SECTION: Step
 
 export function stepReview(state: ReviewState, event: Event): S {
-  if (state.tag === 'change-resolution') {
-    if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
-    const answer = resolution(event.answer, state.notice); if (!answer) return stay(state);
-    const next = nextId(state.c.counters, state.c.path, 'check-review-target');
-    const c = { ...state.c, counters: next.counters };
-    return { state: { ...state.check, c, effectId: next.id, resolution: answer }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: c.fixCandidate ?? c.targetManifest ?? c.priorManifest!, allowedPaths: [] }] };
-  }
   if (state.tag === 'target-check') {
     if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'failed', c: state.c, detail: event.detail });
     if (event.type !== 'REVIEW_TARGET_CHECKED' || !answers(event, state.effectId)) return stay(state);
-    if (event.result === 'changed') {
-      if (!event.notice) return stay({ tag: 'failed', c: state.c, detail: 'Changed target lacks binding evidence.' });
-      if (!state.resolution && state.before.tag === 'rule' && state.pending.type === 'RULINGS' && preRulingFix(state.before.c, state.pending.rulings, event.notice)) {
-        // NOTE: the reviewed baseline stays bound, so the FIXES_APPLIED check re-admits these edits through the fix clusters' allowed paths.
-        return stepReviewUnchecked({ ...state.before, c: { ...state.before.c, counters: state.c.counters, reviewedRevision: event.notice.afterHash } }, state.pending);
-      }
-      if (!state.resolution || state.resolution.afterHash !== event.notice.afterHash) return stay({ tag: 'change-resolution', c: state.c, check: state, notice: event.notice });
-      if (state.resolution.action === 'refresh') {
-        if (state.before.tag === 'fix' || state.before.tag === 'fix-verify') return refreshFix(state, state.before, event.manifestPath, event.notice.afterHash);
-        const round = state.before.tag === 'prepare' ? state.c.round : state.c.round + 1;
-        // NOTE: at the cap no later round reviews the refreshed content, so accepted findings stand and cap-round fixes exit as fixedUnreviewed; unruled or disputed findings escalate.
-        const settles = round > state.c.spec.cap && !state.c.findings.some((row) => row.status === 'open' || row.status === 'pending-rejection' || row.status === 'needs-user');
-        const superseded = ['open', 'accepted', 'pending-rejection', 'needs-user'].filter((status) => !settles || status !== 'accepted');
-        const c = { ...state.c, targetManifest: event.manifestPath, priorManifest: event.manifestPath, reviewedRevision: event.notice.afterHash,
-          findings: state.c.findings.map((row): ReviewFinding => superseded.includes(row.status) ? { ...row, status: 'superseded' } : row), carried: [] };
-        delete c.fixCandidate;
-        if (settles) return settleOrOptIn(c);
-        if (round > c.spec.cap) return stay({ tag: 'escalated', c, escalation: { kind: 'deadlock', ids: c.findings.map((row) => row.id) } });
-        return prepare(c, round, 'full', c.carried);
-      }
-      return stay({ tag: 'decide-escalation', c: state.c, escalation: { kind: 'deadlock', ids: state.c.findings.map((row) => row.id) } });
-    }
+    if (event.result === 'changed' && !event.notice) return stay({ tag: 'failed', c: state.c, detail: 'Changed target lacks binding evidence.' });
     const before = state.before;
     if (!('c' in before)) return stay({ tag: 'failed', c: state.c, detail: 'target-changed: missing review context' });
     const verifying = before.tag === 'fix-verify';
     const verified = verifying && ((state.pending.type === 'VERIFY_DONE' && state.pending.results.every((row) => row['exit'] === 0))
       || (state.pending.type === 'ARTIFACT_PARSED' && state.pending.defects.length === 0));
-    const candidate = state.pending.type === 'FIXES_APPLIED' || (verifying && !verified);
-    const c: ReviewCtx = { ...before.c, counters: state.c.counters, ...(event.notice ? { reviewedRevision: event.notice.afterHash } : {}),
-      ...(candidate ? { fixCandidate: event.manifestPath } : { targetManifest: event.manifestPath }) };
-    if (verified) delete c.fixCandidate;
-    return stepReviewUnchecked({ ...before, c }, state.pending);
+    const fixing = before.tag === 'fix' && state.pending.type === 'FIXES_APPLIED';
+    const rulings = state.pending.type === 'RULINGS' ? state.pending.rulings : {};
+    const rulingFix = before.tag === 'rule' && state.pending.type === 'RULINGS' && before.c.spec.mode === 'fix'
+      && roundOpen(before.c).some((finding) => asRuling(rulings[finding.id])?.ruling === 'accept');
+    const admission = fixing || verifying || rulingFix;
+    const observed = event.notice && (event.result === 'changed' || (rulingFix && event.notice.pathCount > 0)) ? observeTarget(before.c, event.notice) : before.c;
+    if (admission && event.result === 'changed') return stay({ tag: 'failed', c: { ...observed, counters: state.c.counters }, detail: 'Fix admission failed: changed paths or comparison identity exceed the authorized applied scope; binding evidence retained.' });
+    // NOTE: successful checks precede their output capture, so changed declared bytes need another bounded verification pass.
+    if (before.tag === 'fix-verify' && verified && event.result === 'expected' && (event.notice?.pathCount ?? 0) > 0) {
+      const c = { ...observed, counters: state.c.counters, fixCandidate: event.manifestPath, fixCandidateRef: event.manifestRef };
+      const retry = retryFailed(c, before.clusters);
+      const exhausted = [...(before.exhausted ?? []), ...retry.exhausted];
+      if (exhausted.length) return resumeFix(c, [...(before.pendingClusters ?? []), ...retry.clusters], exhausted, before.pass, ['Verification changed the admitted candidate.']);
+      return issueFixVerify(c, { clusters: retry.clusters, pass: before.pass, ...(before.pendingClusters ? { pendingClusters: before.pendingClusters } : {}), exhausted });
+    }
+    const candidate = fixing && state.pending.type === 'FIXES_APPLIED' && state.pending.clusters.some((row) => row['status'] !== 'failed');
+    // NOTE: fix checks retain the admission baseline; ordinary observations retain each finding's launch revision.
+    const c: ReviewCtx = { ...observed, counters: state.c.counters,
+      ...(!admission || verified ? { ...(event.notice ? { reviewedRevision: event.notice.afterHash } : {}), targetManifest: event.manifestPath, targetManifestRef: event.manifestRef } : {}),
+      ...(candidate ? { fixCandidate: event.manifestPath, fixCandidateRef: event.manifestRef } : {}) };
+    if (verified) { delete c.fixCandidate; delete c.fixCandidateRef; }
+    return stepReviewUnchecked({ ...before, c } as typeof before, state.pending);
   }
+  if (event.type === 'REVIEW_USE') return 'c' in state && validateReview(state, event) === null ? stay({ ...state, c: useReview(state.c, event) } as ReviewState) : stay(state);
   const manifest = 'c' in state ? state.c.fixCandidate ?? state.c.targetManifest ?? state.c.priorManifest : undefined;
   const consumes = (state.tag === 'prepare' && event.type === 'REVIEW_PREPARED' && answers(event, state.c.effectId))
     || (state.tag === 'native' && event.type === 'NATIVE_RESULTS' && validateNativeResults(event.slots, state.slots) === null)
@@ -685,26 +703,43 @@ export function stepReview(state: ReviewState, event: Event): S {
     const next = nextId(state.c.counters, state.c.path, 'check-review-target');
     const c = { ...state.c, counters: next.counters };
     const applied = state.tag === 'fix' && event.type === 'FIXES_APPLIED' ? state.clusters.filter((cluster) => event.clusters.some((row) => row['clusterId'] === cluster.clusterId && row['status'] !== 'failed')) : [];
-    const allowedPaths = applied.length ? c.spec.kind === 'code' ? applied.flatMap((cluster) => cluster.paths) : [c.spec.target] : [];
-    return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, allowedPaths }] };
+    const rulings = state.tag === 'rule' && event.type === 'RULINGS' && c.spec.mode === 'fix' ? roundOpen(c).map((finding) => asRuling(event.rulings[finding.id])) : [];
+    const preRulingPaths = rulings.length && rulings.every((ruling) => ruling?.ruling === 'accept' && ruling.fix?.paths.length) ? rulings.flatMap((ruling) => ruling!.fix!.paths) : [];
+    const verifyingPaths = state.tag === 'fix-verify' && c.spec.kind === 'code' ? state.clusters.flatMap((cluster) => cluster.paths) : [];
+    const scopedPaths = applied.length ? applied.flatMap((cluster) => cluster.paths) : verifyingPaths.length ? verifyingPaths : preRulingPaths;
+    const allowedPaths = scopedPaths.length ? c.spec.kind === 'code' ? scopedPaths : [c.spec.target] : [];
+    return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, manifestRef: c.fixCandidate ? c.fixCandidateRef : c.targetManifest ? c.targetManifestRef : c.priorManifestRef, allowedPaths }] };
   }
   return stepReviewUnchecked(state, event);
 }
 
-/**
- * Refresh after applied fixes keeps finding statuses: a parked receipt proceeds to fix-verify, and a parked verification
- * result is discarded and reissued, so findings become `fixed` only after the refreshed content passes.
- */
-function refreshFix(state: Extract<ReviewState, { tag: 'target-check' }>, before: Extract<ReviewState, { tag: 'fix' | 'fix-verify' }>, manifestPath: string, afterHash: string): S {
-  // NOTE: `priorManifest` stays on the reviewed content so the next round still sees the fix as a delta.
-  const c: ReviewCtx = { ...before.c, counters: state.c.counters, targetManifest: manifestPath, reviewedRevision: afterHash };
-  delete c.fixCandidate;
-  if (before.tag === 'fix') return stepReviewUnchecked({ ...before, c }, state.pending);
-  const { tag: _tag, c: _c, ...recovery } = before;
-  return issueFixVerify(c, recovery);
+/** Records one observation per resulting revision; it changes no finding, ruling, or round. */
+function observeTarget(c: ReviewCtx, notice: ChangeNotice): ReviewCtx {
+  const observations = c.observations ?? [];
+  if (observations.some((row) => row.afterHash === notice.afterHash)) return c;
+  const { id, afterHash, beforeHash, paths, pathCount, reason, rawDeltaRef } = notice;
+  return { ...c, observations: [...observations, { id, afterHash, beforeHash, round: c.round, paths, pathCount, reason, rawDeltaRef }] };
 }
 
-function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' | 'change-resolution' }>, event: Event): S {
+function useReview(c: ReviewCtx, event: Extract<HostEvent, { type: 'REVIEW_USE' }>): ReviewCtx {
+  const { type: _type, changeDispositions: _dispositions, ...use } = event;
+  const observations = (c.observations ?? []).map((row) => row.id === use.observationId ? { ...row, use: { ...use, round: c.round } } : row);
+  return { ...c, observations, ...(use.action === 'reuse' ? {} : { requested: use.observationId }) };
+}
+
+/** A selection binds an unassessed observation at its exact revision; a new review wave needs a round left under the cap. */
+function validateUse(c: ReviewCtx, event: Extract<HostEvent, { type: 'REVIEW_USE' }>): string | null {
+  const observation = (c.observations ?? []).find((row) => row.id === event.observationId);
+  if (!observation || observation.afterHash !== event.afterHash) return 'event.observationId: name a review observation with its current afterHash.';
+  if (observation.use) return `event.observationId: ${observation.id} already has a host applicability selection.`;
+  if (event.action === 'reuse') return null;
+  if (event.action === 'targeted' && !event.paths?.length) return 'event.paths: a targeted review names the paths to review.';
+  if (c.requested) return `event.action: a selected review for ${c.requested} is pending; it launches at the next round boundary.`;
+  if (c.round >= c.spec.cap) return `event.action: the review cap (${c.spec.cap}) is reached; reuse with a rationale or escalate. Findings and unresolved coverage are retained.`;
+  return null;
+}
+
+function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }>, event: Event): S {
   if (event.type === 'EFFECT_FAILED' && 'c' in state && answers(event, state.c.effectId)
     && (state.tag === 'prepare' || state.tag === 'wave' || state.tag === 'fix-verify')) {
     return stay({ tag: 'failed', c: state.c, detail: `${event.cls}: ${event.detail}` });
@@ -714,7 +749,7 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' |
     case 'prepare':
       if (event.type !== 'REVIEW_PREPARED' || !answers(event, state.c.effectId)) return stay(state);
       if (event.scope['empty'] === true) return stay({ tag: 'empty', c: state.c });
-      return launchWave({ ...state.c, promptPaths: event.promptPaths, ...(typeof event.scope['manifestPath'] === 'string' ? { priorManifest: event.scope['manifestPath'], targetManifest: String(event.scope['bindingPath'] ?? event.scope['manifestPath']) } : {}) }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
+      return launchWave({ ...state.c, promptPaths: event.promptPaths, ...(typeof event.scope['manifestPath'] === 'string' ? { priorManifest: event.scope['manifestPath'], priorManifestRef: event.scope['manifestRef'] as ReviewManifestRef | undefined, targetManifest: String(event.scope['bindingPath'] ?? event.scope['manifestPath']), targetManifestRef: (event.scope['bindingRef'] ?? event.scope['manifestRef']) as ReviewManifestRef | undefined } : {}) }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
     case 'wave':
       if (event.type === 'WAVE_STARTED' && answers(event, state.c.effectId)) {
         const completed = (event as typeof event & { completed?: Extract<Event, { type: 'WAVE_DONE' }> }).completed;
@@ -754,7 +789,7 @@ export function reviewAwait(state: ReviewState) {
     case 'native': return 'native' as const;
     case 'rule': return 'rule' as const;
     case 'fix': return 'fix' as const;
-    case 'change-resolution': case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
+    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return 'done' as const;
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return null;
     default: return never(state, 'review state');
@@ -775,7 +810,16 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
 }
 
 export function reviewData(state: ReviewState): Readonly<Record<string, unknown>> {
-  if (state.tag === 'change-resolution') return { kind: 'drift', question: 'Resolve changed reviewed content before consuming the parked receipt.', notice: state.notice, options: ['preserve', 'refresh', 'reconcile', 'escalate'] };
+  const data = reviewFrameData(state);
+  if (!('c' in state) || !state.c.observations?.length) return data;
+  const awaiting = reviewAwait(state);
+  if (awaiting === 'done') return state.tag === 'settled' ? { ...data, completion: { ...(data['completion'] as object), coverage: reviewCoverage(state.c) } } : { ...data, coverage: reviewCoverage(state.c) };
+  if (awaiting === null) return data;
+  // NOTE: observations are advisory; a selection is optional and findings keep the revision their wave reviewed.
+  return { ...data, reviewObservations: state.c.observations, reviewUse: 'Optional: REVIEW_USE { observationId, afterHash, action: reuse|targeted|full, rationale, paths? }. Observations never block progress or spend a round.', ...(state.tag === 'decide-escalation' ? { coverage: reviewCoverage(state.c) } : {}) };
+}
+
+function reviewFrameData(state: ReviewState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
     case 'native': return { round: state.c.round, slots: state.slots };
     case 'rule': {
@@ -830,6 +874,12 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
   return c.rounds.map((record) => ({
     round: record.round,
     heading: record.scope,
+    // NOTE: coverage renders only when the target changed, so the reviewed revision and the host's reuse stay distinct.
+    ...(record.revision && c.observations?.some((row) => row.round === record.round) ? {
+      revision: record.revision,
+      applicability: c.observations.filter((row) => row.round === record.round).map((row) => ({ afterHash: row.afterHash, reason: row.reason,
+        ...(row.use ? { action: row.use.action, rationale: row.use.rationale, ...(row.use.paths?.length ? { paths: [...row.use.paths] } : {}), ...(row.use.launchedRound ? { launchedRound: row.use.launchedRound } : {}) } : {}) })),
+    } : {}),
     reviewers: record.reviewers.map((reviewer) => (typeof reviewer === 'string' ? { slot: reviewer } : reviewer)),
     failed: record.failed,
     entries: c.findings.filter((finding) => finding.round === record.round).map((finding) => ({
@@ -853,10 +903,8 @@ export const reviewTransitions = [
   ].map(([from, on]) => ({ from: from!, on: on!, to: 'target-check' })),
   ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
   { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'empty' },
-  { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'change-resolution' },
-  { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'escalated' },
-  { from: 'change-resolution', on: 'DECISION', to: 'target-check' },
   { from: 'target-check', on: 'EFFECT_FAILED', to: 'failed' },
+  ...['native', 'rule', 'fix', 'decide-escalation', 'decide-needs-user', 'decide-opt-in'].map((tag) => ({ from: tag, on: 'REVIEW_USE', to: tag })),
   { from: 'booting', on: 'RUN_STARTED', to: 'prepare' },
   { from: 'booting', on: 'RUN_STARTED', to: 'skipped' },
   { from: 'booting', on: 'RUN_STARTED', to: 'failed' },

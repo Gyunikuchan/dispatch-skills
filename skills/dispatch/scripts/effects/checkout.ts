@@ -4,7 +4,9 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { stableValue } from '../domain/stable-value.ts';
-import type { CheckoutOp, Effect, Handler, Ports } from '../core/types.ts';
+import type { CheckoutOp, Effect, Handler, Ports, RecoveryCapability } from '../core/types.ts';
+import { effectDigest } from '../domain/effect-digest.ts';
+import { portableEffect } from '../lib/portable-effect.ts';
 
 type CheckoutEffect = Extract<Effect, { kind: 'checkout' }>;
 type Row = Readonly<Record<string, unknown>>;
@@ -116,9 +118,14 @@ async function init(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row
   const linked = ignored.filter((entry) => /^[^/]+\/$/.test(entry) && !runRelative.startsWith(entry)).map((entry) => entry.slice(0, -1));
   const copiedIgnored = ignored.filter((entry) => !entry.includes('/'));
   const unreproduced = ignored.filter((entry) => !linked.includes(entry.replace(/\/$/, '')) && !copiedIgnored.includes(entry) && !runRelative.startsWith(entry));
+  const replayInput = isRow(input['replay']) ? input['replay'] : null;
   if (ports.fs.inspectPath(root)?.kind === 'directory') {
-    const message = await ports.git.run(['log', '-1', '--format=%B'], root);
-    if (message.includes(BASELINE_TRAILER) && await clean(ports, root)) return { path: root, base: await head(ports, root), manifest: JSON.parse(message.slice(message.indexOf(BASELINE_TRAILER) + BASELINE_TRAILER.length).trim()) as Row };
+    const baseline = replayInput ? (await ports.git.run(['rev-list', '-1', `--grep=${BASELINE_TRAILER}`, '--fixed-strings', 'HEAD', '--'], root).catch(() => '')).trim() : '';
+    const message = await ports.git.run(['log', '-1', '--format=%B', ...(baseline ? [baseline] : [])], root);
+    if (message.includes(BASELINE_TRAILER) && (replayInput || await clean(ports, root))) {
+      const reused = { path: root, base: baseline || await head(ports, root), manifest: JSON.parse(message.slice(message.indexOf(BASELINE_TRAILER) + BASELINE_TRAILER.length).trim()) as Row };
+      return replayInput ? replay(ports, root, reused, replayInput) : reused;
+    }
     throw new Error('Integration worktree exists without a completed baseline; inspect or remove it before retrying.');
   }
   await worktree(deps, ports, root, 'HEAD', false);
@@ -137,7 +144,48 @@ async function init(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row
   for (const file of deleted) if (ports.fs.inspectPath(path.join(root, file))) throw new Error(`Caller baseline deletion was not reproduced: ${file}`);
   const manifest = { copied, deleted, linked, copiedIgnored, unreproduced };
   const base = await commit(ports, root, `dispatch baseline\n\n${BASELINE_TRAILER} ${JSON.stringify(manifest)}`);
-  return { path: root, base, manifest };
+  return replayInput ? replay(ports, root, { path: root, base, manifest }, replayInput) : { path: root, base, manifest };
+}
+
+const isRow = (value: unknown): value is Row => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Replays archived commits in order. Commit provenance proves completed picks on retry; conflicts stay in place.
+ */
+async function replay(ports: Ports, root: string, baseline: { path: string; base: string; manifest: Row }, input: Row): Promise<Row> {
+  const from = text(input['base']), to = text(input['head']);
+  if (!from || !to) throw new Error('replay requires the archived integration base and head');
+  // NOTE: `--` skips Git's filename check, which fails with ENAMETOOLONG for a range under a deep Windows worktree.
+  const commits = (await ports.git.run(['rev-list', '--reverse', `${from}..${to}`, '--'], root)).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const replayed: { from: string; to: string }[] = [];
+  const retained = (await ports.git.run(['rev-list', '--reverse', `${baseline.base}..HEAD`, '--'], root)).trim().split(/\r?\n/).filter(Boolean);
+  for (const revision of retained) {
+    const message = await ports.git.run(['log', '-1', '--format=%B', revision], root);
+    const source = commits.find((candidate) => message.includes(`(cherry picked from commit ${candidate})`) || message.includes(`${CANDIDATE_TRAILER} ${candidate}`));
+    if (!source) throw new Error(`Delivery replay contains an unbound commit: ${revision}`);
+    const prior = replayed.find((row) => row.from === source);
+    if (prior) prior.to = revision;
+    else {
+      if (source !== commits[replayed.length]) throw new Error('Delivery replay commits are out of order');
+      replayed.push({ from: source, to: revision });
+    }
+  }
+  for (const commit of commits) {
+    if (replayed.some((row) => row.from === commit)) continue;
+    const active = (await ports.git.run(['rev-parse', '--verify', 'CHERRY_PICK_HEAD'], root).catch(() => '')).trim();
+    if (active && active !== commit) throw new Error('Delivery replay has an unrelated cherry-pick');
+    try {
+      if (active) throw new Error('retained cherry-pick needs resolution');
+      await ports.git.run([...COMMIT, 'cherry-pick', '--allow-empty', '--keep-redundant-commits', '-x', commit], root);
+    } catch (error) {
+      if (await pickHead(ports, root) !== commit) throw error;
+      const paths = await unmerged(ports, root);
+      const candidatePaths = split(await ports.git.run(['diff', '--name-only', '-z', `${commit}^`, commit, '--'], root)).sort();
+      return { ...baseline, head: await head(ports, root), candidate: commit, candidatePaths, conflict: true, paths, detail: `replay of ${commit}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`, replayed };
+    }
+    replayed.push({ from: commit, to: await head(ports, root) });
+  }
+  return { ...baseline, head: await head(ports, root), conflict: false, replayed };
 }
 
 async function submit(ports: Ports, root: string, base: string, message: string): Promise<Row> {
@@ -277,10 +325,11 @@ async function entry(ports: Ports, cwd: string, revision: string, file: string):
   return match ? { mode: match[1]!, blob: match[2]! } : null;
 }
 
-async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Row): Promise<Row> {
+async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Row, probe = false): Promise<Row> {
   const base = text(input['base']), revision = text(input['revision']);
   if (await head(ports, root) !== revision) throw new Error(`Integration checkout is not at ${revision}.`);
-  await discard(ports, root, revision);
+  if (!probe) await discard(ports, root, revision);
+  else if (!await clean(ports, root)) throw new Error('Recovery integration checkout has uncommitted content.');
   const files = split(await ports.git.run(['diff', '--name-only', '-z', base, revision, '--'], root)).sort();
   const callerRoot = ports.fs.inspectPath(deps.cwd)?.realPath ?? path.resolve(deps.cwd);
   const fileModes = (await ports.git.run(['config', '--bool', '--default=true', 'core.filemode'], deps.cwd)).trim() === 'true';
@@ -302,12 +351,48 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
     else conflicts.push(file);
   }
   if (conflicts.length) return { conflicts, transferred: [], already: [], collision: { kind: 'newer-content', paths: conflicts, binding: bindingHash({ base, revision, conflicts }) } };
+  if (probe && plan.some((item) => item.action !== 'already')) return { incomplete: true };
   for (const item of plan) {
     const target = path.join(deps.cwd, item.file);
     if (item.action === 'write') copy(ports, path.join(root, item.file), target);
     else if (item.action === 'delete') ports.fs.remove(target);
   }
   return { conflicts: [], transferred: plan.filter((item) => item.action !== 'already').map((item) => item.file), already: plan.filter((item) => item.action === 'already').map((item) => item.file), blobs };
+}
+
+export function checkoutRecovery(deps: CheckoutDeps): RecoveryCapability<CheckoutEffect> {
+  return { async probe(effect, ports, ctx) {
+    const unresolved = { status: 'unresolved' as const, evidence: 'No complete checkout proof; retry retains the original all-path preflight and scope' };
+    const input = effect.input as Row, root = worktreePath(ctx.runDir, 'integration');
+    let result: Row;
+    if (effect.op === 'init' && !input['rebase'] && !input['replay']) {
+      if (ports.fs.inspectPath(root)?.kind !== 'directory' || !await clean(ports, root)) return unresolved;
+      const message = await ports.git.run(['log', '-1', '--format=%B'], root);
+      const trailer = message.split(/\r?\n/).find((line) => line.startsWith(`${BASELINE_TRAILER} `));
+      if (!trailer) return unresolved;
+      const manifest = JSON.parse(trailer.slice(BASELINE_TRAILER.length).trim()) as Row;
+      if (!['copied', 'deleted', 'linked', 'copiedIgnored', 'unreproduced'].every((key) => Array.isArray(manifest[key]) && strings(manifest[key]).length === (manifest[key] as unknown[]).length)) return unresolved;
+      result = { path: root, base: await head(ports, root), manifest };
+    } else if (effect.op === 'commit') {
+      const taskRoot = worktreePath(ctx.runDir, text(input['name']));
+      const revision = await head(ports, taskRoot), base = text(input['base']);
+      if (revision === base || !await clean(ports, taskRoot) || (await ports.git.run(['rev-parse', `${revision}^`], taskRoot)).trim() !== base) return unresolved;
+      result = { revision, paths: split(await ports.git.run(['diff', '--name-only', '-z', base, revision, '--'], taskRoot)).sort() };
+    } else if (effect.op === 'resolve') {
+      if (await head(ports, root) === text(input['expected'])) return unresolved;
+      result = await resolve(ports, root, input);
+    } else if (effect.op === 'deliver') {
+      result = await deliver(deps, ports, root, input, true);
+      if (result['incomplete'] || strings(result['conflicts']).length) return unresolved;
+    } else if (effect.op === 'integrate') {
+      const candidate = text(input['candidate']), expected = text(input['expected']), current = await head(ports, root);
+      const parent = (await ports.git.run(['rev-parse', `${current}^`], root)).trim();
+      const message = await ports.git.run(['log', '-1', '--format=%B', current], root);
+      if (parent !== expected || !message.split(/\r?\n/).some((line) => line.trim() === `${CANDIDATE_TRAILER} ${candidate}`) || !await clean(ports, root)) return unresolved;
+      result = { revision: current, conflict: false, reused: true };
+    } else return unresolved;
+    return { status: 'complete', effectId: effect.id, attempt: ctx.attempt, descriptorHash: effectDigest(portableEffect(effect, ctx.runDir)), evidence: `checkout ${effect.op} immutable revision and live byte proof`, results: [{ type: 'CHECKOUT_DONE', effectId: effect.id, op: effect.op, result }] };
+  } };
 }
 
 /**

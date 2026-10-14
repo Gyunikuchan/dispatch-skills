@@ -12,7 +12,7 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import { CLEAN, fixture, until } from '../helpers/e2e.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../skills/dispatch/scripts/core/types.ts';
 
-test('review-target code drift at native boundary parks a bound notice and retains the capture', async () => {
+test('review-target code change at native boundary records an observation and retains the capture', async () => {
   const f = fixture();
   try {
     fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-stub', effort: 'low' } }] } } }));
@@ -24,15 +24,16 @@ test('review-target code drift at native boundary parks a bound notice and retai
     for (const slot of event.slots) fs.writeFileSync(String(slot['outputPath']), JSON.stringify(CLEAN));
     fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'external edit');
     const done = await f.reply(f.absoluteRun(frame.run), event);
-    assert.equal(done.await, 'decide', JSON.stringify(done));
-    assert.equal(done.data['kind'], 'drift');
+    assert.equal(done.await, 'done', JSON.stringify(done));
+    const coverage = (done.data['completion'] as Record<string, unknown>)['coverage'] as { unassessed: { paths: string[] }[] };
+    assert.deepEqual(coverage.unassessed.flatMap((row) => row.paths), ['src/a.ts']);
     for (const slot of event.slots) assert.ok(fs.existsSync(String(slot['outputPath'])));
     const replay = await f.cli(['send', '--run', done.run]);
-    assert.equal(replay.data['kind'], 'drift'); assert.deepEqual(replay.data['notice'], done.data['notice']);
+    assert.deepEqual(replay.data, done.data);
   } finally { f.cleanup(); }
 });
 
-for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact drift at ruling boundary parks a bound notice`, async () => {
+for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact change at ruling boundary keeps the ruled finding`, async () => {
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, `target.${kind}.md`);
@@ -41,7 +42,8 @@ for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} arti
     assert.equal(frame.await, 'rule', JSON.stringify(frame));
     fs.writeFileSync(target, '# Target\n\n## Goal\nExternal condition\n');
     const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-    assert.equal(done.await, 'decide', JSON.stringify(done)); assert.equal(done.data['kind'], 'drift');
+    assert.equal(done.await, 'done', JSON.stringify(done)); assert.equal(done.data['outcome'], 'complete');
+    assert.equal(((done.data['completion'] as Record<string, unknown>)['coverage'] as { unassessed: unknown[] }).unassessed.length, 1);
     assert.match(fs.readFileSync(path.join(f.absoluteRun(done.run), 'events.jsonl'), 'utf8'), /Missing condition/);
   } finally { f.cleanup(); }
 });
@@ -146,9 +148,9 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     assert.deepEqual(names(session, true), ['.state']);
     assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json', 'rule.findings.json']);
     const folders = names(run, true);
-    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', 'recovery-deltas']);
+    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['checkpoints', 'effect-results', 'events', 'recovery-deltas']);
     assert.deepEqual(fs.readdirSync(path.join(run, 'events')).sort(), [path.basename(named), ...(retro ? [path.basename(retro)] : [])].sort());
-    for (const folder of folders.filter((name) => !['events', 'recovery-deltas'].includes(name))) {
+    for (const folder of folders.filter((name) => !['checkpoints', 'effect-results', 'events', 'recovery-deltas'].includes(name))) {
       assert.deepEqual(names(path.join(run, folder), false).filter((name) => /^(claim|heartbeat|done)(\.a\d+)?\.json$|^launch\.json$/.test(name)), [], folder);
     }
   } finally { f.cleanup(); }

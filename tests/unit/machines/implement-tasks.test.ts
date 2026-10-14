@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import type { ScopeAdjustment } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { effectivePlan, implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
 
@@ -234,11 +233,8 @@ test('tasks: replay folds the recorded events to identical frames without relaun
 test('level-journal: task reconciliation retains the parked draft under its updated signature', () => {
   const { result } = start(1);
   if (result.state.tag !== 'tasks') throw new Error('tasks');
-  const adjustment: ScopeAdjustment = {
-    proposal: { requestId: 'scope-task-signature', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required behavior uses a companion module.', delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
-    approvedBy: 'orchestrator', rationale: 'The extra path is required.',
-  };
-  const plan = effectivePlan({ ...result.state.c, scopeAdjustments: [adjustment] });
+  const current = result.state.c.plan!;
+  const plan = { ...current, tasks: current.tasks.map((task) => task.id === 'T1' ? { ...task, paths: [...task.paths, 'src/extra.ts'] } : task) };
   const revisedTask = plan.tasks.find((task) => task.id === 'T1')!;
   const prior = result.state.c.tasks['T1']!;
   const signature = taskSignature(plan, revisedTask);

@@ -166,9 +166,14 @@ export type ResolutionEntry = {
 
 export type ReviewerView = { slot: SlotId; model?: string; effort?: string };
 export type FailedTargetView = { slot: SlotId; reason: string };
+/** Host applicability of a round's findings to a later target revision; absent `action` means not assessed. */
+export type ApplicabilityView = { afterHash: string; reason: string; action?: 'reuse' | 'targeted' | 'full'; rationale?: string; paths?: readonly string[]; launchedRound?: number };
 export type ResolutionRound = {
   round: number;
   heading?: string;
+  /** Target revision the round's reviewers actually reviewed. */
+  revision?: string;
+  applicability?: readonly ApplicabilityView[];
   reviewers: readonly ReviewerView[];
   failed: readonly FailedTargetView[];
   entries: readonly ResolutionEntry[];

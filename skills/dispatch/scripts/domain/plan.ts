@@ -3,6 +3,7 @@
 import type {
   ChangeAction, EvidenceClass, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask, PlanWarning,
 } from './types.ts';
+import { criterionHeading, isCriterionId } from './criterion-id.ts';
 
 export const RESOLUTION_HEADING = '## Review Findings & Resolutions';
 
@@ -289,7 +290,6 @@ export const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · (?:sha256:[0-9a-f]{
 const TASK_HEADING = /^###\s+(T[1-9]\d*)\s+[—–-]\s+(\S.*?)\s*$/;
 const TASK_FIELD = /^[-*+]\s+(Prerequisites|Criteria):\s*(.*?)\s*$/i;
 const OVERLAP_FIELD = /^[-*+]\s+Overlap:\s*(.*?)\s*$/i;
-const COVERAGE = /^(?:SC[1-9]\d*|FINAL)$/;
 const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;
 const MARKER_HEADING = /^####\s+\[([A-Z][A-Z-]*)\]\s+\S/;
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
@@ -595,17 +595,17 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
 }
 
 function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
-  const id = /^\[SC([1-9]\d*)\]\s+/.exec(text);
+  const id = criterionHeading(text);
   const base: Criterion = {
     id: '', title: text, line, changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
     review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
     evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
     critical: CRITICAL.test(text), valid: false,
   };
-  if (!id?.[1]) { out.push(lint('criterion-id', line, 'Success criterion requires a stable [SC#] identifier.')); return base; }
-  if (ids.has(id[1])) out.push(lint('criterion-id', line, `Duplicate criterion SC${id[1]}.`));
-  ids.add(id[1]);
-  return { ...base, id: `SC${id[1]}`, title: text.slice(id[0].length).trim(), valid: true };
+  if (!id) { out.push(lint('criterion-id', line, 'Success criterion requires a stable [SC#] identifier.')); return base; }
+  if (ids.has(id.id)) out.push(lint('criterion-id', line, `Duplicate criterion ${id.id}.`));
+  ids.add(id.id);
+  return { ...base, id: id.id, title: id.title, valid: true };
 }
 
 function readMapping(current: Criterion, entry: StructuralLine, approved: ReadonlySet<string>, out: LintDefect[]): void {
@@ -678,7 +678,7 @@ function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: re
     const fail = (message: string) => out.push(lint('transient-coverage', criterion.coveredLine, `Criterion ${criterion.id} ${message}`));
     if (criterion.retain === 'durable') { if (target !== null) fail('sets Covered by without Retain: transient.'); continue; }
     if (target === null) { fail('is Retain: transient and requires Covered by: <SC#|FINAL>.'); continue; }
-    if (!COVERAGE.test(target)) { fail(`names Covered by "${target}"; use a criterion ID (SC#) or FINAL.`); continue; }
+    if (target !== 'FINAL' && !isCriterionId(target)) { fail(`names Covered by "${target}"; use a criterion ID (SC#) or FINAL.`); continue; }
     if (target === 'FINAL') { if (!finalCommands.length) fail('is Covered by FINAL, but the plan has no [FINAL] Verify command.'); continue; }
     const covering = byId.get(target);
     if (!covering) fail(`is Covered by unknown criterion ${target}.`);
@@ -825,6 +825,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
     const line = task.criteriaLine ?? task.line;
     if (!task.criteria.length) out.push(lint('task-criteria', line, `Task ${task.id} requires "- Criteria: SC<n>[, ...]" naming its acceptance criteria.`));
     for (const id of task.criteria) {
+      if (!isCriterionId(id)) { out.push(lint('task-criteria', line, `Task ${task.id} names invalid criterion ${id}; use SC[1-9][0-9]*.`)); continue; }
       const criterion = known.get(id);
       if (!criterion) { out.push(lint('task-criteria', line, `Task ${task.id} names unknown criterion ${id}.`)); continue; }
       const prior = owner.get(id);
