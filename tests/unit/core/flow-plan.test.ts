@@ -26,13 +26,6 @@ const PLAN = `# Add retry budget
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] Whole suite stays green
-  - Changes: src/fetch.ts
-  - Verify: \`npm test\` [FINAL]
-  - Evidence: verify
-  - Test rationale: aggregate regression gate over every package.
-
 ## Proposed Changes
 ### T1 — Cap fetch retries
 Fetch stops retrying after three attempts so callers fail fast.
@@ -41,6 +34,13 @@ Fetch stops retrying after three attempts so callers fail fast.
 
 #### [MODIFY] src/fetch.ts
 - Changes: add a retry counter to fetchWithRetry.
+
+## Success Criteria
+- [SC1] Whole suite stays green
+  - Changes: src/fetch.ts
+  - Verify: \`npm test\` [FINAL]
+  - Evidence: verify
+  - Test rationale: aggregate regression gate over every package.
 
 ## Verification Plan
 ### Automated Tests
@@ -52,8 +52,8 @@ Fetch stops retrying after three attempts so callers fail fast.
 *No reviews conducted yet.*
 `;
 
-test('readable artifact ownership: full plan findings stay inline across replay identities', () => {
-  const ports = fakePorts(), base = tempDir(), session = path.join(base, 'reports (full)'), owner = path.join(base, 'owners', 'plan with (spaces).plan.md');
+test('readable artifact ownership: full plan findings go to the review log and the plan keeps a compact table', () => {
+  const ports = fakePorts(), base = tempDir(), session = path.join(base, 'reports (full)'), owner = path.join(base, 'owners', 'plan with (spaces).plan.md'), log = path.join(base, 'owners', 'plan with (spaces).review-log.md');
   ports.fs.writeAtomic(owner, PLAN);
   const writes: string[] = [];
   const write = ports.fs.writeAtomic;
@@ -66,19 +66,23 @@ test('readable artifact ownership: full plan findings stay inline across replay 
   const runDir = path.join(session, '.state', 'runs', '001-review');
   const state = stateOf('plan.review');
   rootMachine.render!(state, ports, runDir);
-  assert.deepEqual(writes, [owner]);
-  const plan = ports.fs.readText(owner);
-  assert.match(plan, /More detail belongs in the report./);
-  assert.match(plan, /Required change: Add the check./);
-  assert.match(plan, /- Ruling:\n  Keep API.  \n  Add check./);
+  assert.deepEqual(writes, [log, owner]);
+  const plan = ports.fs.readText(owner), history = ports.fs.readText(log);
+  assert.match(history, /More detail belongs in the report./);
+  assert.match(history, /Required change: Add the check./);
+  assert.match(history, /- Ruling:\n  Keep API.  \n  Add check./);
+  assert.match(plan, /\| R1-F001 \| 1 \| SHOULD \| Accepted \| Keep API. \|/);
+  assert.match(plan, /Full log: \[plan with \(spaces\)\.review-log\.md\]\(<plan with \(spaces\)\.review-log\.md>\)/);
+  assert.ok(!plan.includes('Required change:'));
   assert.ok(!plan.includes('Full report:'));
   writes.length = 0;
   rootMachine.render!(state, ports, runDir);
   assert.deepEqual(writes, []);
   rootMachine.render!(stateOf('design.i01.plan.review'), ports, runDir);
   rootMachine.render!(state, ports, path.join(session, '.state', 'runs', '002-review'));
-  assert.deepEqual(writes, [owner, owner]);
-  assert.equal((ports.fs.readText(owner).match(/^### Review /gm) ?? []).length, 3);
+  assert.deepEqual(writes, [log, owner, log, owner]);
+  assert.equal((ports.fs.readText(log).match(/^### Review /gm) ?? []).length, 3);
+  assert.match(ports.fs.readText(owner), /Reviews: 3 · Rounds: 3 · Findings: 3 \(Accepted 3\)/);
 });
 
 test('readable artifact ownership: owned review needs no report write or invented rationale', () => {
@@ -90,10 +94,12 @@ test('readable artifact ownership: owned review needs no report write or invente
   const write = ports.fs.writeAtomic;
   ports.fs.writeAtomic = (file, text) => { if (file.endsWith('.report.md')) throw new Error('disk full'); write(file, text); };
   rootMachine.render!(state, ports, session);
-  assert.match(ports.fs.readText(owner), /Required change: Add check/);
+  const log = path.join(session, 'plan.review-log.md');
+  assert.match(ports.fs.readText(log), /Required change: Add check/);
+  assert.match(ports.fs.readText(owner), /\| R1-F001 \| 1 \| SHOULD \| Accepted \| — \|/);
   ports.fs.writeAtomic = write;
   rootMachine.render!(state, ports, session);
-  assert.ok(!ports.fs.readText(owner).includes('- Ruling:'));
+  assert.ok(!ports.fs.readText(log).includes('- Ruling:'));
 });
 
 test('plan end to end: author → AUTHORED → parse → review → rule → done complete with the resolution section rendered', async () => {
@@ -121,6 +127,7 @@ test('plan end to end: author → AUTHORED → parse → review → rule → don
   assert.deepEqual([done.frame?.at, done.frame?.data['outcome']], ['plan › done', 'complete']);
   const rendered = fs.readFileSync(planPath, 'utf8');
   assert.match(rendered, /## Review Findings & Resolutions[\s\S]*R1-F001/);
+  assert.match(rendered, /## Task Map\n[\s\S]*\n\| T1 \| [^\n]*\n[\s\S]*## Proposed Changes/);
   assert.ok(rendered.startsWith('# Add retry budget'));
   const replay = await send({ ...options, dryRun: true });
   assert.deepEqual(replay.frame, done.frame);

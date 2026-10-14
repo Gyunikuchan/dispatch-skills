@@ -42,7 +42,7 @@ const PLAN: ParsedPlan = {
     { action: 'GENERATED', path: 'src/generated.ts', note: 'Generated output', command: 'node scripts/gen.mjs', line: 3 },
   ],
   verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] },
-  tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1', 'SC2'], paths: ['src/a.ts', 'src/b.ts'], generated: [], overlaps: [] }], seams: [], warnings: [], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
+  tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1', 'SC2'], paths: ['src/a.ts', 'src/b.ts'], generated: [], overlaps: [] }], seams: [], warnings: [], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature', sharedContext: '# Generated feature',
 };
 /** Delivers the single task and stops at the code-review prepare effect. */
 function afterDelivery(): Point {
@@ -146,7 +146,7 @@ type CriterionSpec = { id: string; changes: string[]; verify: { command: string;
 function transientPlan(specs: CriterionSpec[], finalCommands: string[] = []): ParsedPlan {
   const paths = [...new Set(specs.flatMap((row) => row.changes))].sort();
   return {
-    title: 'Transient feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], seams: [], warnings: [], traceability: null, governedText: '# Transient feature',
+    title: 'Transient feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], seams: [], warnings: [], traceability: null, governedText: '# Transient feature', sharedContext: '# Transient feature',
     criteria: specs.map((row, index) => ({ id: row.id, title: row.id, line: index + 1, changes: row.changes, verify: row.verify, evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: row.retain ?? 'durable', coveredBy: row.retain === 'transient' ? 'SC2' : null })),
     changes: paths.map((path, index) => ({ action: 'MODIFY', path, note: path, command: null, line: index + 1 })),
     verification: { automated: [], none: 'criterion commands', manual: [] }, finalCommands,

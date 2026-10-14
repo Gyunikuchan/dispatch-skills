@@ -4,14 +4,14 @@ import { publishReviewManifest, readReviewManifest } from './review-manifest.ts'
 import { stableValue } from '../domain/stable-value.ts';
 import path from 'node:path';
 import type { Effect, Handler } from '../core/types.ts';
-import { withoutSections } from '../domain/plan.ts';
+import { RESOLUTION_HEADING, TASK_MAP_HEADING, withoutSections } from '../domain/plan.ts';
 import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import { dispatchWorkspaceOf, runOwnedPaths, verifiedManifests } from './snapshot.ts';
 const bindingHash = (value: unknown): string => crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 
-/** Matches the existing review-delta exclusions without collapsing repeated headings. */
-export const reviewArtifactText = (source: string): string => withoutSections(source, ['## Review Findings & Resolutions', '## Execution Status']);
+/** Matches the review-delta exclusions (driver-owned sections) without collapsing repeated headings. */
+export const reviewArtifactText = (source: string): string => withoutSections(source, [RESOLUTION_HEADING, '## Execution Status', TASK_MAP_HEADING]);
 
 type Check = Extract<Effect, { kind: 'check-review-target' }>;
 const manifestEntries = (value: unknown, nullable: boolean): boolean => value !== null && typeof value === 'object' && !Array.isArray(value)

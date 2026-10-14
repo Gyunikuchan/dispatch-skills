@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { renderReport, renderResolutionSection, renderWalkthrough, replaceResolutionSection } from '../../../skills/dispatch/scripts/domain/render.ts';
+import { renderCompactResolutionSection, renderReport, renderResolutionSection, renderWalkthrough, replaceResolutionSection, reviewLogPathOf } from '../../../skills/dispatch/scripts/domain/render.ts';
 import type { ResolutionRound, WalkthroughView } from '../../../skills/dispatch/scripts/domain/types.ts';
 
 const rounds: ResolutionRound[] = [{
@@ -91,16 +91,69 @@ test('review history retains existing ungrouped rounds', () => {
   assert.match(updated, /### Round 1[\s\S]*R1-F001[\s\S]*### Review new-run/);
 });
 
-test('readable artifact rendering: complete findings and exact rulings remain inline', () => {
-  const input = [{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, defect: 'The loop spins forever. The second sentence explains the cause.', requiredChange: 'Bound the loop.', resolution: 'Keep the interface.\nAdd the counter.' }] }];
+test('compact-findings: deliverable keeps summary table and log keeps full entries', () => {
+  assert.equal(reviewLogPathOf('s/x.plan.md'), 's/x.review-log.md');
+  assert.equal(reviewLogPathOf('s\\x.design.md'), 's\\x.review-log.md');
+  assert.equal(reviewLogPathOf('s/x.walkthrough.md'), 's/x.walkthrough.review-log.md');
+  const input = [{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, defect: 'The loop spins forever. The second sentence explains the cause.', requiredChange: 'Bound the loop.', resolution: 'Keep the interface.\nAdd the counter.' }, rounds[0]!.entries[1]!] },
+    { round: 2, reviewers: [], failed: [], entries: [{ ...rounds[0]!.entries[0]!, id: 'R2-F001', status: 'rejected' as const, severity: 'CONSIDER' as const, resolution: 'Out | of scope.' }] }];
   const section = renderResolutionSection(input);
-  assert.match(section, /Finding: The loop spins forever. The second sentence explains the cause./);
-  assert.match(section, /Required change: Bound the loop./);
-  assert.match(section, /- Ruling:\n  Keep the interface.  \n  Add the counter.  \n/);
-  assert.ok(!section.includes('Full report:'));
-  const owned = replaceResolutionSection('# Plan\n', section, 'run');
-  assert.match(owned, /### Review run\n\n#### Round 1[\s\S]*##### R1-F001/);
-  assert.equal(replaceResolutionSection(owned, section, 'run'), owned);
+  const prior = replaceResolutionSection('# Review log\n', renderResolutionSection([{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, id: 'R1-F009', resolution: 'Prior ruling.' }] }]), 'run-1');
+  const log = replaceResolutionSection(prior, section, 'run-2');
+  assert.equal(replaceResolutionSection(log, section, 'run-2'), log);
+  assert.match(log, /### Review run-1[\s\S]*##### R1-F009[\s\S]*### Review run-2\n\n#### Round 1[\s\S]*##### R1-F001/);
+  assert.match(log, /Finding: The loop spins forever. The second sentence explains the cause./);
+  assert.match(log, /Required change: Bound the loop./);
+  assert.match(log, /- Ruling:\n  Keep the interface.  \n  Add the counter.  \n/);
+  const compact = renderCompactResolutionSection(log, 'x.review-log.md');
+  assert.equal(renderCompactResolutionSection(log, 'x.review-log.md'), compact);
+  assert.ok(compact.startsWith('## Review Findings & Resolutions\n\n'));
+  assert.match(compact, /Reviews: 2 · Rounds: 3 · Findings: 4 \(Fixed 2, Duplicate 1, Rejected 1\) · Full log: \[x\.review-log\.md\]\(x\.review-log\.md\)/);
+  assert.equal((compact.match(/\]\(/g) ?? []).length, 1);
+  assert.match(compact, /\| Review \| ID \| Round \| Severity \| Status \| Ruling \|/);
+  assert.match(compact, /\| 1 \| R1-F009 \| 1 \| MUST \| Fixed \| Prior ruling\. \|/);
+  assert.match(compact, /\| 2 \| R1-F001 \| 1 \| MUST \| Fixed \| Keep the interface\. \|/);
+  assert.match(compact, /\| 2 \| R1-F002 \| 1 \| SHOULD \| Duplicate \| — \|/);
+  assert.match(compact, /\| 2 \| R2-F001 \| 2 \| CONSIDER \| Rejected \| Out \\\| of scope\. \|/);
+  assert.equal((compact.match(/^\| \d+ \| R\d-F\d{3} /gm) ?? []).length, 4);
+  assert.ok(!/^#{3,} /m.test(compact));
+  assert.ok(!compact.includes('Finding:'));
+  assert.match(renderCompactResolutionSection('# Review log\n', 'a b.review-log.md'), /Findings: 0 · Full log: \[a b\.review-log\.md\]\(<a b\.review-log\.md>\)/);
+});
+
+test('compact-ruling-clip: long rulings are cut in the table and kept whole in the log', () => {
+  const long = `Keep the interface ${'and document the reason '.repeat(6)}end.`;
+  const log = replaceResolutionSection('# Review log\n', renderResolutionSection([{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, resolution: long }] }]), 'run-1');
+  assert.ok(log.includes(long));
+  const row = renderCompactResolutionSection(log, 'x.review-log.md').split('\n').find((text) => text.startsWith('| 1 | R1-F001 '))!;
+  const cell = row.split(' | ').at(-1)!.replace(/ \|$/, '');
+  assert.equal(cell.length, 80);
+  assert.ok(cell.endsWith('…'));
+  assert.ok(long.startsWith(cell.slice(0, -1)));
+  const emoji = renderCompactResolutionSection(replaceResolutionSection('# Review log\n', renderResolutionSection([{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, resolution: '😀'.repeat(100) }] }]), 'run-1'), 'x.review-log.md');
+  assert.ok(emoji.includes(`| ${'😀'.repeat(79)}… |`));
+});
+
+test('compact-review-number: ungrouped history counts as run 1 before keyed runs', () => {
+  const ungrouped = replaceResolutionSection('# Review log\n', renderResolutionSection(rounds));
+  const log = replaceResolutionSection(ungrouped, renderResolutionSection([{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, id: 'R1-F001' }] }]), 'run-2');
+  const compact = renderCompactResolutionSection(log, 'x.review-log.md');
+  assert.match(compact, /^\| 1 \| R1-F001 \|/m);
+  assert.match(compact, /^\| 1 \| R1-F002 \|/m);
+  assert.match(compact, /^\| 2 \| R1-F001 \|/m);
+});
+
+test('report-summary-table: report lists summary table before full entries', () => {
+  const report = renderReport({ title: 'Code review', kind: 'code', target: 'HEAD~1..HEAD', summary: '1 fixed', rounds });
+  const table = report.indexOf('| Review | ID | Round | Severity | Status | Ruling |');
+  assert.ok(table > report.indexOf('## Review Findings & Resolutions'));
+  assert.ok(table < report.indexOf('### Round 1'));
+  assert.ok(report.indexOf('Findings: 2 (Fixed 1, Duplicate 1)') < table);
+  assert.ok(!report.includes('Full log:'));
+  assert.match(report, /\| 1 \| R1-F001 \| 1 \| MUST \| Fixed \| bounded \|/);
+  assert.match(report, /#### R1-F001\n\n- Status: \*\*\[Fixed\]\*\*/);
+  assert.match(report, /#### R1-F002\n\n- Status: \*\*\[Duplicate\]\*\*/);
+  assert.ok(!renderReport({ title: 'Review', kind: 'code', target: 'HEAD', summary: 'none', rounds: [] }).includes('| ID |'));
 });
 
 test('readable artifact rendering: complete findings retain sanitized technical text without invented rulings', () => {

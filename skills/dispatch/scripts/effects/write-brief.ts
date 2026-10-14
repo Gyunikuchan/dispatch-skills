@@ -15,6 +15,20 @@ export type BriefDeps = { skillRoot: string; checkpointCommand?: (root: string, 
 const quote = (value: string): string => `"${value}"`;
 const defaultCheckpoint = (root: string, out: string, paths: readonly string[]): string => `dispatch checkpoint --root ${quote(root)} --out ${quote(out)} -- ${paths.map(quote).join(' ')}`;
 
+// NOTE: plan headings would otherwise read as brief sections; the fence outgrows any backtick run inside the plan.
+function fenced(text: string): string {
+  const fence = '`'.repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  return `${fence}markdown\n${text.trim()}\n${fence}`;
+}
+
+function siblingRow(value: unknown): string {
+  if (typeof value !== 'object' || value === null) return `- ${String(value)}`;
+  const row = value as { id?: unknown; outcome?: unknown; prerequisites?: unknown; criteria?: unknown; paths?: unknown; overlap?: unknown };
+  const list = <T>(items: unknown, format: (item: T) => string) => Array.isArray(items) && items.length ? (items as T[]).map(format).join(', ') : 'none';
+  const overlap = list(row.overlap, (item: { path: string; tasks: readonly string[] }) => `\`${item.path}\` (${item.tasks.join(', ')})`);
+  return `- ${String(row.id)} | ${String(row.outcome)} | prerequisites: ${list(row.prerequisites, String)} | criteria: ${list(row.criteria, String)} | paths: ${list(row.paths, (path: string) => `\`${path}\``)} | overlap: ${overlap}`;
+}
+
 function structuredContext(input: Readonly<Record<string, unknown>>): string {
   const rows: [string, string][] = [];
   const render = (value: unknown): string => {
@@ -27,7 +41,9 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
     rows.push(['Governing plan', `Path: ${String(input['planPath'] ?? '(unknown)')}\nHash: ${String(input['planHash'] ?? '(unknown)')}`]);
   }
   rows.push(['Governing outcome', render(input['governingOutcome'])]);
+  if (typeof input['sharedContext'] === 'string' && input['sharedContext'].trim()) rows.push(['Shared plan context', fenced(input['sharedContext'])]);
   if (input['task']) rows.push(['Task, graph, and worktree', render(input['task'])]);
+  if (Array.isArray(input['siblingTasks'])) rows.push(['Sibling tasks', input['siblingTasks'].length ? input['siblingTasks'].map(siblingRow).join('\n') : '(none)']);
   // NOTE: a regenerated brief names what changed and the brief it supersedes, so a live writer can reconcile its draft.
   if (input['revisionNotice']) rows.push(['Plan revision notices', render(input['revisionNotice'])]);
   if (input['previousBriefs']) rows.push(['Previous brief provenance', render(input['previousBriefs'])]);

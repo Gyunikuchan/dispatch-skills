@@ -6,6 +6,7 @@ Purpose: deliver one plan task in its private worktree; edit only the task paths
 
 ## kind-rules
 
+- This brief carries the shared plan context, task, criteria, and sibling tasks. Read other plan sections only for a gap you name, and only the section that covers it.
 - Work in order: inspect, write discriminating tests for RED criteria, record RED, implement to verified GREEN, inspect for refactoring, clean up when useful, rerun affected checks, then write the outcome.
 - After task RED, implement in coherent behavioral slices. Run affected checks during iteration and after every later edit: the mapped commands for touched criteria plus tests of impacted consumers; broaden when impact is uncertain. Every required submission command still runs before the outcome. Per-slice RED ordering is not mechanically verified; do not claim it.
 - After GREEN, inspect the task's changes for duplication, unclear naming, unnecessary branches, and abstractions the task introduced. Make behavior-preserving cleanup only within task paths and the governing outcome; proceed without edits when none is useful, and stop when no warranted in-scope simplification remains. Report adjacent improvements under concerns instead of making them.

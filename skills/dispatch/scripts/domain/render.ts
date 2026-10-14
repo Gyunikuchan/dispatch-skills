@@ -116,6 +116,54 @@ export function replaceResolutionSection(doc: string, rendered: string, reviewKe
   return `${before ? `${before}\n\n` : ''}${body}\n${after ? `\n${after}\n` : ''}`;
 }
 
+// SECTION: Review log and compact section
+
+/** Sibling full-history log: `x.plan.md` and `x.design.md` → `x.review-log.md`; other `x.md` → `x.review-log.md` keeps inner suffixes. */
+export const reviewLogPathOf = (deliverablePath: string): string =>
+  deliverablePath.replace(/(?:\.plan|\.design)?\.md$/, '') + '.review-log.md';
+
+// NOTE: the log keeps the full ruling; a fixed cell width keeps the deliverable section bounded per finding.
+const RULING_CELL_MAX = 80;
+// NOTE: code-point slicing keeps surrogate pairs whole.
+const clip = (text: string): string => { const chars = [...text]; return chars.length > RULING_CELL_MAX ? `${chars.slice(0, RULING_CELL_MAX - 1).join('').trimEnd()}…` : text; };
+
+/** Summary line and one table row per `#### <ID>` entry parsed from rendered history, keyed or not. */
+function findingsSummary(history: string, link?: string): string[] {
+  const rows: { review: number; id: string; round: string; severity: string; status: string; ruling: string }[] = [];
+  // NOTE: ungrouped rounds before the first keyed run count as run 1 so keyed runs never reuse its number.
+  let reviews = 0, lead = 0, rounds = 0, round = '', ruling = false;
+  for (const text of history.replace(/\r\n/g, '\n').split('\n')) {
+    const row = rows.at(-1);
+    if (ruling && row) {
+      if (!text.trim()) continue;
+      ruling = false;
+      if (/^ {2}/.test(text)) { row.ruling = clip(text.trim()); continue; }
+    }
+    let match: RegExpExecArray | null;
+    if (/^#{3,4} Review /.test(text)) { if (!reviews && rows.length) lead = 1; reviews++; }
+    else if ((match = /^#{3,4} Round (\d+)/.exec(text))) { rounds++; round = match[1]!; }
+    else if ((match = /^#{4,5} (\S+)\s*$/.exec(text))) rows.push({ review: reviews + lead || 1, id: match[1]!, round, severity: '', status: '', ruling: '—' });
+    else if (row && (match = /^- Status: \*\*\[(.+)\]\*\*$/.exec(text))) row.status = match[1]!;
+    else if (row && (match = /^- Severity: (.+)$/.exec(text))) row.severity = match[1]!;
+    else if (row && text === '- Ruling:') ruling = true;
+  }
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+  const byStatus = [...counts].map(([status, count]) => `${status} ${count}`).join(', ');
+  // NOTE: angle brackets keep link targets with spaces or parentheses valid CommonMark.
+  const target = link && /[\s()<>]/.test(link) ? `<${link}>` : link;
+  const summary = [reviews ? `Reviews: ${reviews}` : '', `Rounds: ${rounds}`, `Findings: ${rows.length}${byStatus ? ` (${byStatus})` : ''}`, link ? `Full log: [${line(link)}](${target})` : '']
+    .filter(Boolean).join(' · ');
+  if (!rows.length) return [summary];
+  return [summary, '', '| Review | ID | Round | Severity | Status | Ruling |', '| --- | --- | --- | --- | --- | --- |',
+    ...rows.map((row) => `| ${row.review} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.status)} | ${cell(row.ruling)} |`)];
+}
+
+/** Bounded deliverable section derived from the full review log; output depends only on the log text. */
+export function renderCompactResolutionSection(logText: string, logRelativePath: string): string {
+  return [RESOLUTION_HEADING, '', ...findingsSummary(logText, logRelativePath), ''].join('\n');
+}
+
 // SECTION: Walkthrough
 
 /** Spec §10.2: H1 + box, Context only for a user-request Parent, Changes, Verification + Final gate,
@@ -192,7 +240,12 @@ function requiredAction(rounds: readonly ResolutionRound[]): string {
   return actions.length ? actions.join('; ') : 'No action recorded; this is not an approval or coverage claim.';
 }
 
+/** Reports have no log: the summary table leads the full entries. */
 export function renderReport(view: ReportView): string {
+  const full = renderResolutionSection(view.rounds);
+  const section = view.rounds.length
+    ? full.replace(`${RESOLUTION_HEADING}\n\n`, `${RESOLUTION_HEADING}\n\n${findingsSummary(full).join('\n')}\n\n`)
+    : full;
   const out = [
     `# ${line(view.title)}`,
     '',
@@ -205,7 +258,7 @@ export function renderReport(view: ReportView): string {
     '',
     `- Required action: ${requiredAction(view.rounds)}`,
     '',
-    renderResolutionSection(view.rounds),
+    section,
   ];
   return `${out.join('\n').replace(/\s+$/, '')}\n`;
 }

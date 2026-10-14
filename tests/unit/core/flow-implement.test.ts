@@ -13,7 +13,7 @@ import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, FP, HASH } from '../machines/fixtures/implement-recovery.ts';
-import { completionFlow, PLAN, SKILL_ROOT } from './fixtures/flow-implement.ts';
+import { authoringFlow, completionFlow, PLAN, SKILL_ROOT } from './fixtures/flow-implement.ts';
 
 for (const planMode of ['external'] as const) test(`implement-completion-rules: ${planMode} flow binds a real walkthrough and replays completion`, () => completionFlow(planMode));
 
@@ -36,4 +36,13 @@ test('rewrite SC2 implementation review carries governing artifacts and criteria
   const prompt = fs.readFileSync(Object.values(prepared.promptPaths)[0]!, 'utf8');
   assert.match(prompt, /feature\.plan\.md/); assert.match(prompt, /x\.walkthrough\.md/); assert.match(prompt, /SC1/); assert.match(prompt, /check/);
   assert.doesNotMatch(prompt, /- Task: null/); assert.match(prompt, /- Task: x/);
+});
+
+test('task-map-authored: direct implement authoring writes the Task Map after authoring and refreshes it after review fixes', async () => {
+  const { authored, settled, frame } = await authoringFlow();
+  assert.deepEqual([frame?.await, frame?.data['kind']], ['decide', 'approval'], JSON.stringify(frame));
+  assert.match(authored, /## Task Map\n[\s\S]*\| T1 \| Normalize values — [^\n]*\n[\s\S]*## Technical-Design Traceability/);
+  assert.match(settled, /## Task Map\n[\s\S]*\| T1 \| Normalize trimmed values — [^\n]*\n[\s\S]*## Technical-Design Traceability/);
+  assert.equal((settled.match(/^## Task Map$/gm) ?? []).length, 1);
+  assert.equal(governedPlanText(settled), governedPlanText(PLAN.replace('### T1 — Normalize values', '### T1 — Normalize trimmed values')));
 });

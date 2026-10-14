@@ -24,8 +24,6 @@ export const AMEND_TEXT = `# Parts
 ## Key Decisions & Context
 - Three parts (user)
 
-## Success Criteria
-${criterion(1, 'src/a.ts, tests/sc1.test.ts')}${criterion(2, 'src/b.ts')}${criterion(3, 'src/c.ts')}
 ## Proposed Changes
 ### T1 — Part one
 Deliver part one.
@@ -53,6 +51,8 @@ Deliver part three.
 #### [MODIFY] src/c.ts
 - Changes: part three.
 
+## Success Criteria
+${criterion(1, 'src/a.ts, tests/sc1.test.ts')}${criterion(2, 'src/b.ts')}${criterion(3, 'src/c.ts')}
 ## Verification Plan
 ### Automated Tests
 - None: criterion commands cover the change.

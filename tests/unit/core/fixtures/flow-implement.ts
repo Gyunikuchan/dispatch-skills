@@ -10,6 +10,7 @@ import { createHandlers } from '../../../../skills/dispatch/scripts/effects/inde
 import { governedPlanText } from '../../../../skills/dispatch/scripts/domain/plan.ts';
 import { rootMachine } from '../../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../../helpers/memory-run-fs.ts';
 import { stepImplement } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, FP, HASH } from '../../machines/fixtures/implement-recovery.ts';
 
@@ -28,13 +29,6 @@ export const PLAN = `# Normalize values
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] Values are normalized
-  - Changes: src/value.ts
-  - Verify: \`node --test tests/value.test.ts\`
-  - Evidence: verify
-  - Test rationale: The focused regression names the whitespace behavior that the existing suite misses.
-
 ## Proposed Changes
 ### T1 — Normalize values
 Values are normalized before use so downstream comparisons agree.
@@ -43,6 +37,13 @@ Values are normalized before use so downstream comparisons agree.
 
 #### [MODIFY] src/value.ts
 - Changes: normalize the input before processing.
+
+## Success Criteria
+- [SC1] Values are normalized
+  - Changes: src/value.ts
+  - Verify: \`node --test tests/value.test.ts\`
+  - Evidence: verify
+  - Test rationale: The focused regression names the whitespace behavior that the existing suite misses.
 
 ## Verification Plan
 ### Automated Tests
@@ -137,4 +138,53 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   assert.equal(walkthroughs.length, 1); assert.equal(reviewed.path?.replaceAll('\\', '/'), path.join(sessionRoot, walkthroughs[0]!).replaceAll('\\', '/'));
   assert.match(fs.readFileSync(path.join(sessionRoot, walkthroughs[0] as string), 'utf8'), /## Verification/);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
+  assert.ok(!fs.readFileSync(planPath, 'utf8').includes('## Task Map'), 'a supplied plan keeps its text; only driver-authored plans get a Task Map');
+}
+
+/** Direct implement authoring through real handlers: the host authors a plan for an objective, plan review accepts one fix, then the run awaits approval. */
+export async function authoringFlow(): Promise<{ planPath: string; authored: string; settled: string; frame: Awaited<ReturnType<typeof send>>['frame'] }> {
+  const cwd = tempDir();
+  const sessionRoot = path.join(cwd, 'chat');
+  const runDir = path.join(sessionRoot, '.state', 'runs', 'run-1');
+  const runStarted: RunStartedEvent = {
+    type: 'RUN_STARTED', verb: 'implement', argument: 'Normalize values', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+    orchestrator: 'claude', orchestratorModel: null, overrides: { sessionDir: sessionRoot }, repo: {},
+    config: {
+      'write-subagents': { claude: { low: { model: 'writer-a' } } },
+      'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
+      phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } },
+    },
+  };
+  const git: Git = {
+    toplevel: async () => cwd, indexEntries: async () => 'index', diffNames: async () => [],
+    fingerprint: async () => ({ head: 'head', index: 'index', worktree: 'tree' }), changedSince: async () => [],
+  };
+  let waves = 0;
+  const wave: Handler<Extract<Effect, { kind: 'wave' }>> = async (effect) => [{
+    type: 'WAVE_DONE', effectId: effect.id, round: effect.round,
+    slots: effect.roster.map((slot) => ({ slot: String(slot['slot']), state: 'success', claim: 'Reviewed the plan.' })),
+    findings: waves++ ? [] : [{ id: 'R1-F001', severity: 'SHOULD', category: 'clarity', locus: '§ Proposed Changes', defect: 'The task title omits trimming.', requiredChange: 'Name trimming in the T1 title.', sources: [String(effect.roster[0]?.['slot'])], scope: 'in' }],
+  }];
+  const handlers = createHandlers({ skillRoot: SKILL_ROOT, cwd, os: 'linux', git, tempRoot: path.join(cwd, 'tmp'), workspaceRoot: cwd, orchestratorPlatform: 'claude', wave });
+  const ports = fakePorts();
+  // NOTE: logical flow state stays in memory so the per-file timing budget holds under aggregate load.
+  memoryRunFs(ports, cwd);
+  ports.spawn = { run: async () => ({ exit: 0, stdout: 'ok', stderr: '' }) };
+  const options = { runDir, machine: rootMachine, handlers, ports, runRel: 'chat/.state/runs/run-1' };
+  const author = await start({ ...options, runStarted });
+  assert.equal(author.frame?.await, 'author', JSON.stringify(author.frame));
+  const planPath = String(author.frame?.data['path']);
+  ports.fs.writeAtomic(planPath, PLAN);
+  let frame = (await send({ ...options, rawEvent: { type: 'AUTHORED', path: planPath } })).frame;
+  const authored = ports.fs.readText(planPath);
+  for (let guard = 0; frame && frame.await !== 'decide' && guard < 6; guard++) {
+    if (frame.await === 'rule') {
+      const rulings = Object.fromEntries((frame.data['findings'] as { id: string }[]).map(({ id }) => [id, { ruling: 'accept' }]));
+      frame = (await send({ ...options, rawEvent: { type: 'RULINGS', rulings } })).frame;
+    } else if (frame.await === 'fix') {
+      ports.fs.writeAtomic(planPath, ports.fs.readText(planPath).replace('### T1 — Normalize values', '### T1 — Normalize trimmed values'));
+      frame = (await send({ ...options, rawEvent: { type: 'FIXES_APPLIED', clusters: (frame.data['clusters'] as { clusterId: string }[]).map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) } })).frame;
+    } else assert.fail(JSON.stringify(frame));
+  }
+  return { planPath, authored, settled: ports.fs.readText(planPath), frame };
 }

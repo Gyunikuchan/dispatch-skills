@@ -24,20 +24,28 @@ const DESIGN = `# Importer design
 > **Risk:** med — touches ingestion
 > **Increments:** 2
 
+## Execution Status
+| ID | State | Summary | Next Action |
+| --- | --- | --- | --- |
+| I01 | completed | done | - |
+| I02 | ready | next | implement:I02 |
+
+Next Action: implement:I02
+
 ## Context & Intent
 Why.
 
 ## Goals & Requirements
 What.
 
-## Architecture & Boundaries
-How.
-
 ## Alternatives & Decisions
 Chosen.
 
 ## Risks, Security & Operations
 Risks.
+
+## Architecture & Boundaries
+How.
 
 ## Increment Dependency Graph
 | ID | Priority | Summary | Prerequisites | Paths |
@@ -50,14 +58,6 @@ ${detail('I01')}
 ${detail('I02')}
 ## Final Integration
 Run everything.
-
-## Execution Status
-| ID | State | Summary | Next Action |
-| --- | --- | --- | --- |
-| I01 | completed | done | - |
-| I02 | ready | next | implement:I02 |
-
-Next Action: implement:I02
 
 ## Review Findings & Resolutions
 *No reviews conducted yet.*
@@ -117,6 +117,21 @@ test('design: Execution Status requires a Next Action', () => {
 
 test('design: Execution Status rejects duplicate increment rows', () => {
   assert.ok(codes(DESIGN.replace('| I02 | ready | next | implement:I02 |', '| I02 | ready | next | implement:I02 |\n| I02 | ready | again | implement:I02 |')).includes('execution-status'));
+});
+
+test('design-section-order: old order fails and new order passes', () => {
+  const status = DESIGN.slice(DESIGN.indexOf('## Execution Status'), DESIGN.indexOf('## Context & Intent'));
+  const architecture = DESIGN.slice(DESIGN.indexOf('## Architecture & Boundaries'), DESIGN.indexOf('## Increment Dependency Graph'));
+  const oldOrder = DESIGN.replace(status, '').replace(architecture, '')
+    .replace('## Alternatives & Decisions', `${architecture}## Alternatives & Decisions`)
+    .replace('## Review Findings', `${status}## Review Findings`);
+  const result = parseDesign(oldOrder);
+  const defects = result.ok ? [] : result.defects.filter((item) => item.code === 'section-order');
+  const lines = oldOrder.split('\n');
+  assert.deepEqual(defects.map((item) => item.line),
+    ['## Alternatives & Decisions', '## Risks, Security & Operations', '## Execution Status'].map((heading) => lines.indexOf(heading) + 1));
+  assert.match(defects[0]?.message ?? '', /Move "## Alternatives & Decisions" before "## Architecture & Boundaries"/);
+  assert.ok(parseDesign(DESIGN).ok);
 });
 
 test('journal design admission rejects malformed objectives and dependency graphs', () => {

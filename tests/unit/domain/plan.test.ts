@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { governedPlanText, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import {
+  governedPlanText, normalizePlanPath, parsePlan, placeholderVocabulary, renderTaskMap, replaceTaskMapSection, selectTaskBrief, structuralLines, taskExecutionSummary, taskMapRows,
+} from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
 const splitMessage = (action: string, text: string) => `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text}".`;
@@ -20,17 +22,6 @@ const PLAN = `# Add retry budget
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] Fetch stops after three attempts
-  - Changes: src/fetch.ts, tests/fetch.test.ts
-  - Verify: \`node --test tests/fetch.test.ts\`
-  - Evidence: red
-  - Test rationale: fails today because the loop never stops retrying.
-- [SC2] Whole suite stays green
-  - Verify: \`npm test\` [FINAL]
-  - Evidence: verify
-  - Test rationale: aggregate regression gate over every package.
-
 ## Proposed Changes
 ### T1 — Cap fetch retries
 Fetch stops retrying after three attempts so callers fail fast.
@@ -44,6 +35,17 @@ Fetch stops retrying after three attempts so callers fail fast.
 #### [GENERATED] docs/api.md
 - Command: \`npm run docs\`
 - Inputs: src/fetch.ts
+
+## Success Criteria
+- [SC1] Fetch stops after three attempts
+  - Changes: src/fetch.ts, tests/fetch.test.ts
+  - Verify: \`node --test tests/fetch.test.ts\`
+  - Evidence: red
+  - Test rationale: fails today because the loop never stops retrying.
+- [SC2] Whole suite stays green
+  - Verify: \`npm test\` [FINAL]
+  - Evidence: verify
+  - Test rationale: aggregate regression gate over every package.
 
 ## Verification Plan
 ### Automated Tests
@@ -100,7 +102,7 @@ test('readable plan syntax: owned briefs carry Outcome, Constraints and every la
     .replace('### T1 —', '### T1 —')
     .replace('- Criteria: SC1, SC2', '- Criteria: SC1')
     .replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.', '- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.')
-    .replace('## Verification Plan', '### T2 — Check the companion\n- Outcome: Check the companion.\n- Prerequisites: T1\n- Criteria: SC2\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n  - Invariants: Preserve companion shape.\n\n## Verification Plan');
+    .replace('## Success Criteria', '### T2 — Check the companion\n- Outcome: Check the companion.\n- Prerequisites: T1\n- Criteria: SC2\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n  - Invariants: Preserve companion shape.\n\n## Success Criteria');
   const plan = parsed(source);
   const first = selectTaskBrief(plan, 'T1'), second = selectTaskBrief(plan, 'T2');
   assert.ok(first); assert.ok(second);
@@ -221,28 +223,6 @@ const TASKS = `# Shared contract with consumers
 > **Risk:** low — isolated modules
 > **Scope:** src/
 
-## Success Criteria
-- [SC1] Contract exports the shape
-  - Changes: src/contract.ts
-  - Verify: \`node --test tests/contract.test.ts\`
-  - Evidence: verify
-  - Test rationale: pins the exported shape consumers rely on.
-- [SC2] Reader consumes the contract
-  - Changes: src/reader.ts
-  - Verify: \`node --test tests/reader.test.ts\`
-  - Evidence: verify
-  - Test rationale: covers the reader path through the contract.
-- [SC3] Writer consumes the contract
-  - Changes: src/writer.ts
-  - Verify: \`node --test tests/writer.test.ts\`
-  - Evidence: verify
-  - Test rationale: covers the writer path through the contract.
-- [SC4] Reader and writer round-trip
-  - Verify: \`node --test tests/roundtrip.test.ts\` [FINAL]
-  - Evidence: verify
-  - Integration: spans reader and writer tasks.
-  - Test rationale: proves both consumers agree on the encoding.
-
 ## Proposed Changes
 
 ### T1 — Define the shared contract
@@ -271,6 +251,28 @@ The writer encodes records with the shared shape and regenerates the docs.
 #### [GENERATED] docs/contract.md
 - Command: \`npm run docs\`
 - Inputs: src/contract.ts, src/writer.ts, README.md
+
+## Success Criteria
+- [SC1] Contract exports the shape
+  - Changes: src/contract.ts
+  - Verify: \`node --test tests/contract.test.ts\`
+  - Evidence: verify
+  - Test rationale: pins the exported shape consumers rely on.
+- [SC2] Reader consumes the contract
+  - Changes: src/reader.ts
+  - Verify: \`node --test tests/reader.test.ts\`
+  - Evidence: verify
+  - Test rationale: covers the reader path through the contract.
+- [SC3] Writer consumes the contract
+  - Changes: src/writer.ts
+  - Verify: \`node --test tests/writer.test.ts\`
+  - Evidence: verify
+  - Test rationale: covers the writer path through the contract.
+- [SC4] Reader and writer round-trip
+  - Verify: \`node --test tests/roundtrip.test.ts\` [FINAL]
+  - Evidence: verify
+  - Integration: spans reader and writer tasks.
+  - Test rationale: proves both consumers agree on the encoding.
 
 ## Verification Plan
 ### Automated Tests
@@ -570,4 +572,58 @@ test('rejects final coverage without final command', () => {
   assert.ok(parsePlan(source).ok);
   const found = defectsOf(source.replace('`npm test` [FINAL]', '`npm test`'), 'transient-coverage');
   assert.deepEqual(found.map((item) => item.message), ['Criterion SC1 is Covered by FINAL, but the plan has no [FINAL] Verify command.']);
+});
+
+// SECTION: Section order and Task Map
+
+test('plan-section-order: old order fails and new order with absent optional sections passes', () => {
+  const criteria = PLAN.slice(PLAN.indexOf('## Success Criteria'), PLAN.indexOf('## Verification Plan'));
+  const criteriaFirst = PLAN.replace(criteria, '').replace('## Proposed Changes', `${criteria}## Proposed Changes`);
+  const oldOrder = PLAN.replace('## Key Decisions & Context\n', '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
+    .replace('## Technical-Design Traceability\n', '## User Review Required\n- None.\n\n## Technical-Design Traceability\n')
+    .replace('## Review Findings', '## Out of Scope\n- Backoff.\n\n## Review Findings');
+  const orderDefects = (source: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === 'section-order'); };
+  assert.deepEqual(orderDefects(criteriaFirst).map((item) => item.line), [criteriaFirst.split('\n').indexOf('## Proposed Changes') + 1]);
+  assert.deepEqual(orderDefects(oldOrder).map((item) => item.line), ['## User Review Required', '## Out of Scope'].map((heading) => oldOrder.split('\n').indexOf(heading) + 1));
+  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## User Review Required" before "## Key Decisions & Context"/);
+  const full = PLAN.replace('## Key Decisions & Context\n', '## User Review Required\n- None.\n\n## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
+    .replace('## Technical-Design Traceability\n', '## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Technical-Design Traceability\n')
+    .replace('## Review Findings', '## Rollback & Blast Radius\n- Revert the helper.\n\n## Review Findings');
+  parsed(full);
+  parsed(PLAN);
+});
+
+test('task-map: rows match parsed tasks and Task Map edits leave the hash unchanged', () => {
+  const source = overlapPlan();
+  const plan = parsed(source);
+  assert.deepEqual(taskMapRows(plan).map(({ id, prerequisites, criteria, paths }) => ({ id, prerequisites, criteria, paths })),
+    plan.tasks.map(({ id, prerequisites, criteria, paths }) => ({ id, prerequisites, criteria, paths })));
+  assert.deepEqual(taskMapRows(plan).map((row) => row.overlap), [[], [{ path: 'src/shared.ts', tasks: ['T3'] }], [{ path: 'src/shared.ts', tasks: ['T2'] }]]);
+  const map = renderTaskMap(plan);
+  assert.ok(map.split('\n').includes('| T2 | Read through the contract — The reader decodes records with the shared shape. | T1 | SC2 | `src/reader.ts`, `src/shared.ts` | `src/shared.ts` (T3) |'), map);
+  assert.ok(map.split('\n').includes('| T1 | Define the shared contract — Consumers share one exported shape so they cannot drift. | none | SC1 | `src/contract.ts` | none |'), map);
+  const withMap = replaceTaskMapSection(source, map);
+  assert.ok(withMap.indexOf('## Task Map') < withMap.indexOf('## Proposed Changes'));
+  const mapped = parsed(withMap);
+  assert.equal(renderTaskMap(mapped), map);
+  assert.equal(replaceTaskMapSection(withMap, map), withMap);
+  assert.equal(governedPlanText(withMap), governedPlanText(source));
+  assert.equal(mapped.governedText, plan.governedText);
+  const edited = withMap.replace('| T1 | Define', '| T1 | Redefine');
+  assert.equal(parsed(edited).governedText, plan.governedText);
+  assert.equal(replaceTaskMapSection(edited, map), withMap);
+  assert.ok(mapped.sharedContext.trimEnd().endsWith(map.split('\n').at(-1)!));
+  assert.ok(!mapped.sharedContext.includes('## Proposed Changes'));
+});
+
+test('task-map-shared-context: shared context carries the rendered Task Map whether or not the file has one', () => {
+  const source = overlapPlan();
+  const plan = parsed(source), map = renderTaskMap(plan);
+  assert.ok(!source.includes('## Task Map'));
+  assert.ok(plan.sharedContext.includes(map), plan.sharedContext);
+  assert.ok(!plan.sharedContext.includes('## Proposed Changes'));
+  const withMap = replaceTaskMapSection(source, map);
+  assert.equal(parsed(withMap).sharedContext, plan.sharedContext);
+  assert.equal(parsed(withMap.replace('| T1 | Define', '| T1 | Stale')).sharedContext, plan.sharedContext, 'a stale file map never reaches writers');
+  assert.equal(parsed(plan.governedText).sharedContext, plan.sharedContext);
 });

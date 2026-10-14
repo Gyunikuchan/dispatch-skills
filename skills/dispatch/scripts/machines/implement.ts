@@ -11,7 +11,7 @@ import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from
 import { applyDispositions, bindingHash, evidenceAssessment, observe, openObservations, refreshEvidence, resolution, suggestedCriteria, validateDispositions } from './change-resolution.ts';
 import type { EvidenceObligation } from './implement-types.ts';
 import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
-import { selectTaskBrief, validateDesignTraceability } from '../domain/plan.ts';
+import { selectTaskBrief, taskMapRows, validateDesignTraceability } from '../domain/plan.ts';
 import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { amendPlan, replacementPlan, type RevisedPlan } from './revision.ts';
 import { reconcilePlan } from './plan-reconciliation.ts';
@@ -28,6 +28,8 @@ export type Context = {
   machinePath?: string;
   run: RunStartedEvent;
   planPath: string;
+  /** Path of a plan this run authored; root render keeps its Task Map current. User-supplied plans stay as written. */
+  authoredPlan?: string;
   counters: Counters;
   writer: WriterConfig | null;
   writerError: string | null;
@@ -508,6 +510,8 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
     planPath: c.planPath, planHash: c.planHash,
     designBinding: briefDesignBinding(c), reopenedDefects: c.designBinding?.repair,
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c.planPath },
+    sharedContext: plan.sharedContext,
+    siblingTasks: taskMapRows(plan).filter((row) => row.id !== brief.task.id),
     task: {
       id: brief.task.id, title: brief.task.title, summary: brief.task.summary, graph: brief.summary, attempt: record.attempt, signature: record.signature,
       prerequisites: brief.prerequisites.map((task) => ({ id: task.id, integrated: c.tasks[task.id]?.integrated ?? null })),
@@ -1402,7 +1406,7 @@ export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding
     scopeAdjustments: binding.scopeAdjustments ?? [],
     scopeNotice: binding.scopeNotice ?? null,
   };
-  return snapshot(c, 'author');
+  return snapshot({ ...c, authoredPlan: c.planPath }, 'author');
 }
 
 function applyImplement(state: ImplementState, event: Event): S {
@@ -1411,7 +1415,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'RUN_STARTED' || event.verb !== 'implement') return stay(state);
       const c = baseContext(event);
       const candidate = /\.plan\.md$/i.test(c.planPath) || settledPlanInput(event.overrides['settledPlan']) !== null;
-      return snapshot(c, candidate ? 'parse' : 'author');
+      return candidate ? snapshot(c, 'parse') : snapshot({ ...c, authoredPlan: c.planPath }, 'author');
     }
     case 'starting': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return fail(state.c, `initial snapshot failed: ${event.cls}: ${event.detail}`);
@@ -1425,7 +1429,7 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'parsing': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) {
-        if (state.phase === 'initial' && /not found/i.test(event.detail)) return authorPlan(state.c);
+        if (state.phase === 'initial' && /not found/i.test(event.detail)) return authorPlan({ ...state.c, authoredPlan: state.c.planPath });
         return startFailureFromEffect(state.c, event.cls, event.detail);
       }
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);
@@ -1674,6 +1678,7 @@ function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { ac
   return { state: { tag: 'hotfix-brief', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'write-brief', id, stage: 'hotfix', input: {
     planPath: c0.planPath, planHash: c0.planHash, designBinding: briefDesignBinding(c0),
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c0.planPath },
+    sharedContext: plan.sharedContext,
     settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes },
     criteria: plan.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence })),
     envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string' },

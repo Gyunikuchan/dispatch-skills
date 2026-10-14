@@ -40,6 +40,29 @@ test('prewrite-level: task brief renders bound context, worktree, checkpoint, an
   assert.equal(fs.existsSync(envelopePath), false);
 });
 
+test('brief-shared-context: brief carries shared plan range and sibling tasks', async () => {
+  const source = [
+    '# Example plan', '', '> **TL;DR:** Deliver behavior.', '', '## Background', '- Shared background fact.', '',
+    '## Task Map', '| ID | Outcome |', '| --- | --- |', '| T1 | Feature |', '', '## Proposed Changes', '',
+    '### T1 — Feature', '- Outcome: Deliver feature.', '- Criteria: SC1', '', '- #### [MODIFY] src/a.ts', '  - Changes: Own change detail.', '',
+    '### T2 — Sibling', '- Outcome: Deliver sibling.', '- Prerequisites: T1', '- Criteria: SC2', '', '- #### [MODIFY] src/b.ts', '  - Changes: Sibling change detail.', '',
+  ].join('\n');
+  const sharedContext = source.slice(0, source.indexOf('## Proposed Changes'));
+  const siblingTasks = [{ id: 'T2', outcome: 'Sibling — Deliver sibling.', prerequisites: ['T1'], criteria: ['SC2'], paths: ['src/b.ts'], overlap: [] }];
+  const runDir = tempDir();
+  const input = {
+    planPath: 'docs/example.plan.md', planHash: `sha256:${'a'.repeat(64)}`, governingOutcome: { title: 'Example', outcome: 'Deliver behavior' }, sharedContext, siblingTasks,
+    settledScope: { paths: ['src/a.ts'] }, criteria: [{ id: 'SC1', title: 'works' }], task: { id: 'T1', title: 'Feature', worktree: 'run/wt/task-t1' },
+  };
+  const result = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.6', stage: 'task', input }, fakePorts(), { runDir, attempt: 1 }));
+  assert.equal(result.type, 'BRIEF_READY'); if (result.type !== 'BRIEF_READY') return;
+  const text = fs.readFileSync(result.path, 'utf8');
+  assert.match(text, /## Shared plan context\n[\s\S]*# Example plan[\s\S]*Shared background fact\.[\s\S]*## Task Map\n\| ID \| Outcome \|/);
+  assert.doesNotMatch(text, /Sibling change detail|Own change detail|## Proposed Changes/);
+  assert.match(text, /## Sibling tasks\n\n- T2 \| Sibling — Deliver sibling\. \| prerequisites: T1 \| criteria: SC2 \| paths: `src\/b\.ts` \| overlap: none\n/);
+  assert.match(text, /Read other plan sections only for a gap you name/);
+});
+
 test('hotfix template renders concrete limits, single-shot identity, external reasons and pre-RED restriction; retry carries root cause', async () => {
   const runDir = tempDir(), ports = fakePorts();
   const input = { rootCause: 'wrong mapping', stalledCheck: { command: 'check', logPath: 'failed.log', failureId: 'f1' }, hotfix: { maxFiles: 10, maxLines: 150, singleShot: true, model: 'writer-a', external: [{ path: 'env.txt', reason: 'repair environment' }], preRed: true, paths: ['tests/a.test.ts'] } };

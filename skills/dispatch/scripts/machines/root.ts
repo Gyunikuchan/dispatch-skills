@@ -1,9 +1,12 @@
 // Root machine (spec §5.3): verb selection, review kind inference, terminal handoff, `done` projection, host-event
-// validation, and driver-owned Markdown rendering (resolution sections and the standalone report; not an effect).
+// validation, and driver-owned Markdown rendering (resolution sections, plan Task Maps, and the standalone report; not an effect).
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
-import { renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, walkthroughPathOf } from '../domain/render.ts';
+import {
+  renderCompactResolutionSection, renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, reviewLogPathOf, walkthroughPathOf,
+} from '../domain/render.ts';
 import type { ReviewKind } from '../domain/types.ts';
+import { parsePlan, renderTaskMap, replaceTaskMapSection } from '../domain/plan.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
 import {
@@ -251,23 +254,54 @@ function reviewKeyOf(runDir: string, machinePath: string): string {
   return `${session}/${run}/${machinePath}`;
 }
 
-function writeSection(ports: Ports, file: string, review: ReviewState, runDir: string): void {
+/**
+ * Records `section` under `key` in the sibling review log, then writes `doc` to `file` with the compact section.
+ * A new log starts from `seedLog` (the log of the artifact `file` was copied from) or from full inline history.
+ */
+function writeReviewHistory(ports: Ports, file: string, doc: string, section: string, key: string, seedLog?: string): void {
+  const logPath = reviewLogPathOf(file), logName = logPath.split(/[\\/]/).at(-1)!;
+  let prior = ports.fs.exists(logPath) ? ports.fs.readText(logPath) : null;
+  if (prior === null) {
+    const seeded = seedLog && seedLog !== logPath && ports.fs.exists(seedLog) ? resolutionSectionOf(ports.fs.readText(seedLog)) : null;
+    // NOTE: a deliverable rendered before the log existed carries full history inline; move it into the new log.
+    const inline = ports.fs.exists(file) ? resolutionSectionOf(ports.fs.readText(file)) : null;
+    const legacy = [seeded, inline].find((history) => history && /^#{3,} /m.test(history)) ?? '';
+    // An unreviewed deliverable keeps its empty-state section and gets no log.
+    if (!legacy && !/^#{3,} /m.test(section)) return writeIfChanged(ports, file, replaceResolutionSection(doc, section));
+    prior = `# Review log: ${file.split(/[\\/]/).at(-1)}\n${legacy ? `\n${legacy}\n` : ''}`;
+  }
+  const log = replaceResolutionSection(prior, section, key);
+  writeIfChanged(ports, logPath, log);
+  writeIfChanged(ports, file, replaceResolutionSection(doc, renderCompactResolutionSection(log, logName)));
+}
+
+function writeSection(ports: Ports, file: string, review: ReviewState, runDir: string, seedLog?: string): void {
   if (!('c' in review) || !review.c.rounds.length || !ports.fs.exists(file)) return;
   const rounds = resolutionRounds(review.c);
-  writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(rounds), reviewKeyOf(runDir, review.c.path)));
+  writeReviewHistory(ports, file, ports.fs.readText(file), renderResolutionSection(rounds), reviewKeyOf(runDir, review.c.path), seedLog);
+}
+
+/** Writes the driver-owned Task Map into a plan that parses; a plan with defects keeps its text until the author fixes it. */
+function writeTaskMap(ports: Ports, file: string): void {
+  if (!ports.fs.exists(file)) return;
+  const source = ports.fs.readText(file);
+  const parsed = parsePlan(source);
+  if (parsed.ok) writeIfChanged(ports, file, replaceTaskMapSection(source, renderTaskMap(parsed.plan)));
 }
 
 function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string, runDir: string): void {
   // NOTE: an AMEND binds the run to its amended plan text; the file is written once so reruns see the bound hash.
-  for (const amendment of 'c' in implementation ? implementation.c?.amendments ?? [] : []) if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
+  for (const amendment of 'c' in implementation ? implementation.c?.amendments ?? [] : []) {
+    if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
+    // The Task Map is outside the governed hash, so adding it keeps the bound revision; replacement plans stay as supplied.
+    if ((amendment.kind ?? 'amend') === 'amend') writeTaskMap(ports, amendment.path);
+  }
+  // A plan this run authored gets its map once it parses and keeps it current through review fixes; supplied plans stay as written.
+  const authored = 'c' in implementation && implementation.tag !== 'author' && implementation.c?.plan ? implementation.c.authoredPlan : undefined;
+  if (authored) writeTaskMap(ports, authored);
   if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
-  if (walkthrough) {
-    const section = resolutionSectionOf(walkthrough)!;
-    const history = ports.fs.exists(walkthroughPath) ? resolutionSectionOf(ports.fs.readText(walkthroughPath)) : null;
-    const base = replaceResolutionSection(walkthrough, history ?? renderResolutionSection([]));
-    writeIfChanged(ports, walkthroughPath, replaceResolutionSection(base, section, reviewKeyOf(runDir, 'implementation')));
-  }
+  if (walkthrough) writeReviewHistory(ports, walkthroughPath, walkthrough, resolutionSectionOf(walkthrough)!, reviewKeyOf(runDir, 'implementation'));
 }
 
 function render(state: RootState, ports: Ports, runDir: string): void {
@@ -284,7 +318,8 @@ function render(state: RootState, ports: Ports, runDir: string): void {
     if (design.tag === 'revision') {
       const r = design.child;
       if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.path));
-      if (r.tag === 'review') writeSection(ports, r.workingPath, r.review, runDir);
+      // The copy's compact section links the source log; the revision's own log starts from it so both histories survive.
+      if (r.tag === 'review') writeSection(ports, r.workingPath, r.review, runDir, reviewLogPathOf(r.c.path));
     }
     if (design.tag === 'review') writeSection(ports, design.c.path, design.review, runDir);
     for (const [id, history] of Object.entries(design.c.histories)) {
@@ -297,6 +332,8 @@ function render(state: RootState, ports: Ports, runDir: string): void {
   }
   if (child.verb === 'plan') {
     const plan = child.state;
+    // An authored plan reaches review only after it parses; later fixes refresh the map on each render.
+    if ('review' in plan && plan.review !== null && plan.c) writeTaskMap(ports, plan.c.input.path);
     if ('review' in plan && plan.review !== null && 'c' in plan.review) writeSection(ports, plan.review.c.spec.target, plan.review, runDir);
     return;
   }
@@ -364,8 +401,10 @@ export const rootMachine: Machine<RootState> = {
     const session = sessionDirOf(runDir), owned = [`${session}/manifest.json`, `${session}/diagnostics.md`];
     if (!('run' in state)) return owned;
     if (state.tag === 'review' && 'c' in state.child && state.child.c.spec.kind === 'code' && !state.child.c.spec.governing?.walkthroughPath) owned.push(reportPathOf(runDir, state.run.slug));
-    if (state.tag === 'implement') owned.push(walkthroughPathOf(session, state.run.slug));
-    if (state.tag === 'design') for (const id of [...Object.keys(state.child.c.histories), ...(state.child.tag === 'increment' ? [state.child.increment] : [])]) owned.push(walkthroughPathOf(session, state.run.slug, id));
+    const walkthroughs: string[] = [];
+    if (state.tag === 'implement') walkthroughs.push(walkthroughPathOf(session, state.run.slug));
+    if (state.tag === 'design') for (const id of [...Object.keys(state.child.c.histories), ...(state.child.tag === 'increment' ? [state.child.increment] : [])]) walkthroughs.push(walkthroughPathOf(session, state.run.slug, id));
+    for (const file of walkthroughs) owned.push(file, reviewLogPathOf(file));
     return owned;
   },
   executionDeferred: executionBindingDeferred,

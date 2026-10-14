@@ -28,14 +28,6 @@ function plan(tasks: readonly TaskSpec[]): string {
 ## Key Decisions & Context
 - Keep each task within its own fixture paths.
 
-## Success Criteria
-${tasks.map((task) => `- [${task.criterion}] ${task.file} holds ${task.text}
-  - Changes: ${task.file}
-  - Verify: \`${includes(task.file, task.text)}\`
-  - Evidence: verify
-  - Pre-existing: no
-  - Test rationale: Executable checks establish the delivered fixture behavior.`).join('\n')}
-
 ## Proposed Changes
 ${tasks.map((task) => `### ${task.id} — Value ${task.id}
 Deliver value ${task.id.toLowerCase()} within the task paths.
@@ -45,6 +37,14 @@ Deliver value ${task.id.toLowerCase()} within the task paths.
 #### [MODIFY] ${task.file}
 - Write ${task.text}.
 `).join('\n')}
+## Success Criteria
+${tasks.map((task) => `- [${task.criterion}] ${task.file} holds ${task.text}
+  - Changes: ${task.file}
+  - Verify: \`${includes(task.file, task.text)}\`
+  - Evidence: verify
+  - Pre-existing: no
+  - Test rationale: Executable checks establish the delivered fixture behavior.`).join('\n')}
+
 ## Verification Plan
 ### Automated Tests
 - None: Criterion commands cover every change.
@@ -205,9 +205,10 @@ test('authority-integration: observations replacement and original review surviv
     assert.equal(rows.filter((row) => row.type === 'WRITE_RECEIPT' && row.data['status'] === 'submitted' && row.data['task'] === 'T2').length, 1);
     assert.equal(rows.filter((row) => row.type === 'CHECKOUT_DONE' && row.data['op'] === 'integrate').length, 2);
     assert.equal(rows.filter((row) => row.type === 'CHECKOUT_DONE' && row.data['op'] === 'deliver').length, 1);
-    const walkthrough = fs.readFileSync(path.join(session, 'values.walkthrough.md'), 'utf8');
-    assert.ok(walkthrough.includes(`Reviewed target: ${finding.revision}`));
-    assert.match(walkthrough, /Host applicability: reuse/);
+    const reviewLog = fs.readFileSync(path.join(session, 'values.walkthrough.review-log.md'), 'utf8');
+    assert.ok(reviewLog.includes(`Reviewed target: ${finding.revision}`));
+    assert.match(reviewLog, /Host applicability: reuse/);
+    assert.match(fs.readFileSync(path.join(session, 'values.walkthrough.md'), 'utf8'), /Full log: \[values\.walkthrough\.review-log\.md\]/);
     assert.equal(fs.readFileSync(path.join(f.repo, 'report.txt'), 'utf8'), 'unrelated caller content\n');
     const before = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
     assert.equal((await f.cli(['send', '--run', run])).await, 'done');

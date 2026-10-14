@@ -61,7 +61,7 @@ const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
   criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable' as const, coveredBy: null }] : [],
   changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
-  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example', seams: [], warnings: [],
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example', sharedContext: '# Example', seams: [], warnings: [],
   tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [], overlaps: [] }] : [],
 });
 const implementRun = (): RunStartedEvent => run('implement', {

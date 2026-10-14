@@ -21,7 +21,7 @@ export const PLAN: ParsedPlan = {
   title: 'Tasks', box: { 'TL;DR': 'Deliver tasks' }, keyDecisions: [],
   criteria: [criterion('SC1', 'src/a.ts', 'red', ['tests/sc1.test.ts']), criterion('SC2', 'src/b.ts', 'verify'), criterion('SC3', 'src/c.ts', 'verify')],
   changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'a', command: null, line: 1 }, { action: 'NEW', path: 'tests/sc1.test.ts', note: 'tests', command: null, line: 2 }, { action: 'MODIFY', path: 'src/b.ts', note: 'b', command: null, line: 3 }, { action: 'MODIFY', path: 'src/c.ts', note: 'c', command: null, line: 4 }],
-  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks', seams: [], warnings: [],
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks', sharedContext: '# Tasks', seams: [], warnings: [],
   tasks: [task('T1', ['src/a.ts', 'tests/sc1.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
 };
 export const run = (concurrency: number, reviewRounds = 0): RunStartedEvent => ({

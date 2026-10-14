@@ -15,20 +15,28 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 >
 > **Increments:** <count>
 
+## Execution Status
+| ID | State | Summary | Next Action |
+| --- | --- | --- | --- |
+| I01 | complete | <summary> | - |
+| I02 | ready | <summary> | implement:I02 |
+
+Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | resolve-amendment:<id> | resolve-ruling:<key> | final-integration | complete>
+
 ## Context & Intent
 *Problem, context, and clarified intent.*
-
-## Alternatives & Decisions
-*Settled architectural choices with trade-offs, rationale, and rejected alternatives, plus open questions; tag user-made choices `(user)`. Reviews treat settled entries as final.*
 
 ## Goals & Requirements
 *Goals, non-goals, requirements, acceptance criteria.*
 
-## Architecture & Boundaries
-*Constraints, components, invariants, ownership boundaries; optional Mermaid diagram.*
+## Alternatives & Decisions
+*Settled architectural choices with trade-offs, rationale, and rejected alternatives, plus open questions; tag user-made choices `(user)`. Reviews treat settled entries as final.*
 
 ## Risks, Security & Operations
 *Failure modes, security, observability, migration, rollout, rollback.*
+
+## Architecture & Boundaries
+*Constraints, components, invariants, ownership boundaries; optional Mermaid diagram.*
 
 ## Increment Dependency Graph
 | ID | Priority | Summary | Prerequisites | Paths |
@@ -49,14 +57,6 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 ## Final Integration
 *Cross-increment verification.*
 
-## Execution Status
-| ID | State | Summary | Next Action |
-| --- | --- | --- | --- |
-| I01 | complete | <summary> | - |
-| I02 | ready | <summary> | implement:I02 |
-
-Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | resolve-amendment:<id> | resolve-ruling:<key> | final-integration | complete>
-
 ## Review Findings & Resolutions
 *No reviews conducted yet.*
 ````
@@ -68,6 +68,6 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Execution Status and Review Findings & Resolutions: machine-managed; excluded from governed content.
 - Execution Status: every increment's state (completed, active, ready, blocked, invalidated) and one ledger-derived Next Action line.
 
-- Put intent and reader decisions first. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
+- Keep the template section order: live status, intent, and decisions first, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
 - Retain required sections and increment fields; omit optional empty subsections. Use no fixed word limit or second manually maintained summary.
-- Review history: follow [review rules](../review-rules.md) for complete inline findings and exact rulings.
+- Review history: follow [review rules](../review-rules.md) for the compact findings table and the sibling review log.

@@ -150,6 +150,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     seams: Array.isArray(value['seams']) ? value['seams'].filter(NON_EMPTY) : [],
     warnings: Array.isArray(value['warnings']) ? value['warnings'].filter((row): row is PlanWarning => isRecord(row) && row['kind'] === 'overlap' && NON_EMPTY(row['path']) && Array.isArray(row['tasks']) && row['tasks'].every(NON_EMPTY)).map((row) => ({ kind: 'overlap' as const, tasks: [...row.tasks], path: row.path })) : [],
     governedText: typeof value['governedText'] === 'string' ? value['governedText'] : '',
+    sharedContext: typeof value['sharedContext'] === 'string' ? value['sharedContext'] : '',
   };
 }
 

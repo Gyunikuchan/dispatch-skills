@@ -126,7 +126,7 @@ test('binds changed sections for artifact re-review', async () => {
   const git = createGit({ run: async () => '' });
   const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
   const planPath = path.join(tmp, 'test.plan.md');
-  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\ninitial changes\n');
+  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Proposed Changes\ninitial changes\n\n## Success Criteria\n- [SC1] initial\n');
 
   // Round 1: Full review snapshot
   const r1 = (await handler({ kind: 'prepare-review', id: 'p1', round: 1, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }))[0];
@@ -141,8 +141,8 @@ test('binds changed sections for artifact re-review', async () => {
   assert.equal(failMissing?.type, 'EFFECT_FAILED');
   assert.equal(failMissing?.detail, 'review-round-binding-unavailable');
 
-  // Modify section in plan
-  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\nupdated changes\n');
+  // Modify section in plan; the driver-owned Task Map is never a reviewed change
+  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Task Map\n| T1 | updated |\n\n## Proposed Changes\nupdated changes\n\n## Success Criteria\n- [SC1] initial\n');
 
   // Round 2 full re-review binds changed sections as context
   const r2Full = (await handler({ kind: 'prepare-review', id: 'p2-full', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
@@ -169,13 +169,13 @@ test('delta review attributes changes inside fenced code blocks with heading syn
   const planPath = path.join(tmp, 'fenced.plan.md');
 
   // Baseline plan with a fenced block containing ## Execution Status inside Proposed Changes
-  ports.fs.writeAtomic(planPath, '# Plan\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\n```markdown\n## Execution Status\nsome status\n```\n');
+  ports.fs.writeAtomic(planPath, '# Plan\n\n> **TL;DR:** initial\n\n## Proposed Changes\n```markdown\n## Execution Status\nsome status\n```\n\n## Success Criteria\n- [SC1] initial\n');
   const r1 = (await handler({ kind: 'prepare-review', id: 'p1', round: 1, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r1?.type, 'REVIEW_PREPARED');
   const r1Manifest = String(r1?.scope['manifestPath']);
 
   // Update inside the fenced block under Proposed Changes
-  ports.fs.writeAtomic(planPath, '# Plan\n\n> **TL;DR:** initial\n\n## Success Criteria\n- [SC1] initial\n\n## Proposed Changes\n```markdown\n## Execution Status\nupdated status inside fence\n```\n');
+  ports.fs.writeAtomic(planPath, '# Plan\n\n> **TL;DR:** initial\n\n## Proposed Changes\n```markdown\n## Execution Status\nupdated status inside fence\n```\n\n## Success Criteria\n- [SC1] initial\n');
   const r2 = (await handler({ kind: 'prepare-review', id: 'p2', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2?.type, 'REVIEW_PREPARED');
   // Changes remain attributed to 'Proposed Changes', not swallowed by ignored 'Execution Status'

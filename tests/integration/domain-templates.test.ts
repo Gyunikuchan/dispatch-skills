@@ -15,7 +15,8 @@ test('readable artifact templates: populated design preserves executable fields 
   const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
   assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
   assert.equal((template.match(/^>$/gm) ?? []).length, 4);
-  assert.ok(template.indexOf('## Alternatives & Decisions') < template.indexOf('## Goals & Requirements'));
+  const order = ['> **TL;DR:**', '## Execution Status', '## Context & Intent', '## Goals & Requirements', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
+  for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;
   source = source.replace('<`<spec path>` · sha256:<hex> | user request>', 'user request')
     .replace('<low|med|high>', 'low').replace('<count>', '1')
@@ -41,7 +42,7 @@ test('readable artifact templates: walkthrough hierarchy and ownership match ren
 
 test('readable plan template: hierarchy, quote paragraphs and conditional contracts stay executable', () => {
   const template = readFileSync(new URL('plan.md', root), 'utf8');
-  const order = ['> **TL;DR:**', '## Key Decisions & Context', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
+  const order = ['> **TL;DR:**', '## User Review Required', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
   for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
   assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
   assert.equal((template.match(/^>$/gm) ?? []).length, 4);

@@ -49,7 +49,9 @@ export type LintDefectCode =
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
-  | 'execution-status';
+  | 'execution-status'
+  // Shared document structure
+  | 'section-order';
 
 export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
 
@@ -110,8 +112,10 @@ export type ParsedPlan = {
   seams: readonly string[];
   warnings: readonly PlanWarning[];
   traceability: Readonly<Record<string, string>> | null;
-  /** Source without the driver-owned `## Review Findings & Resolutions` section; the caller hashes it. */
+  /** Source without the driver-owned `## Task Map` and `## Review Findings & Resolutions` sections; the caller hashes it. */
   governedText: string;
+  /** Source from the start through the `## Task Map` section: the context every task writer shares. */
+  sharedContext: string;
 };
 
 // SECTION: Design

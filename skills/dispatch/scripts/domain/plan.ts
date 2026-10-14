@@ -6,6 +6,14 @@ import type {
 import { criterionHeading, isCriterionId } from './criterion-id.ts';
 
 export const RESOLUTION_HEADING = '## Review Findings & Resolutions';
+export const TASK_MAP_HEADING = '## Task Map';
+
+/** Plan section order after the title and summary box; every section is optional to this lint. */
+export const PLAN_SECTION_ORDER = [
+  '## User Review Required', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope',
+  TASK_MAP_HEADING, '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan',
+  '## Rollback & Blast Radius', RESOLUTION_HEADING,
+] as const;
 
 // SECTION: Lint severity
 
@@ -27,7 +35,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
     case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'generated-inputs':
-    case 'task-overlap': case 'transient-coverage':
+    case 'task-overlap': case 'transient-coverage': case 'section-order':
       return 'defect';
     default:
       return unreachable(code);
@@ -117,9 +125,23 @@ export function withoutSections(source: string, headings: readonly string[]): st
   return raw.filter((_line, index) => !drop.has(index)).join('\n').replace(/\s+$/, '\n');
 }
 
-/** Hashing input: the source without the driver-owned trailing resolution section. */
+/** Hashing input: the source without the driver-owned Task Map and resolution sections. */
 export function governedPlanText(source: string): string {
-  return withoutSections(source, [RESOLUTION_HEADING]);
+  return withoutSections(source, [RESOLUTION_HEADING, TASK_MAP_HEADING]);
+}
+
+/** Each present `order` heading must follow every earlier-listed present heading; absent and unlisted `##` sections are ignored. */
+export function lintSectionOrder(lines: readonly StructuralLine[], order: readonly string[]): LintDefect[] {
+  const out: LintDefect[] = [];
+  let latest: { rank: number; heading: string } | null = null;
+  for (const entry of lines) {
+    const heading = entry.text.trimEnd();
+    const rank = order.indexOf(heading);
+    if (rank === -1) continue;
+    if (latest && rank < latest.rank) out.push(lint('section-order', entry.line, `Move "${heading}" before "${latest.heading}"; sections follow the template order.`));
+    else latest = { rank, heading };
+  }
+  return out;
 }
 
 // SECTION: Summary box
@@ -326,6 +348,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
+  out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
   for (const entry of lines) {
     if (PROSE_PLACEHOLDER.test(entry.text.replace(/`[^`]*`/g, ''))) out.push(lint('placeholder', entry.line, 'Plan contains a prose placeholder.'));
   }
@@ -350,8 +373,24 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     warnings: overlapWarnings,
     traceability: keyValues(lines, '## Technical-Design Traceability'),
     governedText: governedPlanText(source),
+    sharedContext: '',
   };
-  return { ok: true, plan, warnings };
+  return { ok: true, plan: { ...plan, sharedContext: sharedPlanContext(plan) }, warnings };
+}
+
+/** Index of the first line after the Task Map, or of the first later-ordered section when the plan has no Task Map. */
+function sharedContextEnd(lines: readonly StructuralLine[]): number {
+  const map = sectionRanges(lines, TASK_MAP_HEADING)[0];
+  if (map) return map.end;
+  const later = new Set<string>(PLAN_SECTION_ORDER.slice(PLAN_SECTION_ORDER.indexOf(TASK_MAP_HEADING) + 1));
+  const next = lines.findIndex((entry) => later.has(entry.text.trimEnd()));
+  return next === -1 ? lines.length : next;
+}
+
+/** Governed text through a Task Map rendered from `plan.tasks`; a missing, stale, or edited file map never reaches writers. */
+function sharedPlanContext(plan: Pick<ParsedPlan, 'tasks' | 'governedText'>): string {
+  const text = replaceTaskMapSection(plan.governedText, renderTaskMap(plan));
+  return text.split(/\r?\n/).slice(0, sharedContextEnd(structuralLines(text))).join('\n').replace(/\s+$/, '\n');
 }
 
 function bullets(lines: readonly StructuralLine[], heading: string): string[] {
@@ -845,6 +884,64 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
 }
 
 // SECTION: Derived task views
+
+export type TaskMapRow = { id: string; outcome: string; prerequisites: readonly string[]; criteria: readonly string[]; paths: readonly string[]; overlap: readonly { path: string; tasks: readonly string[] }[] };
+
+/** One row per task in plan order; Overlap names each written path that other tasks also write. */
+export function taskMapRows(plan: Pick<ParsedPlan, 'tasks'>): TaskMapRow[] {
+  return plan.tasks.map((task) => {
+    // Outcome bullets precede Constraints in the task summary; siblings need the outcome only.
+    const outcome = task.summary.split(/(?:^| )Constraints:/)[0]!.trim();
+    return {
+      id: task.id,
+      outcome: outcome && outcome !== task.title ? `${task.title} — ${outcome}` : task.title,
+      prerequisites: task.prerequisites,
+      criteria: task.criteria,
+      paths: task.paths,
+      // NOTE: case-insensitive filesystems make case variants one file, as in the overlap lint.
+      overlap: task.paths.flatMap((path) => {
+        const tasks = plan.tasks.filter((other) => other !== task && other.paths.some((owned) => owned.toLowerCase() === path.toLowerCase())).map((other) => other.id);
+        return tasks.length ? [{ path, tasks }] : [];
+      }),
+    };
+  });
+}
+
+const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+const listCell = (items: readonly string[]) => items.length ? items.join(', ') : 'none';
+
+/** The driver-owned `## Task Map` section, derived from parsed tasks so it cannot drift from them. */
+export function renderTaskMap(plan: Pick<ParsedPlan, 'tasks'>): string {
+  const rows = taskMapRows(plan).map((row) => `| ${[
+    row.id, cell(row.outcome), listCell(row.prerequisites), listCell(row.criteria), listCell(row.paths.map((path) => `\`${path}\``)),
+    listCell(row.overlap.map(({ path, tasks }) => `\`${path}\` (${tasks.join(', ')})`)),
+  ].join(' | ')} |`);
+  return [
+    TASK_MAP_HEADING,
+    '*Driver-generated from Proposed Changes; edits here are replaced.*',
+    '',
+    '| ID | Outcome | Prerequisites | Criteria | Paths | Overlap |',
+    '| --- | --- | --- | --- | --- | --- |',
+    ...rows,
+  ].join('\n');
+}
+
+/** `doc` with its Task Map replaced by `rendered`, or with `rendered` inserted before the first later-ordered section. */
+export function replaceTaskMapSection(doc: string, rendered: string): string {
+  const eol = doc.includes('\r\n') ? '\r\n' : '\n';
+  const raw = doc.split(/\r?\n/);
+  const lines = structuralLines(doc);
+  const block = [...rendered.replace(/\s+$/, '').split(/\r?\n/), ''];
+  const ranges = sectionRanges(lines, TASK_MAP_HEADING);
+  if (ranges.length) {
+    const drop = new Set(ranges.flatMap(({ start, end }) => Array.from({ length: end - start }, (_, offset) => start + offset)));
+    const first = ranges[0]!.start;
+    return raw.flatMap((line, index) => index === first ? block : drop.has(index) ? [] : [line]).join(eol).replace(/\s+$/, eol);
+  }
+  const at = sharedContextEnd(lines);
+  if (at === lines.length) return `${doc.replace(/\s+$/, '')}${eol}${eol}${block.join(eol)}`.replace(/\s+$/, eol);
+  return [...raw.slice(0, at), ...block, ...raw.slice(at)].join(eol);
+}
 
 /** One human line per task in plan order: `T2 — title (after T1)` or `(start)`. */
 export function taskExecutionSummary(tasks: readonly PlanTask[]): string[] {

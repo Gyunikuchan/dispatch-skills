@@ -2,7 +2,7 @@
 // graph priority belongs to the design machine, not here.
 
 import {
-  boxValues, documentTitle, findPlaceholders, isFillerNote, lint, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
+  boxValues, documentTitle, findPlaceholders, isFillerNote, lint, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
   structuralLines, withoutSections, type PlaceholderVocabulary, type StructuralLine,
 } from './plan.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
@@ -11,9 +11,13 @@ const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments'];
 const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · sha256:[0-9a-f]{64})$/;
 export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
-  'Context & Intent', 'Goals & Requirements', 'Architecture & Boundaries', 'Alternatives & Decisions',
-  'Risks, Security & Operations', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',
+  'Context & Intent', 'Goals & Requirements', 'Alternatives & Decisions', 'Risks, Security & Operations',
+  'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',
 ];
+/** Design section order after the title and summary box: status and intent before architecture and increment detail. */
+export const DESIGN_SECTION_ORDER = [
+  EXECUTION_STATUS_HEADING, ...REQUIRED_SECTIONS.map((heading) => `## ${heading}`), RESOLUTION_HEADING,
+] as const;
 const INCREMENT_FIELDS = [
   'Outcome', 'Scope', 'Non-scope', 'Observable behavior', 'Affected contracts', 'Validation', 'Rollback boundary', 'Parallel safety',
 ];
@@ -179,6 +183,7 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   for (const heading of REQUIRED_SECTIONS) {
     if (!sectionRanges(lines, `## ${heading}`).length) defects.push(lint('missing-section', null, `Design requires ## ${heading}.`));
   }
+  defects.push(...lintSectionOrder(lines, DESIGN_SECTION_ORDER));
   const graph = parseIncrementGraph(lines);
   const blocks = incrementDetails(lines);
   const details: Record<string, Record<string, string>> = {};

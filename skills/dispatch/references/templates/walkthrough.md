@@ -35,7 +35,12 @@ Final gate: `<command>` exit <status>
 None.
 
 ## Review Findings & Resolutions
-*No reviews conducted yet.*
+
+Rounds: 1 · Findings: 1 (Fixed 1) · Full log: [<slug>.walkthrough.review-log.md](<slug>.walkthrough.review-log.md)
+
+| Review | ID | Round | Severity | Status | Ruling |
+| --- | --- | --- | --- | --- | --- |
+| 1 | R1-F001 | 1 | MUST | Fixed | <first ruling line> |
 ````
 
 ## Field notes
@@ -44,7 +49,7 @@ None.
 - Changes Made: every file changed in the session. Note precedence: writer `files[].note`, then the plan's Proposed Changes line, then `+N −M`; review fixes append `fixes <IDs>`.
 - Verification: Evidence is `red→green` plus the command for red criteria, or `<class>; <scenario>; <result>` for verify/review. Plan-less: only the `Final gate:` line, Status `n/a`.
 - Revision Log: `## Revision Log` before Review Findings & Resolutions, only when revisions occurred.
-- Review Findings & Resolutions: driver-rendered and machine-managed.
+- Review Findings & Resolutions: driver-rendered and machine-managed. Compact summary line and table; full entries live in the linked review log. Before any review: `*No reviews conducted yet.*` and no log.
 - Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria.
 - Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box is a one-line summary exactly when a `- Deviation:` bullet exists.
 

@@ -32,11 +32,11 @@ Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including 
 reviewed paths, and flag violations as `standards`.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-level shared constraints, nested file ownership and each criterion's specific checks.
-Use the authoritative plan and complete inline review history. Consult raw provider output or journals
+Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, an adjudication dispute or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
-On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
+On re-review, verify prior resolutions in the review log that `## Review Findings & Resolutions` links, and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.

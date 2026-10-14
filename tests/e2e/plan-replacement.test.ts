@@ -27,14 +27,6 @@ function plan(tasks: readonly TaskSpec[]): string {
 ## Key Decisions & Context
 - Keep each task within its own fixture paths.
 
-## Success Criteria
-${tasks.map((task) => `- [${task.criterion}] ${task.file} holds ${task.text}
-  - Changes: ${task.file}
-  - Verify: \`${includes(task.file, task.text)}\`
-  - Evidence: verify
-  - Pre-existing: no
-  - Test rationale: Executable checks establish the delivered fixture behavior.`).join('\n')}
-
 ## Proposed Changes
 ${tasks.map((task) => `### ${task.id} — Value ${task.id}
 Deliver value ${task.id.toLowerCase()} within the task paths.
@@ -44,6 +36,14 @@ Deliver value ${task.id.toLowerCase()} within the task paths.
 #### [MODIFY] ${task.file}
 - Write ${task.text}.
 `).join('\n')}
+## Success Criteria
+${tasks.map((task) => `- [${task.criterion}] ${task.file} holds ${task.text}
+  - Changes: ${task.file}
+  - Verify: \`${includes(task.file, task.text)}\`
+  - Evidence: verify
+  - Pre-existing: no
+  - Test rationale: Executable checks establish the delivered fixture behavior.`).join('\n')}
+
 ## Verification Plan
 ### Automated Tests
 - None: Criterion commands cover every change.

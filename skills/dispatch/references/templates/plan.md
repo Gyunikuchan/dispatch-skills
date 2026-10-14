@@ -19,17 +19,23 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 >
 > **Scope:** <paths or components>
 
+## User Review Required
+*Breaking changes or trade-offs needing user attention (or "None").*
+
 ## Background
 *Optional: current behaviour a fresh reader needs, with `file:line` pointers.*
 
 ## Key Decisions & Context
 *Settled architectural choices with trade-offs, rationale, and rejected alternatives; tag user-made choices `(user)`. Reviews treat entries as settled.*
 
-## User Review Required
-*Breaking changes or trade-offs needing user attention (or "None").*
-
 ## Open Questions & Assumptions
 *Questions, assumptions, or defaults (or "None").*
+
+## Out of Scope
+*Non-goals and deferred follow-ups.*
+
+## Task Map
+*Driver-generated from Proposed Changes after the plan parses; the driver replaces edits here.*
 
 ## Technical-Design Traceability
 - Approved revision: `sha256:<64 hex>`
@@ -82,9 +88,6 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 ### Manual Verification
 - Manual steps, edge cases, and failure scenarios.
 
-## Out of Scope
-*Non-goals and deferred follow-ups.*
-
 ## Rollback & Blast Radius
 *Caller impacts, migrations, and rollback paths; omit when empty.*
 
@@ -96,12 +99,14 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 ## Field notes
 
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
-- Put human decisions and current context first, then task outcomes and execution detail. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
+- Keep the template section order: human decisions and current context first, then task outcomes and execution detail. A present section out of order is a `section-order` defect; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
 - State shared constraints once at plan or task level. Put all mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
-- Review history: follow [review rules](../review-rules.md) for complete inline findings, exact rulings and conditional supporting-evidence disclosure.
+- Review history: follow [review rules](../review-rules.md); the driver keeps complete findings and exact rulings in the sibling review log and a compact table in this plan.
+- Shared range: every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. Put context that all tasks need in the shared range and task-specific detail under the task.
 
 - Technical-Design Traceability: increment plans only.
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
+- Task Map: driver-rendered from parsed tasks (ID, Outcome, Prerequisites, Criteria, Paths, Overlap) and excluded from the plan hash; keep the placeholder.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - Tasks: every H4 belongs to one task; a task is a meaningful outcome with independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.

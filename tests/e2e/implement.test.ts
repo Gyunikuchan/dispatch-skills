@@ -36,13 +36,6 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] Values are normalized
-  - Changes: src/a.ts
-  - Verify: \`node -e "process.exit(0)"\`
-  - Evidence: verify
-  - Test rationale: Run the isolated verification command to establish the scoped gate behavior.
-
 ## Proposed Changes
 ### T1 — Normalize values
 Values are normalized before use so downstream comparisons agree.
@@ -51,6 +44,13 @@ Values are normalized before use so downstream comparisons agree.
 
 #### [MODIFY] src/a.ts
 - Normalize the value.
+
+## Success Criteria
+- [SC1] Values are normalized
+  - Changes: src/a.ts
+  - Verify: \`node -e "process.exit(0)"\`
+  - Evidence: verify
+  - Test rationale: Run the isolated verification command to establish the scoped gate behavior.
 
 ## Verification Plan
 ### Automated Tests
@@ -126,14 +126,6 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] The value contract remains stable
-  - Changes: src/a.ts
-  - Verify: \`node -e "const fs=require('node:fs');process.exit(fs.readFileSync('src/a.ts','utf8').includes('value = 2') ? 1 : 0)"\` [FINAL]
-  - Evidence: verify
-  - Pre-existing: no
-  - Test rationale: Check that implementation preserves the accepted value contract.
-
 ## Proposed Changes
 ### T1 — Preserve the value contract
 Keep the public value contract intact.
@@ -142,6 +134,14 @@ Keep the public value contract intact.
 
 #### [MODIFY] src/a.ts
 - Preserve the accepted value.
+
+## Success Criteria
+- [SC1] The value contract remains stable
+  - Changes: src/a.ts
+  - Verify: \`node -e "const fs=require('node:fs');process.exit(fs.readFileSync('src/a.ts','utf8').includes('value = 2') ? 1 : 0)"\` [FINAL]
+  - Evidence: verify
+  - Pre-existing: no
+  - Test rationale: Check that implementation preserves the accepted value contract.
 
 ## Verification Plan
 ### Automated Tests
@@ -205,13 +205,6 @@ test('reuses settled plan from session journal and rejects stale or failed candi
 ## Technical-Design Traceability
 - Approved revision: none
 
-## Success Criteria
-- [SC1] Values are normalized
-  - Changes: src/a.ts
-  - Verify: \`node -e "process.exit(0)"\`
-  - Evidence: verify
-  - Test rationale: Run the isolated verification command.
-
 ## Proposed Changes
 ### T1 — Normalize values
 Values are normalized before use so downstream comparisons agree.
@@ -220,6 +213,13 @@ Values are normalized before use so downstream comparisons agree.
 
 #### [MODIFY] src/a.ts
 - Normalize the value.
+
+## Success Criteria
+- [SC1] Values are normalized
+  - Changes: src/a.ts
+  - Verify: \`node -e "process.exit(0)"\`
+  - Evidence: verify
+  - Test rationale: Run the isolated verification command.
 
 ## Verification Plan
 ### Automated Tests
@@ -532,6 +532,8 @@ Deliver the ${file} interface and check its result${index && !(independent && in
 > **Scope:** src and tests
 ## Key Decisions & Context
 - Consumers use the accepted contract; each task owns separate source and test files.
+## Proposed Changes
+${tasks}
 ## Success Criteria
 ${criteria}
 - [SC4] Accumulated interfaces agree
@@ -540,8 +542,6 @@ ${criteria}
   - Evidence: verify
   - Integration: The final command checks every accumulated interface.
   - Test rationale: Executable assertions establish behavior in the delivered tree.
-## Proposed Changes
-${tasks}
 ## Verification Plan
 ### Automated Tests
 - None: Criterion commands cover the executable fixture interfaces.
@@ -727,6 +727,13 @@ function governedPlan(title: string, criteria: PlanCriterionSpec[], tasks: PlanT
 ## Key Decisions & Context
 - Keep each task within its own fixture paths.
 
+## Proposed Changes
+${tasks.map((task) => `### ${task.id} — ${task.title}
+Deliver ${task.title.toLowerCase()} within the task paths.
+- Prerequisites: none
+- Criteria: ${task.criteria.join(', ')}
+${(task.extra ?? []).map((line) => `- ${line}\n`).join('')}
+${task.changes.map((change) => `#### [${change.action}] ${change.path}\n- ${change.note}\n`).join('\n')}`).join('\n')}
 ## Success Criteria
 ${criteria.map((row) => `- [${row.id}] ${row.title}
   - Changes: ${row.changes.join(', ')}
@@ -735,13 +742,6 @@ ${criteria.map((row) => `- [${row.id}] ${row.title}
   - Pre-existing: no
 ${(row.extra ?? []).map((line) => `  - ${line}\n`).join('')}  - Test rationale: Executable checks establish the delivered fixture behavior.`).join('\n')}
 
-## Proposed Changes
-${tasks.map((task) => `### ${task.id} — ${task.title}
-Deliver ${task.title.toLowerCase()} within the task paths.
-- Prerequisites: none
-- Criteria: ${task.criteria.join(', ')}
-${(task.extra ?? []).map((line) => `- ${line}\n`).join('')}
-${task.changes.map((change) => `#### [${change.action}] ${change.path}\n- ${change.note}\n`).join('\n')}`).join('\n')}
 ## Verification Plan
 ### Automated Tests
 - None: Criterion commands cover every change.
