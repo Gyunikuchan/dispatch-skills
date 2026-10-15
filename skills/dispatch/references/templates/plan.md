@@ -35,7 +35,10 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 *Non-goals and deferred follow-ups.*
 
 ## Task Map
-*Driver-generated from Proposed Changes after the plan parses; the driver replaces edits here.*
+
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T<n> | <Task title> | <Plain-language outcome> | none | SC<n>[, SC<n>...] |
 
 ## Technical-Design Traceability
 - Approved revision: `sha256:<64 hex>`
@@ -45,11 +48,8 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 ## Proposed Changes
 
-### T<n> — <Task outcome>
-- Outcome: <Plain-language outcome and rationale; why each non-obvious prerequisite is needed.>
-- Constraints: <optional shared task constraints>
-- Prerequisites: <none | T<n>[, T<n>...]>
-- Criteria: <SC#[, SC#...]>
+### T<n> — <Task title>
+- Constraints: <optional task-specific constraints, including why each non-obvious prerequisite is needed>
 - Overlap: <path> — <why this unordered task also writes the path>
 
 - #### [NEW] <relative-path>
@@ -101,13 +101,13 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
 - Keep the template section order: human decisions and current context first, then task outcomes and execution detail. A present section out of order is a `section-order` defect; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
-- State shared constraints once at plan or task level. Put all mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
+- Put task ID, title, outcome, prerequisites, and criteria in the authored Task Map. Join rows to Proposed Changes by ID; titles must match the task headings. Put task-specific Constraints and Overlap under the matching task. Put mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
 - Review history: follow [review rules](../review-rules.md); the driver keeps complete findings and exact rulings in the sibling review log and a compact table in this plan.
-- Shared range: every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. Put context that all tasks need in the shared range and task-specific detail under the task.
+- Shared range: every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. The authored map is part of the governed plan hash and shared writer context. Put context that all tasks need in the shared range and task-specific detail under the task.
 
 - Technical-Design Traceability: increment plans only.
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only. Selectors match behavior-named tests; a Verify command or test file name that contains a criterion or finding ID is a `plan-id-in-test-name` defect.
-- Task Map: driver-rendered from parsed tasks (ID, Outcome, Prerequisites, Criteria, Paths, Overlap) and excluded from the plan hash; keep the placeholder.
+- Task Map: author one table with columns ID, Title, Outcome, Prerequisites, Criteria. Use `none` when a task has no prerequisites. Separate multiple task or criterion IDs with commas. Escape literal pipes as `\|`, including inside inline code. Rows join task sections by ID, not position. Keep Paths and Overlap in task details; keep Constraints under the task because they apply only to that task. The driver reads the table as authored and never rewrites it. Map edits change the governed plan hash; only Review Findings & Resolutions are excluded.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - Tasks: every H4 belongs to one task; a task is a meaningful outcome with independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.

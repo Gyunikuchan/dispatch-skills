@@ -38,11 +38,13 @@ test('rewrite SC2 implementation review carries governing artifacts and criteria
   assert.doesNotMatch(prompt, /- Task: null/); assert.match(prompt, /- Task: x/);
 });
 
-test('task-map-authored: direct implement authoring writes the Task Map after authoring and refreshes it after review fixes', async () => {
+test('task-map-authored: direct implement authoring preserves the authored Task Map through review fixes', async () => {
   const { authored, settled, frame } = await authoringFlow();
   assert.deepEqual([frame?.await, frame?.data['kind']], ['decide', 'approval'], JSON.stringify(frame));
-  assert.match(authored, /## Task Map\n[\s\S]*\| T1 \| Normalize values — [^\n]*\n[\s\S]*## Technical-Design Traceability/);
-  assert.match(settled, /## Task Map\n[\s\S]*\| T1 \| Normalize trimmed values — [^\n]*\n[\s\S]*## Technical-Design Traceability/);
+  assert.match(authored, /## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|\n\| --- \| --- \| --- \| --- \| --- \|\n\| T1 \| Normalize values \| Values are normalized before use so downstream comparisons agree\. \| none \| SC1 \|/);
+  assert.match(settled, /## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|\n\| --- \| --- \| --- \| --- \| --- \|\n\| T1 \| Normalize trimmed values \| Values are normalized before use so downstream comparisons agree\. \| none \| SC1 \|/);
   assert.equal((settled.match(/^## Task Map$/gm) ?? []).length, 1);
-  assert.equal(governedPlanText(settled), governedPlanText(PLAN.replace('### T1 — Normalize values', '### T1 — Normalize trimmed values')));
+  assert.equal(governedPlanText(settled), governedPlanText(PLAN
+    .replace('| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |', '| T1 | Normalize trimmed values | Values are normalized before use so downstream comparisons agree. | none | SC1 |')
+    .replace('### T1 — Normalize values', '### T1 — Normalize trimmed values')));
 });

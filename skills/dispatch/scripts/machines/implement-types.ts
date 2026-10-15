@@ -122,7 +122,8 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
   for (const item of value['tasks']) {
     if (!isRecord(item) || !NON_EMPTY(item['id']) || !Array.isArray(item['generated'])) return null;
     const prerequisites = strings(item['prerequisites']), taskCriteria = strings(item['criteria']), paths = strings(item['paths']);
-    if (!prerequisites || !taskCriteria || !taskCriteria.every(isCriterionId) || !paths) return null;
+    const constraints = item['constraints'] === undefined ? [] : strings(item['constraints']);
+    if (!prerequisites || !taskCriteria || !taskCriteria.every(isCriterionId) || !paths || !constraints) return null;
     const generated: { path: string; inputs: string[] }[] = [];
     for (const entry of item['generated']) {
       const inputs = isRecord(entry) ? strings(entry['inputs']) : null;
@@ -131,7 +132,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     }
     const overlaps = Array.isArray(item['overlaps']) ? item['overlaps'].filter((row): row is { path: string; reason: string } => isRecord(row) && NON_EMPTY(row['path']) && typeof row['reason'] === 'string').map((row) => ({ path: row.path, reason: row.reason })) : [];
     tasks.push({
-      id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], summary: typeof item['summary'] === 'string' ? item['summary'] : '',
+      id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], summary: typeof item['summary'] === 'string' ? item['summary'] : '', constraints,
       line: typeof item['line'] === 'number' ? item['line'] : tasks.length + 1, prerequisites, criteria: taskCriteria, paths, generated, overlaps,
     });
   }

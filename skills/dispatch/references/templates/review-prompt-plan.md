@@ -37,7 +37,7 @@ executing the plan as written delivers the requirement.
 ## inspection
 
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
-Check task-level shared constraints, nested file ownership and each criterion's specific checks.
+Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
 Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, an adjudication dispute or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.

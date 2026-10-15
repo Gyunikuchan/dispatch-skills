@@ -41,7 +41,7 @@ test('amend plan applies exact text edits and relints', () => {
 test('amend plan rejects ambiguous or missing current text', () => {
   const missing = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'SC1', current: 'no such text', proposed: 'x' }]);
   assert.ok(!missing.ok && /exactly once in the plan; found 0/.test(missing.error), JSON.stringify(missing));
-  const ambiguous = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'SC1', current: '- Prerequisites: none', proposed: '- Prerequisites: T2' }]);
+  const ambiguous = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'SC1', current: '| none |', proposed: '| T2 |' }]);
   assert.ok(!ambiguous.ok && /exactly once in the plan; found 3/.test(ambiguous.error));
 });
 

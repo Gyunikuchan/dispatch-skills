@@ -26,15 +26,16 @@ export const PLAN = `# Normalize values
 ## Key Decisions & Context
 - Normalize whitespace and preserve case.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Normalize values
-Values are normalized before use so downstream comparisons agree.
-- Prerequisites: none
-- Criteria: SC1
-
 #### [MODIFY] src/value.ts
 - Changes: normalize the input before processing.
 
@@ -102,6 +103,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
     result: observe((effect.input as Record<string, unknown> | undefined)?.['observe']) ?? { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
   const handlers = { ...baseHandlers, checkout, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
   const ports = fakePorts();
+  memoryRunFs(ports, runDir);
   configurePorts?.(ports, runDir);
   ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
   const commands: string[] = [];
@@ -138,7 +140,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   assert.equal(walkthroughs.length, 1); assert.equal(reviewed.path?.replaceAll('\\', '/'), path.join(sessionRoot, walkthroughs[0]!).replaceAll('\\', '/'));
   assert.match(fs.readFileSync(path.join(sessionRoot, walkthroughs[0] as string), 'utf8'), /## Verification/);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
-  assert.ok(!fs.readFileSync(planPath, 'utf8').includes('## Task Map'), 'a supplied plan keeps its text; only driver-authored plans get a Task Map');
+  assert.equal(governedPlanText(fs.readFileSync(planPath, 'utf8')), governedPlanText(PLAN), 'root rendering keeps the authored Task Map in the supplied plan');
 }
 
 /** Direct implement authoring through real handlers: the host authors a plan for an objective, plan review accepts one fix, then the run awaits approval. */
@@ -182,7 +184,9 @@ export async function authoringFlow(): Promise<{ planPath: string; authored: str
       const rulings = Object.fromEntries((frame.data['findings'] as { id: string }[]).map(({ id }) => [id, { ruling: 'accept' }]));
       frame = (await send({ ...options, rawEvent: { type: 'RULINGS', rulings } })).frame;
     } else if (frame.await === 'fix') {
-      ports.fs.writeAtomic(planPath, ports.fs.readText(planPath).replace('### T1 — Normalize values', '### T1 — Normalize trimmed values'));
+      ports.fs.writeAtomic(planPath, ports.fs.readText(planPath)
+        .replace('| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |', '| T1 | Normalize trimmed values | Values are normalized before use so downstream comparisons agree. | none | SC1 |')
+        .replace('### T1 — Normalize values', '### T1 — Normalize trimmed values'));
       frame = (await send({ ...options, rawEvent: { type: 'FIXES_APPLIED', clusters: (frame.data['clusters'] as { clusterId: string }[]).map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) } })).frame;
     } else assert.fail(JSON.stringify(frame));
   }

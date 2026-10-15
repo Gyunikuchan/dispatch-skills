@@ -28,8 +28,6 @@ export type Context = {
   machinePath?: string;
   run: RunStartedEvent;
   planPath: string;
-  /** Path of a plan this run authored; root render keeps its Task Map current. User-supplied plans stay as written. */
-  authoredPlan?: string;
   counters: Counters;
   writer: WriterConfig | null;
   writerError: string | null;
@@ -514,6 +512,7 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
     siblingTasks: taskMapRows(plan).filter((row) => row.id !== brief.task.id),
     task: {
       id: brief.task.id, title: brief.task.title, summary: brief.task.summary, graph: brief.summary, attempt: record.attempt, signature: record.signature,
+      constraints: brief.task.constraints ?? [],
       prerequisites: brief.prerequisites.map((task) => ({ id: task.id, integrated: c.tasks[task.id]?.integrated ?? null })),
       dependents: brief.dependents.map((task) => task.id), worktree: record.worktree, inputRevision: record.input,
       checkpoint: testPaths.length ? { root: record.worktree, paths: testPaths } : null,
@@ -1408,7 +1407,7 @@ export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding
     scopeAdjustments: binding.scopeAdjustments ?? [],
     scopeNotice: binding.scopeNotice ?? null,
   };
-  return snapshot({ ...c, authoredPlan: c.planPath }, 'author');
+  return snapshot(c, 'author');
 }
 
 function applyImplement(state: ImplementState, event: Event): S {
@@ -1417,7 +1416,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'RUN_STARTED' || event.verb !== 'implement') return stay(state);
       const c = baseContext(event);
       const candidate = /\.plan\.md$/i.test(c.planPath) || settledPlanInput(event.overrides['settledPlan']) !== null;
-      return candidate ? snapshot(c, 'parse') : snapshot({ ...c, authoredPlan: c.planPath }, 'author');
+      return candidate ? snapshot(c, 'parse') : snapshot(c, 'author');
     }
     case 'starting': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return fail(state.c, `initial snapshot failed: ${event.cls}: ${event.detail}`);
@@ -1431,7 +1430,7 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'parsing': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) {
-        if (state.phase === 'initial' && /not found/i.test(event.detail)) return authorPlan({ ...state.c, authoredPlan: state.c.planPath });
+        if (state.phase === 'initial' && /not found/i.test(event.detail)) return authorPlan(state.c);
         return startFailureFromEffect(state.c, event.cls, event.detail);
       }
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);

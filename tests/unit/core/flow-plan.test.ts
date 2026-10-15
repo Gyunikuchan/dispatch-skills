@@ -23,15 +23,16 @@ const PLAN = `# Add retry budget
 ## Key Decisions & Context
 - Cap at three attempts (user)
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Cap fetch retries
-Fetch stops retrying after three attempts so callers fail fast.
-- Prerequisites: none
-- Criteria: SC1
-
 #### [MODIFY] src/fetch.ts
 - Changes: add a retry counter to fetchWithRetry.
 
@@ -127,7 +128,7 @@ test('plan end to end: author → AUTHORED → parse → review → rule → don
   assert.deepEqual([done.frame?.at, done.frame?.data['outcome']], ['plan › done', 'complete']);
   const rendered = fs.readFileSync(planPath, 'utf8');
   assert.match(rendered, /## Review Findings & Resolutions[\s\S]*R1-F001/);
-  assert.match(rendered, /## Task Map\n[\s\S]*\n\| T1 \| [^\n]*\n[\s\S]*## Proposed Changes/);
+  assert.match(rendered, /## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|\n\| --- \| --- \| --- \| --- \| --- \|\n\| T1 \| Cap fetch retries \| Fetch stops retrying after three attempts so callers fail fast\. \| none \| SC1 \|\n\n## Technical-Design Traceability/);
   assert.ok(rendered.startsWith('# Add retry budget'));
   const replay = await send({ ...options, dryRun: true });
   assert.deepEqual(replay.frame, done.frame);

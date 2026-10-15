@@ -34,7 +34,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'criterion-review': case 'criterion-critical-review': case 'missing-section': case 'missing-increment-details':
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
-    case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'generated-inputs':
+    case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'task-map': case 'generated-inputs':
     case 'task-overlap': case 'transient-coverage': case 'section-order': case 'criterion-retain-required': case 'transient-test-path':
     case 'plan-id-in-test-name':
       return 'defect';
@@ -126,9 +126,9 @@ export function withoutSections(source: string, headings: readonly string[]): st
   return raw.filter((_line, index) => !drop.has(index)).join('\n').replace(/\s+$/, '\n');
 }
 
-/** Hashing input: the source without the driver-owned Task Map and resolution sections. */
+/** Hashing input: the source without review history. */
 export function governedPlanText(source: string): string {
-  return withoutSections(source, [RESOLUTION_HEADING, TASK_MAP_HEADING]);
+  return withoutSections(source, [RESOLUTION_HEADING]);
 }
 
 /** Each present `order` heading must follow every earlier-listed present heading; absent and unlisted `##` sections are ignored. */
@@ -311,7 +311,8 @@ const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
 /** Parent forms: the user's request, an external spec pinned by checksum, or a design increment. */
 export const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · (?:sha256:[0-9a-f]{64}|I\d{2}))$/;
 const TASK_HEADING = /^###\s+(T[1-9]\d*)\s+[—–-]\s+(\S.*?)\s*$/;
-const TASK_FIELD = /^[-*+]\s+(Prerequisites|Criteria):\s*(.*?)\s*$/i;
+const TASK_FIELD = /^[-*+]\s+(Outcome|Prerequisites|Criteria):\s*(.*?)\s*$/i;
+const CONSTRAINT_FIELD = /^[-*+]\s+Constraints:\s*(.*?)\s*$/i;
 const OVERLAP_FIELD = /^[-*+]\s+Overlap:\s*(.*?)\s*$/i;
 const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;
 const MARKER_HEADING = /^####\s+\[([A-Z][A-Z-]*)\]\s+\S/;
@@ -345,7 +346,8 @@ export type PlanOptions = { placeholders?: PlaceholderVocabulary };
 export function parsePlan(source: string, options: PlanOptions = {}): PlanResult {
   const lines = structuralLines(source);
   const out: LintDefect[] = [];
-  const { changes, tasks } = parseChanges(lines, out);
+  const { changes, tasks: sections } = parseChanges(lines, out);
+  const tasks = joinTaskMap(sections, parseTaskMap(lines, out), out);
   const verification = parseVerification(lines, out);
   const criteria = parseCriteria(lines, changes, out);
   const seamDeclarations = parseSeamDeclarations(lines);
@@ -359,6 +361,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   lintTransientTestPaths(criteria, changes, out);
   const planIds = collectPlanIds(lines, criteria);
   lintPlanIdNames(criteria, changes, planIds, out);
+  lintTaskSections(sections, out);
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
@@ -379,7 +382,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
     criteria: criteria.map(({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
       ({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
-    tasks: tasks.map(({ id, title, summary, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, line, prerequisites, criteria: ids, paths, generated, overlaps })),
+    tasks: tasks.map(({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
     finalCommands,
@@ -390,7 +393,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     planIds,
     sharedContext: '',
   };
-  return { ok: true, plan: { ...plan, sharedContext: sharedPlanContext(plan) }, warnings };
+  return { ok: true, plan: { ...plan, sharedContext: sharedPlanContext(plan.governedText) }, warnings };
 }
 
 /** Index of the first line after the Task Map, or of the first later-ordered section when the plan has no Task Map. */
@@ -402,9 +405,8 @@ function sharedContextEnd(lines: readonly StructuralLine[]): number {
   return next === -1 ? lines.length : next;
 }
 
-/** Governed text through a Task Map rendered from `plan.tasks`; a missing, stale, or edited file map never reaches writers. */
-function sharedPlanContext(plan: Pick<ParsedPlan, 'tasks' | 'governedText'>): string {
-  const text = replaceTaskMapSection(plan.governedText, renderTaskMap(plan));
+/** Shared writer context preserves the authored map bytes used by the governed hash. */
+function sharedPlanContext(text: string): string {
   return text.split(/\r?\n/).slice(0, sharedContextEnd(structuralLines(text))).join('\n').replace(/\s+$/, '\n');
 }
 
@@ -428,7 +430,9 @@ function keyValues(lines: readonly StructuralLine[], heading: string): Record<st
   return values;
 }
 
-type DraftTask = PlanTask & { prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number; overlapLines: number[] };
+type DraftTask = PlanTask & { constraints: string[]; prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number; overlapLines: number[] };
+
+type AuthoredTaskRow = { id: string; title: string; outcome: string; prerequisites: string[]; criteria: string[]; line: number };
 
 /** Normalize only task-owned file entries and their detail indentation. */
 function taskStructuralView(lines: readonly StructuralLine[]): StructuralLine[] {
@@ -461,19 +465,17 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   let task: DraftTask | null = null;
   let malformed = false;
   let inHeader = false;
-  const summary: string[] = [];
   body.forEach((entry, offset) => {
     if (/^###\s/.test(entry.text)) {
       const heading = TASK_HEADING.exec(entry.text);
       inHeader = true;
-      summary.length = 0;
       if (!heading?.[1] || !heading[2]) {
         out.push(lint('task-heading', entry.line, 'Task heading must be "### T<n> — <outcome title>".'));
         task = null; malformed = true;
         return;
       }
       malformed = false;
-      task = { id: heading[1], title: heading[2], summary: '', line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], overlaps: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line, overlapLines: [] };
+      task = { id: heading[1], title: heading[2], summary: '', constraints: [], line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], overlaps: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line, overlapLines: [] };
       tasks.push(task);
       return;
     }
@@ -483,7 +485,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
       if (/^\s*[-*+]\s+####\s+\[/.test(entry.text)) out.push(lint('change-heading', entry.line, 'Nested file entries require "- #### [ACTION] path" at task level.'));
       const marker = MARKER_HEADING.exec(entry.text)?.[1];
       if (marker) out.push(lint('unknown-change-marker', entry.line, `Unknown change marker [${marker}]; use [NEW], [MODIFY], [DELETE], or [GENERATED].`));
-      if (inHeader && current) readTaskHeader(current, entry, summary, out);
+      if (inHeader && current) readTaskHeader(current, entry, out);
       return;
     }
     inHeader = false;
@@ -527,8 +529,129 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   return { changes, tasks };
 }
 
-/** Task metadata bullets; other prose before the first H4 forms the summary. */
-function readTaskHeader(task: DraftTask, entry: StructuralLine, summary: string[], out: LintDefect[]): void {
+function splitTaskMapRow(source: string): string[] | null {
+  const row = source.trim();
+  if (!row.startsWith('|') || !row.endsWith('|')) return null;
+  const cells: string[] = [];
+  let cell = '';
+  const body = row.slice(1, -1);
+  for (let index = 0; index < body.length;) {
+    const character = body[index]!;
+    if (character === '|') {
+      let slashes = 0;
+      for (let back = cell.length - 1; back >= 0 && cell[back] === '\\'; back--) slashes++;
+      if (slashes % 2) {
+        cell = `${cell.slice(0, -1)}|`;
+        index++;
+        continue;
+      }
+      cells.push(cell.trim());
+      cell = '';
+      index++;
+      continue;
+    }
+    cell += character;
+    index++;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function parseTaskMap(lines: readonly StructuralLine[], out: LintDefect[]): AuthoredTaskRow[] {
+  const ranges = sectionRanges(lines, TASK_MAP_HEADING);
+  if (ranges.length !== 1 || !ranges[0]) {
+    out.push(lint('task-map', ranges[0] ? lines[ranges[0].start]?.line ?? null : null, 'Expected exactly one ## Task Map section with the authored task table.'));
+    return [];
+  }
+  const range = ranges[0];
+  const entries = lines.slice(range.start + 1, range.end).filter((entry) => entry.text.trim());
+  const failRow = (line: number | null, detail: string) => out.push(lint('task-map', line, detail));
+  if (entries.length < 2) {
+    failRow(lines[range.start]?.line ?? null, 'Task Map requires one header, one delimiter, and at least one task row.');
+    return [];
+  }
+  const expected = ['ID', 'Title', 'Outcome', 'Prerequisites', 'Criteria'];
+  const header = splitTaskMapRow(entries[0]!.text);
+  const divider = splitTaskMapRow(entries[1]!.text);
+  if (!header || header.length !== expected.length || header.some((value, index) => value !== expected[index])) {
+    failRow(entries[0]!.line, 'Task Map columns must be ID, Title, Outcome, Prerequisites, Criteria in that order.');
+    return [];
+  }
+  if (!divider || divider.length !== expected.length || divider.some((value) => !/^:?-{3,}:?$/.test(value))) {
+    failRow(entries[1]!.line, 'Task Map requires a Markdown delimiter row with five cells.');
+    return [];
+  }
+  if (entries.length === 2) {
+    failRow(entries[1]!.line, 'Task Map requires at least one task row.');
+    return [];
+  }
+  const rows: AuthoredTaskRow[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries.slice(2)) {
+    const cells = splitTaskMapRow(entry.text);
+    if (!cells || cells.length !== expected.length) {
+      failRow(entry.line, 'Task Map rows require exactly five cells; escape literal pipes as \\|, including inside inline code.');
+      continue;
+    }
+    const id = cells[0]!.replace(/^`|`$/g, '').trim().toUpperCase();
+    const title = cells[1]!.trim();
+    const outcome = cells[2]!.trim();
+    if (!/^T[1-9]\d*$/.test(id)) failRow(entry.line, 'Task Map ID must use T[1-9][0-9]*.');
+    if (!title) failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Title cell.`);
+    if (!outcome) failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Outcome cell.`);
+    if (seen.has(id)) out.push(lint('duplicate-id', entry.line, `Task Map contains duplicate task ${id}.`));
+    seen.add(id);
+    const list = (value: string, label: 'Prerequisites' | 'Criteria', noneAllowed: boolean): string[] => {
+      const text = value.trim();
+      if (!text) {
+        failRow(entry.line, `Task ${id || '(blank)'} requires an explicit ${label} cell; use none only for an empty Prerequisites list.`);
+        return [];
+      }
+      if (/^none$/i.test(text)) {
+        if (!noneAllowed) failRow(entry.line, `Task ${id || '(blank)'} Criteria cell must name at least one criterion.`);
+        return [];
+      }
+      const values = text.split(',').map((item) => item.trim().replace(/^`|`$/g, '').toUpperCase());
+      if (values.some((item) => !item)) failRow(entry.line, `Task ${id || '(blank)'} ${label} must be a comma-separated list of IDs.`);
+      const pattern = label === 'Prerequisites' ? /^T[1-9]\d*$/ : /^SC[1-9]\d*$/;
+      if (values.some((item) => !pattern.test(item))) failRow(entry.line, `Task ${id || '(blank)'} ${label} must contain ${label === 'Prerequisites' ? 'task IDs T[1-9][0-9]*' : 'criterion IDs SC[1-9][0-9]*'}.`);
+      return [...new Set(values.filter((item) => pattern.test(item)))];
+    };
+    rows.push({ id, title, outcome, prerequisites: list(cells[3]!, 'Prerequisites', true), criteria: list(cells[4]!, 'Criteria', false), line: entry.line });
+  }
+  return rows;
+}
+
+function joinTaskMap(sections: readonly DraftTask[], rows: readonly AuthoredTaskRow[], out: LintDefect[]): DraftTask[] {
+  const byId = new Map<string, DraftTask[]>();
+  for (const section of sections) byId.set(section.id, [...(byId.get(section.id) ?? []), section]);
+  const rowIds = new Set(rows.map((row) => row.id));
+  const joined = new Map<string, DraftTask>();
+  for (const row of rows) {
+    const matches = byId.get(row.id) ?? [];
+    if (!matches.length) {
+      out.push(lint('task-map', row.line, `Task Map row ${row.id} has no matching Proposed Changes task.`));
+      continue;
+    }
+    for (const task of matches) {
+      if (task.title !== row.title) out.push(lint('task-map', row.line, `Task Map title for ${row.id} must match its Proposed Changes heading "${task.title}".`));
+      task.summary = row.outcome;
+      task.prerequisites = row.prerequisites;
+      task.criteria = row.criteria;
+      task.prerequisitesLine = row.line;
+      task.criteriaLine = row.line;
+      task.summaryLine = row.line;
+    }
+    if (!joined.has(row.id)) joined.set(row.id, matches[0]!);
+  }
+  for (const task of sections) {
+    if (!rowIds.has(task.id)) out.push(lint('task-map', task.line, `Task ${task.id} has no Task Map row.`));
+  }
+  return rows.flatMap((row) => joined.has(row.id) ? [joined.get(row.id)!] : []);
+}
+
+/** Task sections keep only task-owned constraints and overlap justifications. */
+function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[]): void {
   const overlap = OVERLAP_FIELD.exec(entry.text);
   if (overlap) {
     const parts = /^(.+?)\s+[—–-]\s+(\S.*)$/.exec(overlap[1] ?? '');
@@ -538,25 +661,19 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, summary: string[
     task.overlapLines.push(entry.line);
     return;
   }
-  const field = TASK_FIELD.exec(entry.text);
-  if (field?.[1]) {
-    // Duplicate IDs collapse; case and code spans are cosmetic.
-    const ids = /^none$/i.test(field[2] ?? '') ? [] : [...new Set((field[2] ?? '').split(',').map((item) => item.replace(/`/g, '').trim().toUpperCase()).filter(Boolean))];
-    if (field[1].toLowerCase() === 'prerequisites') {
-      if (task.prerequisitesLine !== null) out.push(lint('missing-prerequisite', entry.line, `Task ${task.id} requires exactly one Prerequisites bullet.`));
-      if (!ids.length && !/^none$/i.test(field[2] ?? '')) out.push(lint('missing-prerequisite', entry.line, `Task ${task.id} Prerequisites must be none or task IDs.`));
-      task.prerequisites = ids; task.prerequisitesLine = entry.line;
-    } else {
-      if (task.criteriaLine !== null) out.push(lint('task-criteria', entry.line, `Task ${task.id} requires exactly one Criteria bullet.`));
-      task.criteria = ids; task.criteriaLine = entry.line;
-    }
+  const constraint = CONSTRAINT_FIELD.exec(entry.text);
+  if (constraint) {
+    const value = constraint[1]?.trim() ?? '';
+    if (!value) out.push(lint('task-map', entry.line, `Task ${task.id} Constraints must contain a task-specific instruction.`));
+    else task.constraints.push(value);
     return;
   }
-  const text = entry.text.trim().replace(/^[-*+]\s+Outcome:\s*/i, '').replace(/^[-*+]\s+(Constraints:)/i, '$1');
-  if (!text) return;
-  if (!summary.length) task.summaryLine = entry.line;
-  summary.push(text);
-  task.summary = summary.join(' ');
+  const field = TASK_FIELD.exec(entry.text);
+  if (field?.[1]) {
+    out.push(lint('task-map', entry.line, `Task ${task.id} ${field[1]} belongs in Task Map; remove this task-section field.`));
+    return;
+  }
+  if (entry.text.trim()) out.push(lint('task-map', entry.line, `Task ${task.id} outcome belongs in Task Map; keep task-specific detail under Constraints or Overlap.`));
 }
 
 function generatedInputs(raw: string | undefined, line: number, out: LintDefect[]): string[] {
@@ -838,19 +955,26 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
 
 // SECTION: Task graph
 
+function lintTaskSections(tasks: readonly DraftTask[], out: LintDefect[]): void {
+  const seen = new Set<string>();
+  for (const task of tasks) {
+    if (seen.has(task.id)) out.push(lint('duplicate-id', task.line, `Duplicate task ${task.id}.`));
+    else seen.add(task.id);
+    if (!task.paths.length) out.push(lint('task-ownership', task.line, `Task ${task.id} owns no file change.`));
+  }
+}
+
 function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], criteria: readonly Criterion[], out: LintDefect[]): PlanWarning[] {
   const byId = new Map<string, DraftTask>();
   for (const task of tasks) {
-    if (byId.has(task.id)) out.push(lint('duplicate-id', task.line, `Duplicate task ${task.id}.`));
-    else byId.set(task.id, task);
+    byId.set(task.id, task);
     const prose = task.summary.replace(/`[^`]*`/g, '');
     if (!prose.trim() || PROSE_PLACEHOLDER.test(prose) || isFillerNote(task.summary)) {
-      out.push(lint('task-summary', task.summaryLine, `Task ${task.id} requires a plain-language outcome summary before its file changes.`));
+      out.push(lint('task-summary', task.summaryLine, `Task ${task.id} requires a meaningful plain-language Outcome in its Task Map row.`));
     }
-    if (task.prerequisitesLine === null) out.push(lint('missing-prerequisite', task.line, `Task ${task.id} requires "- Prerequisites: none" or task IDs.`));
-    if (!task.paths.length) out.push(lint('task-ownership', task.line, `Task ${task.id} owns no file change.`));
+    if (task.prerequisitesLine === null) out.push(lint('missing-prerequisite', task.line, `Task ${task.id} requires Prerequisites: none or task IDs in its Task Map row.`));
     for (const id of task.prerequisites) {
-      if (id === task.id || !tasks.some((other) => other.id === id)) out.push(lint('missing-prerequisite', task.prerequisitesLine, `Task ${task.id} names ${id === task.id ? 'itself' : `unknown task ${id}`} as a prerequisite.`));
+      if (id === task.id || !tasks.some((other) => other.id === id)) out.push(lint('missing-prerequisite', task.prerequisitesLine, `Task ${task.id} lists ${id === task.id ? 'itself' : `unknown task ${id}`} in its Task Map Prerequisites cell.`));
     }
   }
   const ancestors = taskAncestors(byId, out);
@@ -865,7 +989,7 @@ function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], 
         // An input no task owns is a pre-existing file; a self-owned input needs no ordering.
         const producer = tasks.find((other) => other.paths.some((owned) => owned.toLowerCase() === input.toLowerCase()));
         if (producer && producer.id !== task.id && !ancestors.get(task.id)?.has(producer.id)) {
-          out.push(lint('generated-inputs', task.line, `Task ${task.id} generates ${path} from ${input}, produced by ${producer.id}; add ${producer.id} as a direct or transitive prerequisite.`));
+          out.push(lint('generated-inputs', task.line, `Task ${task.id} generates ${path} from ${input}, produced by ${producer.id}; add ${producer.id} to its Task Map Prerequisites cell as a direct or transitive prerequisite.`));
         }
       }
     }
@@ -873,7 +997,7 @@ function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], 
   return lintOverlaps(tasks, ancestors, out);
 }
 
-/** Write paths shared by tasks with no transitive Requires path warn unless either task justifies them with Overlap:. */
+/** Write paths shared by tasks with no transitive Task Map prerequisite path warn unless either task justifies them with Overlap:. */
 function lintOverlaps(tasks: readonly DraftTask[], ancestors: ReadonlyMap<string, ReadonlySet<string>>, out: LintDefect[]): PlanWarning[] {
   // NOTE: case-insensitive filesystems make case variants one file.
   const owned = tasks.map((task) => new Map(task.paths.map((path) => [path.toLowerCase(), path] as const)));
@@ -889,7 +1013,7 @@ function lintOverlaps(tasks: readonly DraftTask[], ancestors: ReadonlyMap<string
       if (other === undefined || justified[i]?.has(folded) || justified[j]?.has(folded)) continue;
       warnings.push({ kind: 'overlap', tasks: [first.id, second.id], path });
       const alias = other === path ? '' : ` (as "${other}" in ${second.id})`;
-      out.push(lint('overlap', second.line, `Tasks ${first.id} and ${second.id} both write "${path}"${alias} with no Requires path between them; add Requires, merge the tasks, or add "- Overlap: ${path} — <reason>".`));
+      out.push(lint('overlap', second.line, `Tasks ${first.id} and ${second.id} both write "${path}"${alias} with no prerequisite path between them; add an entry to Task Map Prerequisites, merge the tasks, or add "- Overlap: ${path} — <reason>".`));
     }
   }));
   return warnings;
@@ -902,7 +1026,7 @@ function taskAncestors(byId: ReadonlyMap<string, DraftTask>, out: LintDefect[]):
   const visit = (task: DraftTask): Set<string> => {
     const known = result.get(task.id);
     if (known) return known;
-    if (visiting.has(task.id)) { out.push(lint('cycle', task.line, `Task ${task.id} is part of a prerequisite cycle.`)); return new Set(); }
+    if (visiting.has(task.id)) { out.push(lint('cycle', task.line, `Task ${task.id} is part of a prerequisite cycle in the Task Map.`)); return new Set(); }
     visiting.add(task.id);
     const set = new Set<string>();
     for (const id of task.prerequisites) {
@@ -924,7 +1048,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
   const owner = new Map<string, string>();
   for (const task of tasks) {
     const line = task.criteriaLine ?? task.line;
-    if (!task.criteria.length) out.push(lint('task-criteria', line, `Task ${task.id} requires "- Criteria: SC<n>[, ...]" naming its acceptance criteria.`));
+    if (!task.criteria.length) out.push(lint('task-criteria', line, `Task ${task.id} requires one or more acceptance criteria in its Task Map Criteria cell.`));
     for (const id of task.criteria) {
       if (!isCriterionId(id)) { out.push(lint('task-criteria', line, `Task ${task.id} names invalid criterion ${id}; use SC[1-9][0-9]*.`)); continue; }
       const criterion = known.get(id);
@@ -940,7 +1064,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
   if (!tasks.length) return;
   for (const criterion of criteria) {
     if (owner.has(criterion.id)) continue;
-    if (criterion.integration === null) out.push(lint('task-criteria', criterion.line, `Criterion ${criterion.id} maps to no task; list it under one task's Criteria or add - Integration: <reason>.`));
+    if (criterion.integration === null) out.push(lint('task-criteria', criterion.line, `Criterion ${criterion.id} maps to no Task Map row; add it to a task's Criteria cell or provide Integration: <reason>.`));
     else if (!criterion.integration.trim() || !criterion.verify.length) out.push(lint('task-criteria', criterion.line, `Integration criterion ${criterion.id} requires a reason and a Verify command.`));
   }
 }
@@ -949,14 +1073,12 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
 
 export type TaskMapRow = { id: string; outcome: string; prerequisites: readonly string[]; criteria: readonly string[]; paths: readonly string[]; overlap: readonly { path: string; tasks: readonly string[] }[] };
 
-/** One row per task in plan order; Overlap names each written path that other tasks also write. */
+/** One row per task in Task Map order; Overlap names each written path that other tasks also write. */
 export function taskMapRows(plan: Pick<ParsedPlan, 'tasks'>): TaskMapRow[] {
   return plan.tasks.map((task) => {
-    // Outcome bullets precede Constraints in the task summary; siblings need the outcome only.
-    const outcome = task.summary.split(/(?:^| )Constraints:/)[0]!.trim();
     return {
       id: task.id,
-      outcome: outcome && outcome !== task.title ? `${task.title} — ${outcome}` : task.title,
+      outcome: task.summary ? `${task.title} — ${task.summary}` : task.title,
       prerequisites: task.prerequisites,
       criteria: task.criteria,
       paths: task.paths,
@@ -967,42 +1089,6 @@ export function taskMapRows(plan: Pick<ParsedPlan, 'tasks'>): TaskMapRow[] {
       }),
     };
   });
-}
-
-const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
-const listCell = (items: readonly string[]) => items.length ? items.join(', ') : 'none';
-
-/** The driver-owned `## Task Map` section, derived from parsed tasks so it cannot drift from them. */
-export function renderTaskMap(plan: Pick<ParsedPlan, 'tasks'>): string {
-  const rows = taskMapRows(plan).map((row) => `| ${[
-    row.id, cell(row.outcome), listCell(row.prerequisites), listCell(row.criteria), listCell(row.paths.map((path) => `\`${path}\``)),
-    listCell(row.overlap.map(({ path, tasks }) => `\`${path}\` (${tasks.join(', ')})`)),
-  ].join(' | ')} |`);
-  return [
-    TASK_MAP_HEADING,
-    '*Driver-generated from Proposed Changes; edits here are replaced.*',
-    '',
-    '| ID | Outcome | Prerequisites | Criteria | Paths | Overlap |',
-    '| --- | --- | --- | --- | --- | --- |',
-    ...rows,
-  ].join('\n');
-}
-
-/** `doc` with its Task Map replaced by `rendered`, or with `rendered` inserted before the first later-ordered section. */
-export function replaceTaskMapSection(doc: string, rendered: string): string {
-  const eol = doc.includes('\r\n') ? '\r\n' : '\n';
-  const raw = doc.split(/\r?\n/);
-  const lines = structuralLines(doc);
-  const block = [...rendered.replace(/\s+$/, '').split(/\r?\n/), ''];
-  const ranges = sectionRanges(lines, TASK_MAP_HEADING);
-  if (ranges.length) {
-    const drop = new Set(ranges.flatMap(({ start, end }) => Array.from({ length: end - start }, (_, offset) => start + offset)));
-    const first = ranges[0]!.start;
-    return raw.flatMap((line, index) => index === first ? block : drop.has(index) ? [] : [line]).join(eol).replace(/\s+$/, eol);
-  }
-  const at = sharedContextEnd(lines);
-  if (at === lines.length) return `${doc.replace(/\s+$/, '')}${eol}${eol}${block.join(eol)}`.replace(/\s+$/, eol);
-  return [...raw.slice(0, at), ...block, ...raw.slice(at)].join(eol);
 }
 
 /** One human line per task in plan order: `T2 — title (after T1)` or `(start)`. */
@@ -1023,6 +1109,7 @@ export type TaskBrief = {
 export function selectTaskBrief(plan: ParsedPlan, id: string): TaskBrief | null {
   const task = plan.tasks.find((item) => item.id === id);
   if (!task) return null;
+  const graphTask = (item: PlanTask): PlanTask => ({ ...item, constraints: [] });
   // An overlapped path has one change entry per owning task; prefer the entry under this task's own heading.
   const next = Math.min(...plan.tasks.map((item) => item.line).filter((line) => line > task.line));
   const inTask = (change: PlanChange) => change.line > task.line && change.line < next;
@@ -1031,8 +1118,8 @@ export function selectTaskBrief(plan: ParsedPlan, id: string): TaskBrief | null 
     changes: plan.changes.filter((change) => task.paths.includes(change.path)
       && (inTask(change) || !plan.changes.some((other) => other.path === change.path && inTask(other)))),
     criteria: plan.criteria.filter((criterion) => task.criteria.includes(criterion.id)),
-    prerequisites: plan.tasks.filter((item) => task.prerequisites.includes(item.id)),
-    dependents: plan.tasks.filter((item) => item.prerequisites.includes(task.id)),
+    prerequisites: plan.tasks.filter((item) => task.prerequisites.includes(item.id)).map(graphTask),
+    dependents: plan.tasks.filter((item) => item.prerequisites.includes(task.id)).map(graphTask),
     summary: taskExecutionSummary(plan.tasks),
   };
 }

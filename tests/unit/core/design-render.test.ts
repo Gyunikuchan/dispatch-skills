@@ -125,7 +125,7 @@ test('readable artifact ownership: design integration records review history in 
 });
 
 
-test('task-map-authored: design increment plan the driver authors gets its Task Map after authoring', async () => {
+test('task-map-authored: design increment plan keeps its authored Task Map after authoring', async () => {
   const ports = fakePorts(), session = tempDir(), runs = path.join(session, '.state', 'runs');
   const handlers: Handlers = {
     'parse-artifact': async (effect) => effect.artifact === 'plan' ? parseArtifact(effect, ports, { runDir: session, attempt: 1 }) : [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects: [] }],
@@ -148,8 +148,8 @@ test('task-map-authored: design increment plan the driver authors gets its Task 
   const authored = await send({ ports, machine: rootMachine, handlers, runDir: implementDir, rawEvent: { type: 'AUTHORED', path: planPath } });
   assert.notEqual(authored.frame?.await, 'author', JSON.stringify(authored.frame));
   const text = ports.fs.readText(planPath);
-  assert.match(text, /## Task Map\n[\s\S]*\| T1 \| [^\n]*`src\/a\.ts`[^\n]*\n[\s\S]*## Technical-Design Traceability/);
-  assert.equal(governedPlanText(text), governed, 'the Task Map stays outside the governed hash');
+  assert.match(text, /## Task Map\n[\s\S]*\| T1 \| Normalize values \| Values are normalized before use so downstream comparisons agree\. \| none \| SC1 \|/);
+  assert.equal(governedPlanText(text), governed, 'root rendering preserves the authored map and hash');
 });
 
 

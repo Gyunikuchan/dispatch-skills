@@ -33,15 +33,16 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
 ## Key Decisions & Context
 - Preserve case.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Normalize values
-Values are normalized before use so downstream comparisons agree.
-- Prerequisites: none
-- Criteria: SC1
-
 #### [MODIFY] src/a.ts
 - Normalize the value.
 
@@ -123,15 +124,16 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
 ## Key Decisions & Context
 - Keep the value contract stable.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Preserve the value contract | Keep the public value contract intact. | none | SC1 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Preserve the value contract
-Keep the public value contract intact.
-- Prerequisites: none
-- Criteria: SC1
-
 #### [MODIFY] src/a.ts
 - Preserve the accepted value.
 
@@ -202,15 +204,16 @@ test('reuses settled plan from session journal and rejects stale or failed candi
 ## Key Decisions & Context
 - Preserve case.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Normalize values
-Values are normalized before use so downstream comparisons agree.
-- Prerequisites: none
-- Criteria: SC1
-
 #### [MODIFY] src/a.ts
 - Normalize the value.
 
@@ -264,13 +267,22 @@ Values are normalized before use so downstream comparisons agree.
       assert.doesNotMatch(casedReuseJournal, /"effectId":"implement\.plan-review/);
     }
 
-    // 4. Stale hash: modify plan on disk so hash differs from settled run
-    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- Preserve case.', '- Preserve case and format.'));
+    // 4. A Task Map-only revision rejects the old settled-plan hash.
+    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace(
+      '| T1 | Normalize values | Values are normalized before use so downstream comparisons agree. | none | SC1 |',
+      '| T1 | Normalize values | Values are normalized before use so downstream comparisons agree with the authored revision. | none | SC1 |',
+    ));
+    const mapRevisionFrame = await f.begin('implement', session, plan);
+    const mapRevisionJournal = fs.readFileSync(path.join(f.absoluteRun(mapRevisionFrame.run), 'events.jsonl'), 'utf8');
+    assert.match(mapRevisionJournal, /"effectId":"implement\.plan-review/);
+
+    // 5. Stale hash: another governed edit also requires plan review
+    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- Normalize the value.', '- Normalize the value and format.'));
     const staleFrame = await f.begin('implement', session, plan);
     const staleJournal = fs.readFileSync(path.join(f.absoluteRun(staleFrame.run), 'events.jsonl'), 'utf8');
     assert.match(staleJournal, /"effectId":"implement\.plan-review/);
 
-    // 5. Unfinished plan run in a fresh session is rejected
+    // 6. Unfinished plan run in a fresh session is rejected
     const session2 = await f.initialize();
     await f.begin('plan', session2, plan);
     const rejectUnfinished = await f.begin('implement', session2, plan);
@@ -515,10 +527,8 @@ async function taskGraph(cap: number, independent = false) {
   - Pre-existing: no
   - Retain: durable
   - Test rationale: Assert the exported value and prerequisite interface with executable Node tests.`).join('\n');
+    const taskRows = files.map((file, index) => `| T${index + 1} | ${names[index]} | Deliver the ${file} interface and check its result${index && !(independent && index === 1) ? '; the shared contract must be accepted first' : ''}. | ${index && !(independent && index === 1) ? 'T1' : 'none'} | SC${index + 1} |`).join('\n');
     const tasks = files.map((file, index) => `### T${index + 1} — ${names[index]}
-Deliver the ${file} interface and check its result${index && !(independent && index === 1) ? '; the shared contract must be accepted first' : ''}.
-- Prerequisites: ${index && !(independent && index === 1) ? 'T1' : 'none'}
-- Criteria: SC${index + 1}
 #### [MODIFY] src/${file}.ts
 - Export value two.
 #### [NEW] tests/${file}.test.js
@@ -533,6 +543,11 @@ Deliver the ${file} interface and check its result${index && !(independent && in
 > **Scope:** src and tests
 ## Key Decisions & Context
 - Consumers use the accepted contract; each task owns separate source and test files.
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+${taskRows}
+
 ## Proposed Changes
 ${tasks}
 ## Success Criteria
@@ -728,11 +743,13 @@ function governedPlan(title: string, criteria: PlanCriterionSpec[], tasks: PlanT
 ## Key Decisions & Context
 - Keep each task within its own fixture paths.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+${tasks.map((task) => `| ${task.id} | ${task.title} | Deliver ${task.title.toLowerCase()} within the task paths. | none | ${task.criteria.join(', ')} |`).join('\n')}
+
 ## Proposed Changes
 ${tasks.map((task) => `### ${task.id} — ${task.title}
-Deliver ${task.title.toLowerCase()} within the task paths.
-- Prerequisites: none
-- Criteria: ${task.criteria.join(', ')}
 ${(task.extra ?? []).map((line) => `- ${line}\n`).join('')}
 ${task.changes.map((change) => `#### [${change.action}] ${change.path}\n- ${change.note}\n`).join('\n')}`).join('\n')}
 ## Success Criteria

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
+import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { implementData, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { AMEND_PLAN } from './fixtures/implement-amend.ts';
 import { failure, host as recoveryHost } from './fixtures/implement-recovery.ts';
@@ -10,11 +15,13 @@ import { host, launch, record, slots, start, submit, type Result, type Sim, type
 
 const SC1_TITLE = { kind: 'modify', target: 'SC1', current: '[SC1] Part 1 works', proposed: '[SC1] Part 1 works fast' } as const;
 const T1_NOTE = { kind: 'modify', target: 'src/a.ts', current: '- Changes: part one.', proposed: '- Changes: part one, tidied.' } as const;
-const T3_REQUIRES_T1 = { kind: 'modify', target: 'T3', current: '- Prerequisites: none\n- Criteria: SC3', proposed: '- Prerequisites: T1\n- Criteria: SC3' } as const;
+const T1_CONSTRAINT = { kind: 'modify', target: 'T1', current: '- Constraints: Preserve the stable API.', proposed: '- Constraints: Preserve the public API.' } as const;
+const T3_REQUIRES_T1 = { kind: 'modify', target: 'T3', current: '| T3 | Part three | Deliver part three. | none | SC3 |', proposed: '| T3 | Part three | Deliver part three. | T1 | SC3 |' } as const;
 const amend = (delta: readonly Record<string, string>[], notify: { task: string; notice: string }[] = [], by?: { by: 'user'; quote: string }): Event =>
   ({ type: 'AMEND', delta, notify, rationale: 'Plan changed mid-run.', ...(by ? { by } : {}) }) as unknown as Event;
 const request = (slot: Slot): Event => ({ type: 'REQUEST', task: slot.task, attempt: slot.attempt, need: 'Read src/shared.ts', paths: ['src/shared.ts'], rationale: 'The helper lives there.' });
 const writeEffects = (trace: Trace) => trace.effects.filter((effect) => effect.kind === 'write-brief');
+const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 
 function running(concurrency = 3): { result: Result; sim: Sim; trace: Trace } {
   const sim: Sim = { plan: AMEND_PLAN };
@@ -123,6 +130,45 @@ test('stale brief hash rejected when scope changed', () => {
   assert.match(validateImplement(result.state, submitWith(result, old) as never) ?? '', /stale brief/);
 });
 
+test('constraint-only amendment reissues its owned brief with the updated constraint', () => {
+  let { result, sim, trace } = running();
+  const old = slot(result, 'T1');
+  const briefs = writeEffects(trace).length;
+  result = host(result, amend([T1_CONSTRAINT], [{ task: 'T1', notice: 'The public API constraint changed.' }]), sim, trace);
+  assert.equal(slot(result, 'T1').handle, old.handle, 'the live writer keeps its handle');
+  assert.equal(writeEffects(trace).length, briefs + 1);
+  const brief = writeEffects(trace).at(-1)!;
+  assert.ok(brief.kind === 'write-brief');
+  assert.deepEqual((brief.input['task'] as { constraints: readonly string[] }).constraints, ['Preserve the public API.']);
+});
+
+test('recovered plan rebuilds each real writer brief with only its own constraints', async () => {
+  const serialized = JSON.parse(JSON.stringify(AMEND_PLAN)) as Record<string, unknown>;
+  serialized['tasks'] = (serialized['tasks'] as Record<string, unknown>[]).map((task) => task['id'] === 'T2'
+    ? { ...task, constraints: ['Preserve part two compatibility.'] }
+    : task);
+  const recovered = asParsedPlan(serialized);
+  assert.ok(recovered);
+
+  const sim: Sim = { plan: recovered };
+  const { result, trace } = start(3, sim);
+  launch(result, sim, trace);
+  const ports = fakePorts(), runDir = tempDir();
+  const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const texts = new Map<string, string>();
+  for (const effect of writeEffects(trace)) {
+    const [event] = await handler(effect, ports, { runDir, attempt: 1 });
+    assert.ok(event?.type === 'BRIEF_READY', JSON.stringify(event));
+    texts.set(effect.input['task'] && typeof effect.input['task'] === 'object' && 'id' in effect.input['task']
+      ? String((effect.input['task'] as { id: unknown }).id)
+      : '', ports.fs.readText(event.path));
+  }
+  assert.match(texts.get('T1') ?? '', /Preserve the stable API\./);
+  assert.doesNotMatch(texts.get('T1') ?? '', /Preserve part two compatibility\./);
+  assert.match(texts.get('T2') ?? '', /Preserve part two compatibility\./);
+  assert.doesNotMatch(texts.get('T2') ?? '', /Preserve the stable API\./);
+});
+
 // SECTION: SC17 — amendment-added prerequisites
 
 test('added prerequisite parks running submission', () => {
@@ -187,14 +233,15 @@ test('failure rejects root cause field', () => {
 // SECTION: Review fixes — parked capacity, removed writers, amendment paths
 
 const REMOVE_T2 = [
+  { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
   { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
-  { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
+  { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ] as const;
 
 test('parked submission frees writer slot', () => {
   let { result, sim, trace } = running(1);
   assert.deepEqual(slots(result).map((item) => item.task), ['T1']);
-  const t1RequiresT2 = { kind: 'modify', target: 'T1', current: '- Prerequisites: none\n- Criteria: SC1', proposed: '- Prerequisites: T2\n- Criteria: SC1' };
+  const t1RequiresT2 = { kind: 'modify', target: 'T1', current: '| T1 | Part one | Deliver part one. | none | SC1 |', proposed: '| T1 | Part one | Deliver part one. | T2 | SC1 |' };
   result = host(result, amend([t1RequiresT2]), sim, trace);
   result = submit(result, 'T1', sim, trace);
   assert.ok(record(result, 'T1')?.parked);
@@ -281,8 +328,9 @@ function atAdmission(id: string): { result: Result; sim: Sim; trace: Trace } {
   return { result: { state: { tag: 'request-decision', c: { ...c, tasks, requestCount: 1 }, request, stage: 'orchestrator', orchestratorRationale: null }, effects: [] }, sim, trace };
 }
 const REMOVE_T3 = [
+  { kind: 'remove', target: 'T3', current: '| T3 | Part three | Deliver part three. | none | SC3 |' },
   { kind: 'remove', target: 'SC3', current: '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n' },
-  { kind: 'remove', target: 'T3', current: '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n' },
+  { kind: 'remove', target: 'T3', current: '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n' },
 ];
 
 test('amend removing task at its admission resumes scheduling', () => {

@@ -4,7 +4,7 @@ import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/sc
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { reconcileTasks, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
+import { reconcileTasks, taskScope, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
 
 test('prewrite-level: task slots schedule in plan order only after the shared gate', () => {
@@ -297,6 +297,25 @@ test('level-journal: task reconciliation retains the parked draft under its upda
   const draft = { ...prior, status: 'pending' as const, signature, attempt: 2, worktree: 'run/wt/task-t1', input: 'integration-head', preserveDraft: true, handle: null, baseline: null };
   const reconciled = reconcileTasks({ ...result.state.c.tasks, T1: draft }, plan)['T1']!;
   assert.deepEqual([reconciled.signature, reconciled.worktree, reconciled.input, reconciled.preserveDraft, reconciled.attempt], [signature, draft.worktree, draft.input, true, 2]);
+});
+
+test('task-signature: constraints default empty and a constraint-only change reopens the task', () => {
+  const current = PLAN.tasks[0]!;
+  const { constraints: _constraints, ...withoutConstraints } = current;
+  const emptyConstraints = { ...current, constraints: [] };
+  assert.equal(taskSignature(PLAN, withoutConstraints), taskSignature(PLAN, emptyConstraints));
+
+  const revisedTask = { ...current, constraints: ['Preserve the public API.'] };
+  assert.notEqual(taskSignature(PLAN, current), taskSignature(PLAN, revisedTask));
+  assert.equal(taskScope(PLAN, current), taskScope(PLAN, revisedTask), 'constraints do not alter the writer scope');
+
+  const { result } = start(1);
+  if (result.state.tag !== 'tasks') throw new Error('tasks');
+  const accepted = { ...result.state.c.tasks[current.id]!, status: 'accepted' as const };
+  const revisedPlan = { ...PLAN, tasks: PLAN.tasks.map((task) => task.id === current.id ? revisedTask : task) };
+  const reconciled = reconcileTasks({ ...result.state.c.tasks, [current.id]: accepted }, revisedPlan)[current.id]!;
+  assert.equal(reconciled.status, 'pending');
+  assert.equal(reconciled.signature, taskSignature(revisedPlan, revisedTask));
 });
 
 // SECTION: RED evidence

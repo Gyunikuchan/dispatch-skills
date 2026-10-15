@@ -20,10 +20,10 @@ const criterion = (id: string) => `- [${id}] Added numeric criterion works
 `;
 const edits = (id: string): PlanEdit[] => [
   { kind: 'add', target: 'T1', current: '## Success Criteria\n', proposed: criterion(id) },
-  { kind: 'modify', target: 'T1', current: '- Criteria: SC1\n', proposed: `- Criteria: SC1, ${id}\n` },
+  { kind: 'modify', target: 'T1', current: '| T1 | Part one | Deliver part one. | none | SC1 |', proposed: `| T1 | Part one | Deliver part one. | none | SC1, ${id} |` },
 ];
 function revisedText(id: string): string {
-  return AMEND_TEXT.replace('## Success Criteria\n', `## Success Criteria\n${criterion(id)}`).replace('- Criteria: SC1\n', `- Criteria: SC1, ${id}\n`);
+  return AMEND_TEXT.replace('## Success Criteria\n', `## Success Criteria\n${criterion(id)}`).replace('| T1 | Part one | Deliver part one. | none | SC1 |', `| T1 | Part one | Deliver part one. | none | SC1, ${id} |`);
 }
 
 async function harness() {

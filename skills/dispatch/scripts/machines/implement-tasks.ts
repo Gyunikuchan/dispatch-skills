@@ -52,10 +52,10 @@ export type RetiredTask = TaskRecord & { retiredBy: string };
 export type TaskBriefHistory = TaskBriefPaths & { scope: string };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
-/** Paths, criterion definitions, and prerequisites define a task's work; reconciliation reports a changed signature as `changed`. */
+/** Paths, criterion definitions, prerequisites, and task constraints define a task's work; reconciliation reopens a changed signature. */
 export function taskSignature(plan: ParsedPlan, task: PlanTask): string {
   const criteria = taskCriteria(plan, task).map(({ line: _line, ...criterion }) => criterion).sort((a, b) => a.id.localeCompare(b.id));
-  return JSON.stringify({ paths: [...task.paths].sort(), criteria: [...task.criteria].sort(), definitions: criteria, summary: task.summary, prerequisites: [...task.prerequisites].sort() });
+  return JSON.stringify({ paths: [...task.paths].sort(), criteria: [...task.criteria].sort(), definitions: criteria, summary: task.summary, constraints: [...(task.constraints ?? [])], prerequisites: [...task.prerequisites].sort() });
 }
 
 export function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {

@@ -45,7 +45,7 @@ export type LintDefectCode =
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
   | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'plan-id-in-test-name'
   // Plan tasks
-  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'generated-inputs' | 'overlap' | 'task-overlap'
+  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
@@ -81,11 +81,13 @@ export type PlanCriterion = {
 
 export type PlanChange = { action: ChangeAction; path: string; note: string; command: string | null; line: number };
 
-/** One H3 task; `paths` are its owned change paths and `generated` its `[GENERATED]` inputs. */
+/** One Task Map row joined to an H3 task; `line` remains the H3 source line. */
 export type PlanTask = {
   id: string;
   title: string;
   summary: string;
+  /** Task-specific instructions for its writer; absent in older serialized plans. */
+  constraints?: readonly string[];
   line: number;
   prerequisites: readonly string[];
   criteria: readonly string[];
@@ -112,7 +114,7 @@ export type ParsedPlan = {
   seams: readonly string[];
   warnings: readonly PlanWarning[];
   traceability: Readonly<Record<string, string>> | null;
-  /** Source without the driver-owned `## Task Map` and `## Review Findings & Resolutions` sections; the caller hashes it. */
+  /** Source with only `## Review Findings & Resolutions` excluded; the caller hashes it. */
   governedText: string;
   /** Criterion IDs plus review finding IDs recorded in the plan, sorted and unique. */
   planIds: readonly string[];

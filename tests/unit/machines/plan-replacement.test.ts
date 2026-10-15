@@ -9,7 +9,7 @@ import { HASH, answer, host, launch, record, slots, start, submit, type Result, 
 
 const PATH = 'session/x.replace-1.plan.md';
 const T1_NOTE = ['- Changes: part one.', '- Changes: part one, tidied.'] as const;
-const T3_REQUIRES_T1 = ['- Prerequisites: none\n- Criteria: SC3', '- Prerequisites: T1\n- Criteria: SC3'] as const;
+const T3_REQUIRES_T1 = ['| T3 | Part three | Deliver part three. | none | SC3 |', '| T3 | Part three | Deliver part three. | T1 | SC3 |'] as const;
 const summary = (over: Partial<PlanReconciliation> = {}): PlanReconciliation => ({ retained: ['T1', 'T2', 'T3'], changed: [], added: [], retired: [], intentChanged: false, dependencyChanged: false, ...over });
 const replace = (expectedHash: string, reconciliation: PlanReconciliation, extra: Record<string, unknown> = {}): Event =>
   ({ type: 'REPLACE_PLAN', path: PATH, expectedHash, rationale: 'The plan changed mid-run.', notify: [], reconciliation, ...extra }) as unknown as Event;
@@ -186,9 +186,10 @@ test('replacement-work: replay conflict binds active HEAD and resumes without or
 });
 
 test('replacement-work: retired accepted owner resolves replay with retained scope and remapped history', () => {
+  const taskMap3 = '| T3 | Part three | Deliver part three. | none | SC3 |';
   const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
-  const task3 = '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
-  const revised = replacementText([sc3, ''], [task3, '']);
+  const task3 = '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
+  const revised = replacementText([taskMap3, ''], [sc3, ''], [task3, '']);
   let { result, sim, trace } = running(revised);
   result = submit(result, 'T3', sim, trace);
   const accepted = record(result, 'T3')!;
@@ -232,9 +233,10 @@ test('replacement-work: retired accepted owner resolves replay with retained sco
 });
 
 test('replacement-work: failed resolved retired replay resumes before delivery and preserves accepted records', () => {
+  const taskMap3 = '| T3 | Part three | Deliver part three. | none | SC3 |';
   const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
-  const task3 = '### T3 — Part three\nDeliver part three.\n- Prerequisites: none\n- Criteria: SC3\n\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
-  let { result, sim, trace } = running(replacementText([sc3, ''], [task3, '']));
+  const task3 = '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
+  let { result, sim, trace } = running(replacementText([taskMap3, ''], [sc3, ''], [task3, '']));
   result = submit(result, 'T3', sim, trace);
   result = host(result, replace(HASH, summary({ retained: ['T1', 'T2'], retired: ['T3'] })), sim, trace);
   result = submit(result, 'T1', sim, trace);

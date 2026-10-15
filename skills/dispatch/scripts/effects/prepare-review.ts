@@ -51,7 +51,7 @@ export function artifactSectionDelta(priorText: string, currentText: string): st
   const current = parseArtifactSections(currentText);
   const changed: string[] = [];
   // Driver-owned sections never count as reviewed changes.
-  const ignored = new Set(['Review Findings & Resolutions', 'Execution Status', 'Task Map']);
+  const ignored = new Set(['Review Findings & Resolutions', 'Execution Status']);
   const seen = new Set<string>();
   for (const [heading, content] of current.entries()) {
     if (ignored.has(heading)) continue;

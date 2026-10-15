@@ -43,9 +43,9 @@ test('prewrite-level: task brief renders bound context, worktree, checkpoint, an
 test('brief-shared-context: brief carries shared plan range and sibling tasks', async () => {
   const source = [
     '# Example plan', '', '> **TL;DR:** Deliver behavior.', '', '## Background', '- Shared background fact.', '',
-    '## Task Map', '| ID | Outcome |', '| --- | --- |', '| T1 | Feature |', '', '## Proposed Changes', '',
-    '### T1 — Feature', '- Outcome: Deliver feature.', '- Criteria: SC1', '', '- #### [MODIFY] src/a.ts', '  - Changes: Own change detail.', '',
-    '### T2 — Sibling', '- Outcome: Deliver sibling.', '- Prerequisites: T1', '- Criteria: SC2', '', '- #### [MODIFY] src/b.ts', '  - Changes: Sibling change detail.', '',
+    '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | Feature | Deliver feature. | none | SC1 |', '| T2 | Sibling | Deliver sibling. | T1 | SC2 |', '', '## Proposed Changes', '',
+    '### T1 — Feature', '', '#### [MODIFY] src/a.ts', '  - Changes: Own change detail.', '',
+    '### T2 — Sibling', '', '#### [MODIFY] src/b.ts', '  - Changes: Sibling change detail.', '',
   ].join('\n');
   const sharedContext = source.slice(0, source.indexOf('## Proposed Changes'));
   const siblingTasks = [{ id: 'T2', outcome: 'Sibling — Deliver sibling.', prerequisites: ['T1'], criteria: ['SC2'], paths: ['src/b.ts'], overlap: [] }];
@@ -57,7 +57,7 @@ test('brief-shared-context: brief carries shared plan range and sibling tasks', 
   const result = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.6', stage: 'task', input }, fakePorts(), { runDir, attempt: 1 }));
   assert.equal(result.type, 'BRIEF_READY'); if (result.type !== 'BRIEF_READY') return;
   const text = fs.readFileSync(result.path, 'utf8');
-  assert.match(text, /## Shared plan context\n[\s\S]*# Example plan[\s\S]*Shared background fact\.[\s\S]*## Task Map\n\| ID \| Outcome \|/);
+  assert.match(text, /## Shared plan context\n[\s\S]*# Example plan[\s\S]*Shared background fact\.[\s\S]*## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|/);
   assert.doesNotMatch(text, /Sibling change detail|Own change detail|## Proposed Changes/);
   assert.match(text, /## Sibling tasks\n\n- T2 \| Sibling — Deliver sibling\. \| prerequisites: T1 \| criteria: SC2 \| paths: `src\/b\.ts` \| overlap: none\n/);
   assert.match(text, /Read other plan sections only for a gap you name/);

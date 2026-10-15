@@ -122,8 +122,9 @@ test('discard requires user-gated amendment', () => {
   const discard = (amendment?: string): Event => ({ type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2.', ...(amendment ? { amendment } : {}) } });
   assert.match(validateImplement(state.result.state, discard() as never) ?? '', /user-gated AMEND/);
   const removeT2 = [
+    { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
     { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
-    { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
+    { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   const amend = (by?: { by: 'user'; quote: string }) => ({ type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', ...(by ? { by } : {}) }) as unknown as Event;
   assert.match(validateImplement(state.result.state, amend() as never) ?? '', /user's quote: discards conflicted integration of T2/);
@@ -247,8 +248,9 @@ test('resolve failure after commit recovers the committed resolution', () => {
 test('resolve rejected after amendment removes conflicting task', () => {
   const state = conflicted();
   const removeT2 = [
+    { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
     { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
-    { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
+    { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   send(state, { type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', by: { by: 'user', quote: 'Drop part two.' } } as unknown as Event);
   assert.equal(state.result.state.tag, 'integration-conflict');
@@ -263,8 +265,9 @@ const NARROW_T2 = [
   { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/d.ts' },
 ];
 const REMOVE_T2 = [
+  { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
   { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
-  { kind: 'remove', target: 'T2', current: '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
+  { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ];
 const discardAmend1 = { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2 work.', amendment: 'amend-1' } } as Event;
 
@@ -289,7 +292,7 @@ test('resolve retry after scope-narrowing amendment refuses recovered out-of-sco
 
 test('amendment adding a prerequisite to the conflicting task is rejected', () => {
   const state = conflicted();
-  const amend = { type: 'AMEND', delta: [{ kind: 'modify', target: 'T2', current: 'Deliver part two.\n- Prerequisites: none', proposed: 'Deliver part two.\n- Prerequisites: T3' }], notify: [], rationale: 'T2 needs T3.', by: { by: 'user', quote: 'Order them.' } } as unknown as Event;
+  const amend = { type: 'AMEND', delta: [{ kind: 'modify', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |', proposed: '| T2 | Part two | Deliver part two. | T3 | SC2 |' }], notify: [], rationale: 'T2 needs T3.', by: { by: 'user', quote: 'Order them.' } } as unknown as Event;
   assert.match(validateImplement(state.result.state, amend as never) ?? '', /before changing T2 prerequisites/);
 });
 

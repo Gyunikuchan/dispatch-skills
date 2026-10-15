@@ -24,11 +24,16 @@ export const AMEND_TEXT = `# Parts
 ## Key Decisions & Context
 - Three parts (user)
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Part one | Deliver part one. | none | SC1 |
+| T2 | Part two | Deliver part two. | none | SC2 |
+| T3 | Part three | Deliver part three. | none | SC3 |
+
 ## Proposed Changes
 ### T1 — Part one
-Deliver part one.
-- Prerequisites: none
-- Criteria: SC1
+- Constraints: Preserve the stable API.
 
 #### [MODIFY] src/a.ts
 - Changes: part one.
@@ -36,18 +41,10 @@ Deliver part one.
 - Purpose: pins part one.
 
 ### T2 — Part two
-Deliver part two.
-- Prerequisites: none
-- Criteria: SC2
-
 #### [MODIFY] src/b.ts
 - Changes: part two.
 
 ### T3 — Part three
-Deliver part three.
-- Prerequisites: none
-- Criteria: SC3
-
 #### [MODIFY] src/c.ts
 - Changes: part three.
 
@@ -86,5 +83,5 @@ export function replacementText(...swaps: readonly (readonly [string, string])[]
   return { text, plan, hash: governedHash(plan) };
 }
 
-export const T2_SECTION = '### T2 — Part two\nDeliver part two.\n- Prerequisites: none\n- Criteria: SC2\n\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n';
+export const T2_SECTION = '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n';
 export const SC2_SECTION = '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';

@@ -49,19 +49,18 @@ test('readable plan template: hierarchy, quote paragraphs and conditional contra
   assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
   for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;
-  source = source.replace(/## Background[\s\S]*?(?=## Proposed Changes)/, '## Key Decisions & Context\n- Keep API (user)\n\n');
+  source = source.replace(/## Background[\s\S]*?(?=## Task Map)/, '## Key Decisions & Context\n- Keep API (user)\n\n');
   source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
   source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
-  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>': 'user request', '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task outcome>': 'Keep output usable', '<Plain-language outcome and rationale; why each non-obvious prerequisite is needed.>': 'Keep output usable.', '<optional shared task constraints>': 'Keep API.', '<none | T<n>[, T<n>...]>': 'none', '<SC#[, SC#...]>': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
-  // Replace composite placeholders before their embedded task-ID token.
-  source = source.replace('<none | T<n>[, T<n>...]>', 'none');
+  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>': 'user request', '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
   for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
   const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
   for (const file of paths) source = source.replace('<relative-path>', file);
   source = source.replace('<relative-path>[, <relative-path>...]', 'src/edit.ts');
   const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result));
   const brief = selectTaskBrief(result.plan, 'T1')!;
-  assert.equal(brief.task.summary, 'Keep output usable. Constraints: Keep API.');
+  assert.equal(brief.task.summary, 'Keep output usable.');
+  assert.deepEqual(brief.task.constraints, ['Keep API.']);
   assert.match(brief.changes[1]!.note, /Invariants:.*exception: keep deprecated flag/);
   assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
 });
@@ -91,11 +90,12 @@ test('templates: plan.md shows [FINAL] after the Verify code span', () => {
   assert.ok(!/Verify: `[^`\n]*\[FINAL\]`/.test(plan));
 });
 
-test('templates: plan.md groups changes under tasks with prerequisites, criteria, and generated inputs', () => {
+test('templates: plan.md owns task metadata in its map and keeps generated inputs under task details', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8');
-  for (const line of ['### T<n> — <Task outcome>', '- Prerequisites: <none | T<n>[, T<n>...]>', '- Criteria: <SC#[, SC#...]>', '- Inputs: <relative-path>[, <relative-path>...]', '  - Integration: <why this criterion spans tasks>']) {
+  for (const line of ['| ID | Title | Outcome | Prerequisites | Criteria |', '| T<n> | <Task title> | <Plain-language outcome> | none | SC<n>[, SC<n>...] |', '### T<n> — <Task title>', '- Constraints: <optional task-specific constraints, including why each non-obvious prerequisite is needed>', '- Inputs: <relative-path>[, <relative-path>...]', '  - Integration: <why this criterion spans tasks>']) {
     assert.ok(plan.includes(line), line);
   }
+  assert.doesNotMatch(plan, /- Prerequisites:|^- Criteria:/m);
   assert.ok(!plan.includes('<Component Name>'));
 });
 

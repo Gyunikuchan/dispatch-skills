@@ -126,7 +126,7 @@ test('binds changed sections for artifact re-review', async () => {
   const git = createGit({ run: async () => '' });
   const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
   const planPath = path.join(tmp, 'test.plan.md');
-  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Proposed Changes\ninitial changes\n\n## Success Criteria\n- [SC1] initial\n');
+  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Task | Initial outcome | none | SC1 |\n\n## Proposed Changes\n### T1 — Task\n#### [MODIFY] src/a.ts\n- Changes: initial changes\n\n## Success Criteria\n- [SC1] initial\n');
 
   // Round 1: Full review snapshot
   const r1 = (await handler({ kind: 'prepare-review', id: 'p1', round: 1, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }))[0];
@@ -141,22 +141,30 @@ test('binds changed sections for artifact re-review', async () => {
   assert.equal(failMissing?.type, 'EFFECT_FAILED');
   assert.equal(failMissing?.detail, 'review-round-binding-unavailable');
 
-  // Modify section in plan; the driver-owned Task Map is never a reviewed change
-  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Task Map\n| T1 | updated |\n\n## Proposed Changes\nupdated changes\n\n## Success Criteria\n- [SC1] initial\n');
+  // A Task Map-only change is included in a delta review.
+  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Task | Updated outcome | none | SC1 |\n\n## Proposed Changes\n### T1 — Task\n#### [MODIFY] src/a.ts\n- Changes: initial changes\n\n## Success Criteria\n- [SC1] initial\n');
+  const r2MapOnly = (await handler({ kind: 'prepare-review', id: 'p2-map-only', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
+  assert.equal(r2MapOnly?.type, 'REVIEW_PREPARED');
+  assert.deepEqual(r2MapOnly?.scope['paths'], ['Task Map']);
+  const r2MapPrompt = ports.fs.readText(r2MapOnly?.promptPaths['codex[0]']!);
+  assert.match(r2MapPrompt, /Re-review round 2 \(delta\) — changed sections: Task Map/);
+
+  // Change both the authored task outcome and its execution detail.
+  ports.fs.writeAtomic(planPath, '# Plan title\n\n> **TL;DR:** initial\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Task | Updated outcome | none | SC1 |\n\n## Proposed Changes\n### T1 — Task\n#### [MODIFY] src/a.ts\n- Changes: updated changes\n\n## Success Criteria\n- [SC1] initial\n');
 
   // Round 2 full re-review binds changed sections as context
   const r2Full = (await handler({ kind: 'prepare-review', id: 'p2-full', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2Full?.type, 'REVIEW_PREPARED');
-  assert.deepEqual(r2Full?.scope['paths'], ['Proposed Changes']);
+  assert.deepEqual([...(r2Full?.scope['paths'] as string[])].sort(), ['Proposed Changes', 'Task Map']);
   const r2FullPrompt = ports.fs.readText(r2Full?.promptPaths['codex[0]']!);
-  assert.match(r2FullPrompt, /Re-review round 2 \(full artifact\) — review the whole artifact; changed sections for context: Proposed Changes/);
+  assert.match(r2FullPrompt, /Re-review round 2 \(full artifact\) — review the whole artifact; changed sections for context: Task Map, Proposed Changes/);
 
   // Round 2 delta re-review binds changed sections and restricts scope
   const r2Delta = (await handler({ kind: 'prepare-review', id: 'p2-delta', round: 2, review: { kind: 'plan', target: planPath, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: r1Manifest, priorManifestRef: r1?.scope['manifestRef'] } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(r2Delta?.type, 'REVIEW_PREPARED');
-  assert.deepEqual(r2Delta?.scope['paths'], ['Proposed Changes']);
+  assert.deepEqual([...(r2Delta?.scope['paths'] as string[])].sort(), ['Proposed Changes', 'Task Map']);
   const r2DeltaPrompt = ports.fs.readText(r2Delta?.promptPaths['codex[0]']!);
-  assert.match(r2DeltaPrompt, /Re-review round 2 \(delta\) — changed sections: Proposed Changes/);
+  assert.match(r2DeltaPrompt, /Re-review round 2 \(delta\) — changed sections: Task Map, Proposed Changes/);
 });
 
 test('delta review attributes changes inside fenced code blocks with heading syntax to enclosing section', async () => {

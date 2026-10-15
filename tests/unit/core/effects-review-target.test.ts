@@ -7,7 +7,7 @@ import { createCheckReviewTarget, reviewArtifactText } from '../../../skills/dis
 import type { Effect } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { Git, ReviewSnapshot } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
-import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
+import { artifactSectionDelta, createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { fixtureReference } from './fixtures/review-manifest.ts';
 import type { ReviewManifestRef } from '../../../skills/dispatch/scripts/core/types.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
@@ -34,6 +34,16 @@ test('review-target preserves repeated headings and fenced managed-section text'
   const source = '# Target\n\n## Goal\nFirst\n\n## Goal\nSecond\n\n```md\n## Review Findings & Resolutions\nRequired text\n```\n';
   assert.notEqual(reviewArtifactText(source), reviewArtifactText(source.replace('First', 'Changed')));
   assert.match(reviewArtifactText(source), /Required text/);
+});
+
+test('review-target identity and delta include authored Task Map metadata', () => {
+  const source = '# Plan\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Task | First outcome. | none | SC1 |\n\n## Proposed Changes\nTask detail.\n';
+  const changed = source.replace('First outcome.', 'Revised outcome.');
+  assert.notEqual(reviewArtifactText(source), reviewArtifactText(changed));
+  assert.deepEqual(artifactSectionDelta(source, changed), ['Task Map']);
+  const history = `${source}\n## Review Findings & Resolutions\nRecorded decision.\n`;
+  assert.equal(reviewArtifactText(source), reviewArtifactText(history));
+  assert.deepEqual(artifactSectionDelta(source, history), []);
 });
 
 test('change receipt: artifact captures an allowed fix and parks verification edits', async () => {

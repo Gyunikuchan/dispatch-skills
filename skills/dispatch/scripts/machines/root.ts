@@ -1,12 +1,11 @@
 // Root machine (spec §5.3): verb selection, review kind inference, terminal handoff, `done` projection, host-event
-// validation, and driver-owned Markdown rendering (resolution sections, plan Task Maps, and the standalone report; not an effect).
+// validation, and driver-owned Markdown rendering (resolution sections and the standalone report; not an effect).
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
 import {
   renderCompactResolutionSection, renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, reviewLogPathOf, walkthroughPathOf,
 } from '../domain/render.ts';
 import type { ReviewKind } from '../domain/types.ts';
-import { parsePlan, renderTaskMap, replaceTaskMapSection } from '../domain/plan.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
 import {
@@ -281,24 +280,11 @@ function writeSection(ports: Ports, file: string, review: ReviewState, runDir: s
   writeReviewHistory(ports, file, ports.fs.readText(file), renderResolutionSection(rounds), reviewKeyOf(runDir, review.c.path), seedLog);
 }
 
-/** Writes the driver-owned Task Map into a plan that parses; a plan with defects keeps its text until the author fixes it. */
-function writeTaskMap(ports: Ports, file: string): void {
-  if (!ports.fs.exists(file)) return;
-  const source = ports.fs.readText(file);
-  const parsed = parsePlan(source);
-  if (parsed.ok) writeIfChanged(ports, file, replaceTaskMapSection(source, renderTaskMap(parsed.plan)));
-}
-
 function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string, runDir: string): void {
   // NOTE: an AMEND binds the run to its amended plan text; the file is written once so reruns see the bound hash.
   for (const amendment of 'c' in implementation ? implementation.c?.amendments ?? [] : []) {
     if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
-    // The Task Map is outside the governed hash, so adding it keeps the bound revision; replacement plans stay as supplied.
-    if ((amendment.kind ?? 'amend') === 'amend') writeTaskMap(ports, amendment.path);
   }
-  // A plan this run authored gets its map once it parses and keeps it current through review fixes; supplied plans stay as written.
-  const authored = 'c' in implementation && implementation.tag !== 'author' && implementation.c?.plan ? implementation.c.authoredPlan : undefined;
-  if (authored) writeTaskMap(ports, authored);
   if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
   if (walkthrough) writeReviewHistory(ports, walkthroughPath, walkthrough, resolutionSectionOf(walkthrough)!, reviewKeyOf(runDir, 'implementation'));
@@ -332,8 +318,6 @@ function render(state: RootState, ports: Ports, runDir: string): void {
   }
   if (child.verb === 'plan') {
     const plan = child.state;
-    // An authored plan reaches review only after it parses; later fixes refresh the map on each render.
-    if ('review' in plan && plan.review !== null && plan.c) writeTaskMap(ports, plan.c.input.path);
     if ('review' in plan && plan.review !== null && 'c' in plan.review) writeSection(ports, plan.review.c.spec.target, plan.review, runDir);
     return;
   }

@@ -16,6 +16,7 @@ const includes = (file: string, text: string) => `node -e "process.exit(require(
 
 type TaskSpec = { id: string; criterion: string; file: string; text: string; prerequisites?: string };
 function plan(tasks: readonly TaskSpec[]): string {
+  const rows = tasks.map((task) => `| ${task.id} | Value ${task.id} | Deliver value ${task.id.toLowerCase()} within the task paths. | ${task.prerequisites ?? 'none'} | ${task.criterion} |`).join('\n');
   return `# Deliver values
 
 > **TL;DR:** Deliver values.
@@ -27,11 +28,13 @@ function plan(tasks: readonly TaskSpec[]): string {
 ## Key Decisions & Context
 - Keep each task within its own fixture paths.
 
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+${rows}
+
 ## Proposed Changes
 ${tasks.map((task) => `### ${task.id} — Value ${task.id}
-Deliver value ${task.id.toLowerCase()} within the task paths.
-- Prerequisites: ${task.prerequisites ?? 'none'}
-- Criteria: ${task.criterion}
 
 #### [MODIFY] ${task.file}
 - Write ${task.text}.

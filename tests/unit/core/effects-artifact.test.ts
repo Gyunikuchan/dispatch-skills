@@ -12,25 +12,66 @@ import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/pr
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
 import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
 const gitWith = (names: string) => createGit({ run: async (args) => (args[0] === 'rev-parse' ? '/repo\n' : args[0] === 'diff' ? names : '') });
 
-test('parse-artifact excludes managed resolution text from the hash and reports plan defects', async () => {
+test('parse-artifact hashes authored Task Map metadata, excludes review history, and reports map defects', async () => {
   const dir = tempDir();
-  const a = path.join(dir, 'a.plan.md');
-  const b = path.join(dir, 'b.plan.md');
-  fs.writeFileSync(a, '# Plan\n\nBody text.\n');
-  fs.writeFileSync(b, '# Plan\n\nBody text.\n\n## Review Findings & Resolutions\n\n- R1-F001 fixed\n');
+  const file = path.join(dir, 'a.plan.md');
+  const row = '| T1 | Task | Deliver task output. | none | SC1 |';
+  const source = `# Plan
+
+> **TL;DR:** deliver the task.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — isolated fixture
+> **Scope:** src/a.ts
+
+## Key Decisions & Context
+- Keep the fixture bounded.
+
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+${row}
+
+## Proposed Changes
+### T1 — Task
+#### [MODIFY] src/a.ts
+- Changes: deliver the task output.
+
+## Success Criteria
+- [SC1] Task output works
+  - Changes: src/a.ts
+  - Verify: \`node --test tests/a.test.ts\`
+  - Evidence: verify
+  - Test rationale: exercise the task output.
+
+## Verification Plan
+### Automated Tests
+- \`npm test\`
+`;
+  const ports = fakePorts();
+  memoryRunFs(ports, dir);
   const ctx = { runDir: dir, attempt: 1 };
-  const first = only(await parseArtifact({ kind: 'parse-artifact', id: 'e.1', path: a, artifact: 'plan' }, fakePorts(), ctx));
-  const second = only(await parseArtifact({ kind: 'parse-artifact', id: 'e.2', path: b, artifact: 'plan' }, fakePorts(), ctx));
-  assert.ok(first.type === 'ARTIFACT_PARSED' && second.type === 'ARTIFACT_PARSED');
+  const parse = async (id: string, text: string) => {
+    ports.fs.writeAtomic(file, text);
+    return only(await parseArtifact({ kind: 'parse-artifact', id, path: file, artifact: 'plan' }, ports, ctx));
+  };
+  const first = await parse('e.1', source);
+  const second = await parse('e.2', `${source}\n## Review Findings & Resolutions\n\n- R1-F001 fixed\n`);
+  const changedMap = await parse('e.3', source.replace('Deliver task output.', 'Deliver the changed task output.'));
+  const invalidMap = await parse('e.4', source.replace(`${row}\n`, ''));
+  assert.ok(first.type === 'ARTIFACT_PARSED' && second.type === 'ARTIFACT_PARSED' && changedMap.type === 'ARTIFACT_PARSED' && invalidMap.type === 'ARTIFACT_PARSED');
   assert.equal(first.hash, second.hash);
+  assert.notEqual(first.hash, changedMap.hash, 'map-only edits change the artifact hash');
   assert.match(first.hash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(first.kind, 'plan');
-  assert.ok(first.defects.length > 0);
+  assert.deepEqual(first.defects, []);
+  assert.ok(invalidMap.defects.some(({ code }) => code === 'task-map'));
 });
 
 test('parse-artifact reports a missing file as EFFECT_FAILED io', async () => {
@@ -42,7 +83,7 @@ test('parse-artifact reports a missing file as EFFECT_FAILED io', async () => {
 test('seam advisory reaches the host and enters review', async () => {
   const dir = tempDir();
   const file = path.join(dir, 'seams.plan.md');
-  const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** user request\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Proposed Changes\n### T1 — Expose command\nThe existing command becomes public.\n- Prerequisites: none\n- Criteria: SC1\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
+  const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** user request\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Expose command | The existing command becomes public. | none | SC1 |\n\n## Proposed Changes\n### T1 — Expose command\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
   const ports = fakePorts();
   const started = planMachine.step(planMachine.initial(), { type: 'RUN_STARTED', verb: 'plan', argument: file,
     level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'codex', orchestratorModel: null,

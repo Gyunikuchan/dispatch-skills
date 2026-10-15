@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  governedPlanText, isTestPath, normalizePlanPath, parsePlan, placeholderVocabulary, renderTaskMap, replaceTaskMapSection, selectTaskBrief, structuralLines, taskExecutionSummary, taskMapRows,
+  governedPlanText, isTestPath, normalizePlanPath, parsePlan, placeholderVocabulary, selectTaskBrief, structuralLines, taskExecutionSummary, taskMapRows,
 } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
@@ -19,14 +19,17 @@ const PLAN = `# Add retry budget
 ## Key Decisions & Context
 - Cap at three attempts (user)
 
+## Task Map
+
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |
+
 ## Technical-Design Traceability
 - Approved revision: none
 
 ## Proposed Changes
 ### T1 — Cap fetch retries
-Fetch stops retrying after three attempts so callers fail fast.
-- Prerequisites: none
-- Criteria: SC1, SC2
 
 #### [MODIFY] src/fetch.ts
 - Changes: add a retry counter to fetchWithRetry.
@@ -73,7 +76,7 @@ test('numeric criterion grammar stays shared across headings task mappings and t
   assert.equal(parsed(transient).criteria[0]?.coveredBy, 'SC205');
   for (const id of ['SC0', 'SC01', 'SC14a']) {
     assert.ok(defects(numeric.replaceAll('SC14', id)).includes('criterion-id'));
-    assert.ok(defects(numeric.replace('Criteria: SC14, SC205', `Criteria: ${id}, SC205`)).includes('task-criteria'));
+    assert.ok(defects(numeric.replace('SC14, SC205', `${id}, SC205`)).includes('task-criteria'));
     assert.ok(defects(transient.replace('Covered by: SC205', `Covered by: ${id}`)).includes('transient-coverage'));
   }
 });
@@ -98,21 +101,26 @@ test('readable plan syntax: nested and mixed entries preserve executable contrac
 });
 
 test('readable plan syntax: owned briefs carry Outcome, Constraints and every labelled invariant once', () => {
-  const source = readable().replace('Fetch stops retrying after three attempts so callers fail fast.', '- Outcome: Fetch stops retrying.\n- Constraints: Keep the public API.')
+  const source = readable().replace('| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |', [
+      '| T1 | Cap fetch retries | Fetch stops retrying. | none | SC1 |',
+      '| T2 | Check the companion | Check the companion. | T1 | SC2 |',
+    ].join('\n'))
+    .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n- Constraints: Keep the public API.')
     .replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only.')
-    .replace('### T1 —', '### T1 —')
-    .replace('- Criteria: SC1, SC2', '- Criteria: SC1')
-    .replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.', '- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.')
-    .replace('## Success Criteria', '### T2 — Check the companion\n- Outcome: Check the companion.\n- Prerequisites: T1\n- Criteria: SC2\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n  - Invariants: Preserve companion shape.\n\n## Success Criteria');
+    .replace('#### [GENERATED] docs/api.md', '#### [GENERATED] docs/api.md')
+    .replace('## Success Criteria', '### T2 — Check the companion\n- Constraints: Preserve companion shape.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria');
   const plan = parsed(source);
   const first = selectTaskBrief(plan, 'T1'), second = selectTaskBrief(plan, 'T2');
   assert.ok(first); assert.ok(second);
-  assert.equal(first.task.summary, 'Fetch stops retrying. Constraints: Keep the public API.');
+  assert.equal(first.task.summary, 'Fetch stops retrying.');
+  assert.deepEqual(first.task.constraints, ['Keep the public API.']);
+  assert.deepEqual(second.task.constraints, ['Preserve companion shape.']);
   const note = first.changes.find(c => c.path === 'src/fetch.ts')!.note;
   for (const text of ['Invariants: Preserve retry ordering.', 'Exception: zero retries still calls once.', 'Keep the callback.', 'Invariants: Preserve errors.']) assert.equal(note.split(text).length - 1, 1);
   assert.ok(!JSON.stringify(first).includes('optional context only'));
-  assert.ok(!JSON.stringify(first).includes('Preserve companion shape'));
+  assert.ok(!JSON.stringify(first.dependents).includes('Preserve companion shape'));
   assert.ok(!JSON.stringify(second).includes('Preserve retry ordering'));
+  assert.ok(plan.sharedContext.includes('| T2 | Check the companion | Check the companion. | T1 | SC2 |'));
   assert.match(plan.governedText, /Notes: optional context only/);
 });
 
@@ -224,28 +232,28 @@ const TASKS = `# Shared contract with consumers
 > **Risk:** low — isolated modules
 > **Scope:** src/
 
+## Task Map
+
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |
+| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |
+| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |
+
 ## Proposed Changes
 
 ### T1 — Define the shared contract
-Consumers share one exported shape so they cannot drift.
-- Prerequisites: none
-- Criteria: SC1
 
 #### [NEW] src/contract.ts
 - Purpose: exports the shared shape.
 
 ### T2 — Read through the contract
-The reader decodes records with the shared shape.
-- Prerequisites: T1
-- Criteria: SC2
+- Constraints: Preserve unknown fields.
 
 #### [MODIFY] src/reader.ts
 - Changes: decode with the contract.
 
 ### T3 — Write through the contract
-The writer encodes records with the shared shape and regenerates the docs.
-- Prerequisites: T1
-- Criteria: SC3
 
 #### [MODIFY] src/writer.ts
 - Changes: encode with the contract.
@@ -290,36 +298,37 @@ test('task-plan: parses tasks with summary, prerequisites, criteria, owned paths
     ['T3', 'Write through the contract', ['T1'], ['SC3'], ['src/writer.ts', 'docs/contract.md']],
   ]);
   assert.equal(tasks[0]?.summary, 'Consumers share one exported shape so they cannot drift.');
+  assert.deepEqual(tasks[1]?.constraints, ['Preserve unknown fields.']);
   assert.deepEqual(tasks[2]?.generated, [{ path: 'docs/contract.md', inputs: ['src/contract.ts', 'src/writer.ts', 'README.md'] }]);
   assert.deepEqual(result.plan.changes.map((change) => change.path), ['src/contract.ts', 'src/reader.ts', 'src/writer.ts', 'docs/contract.md']);
 });
 
 test('task-plan: rejects graph defects', () => {
   const cases: [string, string, string][] = [
-    ['untasked entry', '### T1 — Define the shared contract\nConsumers share one exported shape so they cannot drift.\n- Prerequisites: none\n- Criteria: SC1\n', 'task-ownership'],
-    ['malformed heading', '### T2 — Read', 'task-heading'],
-    ['empty summary', 'The reader decodes records with the shared shape.\n', 'task-summary'],
-    ['duplicate id', '### T3 — Write', 'duplicate-id'],
-    ['unknown prerequisite', '- Prerequisites: T1\n- Criteria: SC2', 'missing-prerequisite'],
-    ['missing prerequisites bullet', '- Prerequisites: T1\n- Criteria: SC3', 'missing-prerequisite'],
-    ['cycle', '- Prerequisites: none\n- Criteria: SC1', 'cycle'],
+    ['untasked entry', '## Proposed Changes\n\n### T1 — Define the shared contract', 'task-ownership'],
+    ['malformed heading', '### T2 — Read through the contract', 'task-heading'],
+    ['empty outcome', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', 'task-summary'],
+    ['duplicate id', '### T3 — Write through the contract', 'duplicate-id'],
+    ['unknown prerequisite', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', 'missing-prerequisite'],
+    ['missing prerequisites cell', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', 'task-map'],
+    ['cycle', '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |', 'cycle'],
   ];
   const replacements: Record<string, string> = {
-    'untasked entry': '', 'malformed heading': '### Reader — Read', 'empty summary': '', 'duplicate id': '### T2 — Write',
-    'unknown prerequisite': '- Prerequisites: T9\n- Criteria: SC2', 'missing prerequisites bullet': '- Criteria: SC3',
-    cycle: '- Prerequisites: T2\n- Criteria: SC1',
+    'untasked entry': '## Proposed Changes\n\n#### [MODIFY] src/orphan.ts\n\n### T1 — Define the shared contract', 'malformed heading': '### Reader — Read', 'empty outcome': '| T2 | Read through the contract |  | T1 | SC2 |', 'duplicate id': '### T2 — Write through the contract',
+    'unknown prerequisite': '| T2 | Read through the contract | The reader decodes records with the shared shape. | T9 | SC2 |', 'missing prerequisites cell': '| T2 | Read through the contract | The reader decodes records with the shared shape. |  | SC2 |',
+    cycle: '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | T2 | SC1 |',
   };
   for (const [name, from, code] of cases) assert.ok(defects(TASKS.replace(from, replacements[name] ?? '')).some((item) => item === code), name);
-  for (const summary of ['TBD', 'Same.']) assert.ok(defects(TASKS.replace('The reader decodes records with the shared shape.', summary)).includes('task-summary'), summary);
+  for (const summary of ['TBD', 'Same.']) assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', `| T2 | Read through the contract | ${summary} | T1 | SC2 |`)).includes('task-summary'), summary);
 });
 
 test('task-plan: rejects mapping defects', () => {
-  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: SC1')).includes('task-criteria'), 'double-mapped');
-  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: SC2, SC9')).includes('task-criteria'), 'unknown criterion');
+  assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC1 |')).includes('task-criteria'), 'double-mapped');
+  assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2, SC9 |')).includes('task-criteria'), 'unknown criterion');
   assert.ok(defects(TASKS.replace('  - Integration: spans reader and writer tasks.\n', '')).includes('task-criteria'), 'unmapped criterion');
-  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: none')).includes('task-criteria'), 'task without criteria');
+  assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | none |')).includes('task-criteria'), 'task without criteria');
   assert.ok(defects(TASKS.replace('  - Changes: src/reader.ts\n', '  - Changes: src/reader.ts, src/writer.ts\n')).includes('task-criteria'), 'foreign path');
-  assert.ok(defects(TASKS.replace('- Criteria: SC3', '- Criteria: SC3, SC4')).includes('task-criteria'), 'task-mapped integration criterion');
+  assert.ok(defects(TASKS.replace('| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |', '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3, SC4 |')).includes('task-criteria'), 'task-mapped integration criterion');
 });
 
 test('task-plan: generated inputs require Inputs and cover producers through prerequisites', () => {
@@ -347,14 +356,14 @@ test('task-plan: derives summary and brief from the graph', () => {
 
 test('task-plan: case-variant generated inputs and repeated task criteria normalize', () => {
   assert.ok(defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, src/Reader.ts')).includes('generated-inputs'), 'case-variant producer');
-  const result = parsePlan(TASKS.replace('- Criteria: SC2', '- criteria: sc2, `SC2`'));
+  const result = parsePlan(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | sc2, `SC2` |'));
   assert.ok(result.ok, JSON.stringify(result));
   assert.deepEqual(result.plan.tasks[1]?.criteria, ['SC2']);
 });
 
 test('task-plan: empty prerequisite values and deleted generated inputs are rejected', () => {
-  for (const value of ['', ', ,']) assert.ok(defects(TASKS.replace('- Prerequisites: T1\n- Criteria: SC2', `- Prerequisites: ${value}\n- Criteria: SC2`)).includes('missing-prerequisite'), JSON.stringify(value));
-  const deleted = TASKS.replace('#### [MODIFY] src/reader.ts', '#### [DELETE] src/reader.ts').replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts').replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T1, T2\n- Criteria: SC3');
+  for (const value of ['', ', ,']) assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', `| T2 | Read through the contract | The reader decodes records with the shared shape. | ${value} | SC2 |`)).includes('task-map'), JSON.stringify(value));
+  const deleted = TASKS.replace('#### [MODIFY] src/reader.ts', '#### [DELETE] src/reader.ts').replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts').replace('| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |', '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1, T2 | SC3 |');
   assert.ok(defects(deleted).includes('generated-inputs'));
 });
 
@@ -363,6 +372,8 @@ test('task-plan: the journal boundary preserves the task graph and rejects pre-t
   assert.ok(result.ok);
   const payload = JSON.parse(JSON.stringify(result.plan)) as Record<string, unknown>;
   assert.deepEqual(asParsedPlan(payload)?.tasks, result.plan.tasks);
+  const withoutConstraints = { ...payload, tasks: (payload['tasks'] as Record<string, unknown>[]).map(({ constraints: _constraints, ...task }) => task) };
+  assert.deepEqual(asParsedPlan(withoutConstraints)?.tasks.map(({ constraints }) => constraints), result.plan.tasks.map(() => []));
   const { tasks: _tasks, ...legacy } = payload;
   assert.equal(asParsedPlan(legacy), null);
 });
@@ -433,7 +444,7 @@ const WRITER_ENTRY = '#### [MODIFY] src/writer.ts\n- Changes: encode with the co
 const overlapPlan = (writerPath = 'src/shared.ts', writerHeader = '') => TASKS
   .replace(READER_ENTRY, `${READER_ENTRY}#### [MODIFY] src/shared.ts\n- Changes: add the reader lookup table.\n`)
   .replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] ${writerPath}\n- Changes: add the writer lookup table.\n`)
-  .replace('- Prerequisites: T1\n- Criteria: SC3', `- Prerequisites: T1\n- Criteria: SC3${writerHeader}`);
+  .replace('### T3 — Write through the contract', `### T3 — Write through the contract${writerHeader}`);
 const okPlan = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result; };
 const overlapCodes = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'overlap');
 
@@ -464,13 +475,13 @@ test('keeps duplicate path defect within one task', () => {
   assert.deepEqual(defectsOf(repeated, 'duplicate-change-path').map((item) => item.message), ['Change path "src/writer.ts" appears more than once.']);
   const aliased = TASKS.replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/Writer.ts\n- Changes: also log each encode.\n`);
   assert.deepEqual(defectsOf(aliased, 'duplicate-change-path').map((item) => item.message), ['Change path "src/Writer.ts" aliases "src/writer.ts" on case-insensitive filesystems.']);
-  const justified = repeated.replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T1\n- Criteria: SC3\n- Overlap: src/writer.ts — same task.');
+  const justified = repeated.replace('### T3 — Write through the contract', '### T3 — Write through the contract\n- Overlap: src/writer.ts — same task.');
   assert.ok(defects(justified).includes('duplicate-change-path'), 'Overlap does not excuse a same-task repeat');
 });
 
 test('ignores reference-only paths for overlap', () => {
   const source = TASKS
-    .replace('The reader decodes records with the shared shape.', 'The reader decodes records that `src/writer.ts` encodes.')
+    .replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records that `src/writer.ts` encodes. | T1 | SC2 |')
     .replace(READER_ENTRY, '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract; mirror `src/writer.ts`.\n<!-- #### [MODIFY] src/writer.ts -->\n')
     .replace('  - Integration: spans reader and writer tasks.', '  - Changes: src/reader.ts, src/writer.ts\n  - Integration: spans reader and writer tasks.');
   const result = okPlan(source);
@@ -486,7 +497,7 @@ test('no overlap warning for directly ordered tasks', () => {
 
 test('no overlap warning for transitively ordered tasks', () => {
   const source = TASKS
-    .replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T2\n- Criteria: SC3')
+    .replace('| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |', '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T2 | SC3 |')
     .replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the writer encode hook.\n`);
   assert.deepEqual(okPlan(source).plan.warnings, []);
   assert.deepEqual(overlapCodes(source), []);
@@ -660,45 +671,109 @@ test('plan-section-order: old order fails and new order with absent optional sec
   const orderDefects = (source: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === 'section-order'); };
   assert.deepEqual(orderDefects(criteriaFirst).map((item) => item.line), [criteriaFirst.split('\n').indexOf('## Proposed Changes') + 1]);
   assert.deepEqual(orderDefects(oldOrder).map((item) => item.line), ['## User Review Required', '## Out of Scope'].map((heading) => oldOrder.split('\n').indexOf(heading) + 1));
-  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## User Review Required" before "## Key Decisions & Context"/);
+  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## User Review Required" before "## Task Map"/);
   const full = PLAN.replace('## Key Decisions & Context\n', '## User Review Required\n- None.\n\n## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
-    .replace('## Technical-Design Traceability\n', '## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Technical-Design Traceability\n')
+    .replace('## Task Map\n', '## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Task Map\n')
     .replace('## Review Findings', '## Rollback & Blast Radius\n- Revert the helper.\n\n## Review Findings');
   parsed(full);
   parsed(PLAN);
 });
 
-test('task-map: rows match parsed tasks and Task Map edits leave the hash unchanged', () => {
+test('authored Task Map owns task metadata, hash input, and shared writer context', () => {
+  const source = PLAN
+    .replace('| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |', '| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |')
+    .replace('### T1 — Cap fetch retries', '### T1 — Cap | fetch retries')
+    .replace('### T1 — Cap | fetch retries', '### T1 — Cap | fetch retries\n- Constraints: Keep the public API.');
+  const result = parsePlan(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  const task = result.plan.tasks[0]!;
+  assert.equal(task.title, 'Cap | fetch retries');
+  assert.equal(task.summary, 'Stop `fetch|retry` after three attempts');
+  assert.deepEqual(task.constraints, ['Keep the public API.']);
+  assert.deepEqual(task.prerequisites, []);
+  assert.deepEqual(task.criteria, ['SC1', 'SC2']);
+  assert.ok(result.plan.sharedContext.includes('| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |'));
+  assert.ok(result.plan.governedText.includes('## Task Map'));
+  assert.notEqual(governedPlanText(source), governedPlanText(source.replace('SC1, SC2', 'SC2, SC1')));
+  assert.equal(governedPlanText(source), governedPlanText(source.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')));
+});
+
+test('Task Map pipes inside inline code follow GFM escaping', () => {
+  const escaped = TASKS.replace('The reader decodes records with the shared shape.', 'The reader decodes `records\\|shape` with the shared shape.');
+  const result = parsePlan(escaped);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.plan.tasks.find(({ id }) => id === 'T2')?.summary, 'The reader decodes `records|shape` with the shared shape.');
+
+  const unescaped = TASKS.replace('The reader decodes records with the shared shape.', 'The reader decodes `records|shape` with the shared shape.');
+  const malformed = parsePlan(unescaped);
+  assert.ok(!malformed.ok && malformed.defects.some((item) => item.code === 'task-map' && item.message.includes('exactly five cells')), JSON.stringify(malformed));
+});
+
+test('Task Map rows join by ID and keep file selection tied to H3 source lines', () => {
+  const source = TASKS
+    .replace('| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |\n| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |\n| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |', [
+      '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
+      '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |',
+      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
+    ].join('\n'))
+    .replace('### T1 — Define the shared contract', '### T1 — Define the shared contract\n- Constraints: Keep the exported name stable.');
+  const plan = parsed(source);
+  assert.deepEqual(plan.tasks.map(({ id }) => id), ['T3', 'T1', 'T2']);
+  assert.equal(plan.tasks.find(({ id }) => id === 'T2')?.line, source.split('\n').indexOf('### T2 — Read through the contract') + 1);
+  assert.deepEqual(selectTaskBrief(plan, 'T2')?.changes.map(({ path }) => path), ['src/reader.ts']);
+  assert.equal(taskMapRows(plan).find(({ id }) => id === 'T2')?.outcome, 'Read through the contract — The reader decodes records with the shared shape.');
+  assert.deepEqual(plan.tasks.find(({ id }) => id === 'T2')?.constraints, ['Preserve unknown fields.']);
+});
+
+test('task-map rejects missing, duplicate, orphan, mismatched, and repeated metadata', () => {
+  const row = '| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |';
+  const missing = PLAN.replace(`${row}\n`, '');
+  assert.ok(defects(missing).includes('task-map'), 'missing task row');
+  assert.ok(defects(PLAN.replace('## Task Map\n', '## Task Map\n\n## Task Map\n')).includes('task-map'), 'duplicate Task Map section');
+  assert.ok(defects(PLAN.replace(row, `${row}\n| T9 | Extra | Extra work. | none | SC1 |`)).includes('task-map'), 'orphan row');
+  const mismatch = PLAN.replace(row, row.replace('Cap fetch retries', 'Other title'));
+  assert.ok(defects(mismatch).includes('task-map'), 'title mismatch');
+  const wrongWidth = PLAN.replace(row, '| T1 | Cap fetch retries | outcome | none |');
+  const wrongWidthResult = parsePlan(wrongWidth);
+  assert.ok(!wrongWidthResult.ok && wrongWidthResult.defects.some((item) => item.code === 'task-map' && item.line === wrongWidth.split('\n').indexOf('| T1 | Cap fetch retries | outcome | none |') + 1), 'malformed row has source line');
+  assert.ok(defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n- Criteria: SC1')).includes('task-map'), 'task metadata stays in the map');
+  assert.ok(defects(PLAN.replace(row, `${row}\n| T1 | Duplicate | Duplicate row. | none | SC1 |`)).includes('duplicate-id'), 'duplicate map ID');
+});
+
+test('unmapped task sections keep graph diagnostics on the Task Map', () => {
+  const row = '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |';
+  const source = TASKS.replace(row + '\n', '');
+  const result = parsePlan(source);
+  assert.ok(!result.ok, JSON.stringify(result));
+  assert.deepEqual(result.defects.filter(({ message }) => message.startsWith('Task T2')).map(({ code }) => code), ['task-map']);
+  assert.ok(result.defects.some(({ code, message }) => code === 'task-criteria' && message.includes('SC2') && message.includes('Task Map row')));
+
+  const withoutChanges = parsePlan(source.replace('#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n', ''));
+  assert.ok(!withoutChanges.ok && withoutChanges.defects.some(({ code, message }) => code === 'task-ownership' && message === 'Task T2 owns no file change.'));
+  const duplicateSection = parsePlan(TASKS.replace('### T3 — Write through the contract', '### T2 — Write through the contract'));
+  assert.ok(!duplicateSection.ok && duplicateSection.defects.some(({ code }) => code === 'duplicate-id'));
+});
+
+test('task-map: derived writer rows preserve map metadata and task-owned overlap', () => {
   const source = overlapPlan();
   const plan = parsed(source);
   assert.deepEqual(taskMapRows(plan).map(({ id, prerequisites, criteria, paths }) => ({ id, prerequisites, criteria, paths })),
     plan.tasks.map(({ id, prerequisites, criteria, paths }) => ({ id, prerequisites, criteria, paths })));
   assert.deepEqual(taskMapRows(plan).map((row) => row.overlap), [[], [{ path: 'src/shared.ts', tasks: ['T3'] }], [{ path: 'src/shared.ts', tasks: ['T2'] }]]);
-  const map = renderTaskMap(plan);
-  assert.ok(map.split('\n').includes('| T2 | Read through the contract — The reader decodes records with the shared shape. | T1 | SC2 | `src/reader.ts`, `src/shared.ts` | `src/shared.ts` (T3) |'), map);
-  assert.ok(map.split('\n').includes('| T1 | Define the shared contract — Consumers share one exported shape so they cannot drift. | none | SC1 | `src/contract.ts` | none |'), map);
-  const withMap = replaceTaskMapSection(source, map);
-  assert.ok(withMap.indexOf('## Task Map') < withMap.indexOf('## Proposed Changes'));
-  const mapped = parsed(withMap);
-  assert.equal(renderTaskMap(mapped), map);
-  assert.equal(replaceTaskMapSection(withMap, map), withMap);
-  assert.equal(governedPlanText(withMap), governedPlanText(source));
-  assert.equal(mapped.governedText, plan.governedText);
-  const edited = withMap.replace('| T1 | Define', '| T1 | Redefine');
-  assert.equal(parsed(edited).governedText, plan.governedText);
-  assert.equal(replaceTaskMapSection(edited, map), withMap);
-  assert.ok(mapped.sharedContext.trimEnd().endsWith(map.split('\n').at(-1)!));
-  assert.ok(!mapped.sharedContext.includes('## Proposed Changes'));
+  assert.equal(taskMapRows(plan)[1]?.outcome, 'Read through the contract — The reader decodes records with the shared shape.');
+  assert.equal(taskMapRows(plan)[0]?.outcome, 'Define the shared contract — Consumers share one exported shape so they cannot drift.');
 });
 
-test('task-map-shared-context: shared context carries the rendered Task Map whether or not the file has one', () => {
+test('task-map-shared-context: authored map bytes reach the writer and bind the governed hash', () => {
   const source = overlapPlan();
-  const plan = parsed(source), map = renderTaskMap(plan);
-  assert.ok(!source.includes('## Task Map'));
-  assert.ok(plan.sharedContext.includes(map), plan.sharedContext);
+  const plan = parsed(source);
+  assert.ok(source.includes('## Task Map'));
+  assert.ok(plan.sharedContext.includes('| ID | Title | Outcome | Prerequisites | Criteria |'), plan.sharedContext);
+  assert.ok(plan.sharedContext.includes('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |'));
   assert.ok(!plan.sharedContext.includes('## Proposed Changes'));
-  const withMap = replaceTaskMapSection(source, map);
-  assert.equal(parsed(withMap).sharedContext, plan.sharedContext);
-  assert.equal(parsed(withMap.replace('| T1 | Define', '| T1 | Stale')).sharedContext, plan.sharedContext, 'a stale file map never reaches writers');
-  assert.equal(parsed(plan.governedText).sharedContext, plan.sharedContext);
+  assert.ok(!plan.sharedContext.includes('Preserve unknown fields.'), 'task constraints stay outside the shared map');
+  const edited = source.replace('| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |', '| T1 | Define the shared contract | Consumers share one exported shape without drift. | none | SC1 |');
+  assert.notEqual(governedPlanText(edited), governedPlanText(source));
+  assert.notEqual(parsed(edited).sharedContext, plan.sharedContext);
+  assert.equal(governedPlanText(source), governedPlanText(source.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')));
 });
