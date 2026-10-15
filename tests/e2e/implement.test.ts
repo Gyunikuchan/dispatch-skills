@@ -257,7 +257,7 @@ test('reuses settled plan from session journal and rejects stale or failed candi
     assert.doesNotMatch(reuseJournal, /"effectId":"implement\.plan-review/);
     session = path.resolve(f.absoluteRun(reuseFrame.run), '../../..');
 
-    // 3b. Reusing settled plan with differing drive/path case matches via designPathIdentity
+    // 3b. Reusing settled plan with differing drive/path case matches via pathIdentity
     if (process.platform === 'win32') {
       const casedPlan = /^[a-z]:/i.test(plan) ? (plan[0] === plan[0]?.toLowerCase() ? plan[0]!.toUpperCase() : plan[0]!.toLowerCase()) + plan.slice(1) : plan;
       const casedReuseFrame = await f.begin('implement', session, casedPlan);

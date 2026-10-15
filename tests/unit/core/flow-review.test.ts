@@ -13,6 +13,7 @@ import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { createHandlers } from '../../../skills/dispatch/scripts/effects/index.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { seedSpec } from '../../helpers/spec-fixture.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const FINDING = {
@@ -34,7 +35,7 @@ function setup() {
   memoryRunFs(ports, runDir);
   const runStarted: RunStartedEvent = {
     type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null,
-    orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {},
+    orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {}, specCandidate: seedSpec(ports, tmp).path,
     config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
   };
   return { options: { runDir, machine: rootMachine, handlers, ports, runRel: 'run' }, runStarted, runDir, commands };

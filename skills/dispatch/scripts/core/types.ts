@@ -4,10 +4,10 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'retro' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 9 as const;
+export const JOURNAL_PROTOCOL_REVISION = 10 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
-  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop';
+  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval';
 
 export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
 
@@ -114,6 +114,7 @@ export type DecisionAnswer = unknown;
 export type ParsedPlan = Payload;
 export type ParsedDesign = Payload;
 export type LintDefect = Payload;
+export type ParsedSpec = Payload;
 export type ReviewScope = Payload;
 export type SlotId = string;
 export type SlotStatus = string;
@@ -180,12 +181,21 @@ export type PathSet = readonly string[];
 
 // SECTION: Events
 
+/** Settled governing spec: repository path and `sha256:<hex>` of its raw bytes. */
+export type SpecIdentity = { path: string; hash: string };
+/** User approval bound to one spec content hash. */
+export type SpecApproval = { by: 'user'; quote: string; hash: string };
+
 export type DesignApproval =
   | { by: 'user'; quote: string; hash: string }
   | { by: 'revision'; quote: string; hash: string; basedOn: string; revisions: readonly { before: string; after: string }[] };
 
 export type RunStartedEvent = {
   designApproval?: DesignApproval;
+  /** Startup-discovered spec path; null or absent means the spec is authored. */
+  specCandidate?: string | null;
+  /** Trusted only when computed by `start()` from session journals. */
+  specApprovals?: readonly SpecApproval[];
   protocolRevision?: typeof JOURNAL_PROTOCOL_REVISION;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
   pins: Pins | null; orchestrator: Platform; orchestratorModel: string | null;
@@ -250,6 +260,7 @@ export type ReplacePlanEvent = { type: 'REPLACE_PLAN'; path: string; expectedHas
 export type HostEvent = HostEventBody & { changeDispositions?: ChangeDisposition[] };
 type HostEventBody =
   | { type: 'AUTHORED'; path: string }
+  | { type: 'SPEC_REVISED'; path: string }
   | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
   | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
   | { type: 'FIXES_APPLIED'; clusters: FixClusterResult[] }
@@ -265,7 +276,7 @@ type HostEventBody =
 
 export type ResultEvent =
   | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
-  | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
+  | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design' | 'spec'; hash: string; parsed: ParsedPlan | ParsedDesign | ParsedSpec; defects: LintDefect[] }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
   | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
   | { type: 'WAVE_PROGRESS'; effectId: string; slot: SlotId; status: SlotStatus }
@@ -280,7 +291,10 @@ export type ResultEvent =
   | { type: 'CHECKOUT_DONE'; effectId: string; op: CheckoutOp; result: Payload }
   | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string; conflict?: { kind: 'newer-content'; paths: readonly string[]; binding: string } };
 
-export type Event = HostEvent | ResultEvent | LifecycleEvent;
+/** Root-synthesized events; never host-sent and never journaled (replay re-derives them). */
+export type InternalEvent = { type: 'SPEC_SETTLED'; path: string; hash: string };
+
+export type Event = HostEvent | ResultEvent | LifecycleEvent | InternalEvent;
 export type EventType = Event['type'];
 export type HostEventType = HostEvent['type'];
 export type ResultEventType = ResultEvent['type'];
@@ -290,6 +304,7 @@ export type ResultEventType = ResultEvent['type'];
 export type Effect =
   | { kind: 'check-review-target'; id: string; review: ReviewSpec; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; allowedPaths: readonly string[] }
   | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
+  | { kind: 'parse-artifact'; id: string; path: string; artifact: 'spec'; level: Level }
   | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
   | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'wave-finish'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number; waveKey: string; attempt: number; captures: NativeSlotResult[] }

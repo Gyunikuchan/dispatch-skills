@@ -102,7 +102,8 @@ export function readJournal(ports: Ports, runDir: string, defer = false): Journa
     if (collected) { yield* scan(ports, file, { records: [], count: 0, recent: [], tornTail: false, goodBytes: 0 }); return; }
     for (const line of scan(ports, file, metadata)) {
       if (line.type === 'RUN_STARTED') { metadata.started = line; if (isRecord(line.data['config'])) metadata.execution = { config: line.data['config'], revision: 0 }; }
-      if (line.type === 'AUTHORED') metadata.authored = line;
+      // NOTE: spec authoring shares AUTHORED; only artifact authoring locates the settled plan.
+      if (line.type === 'AUTHORED' && !/\.spec\.md$/i.test(String(line.data['path'] ?? ''))) metadata.authored = line;
       if (line.type === 'ARTIFACT_PARSED' && line.data['kind'] === 'plan') metadata.parsedPlan = line;
       if (line.type === 'EXECUTION_CONFIG_UPDATED') { latestConfig = line; if (metadata.execution) { const event = { type: line.type, ...line.data } as ExecutionConfigUpdated; metadata.execution = { config: applyExecutionConfig(metadata.execution.config, event.delta), revision: event.revision }; } }
       // Lock recovery and diagnostics notes are not reply boundaries, so they never move the host's reply path.

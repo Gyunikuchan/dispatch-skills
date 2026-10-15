@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent, Verb } from '../../../skills/dispatch/scripts/core/types.ts';
 import { inferKind, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import { play } from '../../helpers/play.ts';
+import { play as playMachine } from '../../helpers/play.ts';
+import { specHash, specParsed, withSpec } from '../../helpers/spec-fixture.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -12,13 +13,21 @@ const started = (verb: Verb, over: Partial<RunStartedEvent> = {}): RunStartedEve
   type: 'RUN_STARTED', verb, argument: 'src/a.ts', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {}, ...over,
 });
+/** Non-ask starts carry a spec candidate; `settle` answers its read so tests begin at the child's first frame. */
+const governed = (event: Event): boolean => event.type === 'RUN_STARTED' && event.verb !== 'ask';
+const settle = (events: readonly Event[]): Event[] => events.flatMap((event) => governed(event) ? [withSpec(event as RunStartedEvent), specParsed()] : [event]);
+const play = (machine: typeof rootMachine, events: readonly Event[]) => {
+  const frames = playMachine(machine, settle(events));
+  return governed(events[0]!) ? frames.slice(1) : frames;
+};
 
 function drive(events: readonly Event[]): { state: RootState; effects: Effect[] } {
   let state = rootMachine.initial();
   const effects: Effect[] = [];
-  for (const event of events) { const result = rootMachine.step(state, event); state = result.state; effects.push(...result.effects); }
+  for (const event of settle(events)) { const result = rootMachine.step(state, event); state = result.state; if (!governed(event)) effects.push(...result.effects); }
   return { state, effects };
 }
+const GOVERNED = { path: 'fixture.spec.md', hash: specHash(), approved: false };
 const handoffDone = (warning: string | null = null): Event => ({ type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning });
 
 test('root selects each verb', () => {
@@ -85,13 +94,13 @@ test('a terminal child schedules handoff and preserves its outcome and destinati
   assert.deepEqual(effects.at(-1), { kind: 'handoff', id: 'root.handoff.1', terminal: true });
   const done = play(rootMachine, [started('review'), empty, handoffDone()]).at(-1);
   assert.equal(done?.at, 'review › done');
-  assert.deepEqual(done?.data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
+  assert.deepEqual(done?.data, { outcome: 'no-reviewable-changes', governingSpec: GOVERNED, summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
 });
 
 test('handoff failure preserves the child outcome with a warning', () => {
   const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   const warned = play(rootMachine, [started('review'), empty, { type: 'EFFECT_FAILED', effectId: 'root.handoff.1', cls: 'io', detail: 'EBUSY' }]).at(-1);
-  assert.deepEqual(warned?.data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: null, warning: 'handoff failed: io: EBUSY' });
+  assert.deepEqual(warned?.data, { outcome: 'no-reviewable-changes', governingSpec: GOVERNED, summary: 'no reviewable changes', handoff: null, warning: 'handoff failed: io: EBUSY' });
 });
 
 test('HANDOFF_DONE with diagnostics true enters retro, and RETRO completes the run with the handoff outcome', () => {
@@ -104,7 +113,7 @@ test('HANDOFF_DONE with diagnostics true enters retro, and RETRO completes the r
   const done = rootMachine.step(retro.state, { type: 'RETRO', observations: [] });
   assert.equal(done.state.tag, 'done');
   assert.deepEqual(done.effects, []);
-  assert.deepEqual(rootMachine.project(done.state).data, { outcome: 'no-reviewable-changes', summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
+  assert.deepEqual(rootMachine.project(done.state).data, { outcome: 'no-reviewable-changes', governingSpec: GOVERNED, summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
 });
 
 test('HANDOFF_DONE with diagnostics false or absent goes straight to done', () => {

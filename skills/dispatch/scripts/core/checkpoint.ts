@@ -25,7 +25,7 @@ function effectDescriptor(value: unknown): boolean {
   const arrays = (...keys: string[]) => keys.every((key) => Array.isArray(value[key]));
   const objects = (...keys: string[]) => keys.every((key) => record(value[key]));
   switch (value['kind']) {
-    case 'parse-artifact': return strings('path') && ['plan', 'design'].includes(String(value['artifact']));
+    case 'parse-artifact': return strings('path') && (['plan', 'design'].includes(String(value['artifact'])) || (value['artifact'] === 'spec' && ['low', 'medium', 'high', 'xhigh', 'max'].includes(String(value['level']))));
     case 'check-review-target': return objects('review') && strings('manifestPath') && arrays('allowedPaths');
     case 'prepare-review': return objects('review', 'scope') && Number.isSafeInteger(value['round']) && Number(value['round']) > 0;
     // NOTE: native-only waves have no worker attempt; their producer binds attempt zero.

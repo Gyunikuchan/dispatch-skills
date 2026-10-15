@@ -69,6 +69,12 @@ export function reconfigureRoot(state: RootState, event: ExecutionConfigUpdated,
     case 'review': return { ...state, child: review(state.child, run, event) };
     case 'implement': return { ...state, child: implement(state.child, event) };
     case 'design': return { ...state, child: design(state.child, event) };
+    case 'spec': {
+      // A parked child keeps its future defaults current, exactly as when it is active.
+      if (!state.parked) return state;
+      const next = reconfigureRoot({ tag: state.parked.verb, run: state.run, child: state.parked.state } as RootState, event, run);
+      return 'child' in next ? { ...state, parked: { verb: state.parked.verb, state: next.child } as typeof state.parked } : state;
+    }
     case 'ask': case 'booting': case 'done': case 'handoff': case 'retro': return state;
   }
 }
@@ -95,6 +101,7 @@ export function executionBindingDeferred(state: RootState): boolean {
     case 'review': return reviewing(state.child);
     case 'implement': return implementing(state.child);
     case 'design': return designing(state.child);
+    case 'spec': return state.parked ? executionBindingDeferred({ tag: state.parked.verb, run: state.run, child: state.parked.state } as RootState) : false;
     case 'booting': case 'handoff': case 'retro': case 'done': return false;
   }
 }

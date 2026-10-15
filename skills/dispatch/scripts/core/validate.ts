@@ -171,6 +171,7 @@ const retirement = obj({ task: nonBlank, disposition: lit('stop', 'retain') });
 
 export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Record<string, unknown>> } = {
   AUTHORED: obj({ type: lit('AUTHORED'), path: str }),
+  SPEC_REVISED: obj({ type: lit('SPEC_REVISED'), path: nonBlank }),
   NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(nativeSlot) }),
   RULINGS: obj({ type: lit('RULINGS'), rulings: rec(payload) }),
   FIXES_APPLIED: obj({ type: lit('FIXES_APPLIED'), clusters: arr(payload) }),
@@ -205,6 +206,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
       'manual-complete': obj({ by: lit('user'), action: lit('manual-complete'), quote: nonBlank, criteria: rec(payload) }),
     })),
     obj({ type: lit('DECISION'), kind: lit('run-stop'), answer: obj({ by: lit('user'), quote: nonBlank }) }),
+    decision('spec-approval', oneOf<unknown>(lit('stop'), obj({ by: lit('user'), quote: nonBlank, hash: nonBlank }))),
     obj({ type: lit('DECISION'), kind: LEGACY_DECIDE_KINDS, answer: any }),
   ),
   REVISE: obj({ type: lit('REVISE'), artifact: lit('plan', 'design'), reason: str, evidence: str }),
@@ -218,14 +220,15 @@ const CHANGE_DISPOSITIONS = nonEmptyArr(obj({ observationId: nonBlank, afterHash
 // NOTE: REVIEW_USE records an optional review applicability choice at any review await; the machine hook rejects it elsewhere.
 // NOTE: REVISE is accepted at every live await but `write`, where AMEND changes the plan without draining writers;
 // the machine's validate hook narrows both (spec §5.7).
+// NOTE: SPEC_REVISED is excluded from native, write, and fix: delegate or host fix work is in flight there.
 export const AWAIT_ACCEPTS: { readonly [K in Await]: readonly HostEventType[] } = {
-  author: ['AUTHORED', 'REVISE'],
+  author: ['AUTHORED', 'REVISE', 'SPEC_REVISED'],
   native: ['NATIVE_RESULTS', 'REVISE', 'REVIEW_USE'],
-  rule: ['RULINGS', 'REVISE', 'REVIEW_USE'],
+  rule: ['RULINGS', 'REVISE', 'REVIEW_USE', 'SPEC_REVISED'],
   fix: ['FIXES_APPLIED', 'REVISE', 'REVIEW_USE'],
   write: ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN'],
-  evidence: ['EVIDENCE', 'REVISE'],
-  decide: ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE'],
+  evidence: ['EVIDENCE', 'REVISE', 'SPEC_REVISED'],
+  decide: ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE', 'SPEC_REVISED'],
   retro: ['RETRO'],
   done: [],
 };

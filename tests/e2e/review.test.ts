@@ -147,7 +147,7 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
     assert.match(fs.readFileSync(named, 'utf8'), /The value is intentional/);
     const entries = (dir: string) => fs.readdirSync(dir, { withFileTypes: true });
     const names = (dir: string, directories: boolean) => entries(dir).filter((entry) => entry.isDirectory() === directories).map((entry) => entry.name).sort();
-    assert.deepEqual(names(session, false), ['manifest.json', 'review.report.md', ...(diagnostics ? ['diagnostics.md'] : [])].sort());
+    assert.deepEqual(names(session, false), ['fixture.spec.md', 'manifest.json', 'review.report.md', ...(diagnostics ? ['diagnostics.md'] : [])].sort());
     assert.deepEqual(names(session, true), ['.state']);
     assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json', 'rule.findings.json']);
     const folders = names(run, true);

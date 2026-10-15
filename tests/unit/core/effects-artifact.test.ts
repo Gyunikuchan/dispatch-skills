@@ -193,3 +193,29 @@ test('prepare-review and write-brief: a write failure is one EFFECT_FAILED io', 
   const brief = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.1', stage: 'task', input: {} }, ports, ctx));
   for (const result of [prep, brief]) assert.ok(result.type === 'EFFECT_FAILED' && result.cls === 'io' && /disk full/.test(result.detail));
 });
+
+const LOW_SPEC = '# Spec\r\n\r\n## Intent & Problem\r\nWhy.\r\n\r\n## Requirements\r\n### REQ-1 — Lint\r\n- Acceptance: lint runs.\r\n\r\n## Non-goals\r\n- none\r\n\r\n## Constraints\r\n- portable\r\n';
+
+test('parse-artifact: spec hashes raw bytes and lints by level', async () => {
+  const dir = tempDir();
+  const file = path.join(dir, 's.spec.md');
+  fs.writeFileSync(file, LOW_SPEC);
+  const hash = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
+  const low = only(await parseArtifact({ kind: 'parse-artifact', id: 'spec.parse-artifact.1', path: file, artifact: 'spec', level: 'low' }, fakePorts(), { runDir: dir, attempt: 1 }));
+  assert.ok(low.type === 'ARTIFACT_PARSED' && low.kind === 'spec');
+  assert.equal(low.hash, hash);
+  assert.deepEqual(low.defects, []);
+  assert.deepEqual((low.parsed as { reqIds: string[] }).reqIds, ['REQ-1']);
+  const medium = only(await parseArtifact({ kind: 'parse-artifact', id: 'spec.parse-artifact.2', path: file, artifact: 'spec', level: 'medium' }, fakePorts(), { runDir: dir, attempt: 1 }));
+  assert.ok(medium.type === 'ARTIFACT_PARSED');
+  assert.equal(medium.hash, hash);
+  assert.deepEqual(medium.parsed, {});
+  assert.ok(medium.defects.length > 0 && medium.defects.every((d) => d['code'] === 'missing-section'));
+});
+
+test('parse-artifact: spec reports a missing file as EFFECT_FAILED io', async () => {
+  const dir = tempDir();
+  const file = path.join(dir, 'nope.spec.md');
+  const missing = only(await parseArtifact({ kind: 'parse-artifact', id: 'spec.parse-artifact.1', path: file, artifact: 'spec', level: 'low' }, fakePorts(), { runDir: dir, attempt: 1 }));
+  assert.deepEqual(missing, { type: 'EFFECT_FAILED', effectId: 'spec.parse-artifact.1', cls: 'io', detail: `spec not found: ${file}` });
+});

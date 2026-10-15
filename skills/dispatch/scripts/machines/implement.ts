@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
@@ -23,6 +23,8 @@ export const MAX_WRITE_ATTEMPTS = 3;
 
 type PlanReviewResult = 'initial' | 'rebind';
 export type Context = {
+  /** Settled governing spec root passed at boot; null for standalone boots. */
+  governingSpec?: SpecIdentity | null;
   pendingWriter?: WriterConfig;
   designBinding?: DesignBinding;
   machinePath?: string;
@@ -187,7 +189,7 @@ function baseContext(run: RunStartedEvent): Context {
   const planPath = planPathFromRun(run);
   const writer = writerConfig(run.config, run.orchestrator, run.level);
   return {
-    run, planPath, counters: {}, writer: writer.ok ? writer.value : null, writerError: writer.ok ? null : writer.error,
+    governingSpec: null, run, planPath, counters: {}, writer: writer.ok ? writer.value : null, writerError: writer.ok ? null : writer.error,
     plan: null, planHash: null, planReview: null, codeReview: null, startFingerprint: null, lastFingerprint: null,
     mutationEpoch: 0, criterionMutation: {}, baseline: [], acceptedBaseline: [], records: {}, evidence: {}, redMatrix: [], concerns: [],
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, phase: 'setup', tasks: {}, integration: null,
@@ -238,7 +240,7 @@ export function planReviewContext(c: Context, invocationContext: string | null |
 }
 
 function startReview(c0: Context): S {
-  const built = reviewSpecFromRun(c0.run, 'plan', c0.planPath);
+  const built = reviewSpecFromRun(c0.run, 'plan', c0.planPath, c0.governingSpec ?? null);
   if (!built.ok) return beginFailure(c0, built.error);
   const spec = { ...built.spec, context: planReviewContext(c0, built.spec.context) };
   const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review`, c0.counters);
@@ -1251,7 +1253,7 @@ function continueAfterDelivery(c: Context): S {
 }
 
 function startCodeReview(c0: Context): S {
-  const built = reviewSpecFromRun(c0.run, 'code', '');
+  const built = reviewSpecFromRun(c0.run, 'code', '', c0.governingSpec ?? null);
   if (!built.ok) return beginFailure(c0, built.error);
   const plan = c0.plan!;
   const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: plan.criteria.map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
@@ -1399,9 +1401,15 @@ function startFailureFromEffect(c: Context, cls: string, detail: string): S {
 }
 
 export function initialImplement(): ImplementState { return { tag: 'booting', counters: emptyCounters }; }
-export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters): S {
+/** Root entry: the `booting` + `RUN_STARTED` path with the settled governing spec in context. */
+export function beginImplement(run: RunStartedEvent, governingSpec: SpecIdentity | null): S {
+  const result = stepImplement(initialImplement(), run);
+  return 'c' in result.state && result.state.c ? { ...result, state: withContext(result.state, { ...result.state.c, governingSpec }) } : result;
+}
+
+export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters, governingSpec: SpecIdentity | null = null): S {
   const c = {
-    ...baseContext(run), counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
+    ...baseContext(run), governingSpec, counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
     levelGatePassed: binding.levelGatePassed ?? false, gateScope: binding.gateScope ?? null,
     levelAssessment: binding.levelAssessment ?? null, levelChoice: binding.levelChoice ?? null,
     scopeAdjustments: binding.scopeAdjustments ?? [],
@@ -1634,7 +1642,19 @@ function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? appr
 function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
 const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN', 'EVIDENCE', 'DECISION', 'REVISE', 'REVIEW_USE']);
 
+/** KD-6: before a parsed plan nothing pins the old spec; after it, the run halts for re-planning or design revision. */
+function respecImplement(state: ImplementState, identity: SpecIdentity): S {
+  if (!('c' in state) || !state.c) return stay(state);
+  const c = { ...state.c, governingSpec: identity };
+  if (c.plan === null) return authorPlan(c, [{ code: 'stale-spec', message: `Governing spec revised to ${identity.hash}; re-author against it.` }]);
+  const parent = c.plan.box?.['Parent']?.replace(/`/g, '').trim() ?? '';
+  const increment = /^(.+?)\s*·\s*I\d{2}$/.exec(parent);
+  if (increment) return stop(c, `stale-design-spec: ${increment[1]} pins a revised spec; revise the design first.`);
+  return stop(c, `stale-spec: governing spec revised to ${identity.hash}; re-plan.`);
+}
+
 export function stepImplement(state: ImplementState, event: Event): S {
+  if (event.type === 'SPEC_SETTLED') return respecImplement(state, { path: event.path, hash: event.hash });
   if (state.tag === 'checking-host-event' || state.tag === 'assessing-host-event' || state.tag === 'drift') return stepRecovery(state, event);
   if (hostTypes.has(event.type) && 'c' in state && state.c && implementAwait(state) !== null && implementAwait(state) !== 'done') {
     if (validateImplement(state, event as HostEvent)) return stay(state);
@@ -2083,6 +2103,8 @@ const HOST_EVENTS = ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', '
 const TASK_EXITS = ['task-checkout', 'task-brief', 'task-envelope', 'task-verify', 'tasks', 'request-decision', 'integration-conflict', 'failure-snapshot'] as const;
 
 export const implementTransitions = [
+  ...['starting', 'author', 'parsing'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'author' })),
+  ...['author', 'plan-review', 'code-review', 'evidence', 'baseline-decision', 'approval', 'level-classification', 'level-recommendation', 'integration-conflict', 'request-decision', 'needs-user', 'concerns', 'failure', 'drift'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'stopped' })),
   { from: 'checking-host-event', on: 'SNAPSHOT', to: 'assessing-host-event' },
   ...['baseline', 'final-verify', 'hotfix-verify', 'task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot', 'trim-snapshot', 'level-classification', 'level-recommendation', 'drift', 'stopped', 'failure-snapshot'].map((to) => ({ from: 'assessing-host-event', on: 'RECOVERY_ASSESSED', to })),
   { from: 'assessing-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },

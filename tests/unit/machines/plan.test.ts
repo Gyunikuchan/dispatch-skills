@@ -4,6 +4,7 @@ import type { Event, RunStartedEvent } from '../../../skills/dispatch/scripts/co
 import { planInputFromRun, planMachine, slugOf } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
+import { specHash, specParsed, withSpec } from '../../helpers/spec-fixture.ts';
 
 const config = (rounds: number) => ({
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -34,9 +35,9 @@ test('plan: author → parse → defects re-enter author → review → done com
 
 test('plan: review skipped (rounds 0) → done complete with the skip summary', () => {
   // HANDOFF_DONE without `diagnostics` (journals written before the retro await) still reaches done.
-  const frame = play(rootMachine, [started(0), authored, { ...parsed(1, []) }, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/t', warning: null }]).at(-1);
+  const frame = play(rootMachine, [withSpec(started(0)), specParsed(), authored, { ...parsed(1, []) }, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/t', warning: null }]).at(-1);
   assert.equal(frame?.await, 'done');
-  assert.deepEqual(frame?.data, { outcome: 'complete', summary: 'plan review skipped (rounds 0)', handoff: '/t' });
+  assert.deepEqual(frame?.data, { outcome: 'complete', summary: 'plan review skipped (rounds 0)', handoff: '/t', governingSpec: { path: 'fixture.spec.md', hash: specHash(), approved: false } });
 });
 
 

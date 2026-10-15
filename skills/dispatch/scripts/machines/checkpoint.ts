@@ -6,7 +6,8 @@ import type { RootState } from './root.ts';
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 function invalid(part: string): never { throw new EngineFault(`checkpoint-state-invalid: ${part}`); }
 const variants = {
-  root: 'booting design ask plan review implement handoff retro done',
+  root: 'booting spec design ask plan review implement handoff retro done',
+  spec: 'reading author approval settled stopped failed',
   ask: 'booting preparing wave native done failed',
   plan: 'booting author parsing review complete escalated failed',
   review: 'target-check booting prepare wave native rule decide-needs-user fix fix-verify decide-escalation decide-opt-in settled escalated failed skipped empty',
@@ -40,6 +41,13 @@ function state(value: unknown, kind: Kind, depth = 0): void {
         const last = item['last'];
         if (!object(last) || !['ask', 'plan', 'review', 'implement', 'design'].includes(String(last['verb']))) invalid('retained child');
         state((last as Record<string, unknown>)['state'], (last as Record<string, unknown>)['verb'] as Kind, depth + 1);
+      }
+    } else if (tag === 'spec') {
+      state(item['stage'], 'spec', depth + 1);
+      const parked = item['parked'];
+      if (parked !== null) {
+        if (!object(parked) || !['plan', 'review', 'implement', 'design'].includes(String(parked['verb']))) invalid('parked child');
+        state(parked['state'], parked['verb'] as Kind, depth + 1);
       }
     } else state(item['child'], tag as Kind, depth + 1);
     return;

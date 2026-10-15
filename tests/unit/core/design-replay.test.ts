@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { appendEvent } from '../../../skills/dispatch/scripts/core/journal.ts';
-import { findDesignDelivery, start, send } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { findDesignDelivery, send } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { start } from '../../helpers/governed-start.ts';
+import { SPEC_EFFECT, specParsed, withSpec } from '../../helpers/spec-fixture.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { run, hash, design } from '../machines/fixtures/design.ts';
-import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Event, Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
 const launched = (slot: Record<string, unknown>) => ({ launcherModel: slot['model'] ?? 'host-default', ...(slot['reasoningEffort'] ? { launcherEffort: slot['reasoningEffort'] } : {}) });
 
@@ -29,15 +31,18 @@ test('same-session unfinished design delivery folds journal and resumes without 
 test('finished matching design delivery exposes terminal state', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, 'runs', '001-implement');
   ports.fs.mkdir(runDir, { recursive: true });
-  const events = [run('implement')];
+  const events = [withSpec(run('implement'))];
   const { type, ...data } = events[0]!;
   appendEvent(ports, runDir, type, data, 1);
-  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'design.parse-artifact.1', kind: 'parse-artifact', attempt: 1 }, 2);
-  appendEvent(ports, runDir, 'ARTIFACT_PARSED', { effectId: 'design.parse-artifact.1', kind: 'design', hash, parsed: design, defects: [] }, 3);
-  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'design.parse-artifact.2', kind: 'parse-artifact', attempt: 1 }, 4);
-  appendEvent(ports, runDir, 'EFFECT_FAILED', { effectId: 'design.parse-artifact.2', cls: 'io', detail: 'Read failed' }, 5);
-  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'root.handoff.1', kind: 'handoff', attempt: 1 }, 6);
-  appendEvent(ports, runDir, 'HANDOFF_DONE', { effectId: 'root.handoff.1', destination: '/handoff', warning: null }, 7);
+  const { type: _parsed, ...spec } = specParsed() as Extract<Event, { type: 'ARTIFACT_PARSED' }>;
+  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: SPEC_EFFECT, kind: 'parse-artifact', attempt: 1 }, 2);
+  appendEvent(ports, runDir, 'ARTIFACT_PARSED', spec, 3);
+  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'design.parse-artifact.1', kind: 'parse-artifact', attempt: 1 }, 4);
+  appendEvent(ports, runDir, 'ARTIFACT_PARSED', { effectId: 'design.parse-artifact.1', kind: 'design', hash, parsed: design, defects: [] }, 5);
+  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'design.parse-artifact.2', kind: 'parse-artifact', attempt: 1 }, 6);
+  appendEvent(ports, runDir, 'EFFECT_FAILED', { effectId: 'design.parse-artifact.2', cls: 'io', detail: 'Read failed' }, 7);
+  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'root.handoff.1', kind: 'handoff', attempt: 1 }, 8);
+  appendEvent(ports, runDir, 'HANDOFF_DONE', { effectId: 'root.handoff.1', destination: '/handoff', warning: null }, 9);
   const found = findDesignDelivery(ports, path.dirname(runDir), rootMachine, { path: 'x.design.md', revision: hash });
   assert.equal(found?.finished, true);
   assert.equal(found?.state.tag, 'done');

@@ -17,6 +17,7 @@ import { sessionDirOf } from './effects/handoff.ts';
 import { rebind } from './core/checkpoint.ts';
 import { listWorkerClaims, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
+import { discoverSpecCandidate } from './core/spec-discovery.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
 import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.ts';
 import { checkIntegrity, hashFile, integrityDiagnostic, readVersion } from './lib/integrity.ts';
@@ -208,6 +209,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         const settled = findSettledPlan(ports, path.join(sessionDir, '.state/runs'), dispatchMachine, repo, { path: argument });
         if (settled) overrides['settledPlan'] = settled;
       }
+      let specCandidate: string | null = null;
+      if (command.verb !== 'ask') {
+        const discovered = discoverSpecCandidate(ports.fs, { verb: command.verb!, argument, specFlag: textFlag(command, 'spec') ?? null, sessionDir, repoRoot: repo });
+        if (!discovered.ok) throw new UsageError(discovered.message);
+        specCandidate = discovered.candidate;
+      }
       const runKind = command.verb === 'review' ? `${textFlag(command, 'kind') ?? (/\.plan\.md$/i.test(argument) ? 'plan' : /\.design\.md$/i.test(argument) ? 'design' : 'code')}-review` as 'code-review' | 'plan-review' | 'design-review' : command.verb!;
       const reserved = createRun(sessionDir, runKind);
       const config = { ...loaded.config };
@@ -218,7 +225,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           return delegate.nativeSubagentsOnly === true ? id === orchestrator : SPECS[id].modes.some((mode) => discovery.resolve(id, mode.id).status === 'path');
         }));
       }
-      const runStarted: RunStartedEvent = { type: 'RUN_STARTED', verb: command.verb!, argument, level, levelSource: command.flags['level-source'] as 'explicit' | 'classified', pins: pins ? policy.pins(pins) : provider ? policy.pins(`(${provider})`) : null, orchestrator, orchestratorModel, overrides, config, repo: { root: repo } };
+      const runStarted: RunStartedEvent = { type: 'RUN_STARTED', verb: command.verb!, argument, level, levelSource: command.flags['level-source'] as 'explicit' | 'classified', pins: pins ? policy.pins(pins) : provider ? policy.pins(`(${provider})`) : null, orchestrator, orchestratorModel, overrides, config, repo: { root: repo }, ...(specCandidate ? { specCandidate } : {}) };
       const result = await start({ runDir: reserved.dir, reservedRun: true, runStarted, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, runRel: path.relative(repo, reserved.dir).replaceAll('\\', '/'), ...diagnosticOptions });
       if (result.frame) emit(finish(result.frame, reserved.dir)); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
     }

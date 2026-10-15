@@ -53,3 +53,10 @@ test('cli-start-review-context: start review accepts --context and non-review ve
   }
 });
 
+test('cli: spec flag is accepted for work verbs and rejected for ask', () => {
+  for (const verb of ['design', 'plan', 'review', 'implement']) {
+    assert.equal(parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--spec', 'x.spec.md', '--', 'target'], policy).flags['spec'], 'x.spec.md');
+  }
+  assert.throws(() => parseCommand([...start, '--spec', 'x.spec.md', '--', 'question'], policy), (error: unknown) => error instanceof UsageError && /--spec is for design, plan, review, or implement/.test(error.message));
+  assert.equal(parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'intent', '--', 'main..HEAD'], policy).flags['context'], 'intent');
+});

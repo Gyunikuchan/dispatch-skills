@@ -3,10 +3,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/domain/plan.ts';
 import { parseDesign } from '../../skills/dispatch/scripts/domain/design.ts';
+import { parseSpec } from '../../skills/dispatch/scripts/domain/spec.ts';
 
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
-  'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md',
+  'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
   'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md', 'quality-bar.md',
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
@@ -63,6 +64,16 @@ test('readable plan template: hierarchy, quote paragraphs and conditional contra
   assert.deepEqual(brief.task.constraints, ['Keep API.']);
   assert.match(brief.changes[1]!.note, /Invariants:.*exception: keep deprecated flag/);
   assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
+});
+
+test('templates: spec template skeleton lints at low and medium', () => {
+  const template = readFileSync(new URL('spec.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const source = template.split('````markdown\n')[1]!.split('````')[0]!
+    .replace('### REQ-<n> — <title>', '### REQ-1 — Concrete title').replace('### DEC-<n> — <title>', '### DEC-1 — Concrete title');
+  for (const level of ['low', 'medium'] as const) {
+    const result = parseSpec(source, { level });
+    assert.ok(result.ok, `${level}: ${JSON.stringify(result)}`);
+  }
 });
 
 test('templates: every kept template exists and none are extra', () => {

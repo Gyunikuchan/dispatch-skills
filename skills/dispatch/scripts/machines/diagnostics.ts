@@ -44,6 +44,7 @@ function design(state: DesignState, key: string): Phase[] {
 export function diagnosticPhases(state: RootState): Phase[] {
   switch (state.tag) {
     case 'booting': return [];
+    case 'spec': return state.parked ? diagnosticPhases({ tag: state.parked.verb, run: state.run, child: state.parked.state } as RootState) : [];
     case 'ask': return [{ key: 'ask', name: 'ask' }];
     case 'plan': return plan(state.child, 'plan');
     case 'implement': return implement(state.child, 'implementation');

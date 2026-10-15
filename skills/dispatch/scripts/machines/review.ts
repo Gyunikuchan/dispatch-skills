@@ -1,7 +1,7 @@
 // Reusable review sub-machine (spec §5.5, §7): prepare → wave → [native] → rule → [fix → fix-verify] → next?.
 // Pure reducer; rounds policy lives in policy/rounds.ts. Parents embed `ReviewState` and forward events via `stepReview`.
 
-import type { ChangeNotice, ReviewManifestRef, Effect, Event, FindingId, HostEvent, Level, Machine, ReviewObservation, ReviewUse, RunStartedEvent } from '../core/types.ts';
+import type { ChangeNotice, ReviewManifestRef, Effect, Event, FindingId, HostEvent, Level, Machine, ReviewObservation, ReviewUse, RunStartedEvent, SpecIdentity } from '../core/types.ts';
 import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
 import { statusLabel } from '../domain/render.ts';
@@ -64,14 +64,14 @@ export function resolveSlots(run: RunStartedEvent, phase: 'plan-review' | 'code-
 
 export const phaseOf = (kind: ReviewKind): 'plan-review' | 'code-review' => (kind === 'code' ? 'code-review' : 'plan-review');
 
-export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, target: string): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
+export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, target: string, governingSpec: SpecIdentity | null = null): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
   const slots = resolveSlots(run, phaseOf(kind));
   if (!slots.ok) return slots;
   const context = isString(run.overrides['context']) ? run.overrides['context'] : (run.verb === 'review' && kind === 'code' ? null : run.argument);
   const sessionDir = isString(run.overrides['sessionDir']) ? run.overrides['sessionDir'] : undefined;
   const governing = isRecord(run.overrides['governing']) ? run.overrides['governing'] as ReviewSpec['governing'] : undefined;
   const writer = writerConfig(run.config, run.orchestrator, run.level);
-  return { ok: true, spec: { kind, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, writer: writer.ok ? writer.value : null, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
+  return { ok: true, spec: { kind, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, writer: writer.ok ? writer.value : null, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}), ...(governingSpec ? { governingSpec } : {}) } };
 }
 
 // SECTION: Waves (shared with ask)
@@ -688,6 +688,9 @@ export function stepReview(state: ReviewState, event: Event): S {
     if (verified) { delete c.fixCandidate; delete c.fixCandidateRef; }
     return stepReviewUnchecked({ ...before, c } as typeof before, state.pending);
   }
+  if (event.type === 'SPEC_SETTLED' && (state.tag === 'rule' || state.tag === 'decide-needs-user' || state.tag === 'decide-escalation' || state.tag === 'decide-opt-in')) {
+    return respec(state.c, { path: event.path, hash: event.hash });
+  }
   if (event.type === 'REVIEW_USE') return 'c' in state && validateReview(state, event) === null ? stay({ ...state, c: useReview(state.c, event) } as ReviewState) : stay(state);
   const manifest = 'c' in state ? state.c.fixCandidate ?? state.c.targetManifest ?? state.c.priorManifest : undefined;
   const consumes = (state.tag === 'prepare' && event.type === 'REVIEW_PREPARED' && answers(event, state.c.effectId))
@@ -709,6 +712,29 @@ export function stepReview(state: ReviewState, event: Event): S {
     return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, manifestRef: c.fixCandidate ? c.fixCandidateRef : c.targetManifest ? c.targetManifestRef : c.priorManifestRef, allowedPaths }] };
   }
   return stepReviewUnchecked(state, event);
+}
+
+/**
+ * Supersedes the round's unruled findings and re-prepares a full-scope round against the revised spec.
+ * A delta or disputes-only scope would skip an unchanged target, so it would never be checked against the new intent.
+ * NOTE: the next round number keeps finding IDs unique; the cap grows by one so the re-review costs no round.
+ */
+function respec(c: ReviewCtx, governingSpec: SpecIdentity): S {
+  const findings = c.findings.map((finding): ReviewFinding => finding.round === c.round && (finding.status === 'open' || finding.status === 'needs-user') ? { ...finding, status: 'superseded' } : finding);
+  const pendingSpec = { ...c.spec, cap: c.spec.cap + 1, governingSpec } as ReviewSpec;
+  return prepare({ ...c, findings, pendingSpec }, c.round + 1, 'full', c.carried);
+}
+
+/**
+ * Rebinds a retained nested review to a revised governing spec. A round awaiting rulings or decisions supersedes
+ * and re-prepares as SPEC_SETTLED does; any other state carries the new identity into its next prepare.
+ */
+export function rebindReviewSpec(state: ReviewState, governingSpec: SpecIdentity): S {
+  if (!('c' in state)) return stay(state);
+  if (state.tag === 'rule' || state.tag === 'decide-needs-user' || state.tag === 'decide-escalation' || state.tag === 'decide-opt-in') return respec(state.c, governingSpec);
+  const rebind = (c: ReviewCtx): ReviewCtx => ({ ...c, spec: { ...c.spec, governingSpec } as ReviewSpec, ...(c.pendingSpec ? { pendingSpec: { ...c.pendingSpec, governingSpec } as ReviewSpec } : {}) });
+  if (state.tag !== 'target-check') return stay({ ...state, c: rebind(state.c) } as ReviewState);
+  return stay({ ...state, c: rebind(state.c), before: 'c' in state.before ? { ...state.before, c: rebind(state.before.c) } as typeof state.before : state.before });
 }
 
 /** Records one observation per resulting revision; it changes no finding, ruling, or round. */
@@ -941,6 +967,7 @@ export const reviewTransitions = [
   { from: 'decide-escalation', on: 'DECISION', to: 'escalated' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'fix' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'settled' },
+  ...['rule', 'decide-needs-user', 'decide-escalation', 'decide-opt-in'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'prepare' })),
 ] as const;
 
 /** Standalone reviewer over a code target (root builds specs itself; this machine serves tier-1 tests and parity). */

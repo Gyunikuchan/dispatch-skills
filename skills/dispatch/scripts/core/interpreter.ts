@@ -20,7 +20,8 @@ import type {
 } from './types.ts';
 import { HOST_EVENT_SHAPES, validateHostEvent, validateExecutionUpdate, validateRecoveryDisposition } from './validate.ts';
 import { probeEffect, descriptorHash, assertRecoveredResults, publishEffectResult } from './effect-recovery.ts';
-import type { EffectRecoveryDisposition } from './types.ts';
+import type { EffectRecoveryDisposition, SpecApproval } from './types.ts';
+import { pathIdentity } from '../domain/path-identity.ts';
 import { applyExecutionConfig, executionDelta } from '../domain/execution-config.ts';
 import { validateConfig } from '../lib/config.ts';
 import { diagnosticPhases } from '../machines/diagnostics.ts';
@@ -648,10 +649,6 @@ export interface StartOptions<S> extends Omit<SendOptions<S>, 'rawEvent' | 'dryR
   runStarted: RunStartedEvent;
   reservedRun?: boolean;
 }
-const designPathIdentity = (file: string) => {
-  const normalized = path.resolve(file.replace(/\\/g, '/')).replace(/\\/g, '/');
-  return path.sep === '\\' ? normalized.toLowerCase() : normalized;
-};
 const runSession = (runDir: string): string | undefined => {
   const root = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
   return root === runDir ? undefined : root;
@@ -659,6 +656,25 @@ const runSession = (runDir: string): string | undefined => {
 /** Historical discovery skips legacy-layout runs, so they cannot block new runs in the same session. */
 function foldCurrent<S>(machine: Machine<S>, ports: Ports, runDir: string, read: JournalRead): Folder<S> | null {
   try { return loadExecution(machine, ports, runDir, read).folder; } catch (error) { if (error instanceof LayoutUnsupported) return null; throw error; }
+}
+/** User spec approvals from current-protocol runs in the session, de-duplicated by hash. */
+function journalSpecApprovals(ports: Ports, runsDir: string): SpecApproval[] {
+  if (!ports.fs.exists(runsDir)) return [];
+  const byHash = new Map<string, SpecApproval>();
+  for (const file of ports.fs.listFiles(runsDir).sort()) {
+    if (path.basename(file) !== JOURNAL_FILE) continue;
+    let read: JournalRead;
+    // Journals from other layouts or revisions never block a new run.
+    try { read = readJournal(ports, path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file))); } catch { continue; }
+    if (read.started?.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) continue;
+    for (const record of read.records) {
+      if (record.type !== 'DECISION' || record.data?.['kind'] !== 'spec-approval') continue;
+      const answer = record.data['answer'] as Record<string, unknown> | null;
+      if (!answer || answer['by'] !== 'user' || typeof answer['quote'] !== 'string' || typeof answer['hash'] !== 'string' || byHash.has(answer['hash'])) continue;
+      byHash.set(answer['hash'], { by: 'user', quote: answer['quote'], hash: answer['hash'] });
+    }
+  }
+  return [...byHash.values()];
 }
 function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
   if (!ports.fs.exists(runsDir)) return undefined;
@@ -678,7 +694,7 @@ function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machin
     const binding = (completion as Record<string, unknown>)['governedDesign'];
     if (typeof binding !== 'object' || binding === null) continue;
     const governed = binding as Record<string, unknown>;
-    if (typeof governed['path'] !== 'string' || designPathIdentity(governed['path']) !== designPathIdentity(identity.path) || governed['revision'] !== identity.revision) continue;
+    if (typeof governed['path'] !== 'string' || pathIdentity(governed['path'], process.cwd()) !== pathIdentity(identity.path, process.cwd()) || governed['revision'] !== identity.revision) continue;
     const approval = (completion as Record<string, unknown>)['approval'];
     if (typeof approval !== 'object' || approval === null) continue;
     const a = approval as Record<string, unknown>;
@@ -698,7 +714,7 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
     const read = readJournal(ports, runDir);
     const root = runSession(runDir) ?? runDir;
     const started = read.started ? restoreJournalPaths(read.started, root) : undefined;
-    if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
+    if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || pathIdentity(started.data['argument'], process.cwd()) !== pathIdentity(identity.path, process.cwd())) continue;
     const folder = foldCurrent(machine, ports, runDir, read);
     if (!folder) continue;
     const finished = machine.awaitOf(folder.state) === 'done';
@@ -748,7 +764,7 @@ export function findSettledPlan<S>(
       : typeof authoredLine?.data['path'] === 'string'
       ? authoredLine.data['path'] as string
       : planArg;
-    if (designPathIdentity(path.resolve(repoRoot, planPath)) !== designPathIdentity(path.resolve(repoRoot, identity.path))) continue;
+    if (pathIdentity(planPath, repoRoot) !== pathIdentity(identity.path, repoRoot)) continue;
     const folder = foldCurrent(machine, ports, runDir, read);
     if (!folder) continue;
     if (machine.awaitOf(folder.state) !== 'done') continue;
@@ -768,7 +784,10 @@ export function findSettledPlan<S>(
 /** Creates the run folder exclusively (ADR 0003), appends `RUN_STARTED`, and enters the send loop. */
 export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
   const { ports, runDir } = options;
-  const { designApproval: _untrustedApproval, ...requested } = options.runStarted;
+  const { designApproval: _untrustedApproval, specApprovals: _untrustedSpecApprovals, ...accepted } = options.runStarted;
+  // An ask run has no governing spec, so a caller-supplied candidate is never journaled.
+  const { specCandidate: _askCandidate, ...askRequested } = accepted;
+  const requested = accepted.verb === 'ask' ? askRequested : accepted;
   let designApproval: RunStartedEvent['designApproval'];
   const revision = requested.overrides['designRevision'];
   if (requested.verb === 'implement' && /\.design\.md$/i.test(requested.argument) && typeof revision === 'string') {
@@ -785,7 +804,9 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
     if (!ports.fs.exists(runDir) || ports.fs.listFiles(runDir).length) throw new EngineFault('Reserved run must be an empty directory');
   } else ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
-  const { type, ...data } = { ...requested, protocolRevision: JOURNAL_PROTOCOL_REVISION, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
+  // Spec approvals are trusted only from prior journals in this session, never from the caller.
+  const specApprovals = requested.verb === 'ask' ? [] : journalSpecApprovals(ports, path.dirname(runDir));
+  const { type, ...data } = { ...requested, protocolRevision: JOURNAL_PROTOCOL_REVISION, ...(designApproval ? { designApproval } : {}), ...(specApprovals.length ? { specApprovals } : {}), overrides: { ...requested.overrides, sessionDir } };
   const stored = runSession(runDir) ? storeSessionPaths(data, sessionDir) : data;
   const line: JournalLine = { seq: 1, v: 1, at: new Date(ports.clock.now()).toISOString(), type, data: stored };
   const folder = createFolder(options.machine);

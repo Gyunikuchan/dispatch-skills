@@ -17,6 +17,8 @@ import { hash as designHash, design, run as designRun, approval as designApprova
 import { beginDesign, stepDesign, transitions as designTransitions, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { beginDesignRevision, stepDesignRevision, transitions as designRevisionTransitions, type DesignRevisionState } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { beginReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { specMachine } from '../../../skills/dispatch/scripts/machines/spec.ts';
+import { SPEC_SOURCE, specApproval, specHash, specParsed, withSpec } from '../../helpers/spec-fixture.ts';
 
 // SECTION: Scenario vocabulary (each step answers the newest open effect)
 
@@ -55,6 +57,16 @@ const handed: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), 
 const authored: Step = { type: 'AUTHORED', path: 'x.plan.md' };
 const plan = { argument: 'x.plan.md', overrides: { kind: 'plan' } };
 const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(), prepared, wave([f(2)])];
+const REVISED_SPEC = `${SPEC_SOURCE}\nRevised.\n`;
+const specSettled: Step = (effect) => specParsed(id(effect));
+const specRevisedSettled: Step = (effect) => specParsed(id(effect), 'fixture.spec.md', REVISED_SPEC);
+const specRevised: Step = { type: 'SPEC_REVISED', path: 'fixture.spec.md' };
+const specSettledEvent: Event = { type: 'SPEC_SETTLED', path: 'fixture.spec.md', hash: specHash(REVISED_SPEC) };
+/** Root scenarios settle the governing spec before the child boots; ask runs have none. */
+const governed = (scenario: readonly Step[]): readonly Step[] => {
+  const [first, ...rest] = scenario;
+  return typeof first === 'object' && first.type === 'RUN_STARTED' && first.verb !== 'ask' && !('specCandidate' in first) ? [withSpec(first), specSettled, ...rest] : scenario;
+};
 
 const IMPLEMENT_HASH = `sha256:${'a'.repeat(64)}`;
 const implementPlan = (withEvidence = false) => ({
@@ -154,7 +166,8 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[], bindReview = fal
   return { triples, ids };
 }
 
-function parity<S>(machine: Machine<S>, scenarios: readonly (readonly Step[])[], direct: readonly (readonly [S, Event])[] = []): void {
+function parity<S>(machine: Machine<S>, scenarios0: readonly (readonly Step[])[], direct: readonly (readonly [S, Event])[] = [], transform: (scenario: readonly Step[]) => readonly Step[] = (scenario) => scenario): void {
+  const scenarios = scenarios0.map(transform);
   const observed = new Set<string>();
   for (const scenario of scenarios) for (const triple of replay(machine, scenario).triples) observed.add(triple);
   if (machine === reviewMachine as unknown as Machine<S>) for (const scenario of scenarios) for (const triple of replay(machine, scenario, true).triples) observed.add(triple);
@@ -193,6 +206,10 @@ test('review-target transitions table matches step', () => {
     { tag: 'native', c: observedCtx, slots: [] }, { tag: 'rule', c: observedCtx }, { tag: 'fix', c: observedCtx, clusters: [cluster], pass: 'main', defects: [] },
     { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } }, { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
   ] as ReviewState[]).map((state) => [state, use] as const);
+  const respecs: (readonly [ReviewState, Event])[] = ([
+    { tag: 'rule', c: observedCtx }, { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } },
+    { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
+  ] as ReviewState[]).map((state) => [state, specSettledEvent] as const);
   const emptyParent: ReviewState = { tag: 'prepare', c: { ...checking.state.c, effectId: 'prepare' } };
   const emptyPrepared = reviewMachine.step(emptyParent, { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: true }, promptPaths: {} });
   if (emptyPrepared.state.tag !== 'target-check') throw new Error('empty target check');
@@ -226,7 +243,7 @@ test('review-target transitions table matches step', () => {
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
   ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }],
-    [checking.state, changed], ...selections,
+    [checking.state, changed], ...selections, ...respecs,
     [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
 });
 
@@ -246,6 +263,26 @@ test('plan transitions table matches step', () => {
     [run('plan', {}, 1), authored, parsed(), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, parsed()],
     [run('plan', {}, 1), authored, parsed(), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', [])],
     [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
+  ], planRespecs());
+});
+
+function planRespecs() {
+  const author = planMachine.step(planMachine.initial(), run('plan'));
+  const parsing = planMachine.step(author.state, authored as Event);
+  const review = planMachine.step(parsing.state, (parsed() as (effect: Effect | undefined) => Event)(parsing.effects[0]));
+  return [author.state, parsing.state, review.state].map((state) => [state, specSettledEvent] as const);
+}
+
+test('spec transitions table matches step', () => {
+  const reading = { tag: 'reading', c: { path: 'fixture.spec.md', level: 'low', approvals: [], counters: {} }, effectId: 'spec.parse-artifact.1' } as const;
+  const approval = { tag: 'approval', c: reading.c, identity: { path: 'fixture.spec.md', hash: specHash() } } as const;
+  parity(specMachine, [[{ type: 'AUTHORED', path: 'dispatch.spec.md' }]], [
+    [reading, specParsed('spec.parse-artifact.1')],
+    [reading, { ...specParsed('spec.parse-artifact.1'), defects: [{ code: 'missing-section', message: 'm' }] } as Event],
+    [reading, { type: 'EFFECT_FAILED', effectId: 'spec.parse-artifact.1', cls: 'io', detail: 'fixture.spec.md not found' }],
+    [reading, { type: 'EFFECT_FAILED', effectId: 'spec.parse-artifact.1', cls: 'io', detail: 'permission denied' }],
+    [approval, specApproval()], [approval, { type: 'DECISION', kind: 'spec-approval', answer: 'stop' }],
+    [approval, { type: 'SPEC_REVISED', path: 'fixture.spec.md' }],
   ]);
 });
 
@@ -255,6 +292,12 @@ test('root transitions table matches step', () => {
     ...(['escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
   ];
   parity(rootMachine, [
+    ...rootSpecScenarios(),
+  ], terminalRevisionEvents, governed);
+});
+
+function rootSpecScenarios(): readonly (readonly Step[])[] {
+  return [
     [run('ask', badPins)],
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
     // An enabled handoff enters retro, and RETRO completes the run.
@@ -272,8 +315,22 @@ test('root transitions table matches step', () => {
     [run('review'), ...regression, decide('escalation', 'stop')],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, verified()],
     [run('review', { ...plan }, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, parsed()],
-  ], terminalRevisionEvents);
-});
+    // Spec stage: authored without a candidate, gated at medium, declined, unreadable, and revised.
+    [run('plan', { specCandidate: null }), (_effect, state) => ({ type: 'AUTHORED', path: String((state as { stage: { c: { path: string } } }).stage.c.path) }), specSettled],
+    [run('plan', { specCandidate: 'fixture.spec.md', level: 'medium' }), specSettled, specApproval()],
+    [run('plan', { specCandidate: 'fixture.spec.md', level: 'medium' }), specSettled, { type: 'DECISION', kind: 'spec-approval', answer: 'stop' }],
+    [run('plan', { specCandidate: 'fixture.spec.md' }), (effect) => ({ type: 'EFFECT_FAILED', effectId: id(effect), cls: 'io', detail: 'permission denied' })],
+    [run('plan', { specCandidate: 'fixture.spec.md' }), specSettled, specRevised, specRevisedSettled],
+    [run('plan', { specCandidate: 'fixture.spec.md' }), specSettled, specRevised, specSettled],
+    [run('design', { specCandidate: 'fixture.spec.md' }), specSettled, specRevised, specRevisedSettled],
+    [run('review', { specCandidate: 'fixture.spec.md' }), specSettled, prepared, wave([f(1)]), specRevised, specRevisedSettled],
+    [run('implement', { specCandidate: 'fixture.spec.md' }), specSettled, implementSnapshot, failed, specRevised, specRevisedSettled],
+    // Approval resumes the parked design or objective-implement author.
+    [run('design', { specCandidate: 'fixture.spec.md', level: 'medium' }), specSettled, specApproval()],
+    [run('implement', { specCandidate: 'fixture.spec.md', level: 'medium', argument: 'src/a.ts' }), specSettled, implementSnapshot,
+      (effect) => ({ type: 'EFFECT_FAILED', effectId: id(effect), cls: 'io', detail: 'plan not found' }), specApproval()],
+  ];
+}
 
 test('implementation transition declarations include every observed reducer boundary', () => {
   const scenarios: readonly (readonly Step[])[] = [
@@ -310,7 +367,7 @@ test('level-journal: machine parity includes classification, integration-conflic
 });
 
 test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a second review round', () => {
-  const journal = replay(rootMachine, [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([]), handed]);
+  const journal = replay(rootMachine, [withSpec(run('plan')), specSettled, authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([]), handed]);
   assert.ok(journal.ids.includes('plan.review.prepare-review.2'), journal.ids.join(', '));
   for (const effectId of journal.ids) assert.match(effectId, EFFECT_ID_PATTERN);
   assert.equal(new Set(journal.ids).size, journal.ids.length);
@@ -484,6 +541,10 @@ test('every design and design revision transition row has a reducer fixture', ()
   if (integrationScopeChild.tag !== 'scope-adjudication') throw new Error('integration revision adjudication');
   const integrationRevisionParent: DesignState = { tag: 'revision', c: settledIntegration, child: integrationScopeChild, parent: { ...integrated, c: settledIntegration } };
   extra.push([integrationRevisionParent, { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'approve', rationale: 'The revised acceptance detail resolves the integration concern.' } }]);
+  const respec = (state: DesignState) => extra.push([state, specSettledEvent]);
+  respec({ tag: 'author', c, defects: [] }); respec(parsing); respec(dReview({ tag: 'rule', c: rc })); respec(designApproval());
+  respec({ tag: 'approval', c: { ...designApproval('implement').c, baseline: 'a'.repeat(40) } }); respec(activeParent); respec(integrated);
+  respec({ tag: 'revision', c: active.c, child: rStart });
   const all = [...observed, ...extra.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesign(state, event).state.tag}`)];
   assert.deepEqual(new Set(all), new Set(designTransitions.map((row) => `${row.from} --${row.on}--> ${row.to}`)));
 });

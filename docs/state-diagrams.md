@@ -15,16 +15,15 @@ stateDiagram-v2
   state "plan" as S6
   state "retro" as S7
   state "review" as S8
+  state "spec" as S9
   S0 --> S4: EFFECT_FAILED
   S0 --> S4: WAVE_DONE
   S1 --> S0: RUN_STARTED
-  S1 --> S2: RUN_STARTED
   S1 --> S4: RUN_STARTED
-  S1 --> S5: RUN_STARTED
-  S1 --> S6: RUN_STARTED
-  S1 --> S8: RUN_STARTED
+  S1 --> S9: RUN_STARTED
   S2 --> S4: DECISION
   S2 --> S4: EFFECT_FAILED
+  S2 --> S9: SPEC_REVISED
   S4 --> S3: EFFECT_FAILED
   S4 --> S3: HANDOFF_DONE
   S4 --> S7: HANDOFF_DONE
@@ -32,11 +31,14 @@ stateDiagram-v2
   S5 --> S4: RECOVERY_ASSESSED
   S5 --> S4: SNAPSHOT
   S5 --> S4: VERIFY_DONE
+  S5 --> S9: EFFECT_FAILED
+  S5 --> S9: SPEC_REVISED
   S6 --> S4: ARTIFACT_PARSED
   S6 --> S4: DECISION
   S6 --> S4: EFFECT_FAILED
   S6 --> S4: RULINGS
   S6 --> S4: WAVE_DONE
+  S6 --> S9: SPEC_REVISED
   S7 --> S3: RETRO
   S8 --> S4: ARTIFACT_PARSED
   S8 --> S4: DECISION
@@ -45,6 +47,16 @@ stateDiagram-v2
   S8 --> S4: RULINGS
   S8 --> S4: VERIFY_DONE
   S8 --> S4: WAVE_DONE
+  S8 --> S9: SPEC_REVISED
+  S9 --> S2: ARTIFACT_PARSED
+  S9 --> S2: DECISION
+  S9 --> S4: DECISION
+  S9 --> S4: EFFECT_FAILED
+  S9 --> S5: ARTIFACT_PARSED
+  S9 --> S5: DECISION
+  S9 --> S6: ARTIFACT_PARSED
+  S9 --> S6: DECISION
+  S9 --> S8: ARTIFACT_PARSED
 ```
 
 ## design
@@ -62,12 +74,15 @@ stateDiagram-v2
   state "review" as S8
   state "revision" as S9
   state "stopped" as S10
+  S0 --> S1: SPEC_SETTLED
   S0 --> S2: DECISION
   S0 --> S3: DECISION
   S0 --> S4: DECISION
   S0 --> S5: DECISION
   S0 --> S6: DECISION
   S0 --> S9: REVISE
+  S0 --> S9: SPEC_SETTLED
+  S1 --> S1: SPEC_SETTLED
   S1 --> S7: AUTHORED
   S1 --> S9: REVISE
   S2 --> S4: EFFECT_FAILED
@@ -77,6 +92,7 @@ stateDiagram-v2
   S5 --> S10: SNAPSHOT
   S5 --> S6: VERIFY_DONE
   S5 --> S9: REVISE
+  S5 --> S9: SPEC_SETTLED
   S6 --> S3: DECISION
   S6 --> S3: REVIEW_PREPARED
   S6 --> S3: RULINGS
@@ -91,11 +107,14 @@ stateDiagram-v2
   S6 --> S9: DECISION
   S6 --> S9: REVISE
   S6 --> S9: RULINGS
+  S6 --> S9: SPEC_SETTLED
   S7 --> S0: ARTIFACT_PARSED
   S7 --> S1: ARTIFACT_PARSED
+  S7 --> S1: SPEC_SETTLED
   S7 --> S2: ARTIFACT_PARSED
   S7 --> S4: EFFECT_FAILED
   S7 --> S8: ARTIFACT_PARSED
+  S8 --> S1: SPEC_SETTLED
   S8 --> S4: DECISION
   S8 --> S4: EFFECT_FAILED
   S8 --> S4: REVIEW_PREPARED
@@ -116,6 +135,7 @@ stateDiagram-v2
   S9 --> S8: ARTIFACT_PARSED
   S9 --> S9: ARTIFACT_PARSED
   S9 --> S9: DECISION
+  S9 --> S9: SPEC_SETTLED
 ```
 
 ## plan
@@ -129,13 +149,16 @@ stateDiagram-v2
   state "failed" as S4
   state "parsing" as S5
   state "review" as S6
+  S0 --> S0: SPEC_SETTLED
   S0 --> S5: AUTHORED
   S1 --> S0: RUN_STARTED
   S1 --> S4: RUN_STARTED
   S5 --> S0: ARTIFACT_PARSED
+  S5 --> S0: SPEC_SETTLED
   S5 --> S2: ARTIFACT_PARSED
   S5 --> S4: EFFECT_FAILED
   S5 --> S6: ARTIFACT_PARSED
+  S6 --> S0: SPEC_SETTLED
   S6 --> S2: ARTIFACT_PARSED
   S6 --> S2: DECISION
   S6 --> S2: RULINGS
@@ -167,6 +190,7 @@ stateDiagram-v2
   S0 --> S10: RUN_STARTED
   S0 --> S13: RUN_STARTED
   S0 --> S6: RUN_STARTED
+  S1 --> S10: SPEC_SETTLED
   S1 --> S1: REVIEW_USE
   S1 --> S5: DECISION
   S10 --> S14: REVIEW_PREPARED
@@ -174,6 +198,7 @@ stateDiagram-v2
   S10 --> S4: REVIEW_PREPARED
   S10 --> S6: EFFECT_FAILED
   S11 --> S10: RULINGS
+  S11 --> S10: SPEC_SETTLED
   S11 --> S11: REVIEW_USE
   S11 --> S12: RULINGS
   S11 --> S14: RULINGS
@@ -202,11 +227,13 @@ stateDiagram-v2
   S15 --> S6: EFFECT_FAILED
   S15 --> S9: WAVE_DONE
   S2 --> S10: DECISION
+  S2 --> S10: SPEC_SETTLED
   S2 --> S12: DECISION
   S2 --> S14: DECISION
   S2 --> S2: REVIEW_USE
   S2 --> S3: DECISION
   S2 --> S7: DECISION
+  S3 --> S10: SPEC_SETTLED
   S3 --> S12: DECISION
   S3 --> S14: DECISION
   S3 --> S3: REVIEW_USE
@@ -284,6 +311,7 @@ stateDiagram-v2
   S0 --> S28: DECISION
   S0 --> S30: DECISION
   S0 --> S37: DECISION
+  S0 --> S37: SPEC_SETTLED
   S0 --> S39: DECISION
   S0 --> S8: AMEND
   S0 --> S8: AUTHORED
@@ -315,6 +343,7 @@ stateDiagram-v2
   S1 --> S43: RECOVERY_ASSESSED
   S1 --> S9: RECOVERY_ASSESSED
   S11 --> S37: DECISION
+  S11 --> S37: SPEC_SETTLED
   S11 --> S8: AMEND
   S11 --> S8: AUTHORED
   S11 --> S8: DECISION
@@ -339,11 +368,13 @@ stateDiagram-v2
   S13 --> S33: DECISION
   S13 --> S34: DECISION
   S13 --> S37: DECISION
+  S13 --> S37: SPEC_SETTLED
   S13 --> S39: DECISION
   S13 --> S8: DECISION
   S13 --> S9: DECISION
   S14 --> S10: EVIDENCE
   S14 --> S14: EVIDENCE
+  S14 --> S37: SPEC_SETTLED
   S14 --> S8: AMEND
   S14 --> S8: AUTHORED
   S14 --> S8: DECISION
@@ -364,6 +395,7 @@ stateDiagram-v2
   S16 --> S34: DECISION
   S16 --> S35: AMEND
   S16 --> S37: DECISION
+  S16 --> S37: SPEC_SETTLED
   S16 --> S38: AMEND
   S16 --> S39: AMEND
   S16 --> S39: DECISION
@@ -394,7 +426,9 @@ stateDiagram-v2
   S19 --> S18: SNAPSHOT
   S19 --> S1: SNAPSHOT
   S19 --> S39: SNAPSHOT
+  S2 --> S2: SPEC_SETTLED
   S2 --> S31: AUTHORED
+  S2 --> S37: SPEC_SETTLED
   S2 --> S8: AMEND
   S2 --> S8: AUTHORED
   S2 --> S8: DECISION
@@ -447,6 +481,7 @@ stateDiagram-v2
   S27 --> S27: AMEND
   S27 --> S32: REPLACE_PLAN
   S27 --> S35: AMEND
+  S27 --> S37: SPEC_SETTLED
   S27 --> S38: AMEND
   S27 --> S39: AMEND
   S27 --> S39: DECISION
@@ -465,6 +500,7 @@ stateDiagram-v2
   S27 --> S8: REQUEST
   S27 --> S8: RULINGS
   S27 --> S8: WRITE_RECEIPT
+  S28 --> S37: SPEC_SETTLED
   S28 --> S8: AMEND
   S28 --> S8: AUTHORED
   S28 --> S8: DECISION
@@ -475,6 +511,7 @@ stateDiagram-v2
   S28 --> S8: REQUEST
   S28 --> S8: RULINGS
   S28 --> S8: WRITE_RECEIPT
+  S29 --> S37: SPEC_SETTLED
   S29 --> S8: AMEND
   S29 --> S8: AUTHORED
   S29 --> S8: DECISION
@@ -489,6 +526,7 @@ stateDiagram-v2
   S3 --> S6: VERIFY_DONE
   S30 --> S28: DECISION
   S30 --> S37: DECISION
+  S30 --> S37: SPEC_SETTLED
   S30 --> S39: DECISION
   S30 --> S8: AMEND
   S30 --> S8: AUTHORED
@@ -504,6 +542,7 @@ stateDiagram-v2
   S31 --> S17: EFFECT_FAILED
   S31 --> S2: ARTIFACT_PARSED
   S31 --> S2: EFFECT_FAILED
+  S31 --> S2: SPEC_SETTLED
   S31 --> S33: ARTIFACT_PARSED
   S31 --> S5: ARTIFACT_PARSED
   S32 --> S16: ARTIFACT_PARSED
@@ -532,6 +571,7 @@ stateDiagram-v2
   S33 --> S31: VERIFY_DONE
   S33 --> S31: WAVE_DONE
   S33 --> S33: FIXES_APPLIED
+  S33 --> S37: SPEC_SETTLED
   S33 --> S8: AMEND
   S33 --> S8: AUTHORED
   S33 --> S8: DECISION
@@ -554,6 +594,7 @@ stateDiagram-v2
   S35 --> S32: REPLACE_PLAN
   S35 --> S35: AMEND
   S35 --> S35: DECISION
+  S35 --> S37: SPEC_SETTLED
   S35 --> S38: AMEND
   S35 --> S38: DECISION
   S35 --> S39: AMEND
@@ -576,6 +617,7 @@ stateDiagram-v2
   S35 --> S8: WRITE_RECEIPT
   S36 --> S15: EFFECT_FAILED
   S36 --> S2: SNAPSHOT
+  S36 --> S2: SPEC_SETTLED
   S36 --> S31: SNAPSHOT
   S38 --> S17: BRIEF_READY
   S38 --> S17: EFFECT_FAILED
@@ -611,6 +653,7 @@ stateDiagram-v2
   S4 --> S0: DECISION
   S4 --> S28: DECISION
   S4 --> S37: DECISION
+  S4 --> S37: SPEC_SETTLED
   S4 --> S8: AMEND
   S4 --> S8: AUTHORED
   S4 --> S8: DECISION
@@ -722,6 +765,7 @@ stateDiagram-v2
   S9 --> S34: RULINGS
   S9 --> S34: VERIFY_DONE
   S9 --> S34: WAVE_DONE
+  S9 --> S37: SPEC_SETTLED
   S9 --> S8: AMEND
   S9 --> S8: AUTHORED
   S9 --> S8: DECISION

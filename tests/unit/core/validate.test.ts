@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { JOURNAL_PROTOCOL_REVISION } from '../../../skills/dispatch/scripts/core/types.ts';
 import { arr, AWAIT_ACCEPTS, lit, num, obj, oneOf, opt, rec, str, validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
 
 const IDENTITY = { task: 'T1', attempt: 1, signature: 'sig', handle: 'writer-T1' } as const;
@@ -17,7 +18,7 @@ test('combinators accept matching values and name the failing path', () => {
 
 test('an event type the current await does not accept names the expected types', () => {
   assert.deepEqual(validateHostEvent('author', { type: 'RULINGS', rulings: {} }),
-    { ok: false, error: 'event.type: RULINGS is not accepted at await author; expected AUTHORED|REVISE' });
+    { ok: false, error: 'event.type: RULINGS is not accepted at await author; expected AUTHORED|REVISE|SPEC_REVISED' });
   assert.deepEqual(validateHostEvent('done', { type: 'AUTHORED', path: 'p' }),
     { ok: false, error: 'event.type: AUTHORED is not accepted at await done; expected no event' });
 });
@@ -30,6 +31,7 @@ test('unknown event types and non-objects are rejected', () => {
 test('shape guards cover every accepted host event', () => {
   const samples = [
     ['author', { type: 'AUTHORED', path: 'plan.md' }],
+    ['author', { type: 'SPEC_REVISED', path: 's.spec.md' }],
     ['native', { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]' }] }],
     ['rule', { type: 'RULINGS', rulings: { F1: { ruling: 'accept' } } }],
     ['fix', { type: 'FIXES_APPLIED', clusters: [] }],
@@ -167,7 +169,24 @@ test('write await accepts receipt request amend', () => {
 });
 
 test('decide await accepts amend', () => {
-  assert.deepEqual(AWAIT_ACCEPTS.decide, ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE']);
+  assert.deepEqual(AWAIT_ACCEPTS.decide, ['DECISION', 'AMEND', 'REPLACE_PLAN', 'REVISE', 'REVIEW_USE', 'SPEC_REVISED']);
   assert.deepEqual(validateHostEvent('decide', AMEND), { ok: true, value: AMEND });
   assert.equal(validateHostEvent('decide', { type: 'REQUEST', task: 'T1', attempt: 1, need: 'n', paths: [], rationale: 'r' }).ok, false);
+});
+
+test('host events: spec revision is accepted at author, rule, evidence and decide only', () => {
+  const event = { type: 'SPEC_REVISED', path: 'session/s.spec.md' };
+  for (const current of ['author', 'rule', 'evidence', 'decide'] as const) assert.deepEqual(validateHostEvent(current, event), { ok: true, value: event }, current);
+  for (const current of ['native', 'write', 'fix'] as const) assert.match(String((validateHostEvent(current, event) as { error?: string }).error), /SPEC_REVISED is not accepted/, current);
+  assert.equal(validateHostEvent('author', { type: 'SPEC_REVISED', path: ' ' }).ok, false);
+});
+
+test('host events: spec approval requires a user quote and hash or stop', () => {
+  const answer = { by: 'user', quote: 'Approve', hash: 'sha256:abc' };
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer }).ok, true);
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: 'stop' }).ok, true);
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { ...answer, quote: ' ' } }).ok, false);
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { by: 'user', quote: 'yes' } }).ok, false);
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { ...answer, by: 'orchestrator' } }).ok, false);
+  assert.equal(JOURNAL_PROTOCOL_REVISION, 10);
 });

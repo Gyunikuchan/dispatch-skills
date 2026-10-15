@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { hashes } from '../../scripts/generate-hashes.ts';
 import type { Frame } from '../../skills/dispatch/scripts/core/types.ts';
 import { completedLaunch, recordedLaunches, type Scenario } from './stub-provider.ts';
+import { SPEC_PATH, SPEC_SOURCE } from './spec-fixture.ts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const STUB = path.resolve(ROOT, 'tests/helpers/stub-provider.ts');
 export const CLEAN = { status: 'CLEAN', findings: [] };
@@ -62,7 +63,12 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     if (typeof frame.data?.['handoff'] === 'string') ownedSessions.add(frame.data['handoff']);
     return frame;
   };
-  const initialize = async () => (await cli(['session', 'init', '--session-id', crypto.randomUUID(), '--objective', 'E2E fixture'])).sessionDir;
+  /** Seeds a valid session-root `fixture.spec.md` unless `spec: false`, so low-level starts settle their governing spec. */
+  const initialize = async (options: { spec?: boolean } = {}) => {
+    const session = (await cli(['session', 'init', '--session-id', crypto.randomUUID(), '--objective', 'E2E fixture'])).sessionDir;
+    if (options.spec !== false) fs.writeFileSync(path.join(session, SPEC_PATH), SPEC_SOURCE);
+    return session;
+  };
   const begin = async (verb: string, session: string, argument: string, flags: string[] = []) => cli(['start', verb, '--session-dir', session, '--orchestrator', 'codex', '--level', 'low', '--level-source', 'explicit', ...flags, '--', argument]);
   const reply = async (run: string, event: unknown, dryRun = false) => {
     const eventPath = eventFiles.get(path.resolve(repo, run)) ?? path.join(dir, 'reply.json'); fs.writeFileSync(eventPath, JSON.stringify(event));

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { start, send, findDesignDelivery, loadExecution, timelineFold, findSettledPlan } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { send, findDesignDelivery, loadExecution, timelineFold, findSettledPlan } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { start } from '../../helpers/governed-start.ts';
 import { collectRunFacts } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
 import { renderReport } from '../../../skills/dispatch/scripts/domain/render.ts';
 import { resolutionRounds } from '../../../skills/dispatch/scripts/machines/review.ts';
