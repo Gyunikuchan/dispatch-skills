@@ -218,7 +218,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           return delegate.nativeSubagentsOnly === true ? id === orchestrator : SPECS[id].modes.some((mode) => discovery.resolve(id, mode.id).status === 'path');
         }));
       }
-      const runStarted: RunStartedEvent = { type: 'RUN_STARTED', verb: command.verb!, argument, level, levelSource: command.flags['level-source'] as 'explicit' | 'classified', pins: pins ? policy.pins(pins) : provider ? policy.pins(`(${provider})`) : null, fix: command.flags['fix'] === true, orchestrator, orchestratorModel, overrides, config, repo: { root: repo } };
+      const runStarted: RunStartedEvent = { type: 'RUN_STARTED', verb: command.verb!, argument, level, levelSource: command.flags['level-source'] as 'explicit' | 'classified', pins: pins ? policy.pins(pins) : provider ? policy.pins(`(${provider})`) : null, orchestrator, orchestratorModel, overrides, config, repo: { root: repo } };
       const result = await start({ runDir: reserved.dir, reservedRun: true, runStarted, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, runRel: path.relative(repo, reserved.dir).replaceAll('\\', '/'), ...diagnosticOptions });
       if (result.frame) emit(finish(result.frame, reserved.dir)); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
     }

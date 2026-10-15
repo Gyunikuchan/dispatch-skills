@@ -66,7 +66,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   fs.writeFileSync(planPath, PLAN);
   const hash = `sha256:${crypto.createHash('sha256').update(governedPlanText(PLAN)).digest('hex')}`;
   const runStarted: RunStartedEvent = {
-    type: 'RUN_STARTED', verb: 'implement', argument: planMode === 'objective' ? 'Normalize values' : planPath, level: 'low', levelSource: 'explicit', pins: null, fix: false,
+    type: 'RUN_STARTED', verb: 'implement', argument: planMode === 'objective' ? 'Normalize values' : planPath, level: 'low', levelSource: 'explicit', pins: null,
     orchestrator: 'claude', orchestratorModel: null, overrides: { path: planPath, settledPlan: { path: planPath, hash, outcome: 'settled' } }, repo: {},
     config: {
       'write-subagents': { claude: { low: { model: 'writer-a' } } },
@@ -149,7 +149,7 @@ export async function authoringFlow(): Promise<{ planPath: string; authored: str
   const sessionRoot = path.join(cwd, 'chat');
   const runDir = path.join(sessionRoot, '.state', 'runs', 'run-1');
   const runStarted: RunStartedEvent = {
-    type: 'RUN_STARTED', verb: 'implement', argument: 'Normalize values', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+    type: 'RUN_STARTED', verb: 'implement', argument: 'Normalize values', level: 'low', levelSource: 'explicit', pins: null,
     orchestrator: 'claude', orchestratorModel: null, overrides: { sessionDir: sessionRoot }, repo: {},
     config: {
       'write-subagents': { claude: { low: { model: 'writer-a' } } },

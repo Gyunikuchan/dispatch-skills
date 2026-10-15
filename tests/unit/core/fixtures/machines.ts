@@ -16,7 +16,7 @@ const codec = <S>(name: string, tags: string[] = []): StateCodec<S> => ({
 });
 
 export const RUN_STARTED: RunStartedEvent = {
-  type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'ask', argument: 'fixture', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'ask', argument: 'fixture', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: {}, repo: {},
 };
 

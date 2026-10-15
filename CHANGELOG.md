@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking:** Standalone reviews always apply and verify accepted fixes; the `--fix` option is removed.
 - Reviews reject preference-only and tool-enforced findings, and check new code for existing equivalents.
 - Plans must state test retention; retained tests meet a durable quality bar, and transient tests live in their own trimmable files.
 

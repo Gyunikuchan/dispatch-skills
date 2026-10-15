@@ -56,7 +56,7 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host agent to verify |
 | [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
 | [`plan`](references/readme/plan.md) | The change is one coherent unit | A plan after its configured review and fix rounds |
-| [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed findings; fixes only when requested |
+| [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
 Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. If the requested verb does not fit the scope or outcome, Dispatch recommends a better fit before starting and waits for your choice; it does not silently switch verbs. You can skip work you have already completed.
@@ -101,11 +101,10 @@ Review current or committed work:
 
 ```text
 /dispatch review code
-/dispatch review code --fix
 /dispatch review code: main..HEAD
 ```
 
-Without a range, code review covers uncommitted changes. Reviews report findings by default. With `--fix`, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit.
+Without a range, code review covers uncommitted changes. Your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit.
 
 ## Configure routing
 

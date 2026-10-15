@@ -14,7 +14,7 @@ const PLAN = {
   verification: { automated: ['node --test tests/example.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# plan',
 };
 const run = (overrides: Record<string, unknown> = {}): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'implement', argument: 'Implement example', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb: 'implement', argument: 'Implement example', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides, repo: {},
   config: { 'write-subagents': { claude: { low: { model: 'writer-a' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
 });
@@ -177,7 +177,7 @@ test('prewrite-level: classified task assessment controls writer and review rout
   if (result.state.tag !== 'task-checkout') return;
   assert.equal(result.state.c.run.level, 'medium');
   assert.deepEqual(result.state.c.writer?.models, ['writer-medium']);
-  const review = reviewSpecFromRun(result.state.c.run, 'code', 'fix', 'plans/example.plan.md');
+  const review = reviewSpecFromRun(result.state.c.run, 'code', 'plans/example.plan.md');
   assert.equal(review.ok && review.spec.cap, 1);
 });
 
@@ -224,7 +224,7 @@ test('prewrite-level: lower retained level preserves configured phase skips', ()
   if (result.state.tag === 'task-checkout') {
     assert.equal(result.state.c.run.level, 'high');
     assert.equal(result.state.c.writer?.models[0], 'writer-high');
-    const review = reviewSpecFromRun(result.state.c.run, 'code', 'fix', 'plans/example.plan.md');
+    const review = reviewSpecFromRun(result.state.c.run, 'code', 'plans/example.plan.md');
     assert.equal(review.ok && review.spec.cap, 0);
   }
 });

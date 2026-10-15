@@ -25,7 +25,7 @@ type Tagged = { tag: string };
 
 const phases = (rounds: number) => ({ rounds: { low: rounds }, targets: { low: 1 } });
 const run = (verb: Verb, over: Partial<RunStartedEvent> = {}, rounds = 2): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb, argument: '', level: 'low', levelSource: 'explicit', pins: null, fix: true, orchestrator: 'claude', orchestratorModel: null,
+  type: 'RUN_STARTED', verb, argument: '', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null,
   overrides: {}, repo: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'code-review': phases(rounds), 'plan-review': phases(rounds) } }, ...over,
 });
 const badPins: Partial<RunStartedEvent> = { pins: { kind: 'providers', keys: ['nope'] } };
@@ -205,8 +205,9 @@ test('review-target transitions table matches step', () => {
     [run('review'), prepared, failed], [run('review'), prepared, nativeWave, natives, wave([f(1)])],
     [run('review'), prepared, wave([])], [run('review'), ...regression, decide('escalation', 'stop')],
     [run('review'), prepared, wave([f(1)]), rule('reject'), prepared, wave([])],
-    [run('review', { fix: false }), prepared, wave([f(1)]), rule('accept')],
-    [run('review', { fix: false }), prepared, wave([f(1)]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
+    [run('review'), prepared, wave([f(1, { scope: 'adjacent', severity: 'CONSIDER' })]), rule('reject')],
+    [run('review'), prepared, wave([f(1)]), rule('accept')],
+    [run('review'), prepared, wave([f(1)]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review'), prepared, wave([f(1, { category: 'intent' }), f(1, { id: 'R1-F002', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'accept' } } },
       decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'keep' } }), applied, verified(1), applied, failed],
@@ -266,7 +267,8 @@ test('root transitions table matches step', () => {
     [run('plan'), authored, parsed(), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('reject')],
     [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
     [run('review'), empty], [run('review'), prepared, wave([])], [run('review'), prepared, failed],
-    [run('review', { fix: false }), prepared, wave([f(1)]), rule('accept')],
+    [run('review'), prepared, wave([f(1)]), rule('accept')],
+    [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('reject')],
     [run('review'), ...regression, decide('escalation', 'stop')],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, verified()],
     [run('review', { ...plan }, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, parsed()],
@@ -345,7 +347,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   const disagree: Event = { type: 'DECISION', kind: 'request', answer: { by: 'orchestrator', action: 'escalate', rationale: 'The requested change exceeds the design intent.' } };
   const userScopeState = stepDesignRevision(scopeState, disagree).state;
   if (userScopeState.tag !== 'scope-user-decision') throw new Error('scope user decision');
-  const begun = beginReview({ kind: 'design', mode: 'fix', target: author.workingPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.revision.review', c.counters).state;
+  const begun = beginReview({ kind: 'design', target: author.workingPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.revision.review', c.counters).state;
   if (!('c' in begun)) throw new Error('review context');
   const rc = { ...begun.c, effectId: 'review-result', round: 1, optInAsked: true };
   const review = (state: ReviewState): DesignRevisionState => ({ tag: 'review', c, workingPath: author.workingPath, reason: 'repair', evidence: 'finding', review: state });
@@ -400,12 +402,34 @@ test('every design and design revision transition row has a reducer fixture', ()
   extra.push([{ ...active, c: { ...active.c, completed: ['I02'], ownership: { I02: ['src/b.ts'] } }, child: { tag: 'final-verify', c: { ...context, changedPaths: ['src/a.ts'] }, effectId: 'final', before: fingerprint } }, { type: 'VERIFY_DONE', effectId: 'final', purpose: 'final', results: [], fingerprint }]);
 
   const integrated = integration();
-  if (integrated.tag !== 'integration' || !('c' in integrated.review)) throw new Error('integration');
-  const codeCtx = { ...rc, spec: { ...rc.spec, kind: 'code' as const, mode: 'report' as const } };
+  if (integrated.tag !== 'integration') throw new Error('integration');
+  const integrationReview = integrated.review;
+  if (integrationReview.tag !== 'rule') throw new Error('integration review');
+  const codeCtx = { ...rc, spec: { ...rc.spec, kind: 'code' as const } };
   const iReview = (child: ReviewState): DesignState => ({ ...integrated, review: child });
+  const pathlessConsider = (optInAsked: boolean, ownership = integrated.c.ownership): DesignState => ({
+    ...integrated,
+    c: { ...integrated.c, ownership },
+    review: { ...integrationReview, c: { ...integrationReview.c, optInAsked, findings: integrationReview.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' as const })) } },
+  });
+  const acceptedPathless = { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } } as const;
+  const declinedOptIn: Event = { type: 'DECISION', kind: 'opt-in', answer: [] };
+  const sharedContractRuling = { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: '[shared-contract] inherited contract' } } } as const;
+  const optedInReview = (state: DesignState, ruling: Event = acceptedPathless): DesignState => {
+    const offered = stepDesign(state, ruling).state;
+    if (offered.tag !== 'integration' || offered.review.tag !== 'decide-opt-in') throw new Error('pathless CONSIDER opt-in');
+    return offered;
+  };
+  const ambiguousOwnership = { I01: ['src/a.ts'], I02: ['src/a.ts'] };
+  extra.push([pathlessConsider(true), acceptedPathless]);
+  extra.push([pathlessConsider(true, ambiguousOwnership), acceptedPathless]);
+  extra.push([pathlessConsider(true), sharedContractRuling]);
+  extra.push([optedInReview(pathlessConsider(false)), declinedOptIn]);
+  extra.push([optedInReview(pathlessConsider(false, ambiguousOwnership)), declinedOptIn]);
+  extra.push([optedInReview(pathlessConsider(false), sharedContractRuling), declinedOptIn]);
   extra.push([integrated, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
   extra.push([{ ...integrated, c: { ...integrated.c, ownership: {} } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
-  extra.push([{ ...integrated, review: { ...integrated.review, c: { ...integrated.review.c, findings: integrated.review.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
+  extra.push([{ ...integrated, review: { ...integrationReview, c: { ...integrationReview.c, findings: integrationReview.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
   extra.push([iReview({ tag: 'rule', c: codeCtx }), { type: 'RULINGS', rulings: {} }]);
   extra.push([iReview({ tag: 'wave', c: codeCtx, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [{ slot: 'reviewer', state: 'success' }] }]);
   extra.push([iReview({ tag: 'decide-opt-in', c: codeCtx, items: [] }), { type: 'DECISION', kind: 'opt-in', answer: [] }]);

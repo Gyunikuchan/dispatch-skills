@@ -125,7 +125,7 @@ test('level-journal: projectFrame launches only unlaunched task slots when write
 test('plan review rule example uses the plan path', () => {
   const config = { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } };
   const events: Event[] = [
-    { type: 'RUN_STARTED', verb: 'review', argument: 'docs/x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: true, orchestrator: 'claude', orchestratorModel: null, overrides: { kind: 'plan' }, config, repo: {} },
+    { type: 'RUN_STARTED', verb: 'review', argument: 'docs/x.plan.md', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null, overrides: { kind: 'plan' }, config, repo: {} },
     { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0' } },
     { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [{ id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: '§ Proposed Changes', defect: 'gap', requiredChange: 'fill', sources: ['codex[0]'], scope: 'in' }] as never },
   ];

@@ -33,7 +33,7 @@ test('review-target code change at native boundary records an observation and re
   } finally { f.cleanup(); }
 });
 
-for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact change at ruling boundary keeps the ruled finding`, async () => {
+for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact change at ruling boundary blocks accepted fix admission`, async () => {
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, `target.${kind}.md`);
@@ -42,13 +42,15 @@ for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} arti
     assert.equal(frame.await, 'rule', JSON.stringify(frame));
     fs.writeFileSync(target, '# Target\n\n## Goal\nExternal condition\n');
     const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-    assert.equal(done.await, 'done', JSON.stringify(done)); assert.equal(done.data['outcome'], 'complete');
-    assert.equal(((done.data['completion'] as Record<string, unknown>)['coverage'] as { unassessed: unknown[] }).unassessed.length, 1);
-    assert.match(fs.readFileSync(path.join(f.absoluteRun(done.run), 'events.jsonl'), 'utf8'), /Missing condition/);
+    assert.equal(done.await, 'done', JSON.stringify(done)); assert.equal(done.data['outcome'], 'failed', JSON.stringify(done));
+    assert.match(String(done.data['summary']), /Fix admission failed/);
+    const journal = fs.readFileSync(path.join(f.absoluteRun(done.run), 'events.jsonl'), 'utf8');
+    assert.match(journal, /Missing condition/);
+    assert.match(journal, /"type":"RULINGS".*"ruling":"accept"/);
   } finally { f.cleanup(); }
 });
 
-test('review-target artifact managed resolution changes remain valid', async () => {
+test('review-target artifact managed resolution changes do not block accepted fix admission', async () => {
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, 'target.plan.md');
@@ -56,16 +58,17 @@ test('review-target artifact managed resolution changes remain valid', async () 
     const frame = await f.begin('review', session, target, ['--kind', 'plan']);
     assert.equal(frame.await, 'rule');
     fs.appendFileSync(target, '\n## Review Findings & Resolutions\nDriver evidence\n');
-    const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-    assert.equal(done.data['outcome'], 'complete', JSON.stringify(done));
+    const fixing = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+    assert.equal(fixing.await, 'fix', JSON.stringify(fixing));
+    assert.deepEqual((fixing.data['clusters'] as { findingIds: string[] }[]).flatMap((row) => row.findingIds), ['R1-F001']);
   } finally { f.cleanup(); }
 });
-test('review code --fix disputes an unsupported claim, carries rejection, then verifies accepted fix', async () => {
+test('review code disputes an unsupported claim, carries rejection, then verifies accepted fix', async () => {
   const finding = { severity: 'MUST', locus: 'src/a.ts:L1', tag: 'correctness', defect: 'Value is incorrect', requiredChange: 'Set value to 3' };
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [finding] }, { status: 'FINDINGS', findings: [finding] }, CLEAN] });
   try {
     const session = await f.initialize(); fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'export const value = 2;\n');
-    let frame = await f.begin('review', session, '', ['--kind', 'code', '--fix']); const run = f.absoluteRun(frame.run);
+    let frame = await f.begin('review', session, '', ['--kind', 'code']); const run = f.absoluteRun(frame.run);
     assert.equal(frame.await, 'rule', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Insufficient evidence; show the required value.' } } });
     assert.equal(frame.await, 'rule', JSON.stringify(frame)); assert.ok(f.launches()[1]?.prompt.includes('Insufficient evidence'), JSON.stringify(f.launches()));

@@ -100,7 +100,7 @@ function deliver(c: DesignContext): S {
   if (c.completed.length !== c.design.increments.length) return failed(c, 'No ready increment remains; prerequisite graph is blocked.');
   if (!c.baseline || c.completed.some((id) => !c.ownership[id]?.length)) return failed(c, 'Integration requires the recorded ancestor baseline and ownership for every increment.');
   const ownership = Object.fromEntries(c.completed.map((id) => [id, c.ownership[id]!]));
-  const built = reviewSpecFromRun(c.run, 'code', 'report', '');
+  const built = reviewSpecFromRun(c.run, 'code', '');
   if (!built.ok) return failed(c, built.error);
   const offset = c.integrationRound;
   const result = beginReview({ ...built.spec, context: JSON.stringify({ integration: { baseline: c.baseline, ownership, revision: c.hash }, objective: c.design.box['TL;DR'] }) }, 'design.integration', c.counters, offset);
@@ -151,7 +151,7 @@ export function stepDesign(state: DesignState, event: Event): S {
       }
       c.approval = null;
       if (state.afterReview) return stay({ tag: 'approval', c });
-      const built = reviewSpecFromRun(c.run, 'design', 'fix', c.path);
+      const built = reviewSpecFromRun(c.run, 'design', c.path);
       return built.ok ? reviewed(c, beginReview(built.spec, 'design.review', c.counters)) : failed(c, built.error);
     }
     case 'review': return reviewed(state.c, stepReview(state.review, event));
@@ -297,7 +297,7 @@ function projectDesignData(state: DesignState): Readonly<Record<string, unknown>
   if (state.tag === 'approval') return { kind: 'approval', hash: state.c.hash, question: 'Approve this governed design revision.', options: ['approve', 'stop'], required: { by: 'user', quote: 'non-empty', hash: state.c.hash } };
   if (state.tag === 'increment') return { ...implementData(state.child), increment: state.increment, revision: state.c.hash };
   if (state.tag === 'revision') return designRevisionData(state.child);
-  if (state.tag === 'review' || state.tag === 'integration') return { ...reviewData(state.review), baseline: state.c.baseline, ownership: state.c.ownership, ...(state.tag === 'integration' && reviewAwait(state.review) === 'rule' ? { sharedContract: { rulingField: 'rulings[id].reason', marker: sharedContractMarker, instruction: 'Include the marker for a shared contract defect confined to one owner; acceptance requests design revision.' } } : {}) };
+  if (state.tag === 'review' || state.tag === 'integration') return { ...reviewData(state.review), baseline: state.c.baseline, ownership: state.c.ownership, ...(state.tag === 'integration' && reviewAwait(state.review) === 'rule' ? { sharedContract: { rulingField: 'rulings[id].reason', marker: sharedContractMarker, instruction: 'Accepted, fixable in-scope findings receive scoped fixes. Put the marker in the ruling reason for a one-owner shared-contract finding that should route to design revision if it remains accepted when review settles.' } } : {}) };
   if (state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed') return { outcome: state.tag, summary: state.summary, completion: { governedDesign: { path: state.c.path, revision: state.c.hash }, hash: state.c.hash, approval: state.c.approval, completed: state.c.completed, ownership: state.c.ownership, level: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments } };
   return {};
 }
@@ -341,12 +341,14 @@ export const transitions = [
   { from: 'increment', on: 'VERIFY_DONE', to: 'integration' },
   { from: 'increment', on: 'SNAPSHOT', to: 'stopped' },
   ...['author', 'review', 'approval', 'increment', 'integration'].map((from) => ({ from, on: 'REVISE', to: 'revision' })),
-  ...['increment', 'revision', 'complete', 'failed'].map((to) => ({ from: 'integration', on: 'RULINGS', to })),
+  ...['integration', 'complete', 'increment', 'revision', 'failed'].map((to) => ({ from: 'integration', on: 'RULINGS', to })),
   { from: 'integration', on: 'WAVE_DONE', to: 'complete' },
   { from: 'integration', on: 'REVIEW_PREPARED', to: 'complete' },
   { from: 'integration', on: 'REVIEW_PREPARED', to: 'failed' },
   { from: 'integration', on: 'EFFECT_FAILED', to: 'failed' },
   { from: 'integration', on: 'DECISION', to: 'complete' },
+  { from: 'integration', on: 'DECISION', to: 'increment' },
+  { from: 'integration', on: 'DECISION', to: 'revision' },
   { from: 'integration', on: 'DECISION', to: 'failed' },
   ...['author', 'review', 'approval', 'increment', 'integration', 'failed'].map((to) => ({ from: 'revision', on: 'ARTIFACT_PARSED', to })),
   { from: 'revision', on: 'ARTIFACT_PARSED', to: 'revision' },

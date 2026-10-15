@@ -8,7 +8,7 @@ const CONFIG = {
   phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } },
 };
 const started = (over: Partial<RunStartedEvent> = {}): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {}, ...over,
 });
 const finding = (id: string, over: Record<string, unknown> = {}) => ({
@@ -19,7 +19,7 @@ const waveDone = (n: number, findings: unknown[]): Event => ({ type: 'WAVE_DONE'
 const rulings = (map: Record<string, unknown>): HostEvent => ({ type: 'RULINGS', rulings: map as never });
 
 test('ruling-reason: reject and downgrade require a nonblank string before consumption', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001', { severity: 'CONSIDER' })])]);
+  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { severity: 'CONSIDER' })])]);
   for (const ruling of ['reject', 'downgrade']) {
     for (const reason of [undefined, '', '  ', 42]) {
       const event = rulings({ 'R1-F001': { ruling, reason } });
@@ -29,11 +29,17 @@ test('ruling-reason: reject and downgrade require a nonblank string before consu
     const reason = ruling === 'reject' ? 'recorded decision D2; no new evidence' : 'Evidence in D2';
     const event = rulings({ 'R1-F001': { ruling, reason, severity: 'CONSIDER' } });
     assert.equal(reviewMachine.validate?.(state, event), null);
-    const next = reviewMachine.step(state, event).state;
+    const events: Event[] = [event];
+    let next = reviewMachine.step(state, event).state;
+    if (next.tag === 'decide-opt-in') {
+      const decision = { type: 'DECISION', kind: 'opt-in', answer: [] } as const;
+      events.push(decision);
+      next = drive([decision], next);
+    }
     assert.equal(next.tag, 'settled');
     assert.equal('c' in next && next.c.findings[0]?.resolution, reason);
     assert.equal('c' in next && next.c.findings[0]?.status, ruling === 'reject' ? 'rejected' : 'downgraded');
-    assert.deepEqual(drive([event], state), next);
+    assert.deepEqual(drive(events, state), next);
   }
 });
 
@@ -51,7 +57,7 @@ test('diagnostics amendment ruling parser: intent requires recorded authority', 
 });
 
 test('diagnostics amendment ruling parser: needs-user records the user ruling', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })]), rulings({ 'R1-F001': { ruling: 'needs-user' } })]);
+  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })]), rulings({ 'R1-F001': { ruling: 'needs-user' } })]);
   assert.equal(state.tag, 'decide-needs-user');
   const frame = reviewMachine.project(state);
   assert.equal(frame.data['kind'], 'needs-user');
@@ -125,7 +131,7 @@ test('diagnostics amendment ruling parser: orchestrator intent needs a nonblank 
 });
 
 test('diagnostics amendment ruling parser: unsupported authority falls back to user validation', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
+  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   for (const by of ['user', 'Orchestrator', 42]) {
     const event = rulings({ 'R1-F001': { ruling: 'reject', by, reason: 'D2' } });
     assert.match(reviewMachine.validate?.(state, event) ?? '', /ruling: expected /);
@@ -148,7 +154,7 @@ test('SC5 rule frame shows recovered original tag', () => {
 });
 
 test('SC5 uncategorized finding takes an ordinary ruling', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [recovered('R1-F001', { originalTag: 'Intent' })])]);
+  const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001', { originalTag: 'Intent' })])]);
   const event = rulings({ 'R1-F001': { ruling: 'accept' } });
   assert.equal(reviewMachine.validate?.(state, event), null);
   const next = reviewMachine.step(state, event).state;
@@ -157,7 +163,7 @@ test('SC5 uncategorized finding takes an ordinary ruling', () => {
 });
 
 test('SC5 resolution entries keep original tag', () => {
-  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')]),
+  const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')]),
     rulings({ 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } })]);
   assert.ok('c' in state);
   const entries = resolutionRounds(state.c)[0]?.entries ?? [];
@@ -166,23 +172,22 @@ test('SC5 resolution entries keep original tag', () => {
 });
 
 test('diagnostics amendment ruling parser: intent finding ruled with a user quote', () => {
-  const ruled = (fix: boolean) => drive([started({ fix }), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
-  const report = ruled(false);
+  const review = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   for (const quote of [undefined, '', '  ']) {
     const event = rulings({ 'R1-F001': { ruling: 'reject', reason: 'user declined', quote } });
-    assert.match(reviewMachine.validate?.(report, event) ?? '', /^event\.rulings\.R1-F001\.ruling: expected /);
-    assert.deepEqual(reviewMachine.step(report, event).state, report);
+    assert.match(reviewMachine.validate?.(review, event) ?? '', /^event\.rulings\.R1-F001\.ruling: expected /);
+    assert.deepEqual(reviewMachine.step(review, event).state, review);
   }
   const downgrade = rulings({ 'R1-F001': { ruling: 'downgrade', reason: 'minor', severity: 'CONSIDER', quote: 'minor' } });
-  assert.match(reviewMachine.validate?.(report, downgrade) ?? '', /expected /);
+  assert.match(reviewMachine.validate?.(review, downgrade) ?? '', /expected /);
   const reject = rulings({ 'R1-F001': { ruling: 'reject', quote: 'keep the current API' } });
-  assert.equal(reviewMachine.validate?.(report, reject), null);
-  const settled = drive([reject], report);
+  assert.equal(reviewMachine.validate?.(review, reject), null);
+  const settled = drive([reject], review);
   assert.equal(settled.tag, 'settled');
   const rejected = 'c' in settled ? settled.c.findings[0] : undefined;
   assert.deepEqual([rejected?.status, rejected?.resolution], ['rejected', 'user: keep the current API']);
   const accept = rulings({ 'R1-F001': { ruling: 'accept', quote: 'yes, rename it', fix: { affectedPaths: ['src/a.ts'], dependsOn: [], verification: [] } } });
-  const fix = drive([accept], ruled(true));
+  const fix = drive([accept], review);
   assert.equal(fix.tag, 'fix');
   assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
   assert.equal('c' in fix && fix.c.findings[0]?.resolution, 'user: yes, rename it');

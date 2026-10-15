@@ -21,7 +21,7 @@ test('ask end to end: start reaches done with claims; the journal replays to the
   const runDir = path.join(tmp, 'run');
   const ports = fakePorts();
   const runStarted: RunStartedEvent = {
-    type: 'RUN_STARTED', verb: 'ask', argument: 'Where is the lock released?', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+    type: 'RUN_STARTED', verb: 'ask', argument: 'Where is the lock released?', level: 'low', levelSource: 'explicit', pins: null,
     orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } } },
   };
   const result = await start({ runDir, machine: rootMachine, handlers, ports, runStarted, runRel: 'run' });

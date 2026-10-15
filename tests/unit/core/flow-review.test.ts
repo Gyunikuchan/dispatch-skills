@@ -20,7 +20,7 @@ const FINDING = {
   fix: { paths: ['src/a.ts'], dependencies: [], verification: ['npm test'] },
 };
 
-function setup(fix: boolean) {
+function setup() {
   const wave: Handler<Extract<Effect, { kind: 'wave' }>> = async (effect) => [{
     type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [{ slot: 'codex[0]', state: 'success' }], findings: effect.round === 1 ? [FINDING] : [],
   }];
@@ -33,26 +33,15 @@ function setup(fix: boolean) {
   const runDir = path.join(tmp, 'run');
   memoryRunFs(ports, runDir);
   const runStarted: RunStartedEvent = {
-    type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null, fix,
+    type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null,
     orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {},
     config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
   };
   return { options: { runDir, machine: rootMachine, handlers, ports, runRel: 'run' }, runStarted, runDir, commands };
 }
 
-test('review-report-only-default: standalone report mode renders <slug>.report.md and ends done', async () => {
-  const { options, runStarted, runDir } = setup(false);
-  const rule = await start({ ...options, runStarted });
-  assert.deepEqual([rule.frame?.at, rule.frame?.await], ['review › rule', 'rule']);
-  const done = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } } });
-  assert.deepEqual([done.frame?.at, done.frame?.await, done.frame?.data['outcome']], ['review › done', 'done', 'complete']);
-  const report = options.ports.fs.readText(path.join(runDir, 'main-head.report.md'));
-  assert.match(report, /R1-F001/);
-  assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
-});
-
-test('review --fix: fix → FIXES_APPLIED runs fix-verify, and the run settles', async () => {
-  const { options, runStarted, commands } = setup(true);
+test('standalone review applies accepted fixes and verifies them', async () => {
+  const { options, runStarted, commands } = setup();
   await start({ ...options, runStarted });
   const fix = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } } });
   assert.deepEqual([fix.frame?.at, fix.frame?.await], ['review › fix', 'fix']);
@@ -67,7 +56,7 @@ test('review --fix: fix → FIXES_APPLIED runs fix-verify, and the run settles',
 
 
 test('rewrite SC2 prompt preserves comparison independently of context', async () => {
-  const { options, runStarted, runDir } = setup(false);
+  const { options, runStarted, runDir } = setup();
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Check the boundary' } } });
   assert.equal(result.frame?.await, 'rule', JSON.stringify(result));
   const file = options.ports.fs.listFiles(runDir).find((name) => name.endsWith('.prompt.md'))!;
@@ -79,7 +68,7 @@ test('rewrite SC2 prompt preserves comparison independently of context', async (
 
 
 test('rewrite SC3 incompatible journals fail explicitly', () => {
-  const { runStarted } = setup(false); const { type, ...data } = runStarted;
+  const { runStarted } = setup(); const { type, ...data } = runStarted;
   assert.throws(() => fold(rootMachine, [{ seq: 1, v: 1, at: 'now', type, data }]), /unsupported-journal-protocol/);
 });
 
@@ -113,7 +102,7 @@ test('review-target retried prepare refreshes its manifest and later round reuse
 });
 
 test('review-target refuses protocol-5 journals before replay', () => {
-  const { runStarted } = setup(false);
+  const { runStarted } = setup();
   const { type, ...data } = { ...runStarted, protocolRevision: 5 };
   assert.throws(() => fold(rootMachine, [{ seq: 1, v: 1, at: 'now', type, data }]), LayoutUnsupported);
 });
@@ -191,7 +180,7 @@ test('delta review attributes changes inside fenced code blocks with heading syn
 });
 
 test('flow-review-context: start review forwards --context into run spec context and review prompt', async () => {
-  const { options, runStarted, runDir } = setup(false);
+  const { options, runStarted, runDir } = setup();
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Semantic intent from chat' } } });
   assert.equal(result.frame?.await, 'rule');
   const file = options.ports.fs.listFiles(runDir).find((name) => name.endsWith('.prompt.md'))!;
@@ -208,7 +197,7 @@ test('flow-review-discovery: discovers unique session deliverables and respects 
   fs.writeFileSync(path.join(sessionDir, 'feat.walkthrough.md'), '# Walkthrough');
 
   // 1. Unique candidates discovered through RUN_STARTED event and reviewSpecFromRun
-  const { options, runStarted } = setup(false);
+  const { options, runStarted } = setup();
   const runDir1 = path.join(sessionDir, '.state/runs/001-code-review');
   memoryRunFs(options.ports, runDir1);
   const r1 = await start({ ...options, runDir: runDir1, runStarted });

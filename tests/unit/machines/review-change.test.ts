@@ -10,8 +10,8 @@ import { approvalState, RUN } from './fixtures/implement-recovery.ts';
 import { approval as designApproval } from './fixtures/design.ts';
 import { integration } from './fixtures/design-integration.ts';
 
-function context(kind: 'plan' | 'design' | 'code' = 'plan', mode: 'report' | 'fix' = 'fix', cap = 3) {
-  const begun = beginReview({ kind, mode, target: kind === 'code' ? '' : `target.${kind}.md`, cap, breadth: 1, context: 'Scoped change', roster: [], timeoutMs: 1000 }, 'review', {});
+function context(kind: 'plan' | 'design' | 'code' = 'plan', cap = 3) {
+  const begun = beginReview({ kind, target: kind === 'code' ? '' : `target.${kind}.md`, cap, breadth: 1, context: 'Scoped change', roster: [], timeoutMs: 1000 }, 'review', {});
   if (!('c' in begun.state)) throw new Error('context');
   return { ...begun.state.c, round: 1, targetManifest: 'baseline.json' };
 }
@@ -34,8 +34,8 @@ for (const kind of ['plan', 'design', 'code'] as const) test(`review branch: ${k
 });
 const reviewFinding = (id: string, status: ReviewFinding['status'], extra: Partial<ReviewFinding> = {}): ReviewFinding => ({ id, severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L1', defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in', round: 1, status, ...extra });
 export const notice: ChangeNotice = { id: 'change', phase: 'review', pendingId: 'check', beforeHash: 'before', afterHash: 'after', rawDeltaRef: { version: 1, sha256: 'a'.repeat(64), bytes: 10, path: 'recovery-deltas/a.json' }, paths: ['target.plan.md'], pathCount: 1, relevance: 'relevant', reason: 'Reviewed input changed', affectedEvidence: [] };
-for (const mode of ['report', 'fix'] as const) test(`review branch: ${mode} target changes record observations and apply the parked receipt`, () => {
-  const c = { ...context('plan', mode), findings: [reviewFinding('R1-F001', 'open', { locus: '§ Scope' })] };
+test('review branch: target changes record observations and apply the parked receipt', () => {
+  const c = { ...context('plan'), findings: [reviewFinding('R1-F001', 'open', { locus: '§ Scope' })] };
   const check: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Not a defect' } } }, effectId: 'check' };
   const changed = stepReview(check, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'current.json', result: 'changed', notice });
   assert.notEqual(reviewMachine.awaitOf(changed.state), 'decide');
@@ -54,7 +54,7 @@ test('review branch: bound empty preparation checks identity before terminal rou
   assert.equal(stepReview(next.state, { type: 'REVIEW_TARGET_CHECKED', effectId: next.effects[0]!.id, manifestPath: 'empty.json', result: 'unchanged' }).state.tag, 'empty');
 });
 test('review branch: changed bound preparation launches its unissued round without a decision', () => {
-  const c = { ...context('code', 'report', 3), round: 2, preparedRound: 3 };
+  const c = { ...context('code', 3), round: 2, preparedRound: 3 };
   const before: ReviewState = { tag: 'prepare', c: { ...c, effectId: 'prepare' } };
   const state: ReviewState = { tag: 'target-check', c, before, pending: { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: false }, promptPaths: {} }, effectId: 'check' };
   const launched = stepReview(state, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'fresh.json', result: 'changed', notice });
@@ -91,7 +91,7 @@ const FIX_CONFIG = {
   phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } },
 };
 const fixRun = (kind: 'code' | 'plan'): Event => ({
-  type: 'RUN_STARTED', verb: 'review', argument: kind === 'plan' ? 'x.plan.md' : '', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+  type: 'RUN_STARTED', verb: 'review', argument: kind === 'plan' ? 'x.plan.md' : '', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: { kind }, config: FIX_CONFIG, repo: {},
 });
 type Driven = { state: ReviewState; effects: readonly Effect[] };

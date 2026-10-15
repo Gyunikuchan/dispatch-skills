@@ -4,7 +4,7 @@ Use `review` when a design, plan, working tree, or Git range already exists and 
 
 ## What happens
 
-Dispatch reports findings by default. It does not apply fixes unless you ask for them. With `--fix`, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
+In every review, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
 
 ### Flow at a glance
 
@@ -14,10 +14,8 @@ flowchart TD
     Route --> Review["⚡ Independent reviews"]
     Review --> Rule{"⚖️ Finding backed by<br/>evidence and intent?"}
     Rule -->|No| Reject["🚫 Rejected"]
-    Rule -->|Yes| Fix{"🔧 --fix?"}
-    Fix -->|No| Report["📋 Findings + rulings"]
-    Reject --> Report
-    Fix -->|Yes| Apply["🔧 Apply safe fixes"]
+    Rule -->|Yes| Apply["🔧 Apply accepted safe fixes"]
+    Reject --> Settled
     Apply --> Verify["✅ Verify"]
     Verify --> Settled{"🔄 Settled?"}
     Settled -->|Findings remain| Review
@@ -35,7 +33,6 @@ Name what you want reviewed. For code, no range means uncommitted changes; provi
 /dispatch review: <path/to/change.plan.md>
 /dispatch review code
 /dispatch review code: main..HEAD
-/dispatch review code --fix
 ```
 
 The `.plan.md` and `.design.md` extensions let Dispatch infer the target type; other paths default to code review. Your host agent evaluates findings against the work's intended outcome. See [review rules](../review-rules.md) for how findings are assessed and resolved.

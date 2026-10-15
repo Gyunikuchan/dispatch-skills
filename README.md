@@ -133,17 +133,13 @@ Review your working tree or a branch range:
 
 ```text
 /dispatch review code
-/dispatch review code --fix
 /dispatch review code: main..HEAD
 ```
 
 > [!NOTE]
 > With no range, a dirty tree is reviewed as its uncommitted changes alone — staged, unstaged, and untracked — and your committed branch work is left out. A clean tree has no reviewable changes. Name a range explicitly to review committed changes.
 
-> [!NOTE]
-> Reviews are report-only. Add `--fix` to let verified findings be applied.
-
-With `--fix`, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
+In each review, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
 
 Run the whole loop — plan, review, approval gate, implementation, code review to settlement:
 

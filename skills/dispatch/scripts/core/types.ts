@@ -188,7 +188,7 @@ export type RunStartedEvent = {
   designApproval?: DesignApproval;
   protocolRevision?: typeof JOURNAL_PROTOCOL_REVISION;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
-  pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
+  pins: Pins | null; orchestrator: Platform; orchestratorModel: string | null;
   overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;
 };
 

@@ -1,42 +1,62 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { threshold } from '../../../skills/dispatch/scripts/policy/rounds.ts';
 import { stepDesign, designData, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { design, hash } from './fixtures/design.ts';
 import { started } from './fixtures/design-delivery.ts';
 import { integration } from './fixtures/design-integration.ts';
 
-test('design-reopen-on-defect: accepted owned defect reopens its child with repair context', () => {
-  const result = stepDesign(integration(), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-  assert.equal(result.state.tag, 'increment');
-  if (result.state.tag !== 'increment' || !('c' in result.state.child) || !result.state.child.c) throw new Error('child');
-  assert.equal(result.state.increment, 'I01');
-  assert.match(result.state.child.c.designBinding!.repair[0]!, /Broken integration/);
-  assert.deepEqual(result.state.c.ownership['I01'], ['src/a.ts']);
+function fixBatch(state: DesignState) {
+  if (state.tag !== 'integration' || state.review.tag !== 'fix') throw new Error('integration fix batch');
+  return state.review;
+}
+
+test('design-integration-fix: accepted owned finding enters the fix batch', () => {
+  const state = stepDesign(integration(), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state;
+  assert.deepEqual(fixBatch(state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
 });
-test('design-integration-ownership: ambiguous ownership fails closed', () => {
+test('design-integration-fix: accepted finding enters the fix batch before owner reconciliation', () => {
   const state = integration();
   state.c = { ...state.c, ownership: { I01: ['src/a.ts'], I02: ['src/a.ts'] } };
-  assert.equal(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state.tag, 'failed');
+  assert.deepEqual(fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
 });
-test('accepted shared-contract integration finding requests design revision', () => {
+test('design-integration-ownership: settled non-fixable acceptance still fails closed on ambiguous ownership', () => {
+  const state = integration();
+  if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
+  state.c = { ...state.c, ownership: { I01: ['src/a.ts'], I02: ['src/a.ts'] } };
+  state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' })) } };
+  const offered = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  if (offered.state.tag !== 'integration' || offered.state.review.tag !== 'decide-opt-in') throw new Error('opt-in');
+  const settled = stepDesign(offered.state, { type: 'DECISION', kind: 'opt-in', answer: [] }).state;
+  assert.equal(settled.tag, 'failed');
+  if (settled.tag === 'failed') assert.match(settled.summary, /ownership is ambiguous or lost/);
+});
+test('accepted shared-contract integration finding enters the fix batch', () => {
   const state = integration();
   if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
   state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } };
-  assert.equal(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state.tag, 'revision');
+  const fix = fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state);
+  assert.deepEqual(fix.clusters.flatMap((cluster) => cluster.paths), ['src/a.ts', 'src/b.ts']);
 });
 
 test('integration discloses the one-owner shared contract ruling signal', () => {
   const state = integration();
-  const signal = designData(state)['sharedContract'] as { marker: string; rulingField: string };
+  const signal = designData(state)['sharedContract'] as { marker: string; rulingField: string; instruction: string };
   assert.equal(signal.rulingField, 'rulings[id].reason');
+  assert.match(signal.instruction, /fixable in-scope findings receive scoped fixes/i);
+  assert.match(signal.instruction, /marker in the ruling reason.*design revision.*if it remains accepted when review settles/i);
   const result = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: `${signal.marker} changes an inherited invariant` } } });
-  assert.equal(result.state.tag, 'revision');
+  assert.deepEqual(fixBatch(result.state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
 });
 
 test('integration shared revision objective refusal fails closed without replaying consumed rulings', () => {
-  const revision = stepDesign(integration(), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: '[shared-contract]' } } });
+  const state = integration();
+  if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
+  state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' })) } };
+  const offered = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: '[shared-contract]' } } });
+  assert.equal(offered.state.tag, 'integration');
+  if (offered.state.tag !== 'integration' || offered.state.review.tag !== 'decide-opt-in') throw new Error('opt-in');
+  const revision = stepDesign(offered.state, { type: 'DECISION', kind: 'opt-in', answer: [] });
   if (revision.state.tag !== 'revision') throw new Error('revision');
   const parsed = stepDesign(revision.state, { type: 'AUTHORED', path: revision.state.child.workingPath });
   const refused = stepDesign(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash, parsed: { ...design, box: { 'TL;DR': 'Other objective' } }, defects: [] });
@@ -48,28 +68,31 @@ test('integration shared revision objective refusal fails closed without replayi
 test('increment-local intent reopens its owner after the user ruling settles', () => {
   const state = integration();
   if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
-  state.review = stepReview({ tag: 'rule', c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, category: 'intent', status: 'accepted' })) } }, { type: 'RULINGS', rulings: {} }).state;
-  const result = stepDesign(state, { type: 'LOCK_BROKEN', stalePid: 1 });
+  state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, category: 'intent', severity: 'CONSIDER' })) } };
+  const needsUser = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' } } });
+  const accepted = stepDesign(needsUser.state, { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'accept', quote: 'yes' } } });
+  const result = stepDesign(accepted.state, { type: 'DECISION', kind: 'opt-in', answer: [] });
   assert.equal(result.state.tag, 'increment');
 });
 
-test('shared-contract revision retains every accepted local repair in either finding order', () => {
+test('shared-contract accepted local findings enter one fix batch in either order', () => {
   for (const reverse of [false, true]) {
     const state = integration();
     if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
     const local = state.review.c.findings[0]!;
     const shared = { ...local, id: 'R1-F002', defect: 'Shared defect', fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } };
     state.review = { ...state.review, c: { ...state.review.c, findings: reverse ? [shared, local] : [local, shared] } };
-    const result = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } });
-    assert.equal(result.state.tag, 'revision');
-    assert.match(result.state.c.repairs['I01']!.join('\n'), /Broken integration/);
-    assert.deepEqual(result.state.c.completed, ['I02']);
-    if (result.state.tag === 'revision') assert.match(result.state.child.evidence, /Shared defect/);
+    const fix = fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } }).state);
+    assert.deepEqual(fix.clusters.flatMap((cluster) => cluster.findingIds).sort(), ['R1-F001', 'R1-F002']);
   }
 });
 
-test('integration repair re-entry retains the original cap and cumulative round threshold', () => {
-  const first = stepDesign(integration(), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state;
+test('non-fixable accepted integration repair re-entry retains the original cap and cumulative round threshold', () => {
+  const initial = integration();
+  if (initial.tag !== 'integration' || !('c' in initial.review)) throw new Error('integration review');
+  initial.review = { ...initial.review, c: { ...initial.review.c, findings: initial.review.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' })) } };
+  const offered = stepDesign(initial, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  const first = stepDesign(offered.state, { type: 'DECISION', kind: 'opt-in', answer: [] }).state;
   if (first.tag !== 'increment' || !('c' in first.child) || !first.child.c) throw new Error('repair');
   const config = { ...first.c.run.config, phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } } };
   const repaired = { ...first, c: { ...first.c, run: { ...first.c.run, config } }, child: { tag: 'complete' as const, c: { ...first.child.c, changedPaths: ['src/a.ts'] }, summary: 'Repaired' } };

@@ -41,7 +41,7 @@ export function planInputFromRun(run: RunStartedEvent): { ok: true; input: PlanI
       : sessionDir
         ? `${sessionDir}/${slugOf(run.argument)}.plan.md`
         : `${slugOf(run.argument)}.plan.md`;
-  const built = reviewSpecFromRun(run, 'plan', 'fix', path);
+  const built = reviewSpecFromRun(run, 'plan', path);
   return built.ok ? { ok: true, input: { path, spec: built.spec } } : built;
 }
 

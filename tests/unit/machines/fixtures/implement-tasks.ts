@@ -25,7 +25,7 @@ export const PLAN: ParsedPlan = {
   tasks: [task('T1', ['src/a.ts', 'tests/validation.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
 };
 export const run = (concurrency: number, reviewRounds = 0): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {},
+  type: 'RUN_STARTED', verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null, repo: {},
   overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } },
   config: { 'write-concurrency': concurrency, 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: reviewRounds }, targets: { low: 1 } } } },
 });

@@ -103,7 +103,7 @@ import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 for (const variant of ['native-zero', 'negative', 'cli-zero'] as const) test(`checkpoint-state: ${variant} wave finish retains valid native binding and rejects malformed attempts`, async () => {
   const runDir = path.join(tempDir(), 'run'), ports = fakePorts();
   const roster = [{ provider: 'codex', native: variant !== 'cli-zero', model: 'configured', sandbox: true, slot: 'codex[0]', index: 0, reserve: false }] as RosterSlot[];
-  const begun = beginReview({ kind: 'code', mode: 'report', target: '', cap: 1, breadth: 1, context: null, roster, timeoutMs: 1000 }, 'review', {});
+  const begun = beginReview({ kind: 'code', target: '', cap: 1, breadth: 1, context: null, roster, timeoutMs: 1000 }, 'review', {});
   const initial: RootState = { tag: 'review', run: { verb: 'review', argument: '', slug: 'review' }, child: begun.state };
   const machine = { ...rootMachine, initial: () => initial, step: (state: RootState, event: Parameters<typeof rootMachine.step>[1]) => event.type === 'RUN_STARTED' ? { state, effects: begun.effects } : rootMachine.step(state, event), render: () => {} };
   let finishes = 0;

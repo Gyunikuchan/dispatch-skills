@@ -9,7 +9,7 @@ const CONFIG = {
   phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } },
 };
 const started = (verb: Verb, over: Partial<RunStartedEvent> = {}): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb, argument: 'src/a.ts', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb, argument: 'src/a.ts', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {}, ...over,
 });
 
@@ -64,13 +64,18 @@ test('grammar-review-infers: --kind wins, then .plan.md / .design.md, else code'
   assert.equal(effects[0]?.kind === 'prepare-review' && effects[0].review['kind'], 'plan');
 });
 
-test('review-report-only-default: standalone review reports unless fix is true', () => {
-  const mode = (fix: boolean) => {
-    const effect = drive([started('review', { fix })]).effects[0];
-    return effect?.kind === 'prepare-review' ? effect.review['mode'] : null;
-  };
-  assert.equal(mode(false), 'report');
-  assert.equal(mode(true), 'fix');
+test('standalone review applies accepted fixes without a flag', () => {
+  const state = drive([
+    started('review'),
+    { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0' } },
+    {
+      type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1,
+      slots: [{ slot: 'codex[0]', state: 'success' }],
+      findings: [{ id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L3', defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in' }],
+    },
+    { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } },
+  ]).state;
+  assert.equal(rootMachine.project(state).at, 'review › fix');
 });
 
 test('a terminal child schedules handoff and preserves its outcome and destination', () => {

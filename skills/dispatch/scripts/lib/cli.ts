@@ -8,13 +8,13 @@ export const ALIASES: Readonly<Record<string, string>> = {
 };
 const VERBS: readonly Verb[] = ['ask', 'design', 'plan', 'review', 'implement'];
 const FLAGS: Readonly<Record<string, readonly string[]>> = {
-  start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'fix', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'context'],
+  start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'context'],
   send: ['run', 'event', 'dry-run', 'refresh-config'], status: ['run'], doctor: ['level', 'json'],
   session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
   checkpoint: ['root', 'out'],
   rebind: ['run', 'reason', 'event'],
 };
-const BOOLEANS = new Set(['fix', 'verbose', 'dry-run', 'json', 'refresh-config']);
+const BOOLEANS = new Set(['verbose', 'dry-run', 'json', 'refresh-config']);
 
 export function parseCommand(argv: readonly string[], policy: CliPolicy): Command {
   const args = [...argv], command = args.shift();

@@ -14,7 +14,7 @@ import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 const finding = (id: string, file: string) => ({ id, severity: 'MUST' as const, category: 'correctness', locus: `${file}:L1`, defect: 'Missing guard', requiredChange: 'Add guard', sources: ['codex[0]'], scope: 'in' as const, round: 1, status: 'open' as const, revision: 'original-revision' });
 const ruling = (file: string) => ({ ruling: 'accept', fix: { affectedPaths: [file], dependsOn: file === 'src/b.ts' ? ['R1-F001'] : [], verification: ['check'] } });
 
-function harness(mode: 'fix' | 'report' = 'fix') {
+function harness() {
   const ports = fakePorts(), cwd = tempDir(), runDir = path.join(cwd, 'run'), baseline = path.join(runDir, 'baseline.json');
   memoryRunFs(ports, runDir);
   const original: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: {}, working: { 'src/a.ts': 'a-before', 'src/b.ts': 'b-before', 'src/c.ts': 'c-before' }, untracked: {}, governedPaths: ['src/a.ts', 'src/b.ts', 'src/c.ts'] };
@@ -22,9 +22,9 @@ function harness(mode: 'fix' | 'report' = 'fix') {
   ports.fs.writeAtomic(baseline, JSON.stringify(original));
   const delta = async (_cwd: string, prior: ReviewSnapshot, next: ReviewSnapshot) => ({ staged: [], unstaged: [], untracked: [], deleted: [], paths: [...new Set([...Object.keys(prior.working), ...Object.keys(next.working)])].filter((file) => prior.working[file] !== next.working[file]) });
   const git = { toplevel: async () => cwd, diffNames: async () => Object.keys(current.working).filter((file) => current.working[file] !== original.working[file]), reviewSnapshot: async () => structuredClone(current), reviewDelta: delta } as unknown as Git;
-  const begun = beginReview({ kind: 'code', mode, target: '', cap: 3, breadth: 1, context: 'Scoped review', roster: [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }], timeoutMs: 1000 }, 'review', {});
+  const begun = beginReview({ kind: 'code', target: '', cap: 3, breadth: 1, context: 'Scoped review', roster: [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }], timeoutMs: 1000 }, 'review', {});
   if (!('c' in begun.state)) throw new Error('review context');
-  const c = { ...begun.state.c, round: 1, targetManifest: baseline, targetManifestRef: fixtureReference(ports, runDir, baseline), priorManifest: baseline, priorManifestRef: fixtureReference(ports, runDir, baseline), reviewedRevision: 'original-revision', findings: [finding('R1-F001', 'src/a.ts'), finding('R1-F002', 'src/b.ts')] };
+  const c = { ...begun.state.c, round: 1, effectId: 'review.wave.1', targetManifest: baseline, targetManifestRef: fixtureReference(ports, runDir, baseline), priorManifest: baseline, priorManifestRef: fixtureReference(ports, runDir, baseline), reviewedRevision: 'original-revision', findings: [finding('R1-F001', 'src/a.ts'), finding('R1-F002', 'src/b.ts')] };
   const handler = createCheckReviewTarget({ cwd, git });
   return {
     ports, cwd, runDir, baseline, git, c,
@@ -38,6 +38,11 @@ function harness(mode: 'fix' | 'report' = 'fix') {
       return stepReview(parked.state, results[0]!);
     },
   };
+}
+async function observedRule(f: ReturnType<typeof harness>, findings: readonly unknown[] = f.c.findings) {
+  return f.check({ tag: 'wave', c: { ...f.c, effectId: 'review.wave.1', waveRevision: 'original-revision', findings: [] }, phase: 'cli' }, {
+    type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: findings as never,
+  });
 }
 const acceptAll = { type: 'RULINGS' as const, rulings: { 'R1-F001': ruling('src/a.ts'), 'R1-F002': ruling('src/b.ts') } };
 const receipts = (state: ReviewState, failed = false): Event => {
@@ -194,18 +199,15 @@ test('review admission: authorized mixed receipt verifies only applied clusters'
 });
 
 test('review-reuse: selected unchanged paths reach prepared prompt scope and launch', async () => {
-  const f = harness('report');
+  const f = harness();
   f.edit('src/a.ts');
-  const observed = await f.check({ tag: 'rule', c: f.c }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } });
-  // Select at a live rule frame, retaining the real handler's observation and prior findings.
-  if (!('c' in observed.state)) throw new Error('review context');
-  const c = observed.state.c, notice = c.observations![0]!;
-  const selected = stepReview({ tag: 'rule', c }, { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'targeted', paths: ['src/b.ts'], rationale: 'Inspect unchanged dependent code.' });
-  const next = stepReview(selected.state, { type: 'RULINGS', rulings: {} });
-  const check = next.effects.find((effect) => effect.kind === 'check-review-target');
-  const prepared = check?.kind === 'check-review-target' ? stepReview(next.state, (await createCheckReviewTarget({ cwd: f.cwd, git: f.git })(check, f.ports, { runDir: f.runDir, attempt: 1 }))[0]!) : next;
+  const observed = await observedRule(f, f.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' as const })));
+  if (observed.state.tag !== 'rule') throw new Error('rule frame');
+  const notice = observed.state.c.observations![0]!;
+  const selected = stepReview(observed.state, { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'targeted', paths: ['src/b.ts'], rationale: 'Inspect unchanged dependent code.' });
+  const prepared = await f.check(selected.state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } });
   const effect = prepared.effects.find((item) => item.kind === 'prepare-review');
-  assert.ok(effect?.kind === 'prepare-review');
+  assert.ok(effect?.kind === 'prepare-review', JSON.stringify(prepared));
   const event = (await createPrepareReview({ cwd: f.cwd, git: f.git, skillRoot: path.resolve('skills/dispatch') })(effect, f.ports, { runDir: f.runDir, attempt: 1 }))[0];
   assert.ok(event?.type === 'REVIEW_PREPARED', JSON.stringify(event));
   assert.deepEqual(event.scope['paths'], ['src/b.ts']);
@@ -219,13 +221,15 @@ test('review-reuse: selected unchanged paths reach prepared prompt scope and lau
 });
 
 for (const continuation of ['dispute', 'full'] as const) test(`review-reuse: selected unchanged paths retain mandatory ${continuation} coverage`, async () => {
-  const f = harness('report'); f.edit('src/a.ts'); f.edit('src/c.ts');
-  const observed = await f.check({ tag: 'rule', c: f.c }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } });
-  if (!('c' in observed.state)) throw new Error('review context');
-  const c = { ...observed.state.c, findings: observed.state.c.findings.map((item) => item.id === 'R1-F001' ? { ...item, status: continuation === 'full' ? 'fixed' as const : 'pending-rejection' as const, fix: { paths: ['src/a.ts'], dependencies: [], verification: [] }, resolution: 'Disputed guard' } : item) };
+  const f = harness(); f.edit('src/a.ts'); f.edit('src/c.ts');
+  const observed = await observedRule(f);
+  if (observed.state.tag !== 'rule') throw new Error('rule frame');
+  const c = { ...observed.state.c, findings: observed.state.c.findings.map((item) => item.id === 'R1-F001'
+    ? { ...item, status: continuation === 'full' ? 'fixed' as const : 'pending-rejection' as const, fix: { paths: ['src/a.ts'], dependencies: [], verification: [] }, resolution: 'Disputed guard' }
+    : { ...item, severity: 'CONSIDER' as const }) };
   const notice = c.observations![0]!;
   const selected = stepReview({ tag: 'rule', c }, { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'targeted', paths: ['src/b.ts'], rationale: 'Inspect dependent code.' });
-  const prepared = await f.check(selected.state, { type: 'RULINGS', rulings: {} });
+  const prepared = await f.check(selected.state, { type: 'RULINGS', rulings: { 'R1-F002': { ruling: 'accept' } } });
   const effect = prepared.effects.find((item) => item.kind === 'prepare-review');
   assert.ok(effect?.kind === 'prepare-review');
   const event = (await createPrepareReview({ cwd: f.cwd, git: f.git, skillRoot: path.resolve('skills/dispatch') })(effect, f.ports, { runDir: f.runDir, attempt: 1 }))[0];

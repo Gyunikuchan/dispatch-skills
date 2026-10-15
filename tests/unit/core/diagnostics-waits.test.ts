@@ -92,8 +92,8 @@ function codeReview(finding: (round: number) => Record<string, unknown>, rounds:
   };
 }
 const reviewFinding = (round: number, category = 'correctness') => ({ id: `R${round}-F001`, severity: 'MUST', category, locus: 'src/a.ts:L3', defect: 'null deref', requiredChange: 'guard it', sources: ['codex[0]'], scope: 'in' });
-/** The production needs-user answer: one ruling and the user's words per finding. */
-const needsUser = { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'accept', quote: 'Yes, change the API.' } } };
+/** The production needs-user answer: a user rejection preserves this wait-attribution trace without starting a fix batch. */
+const needsUser = { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'reject', quote: 'No, keep the current behavior.' } } };
 
 type HostState = { tag: 'booting' | 'author' | 'native' | 'write' | 'done' };
 const hostMachine: Machine<HostState> = {
@@ -166,7 +166,7 @@ test('SC10 needs-user wait then failing send counts the wait as user time', asyn
   assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
   const report = review.report();
   assert.ok(report.includes('- Run 1 fault: `port-timeout` in `root.handoff.1`; user wait 2h 0m 0s; driver <1s.'), report);
-  assert.match(report, /\| code review \| [a-z-]+ \| 2h 2m 5s \| 1m 0s \| 1m 5s \| 2h 0m 0s \|/, 'the accepted user wait and pending-effect recovery interval retain their attribution');
+  assert.match(report, /\| code review \| [a-z-]+ \| 2h 2m 5s \| 1m 0s \| 1m 5s \| 2h 0m 0s \|/, 'the committed user wait and pending-effect recovery interval retain their attribution');
   assert.doesNotMatch(report, /H6/, 'no host gap holds the user wait');
 });
 

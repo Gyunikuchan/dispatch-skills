@@ -13,7 +13,7 @@ import {
 } from '../policy/rounds.ts';
 import {
   answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, stay,
-  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Ruling, type SettledRow, type Step,
+  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewSpec, type Ruling, type SettledRow, type Step,
 } from './types.ts';
 import { writerConfig } from './implement-types.ts';
 
@@ -64,14 +64,14 @@ export function resolveSlots(run: RunStartedEvent, phase: 'plan-review' | 'code-
 
 export const phaseOf = (kind: ReviewKind): 'plan-review' | 'code-review' => (kind === 'code' ? 'code-review' : 'plan-review');
 
-export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, mode: ReviewMode, target: string): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
+export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, target: string): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
   const slots = resolveSlots(run, phaseOf(kind));
   if (!slots.ok) return slots;
   const context = isString(run.overrides['context']) ? run.overrides['context'] : (run.verb === 'review' && kind === 'code' ? null : run.argument);
   const sessionDir = isString(run.overrides['sessionDir']) ? run.overrides['sessionDir'] : undefined;
   const governing = isRecord(run.overrides['governing']) ? run.overrides['governing'] as ReviewSpec['governing'] : undefined;
   const writer = writerConfig(run.config, run.orchestrator, run.level);
-  return { ok: true, spec: { kind, mode, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, writer: writer.ok ? writer.value : null, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
+  return { ok: true, spec: { kind, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, writer: writer.ok ? writer.value : null, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
 }
 
 // SECTION: Waves (shared with ask)
@@ -390,10 +390,8 @@ function onRulings(c0: ReviewCtx, rulings: Readonly<Record<string, unknown>>): S
 const fixable = (finding: ReviewFinding): boolean => finding.scope === 'in' && isAccepted(finding) && (finding.severity !== 'CONSIDER' || (finding.fix?.paths.length ?? 0) > 0);
 
 function afterRulings(c: ReviewCtx): S {
-  if (c.spec.mode === 'fix') {
-    const batch = c.findings.filter((finding) => finding.round === c.round && fixable(finding));
-    if (batch.length) return enterFix(c, batch, 'main');
-  }
+  const batch = c.findings.filter((finding) => finding.round === c.round && fixable(finding));
+  if (batch.length) return enterFix(c, batch, 'main');
   return decideNext(c);
 }
 
@@ -553,7 +551,7 @@ const optInItems = (c: ReviewCtx): FindingId[] => c.findings
   .map((finding) => finding.id);
 
 function settleOrOptIn(c: ReviewCtx): S {
-  if (c.spec.mode === 'fix' && !c.optInAsked) {
+  if (!c.optInAsked) {
     const items = optInItems(c);
     if (items.length) return stay({ tag: 'decide-opt-in', c: { ...c, optInAsked: true }, items });
   }
@@ -669,7 +667,7 @@ export function stepReview(state: ReviewState, event: Event): S {
       || (state.pending.type === 'ARTIFACT_PARSED' && state.pending.defects.length === 0));
     const fixing = before.tag === 'fix' && state.pending.type === 'FIXES_APPLIED';
     const rulings = state.pending.type === 'RULINGS' ? state.pending.rulings : {};
-    const rulingFix = before.tag === 'rule' && state.pending.type === 'RULINGS' && before.c.spec.mode === 'fix'
+    const rulingFix = before.tag === 'rule' && state.pending.type === 'RULINGS'
       && roundOpen(before.c).some((finding) => asRuling(rulings[finding.id])?.ruling === 'accept');
     const admission = fixing || verifying || rulingFix;
     const observed = event.notice && (event.result === 'changed' || (rulingFix && event.notice.pathCount > 0)) ? observeTarget(before.c, event.notice) : before.c;
@@ -703,7 +701,7 @@ export function stepReview(state: ReviewState, event: Event): S {
     const next = nextId(state.c.counters, state.c.path, 'check-review-target');
     const c = { ...state.c, counters: next.counters };
     const applied = state.tag === 'fix' && event.type === 'FIXES_APPLIED' ? state.clusters.filter((cluster) => event.clusters.some((row) => row['clusterId'] === cluster.clusterId && row['status'] !== 'failed')) : [];
-    const rulings = state.tag === 'rule' && event.type === 'RULINGS' && c.spec.mode === 'fix' ? roundOpen(c).map((finding) => asRuling(event.rulings[finding.id])) : [];
+    const rulings = state.tag === 'rule' && event.type === 'RULINGS' ? roundOpen(c).map((finding) => asRuling(event.rulings[finding.id])) : [];
     const preRulingPaths = rulings.length && rulings.every((ruling) => ruling?.ruling === 'accept' && ruling.fix?.paths.length) ? rulings.flatMap((ruling) => ruling!.fix!.paths) : [];
     const verifyingPaths = state.tag === 'fix-verify' && c.spec.kind === 'code' ? state.clusters.flatMap((cluster) => cluster.paths) : [];
     const scopedPaths = applied.length ? applied.flatMap((cluster) => cluster.paths) : verifyingPaths.length ? verifyingPaths : preRulingPaths;
@@ -951,9 +949,9 @@ export const reviewMachine: Machine<ReviewState> = {
   step(state, event) {
     if (state.tag === 'booting' && event.type === 'RUN_STARTED') {
       const kind: ReviewKind = event.overrides['kind'] === 'plan' || event.overrides['kind'] === 'design' ? event.overrides['kind'] : 'code';
-      const built = reviewSpecFromRun(event, kind, event.fix ? 'fix' : 'report', event.argument);
+      const built = reviewSpecFromRun(event, kind, event.argument);
       if (built.ok) return beginReview(built.spec, 'review', state.counters);
-      const spec: ReviewSpec = { kind, mode: 'report', target: event.argument, cap: 0, breadth: 0, context: '', roster: [], timeoutMs: DEFAULT_TIMEOUT_MS };
+      const spec: ReviewSpec = { kind, target: event.argument, cap: 0, breadth: 0, context: '', roster: [], timeoutMs: DEFAULT_TIMEOUT_MS };
       const c = (beginReview(spec, 'review', state.counters).state as Extract<ReviewState, { tag: 'skipped' }>).c;
       return stay({ tag: 'failed', c, detail: built.error });
     }

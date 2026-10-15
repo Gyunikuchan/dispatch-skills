@@ -19,8 +19,8 @@ const notice: ChangeNotice = { id: 'change-1', phase: 'review', pendingId: 'chec
 const finding = { id: 'R1-F001', severity: 'MUST' as const, category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing guard', requiredChange: 'Add guard', sources: ['codex[0]'], scope: 'in' as const };
 
 /** A review parked on its round-1 wave result; the wave launched against `launch-rev`. */
-function inFlight(kind: Kind, mode: 'report' | 'fix'): ReviewState {
-  const begun = beginReview({ kind, mode, target: kind === 'code' ? '' : `target.${kind}.md`, cap: 3, breadth: 1, context: 'Scoped change', roster: [], timeoutMs: 1000 }, 'review', {});
+function inFlight(kind: Kind): ReviewState {
+  const begun = beginReview({ kind, target: kind === 'code' ? '' : `target.${kind}.md`, cap: 3, breadth: 1, context: 'Scoped change', roster: [], timeoutMs: 1000 }, 'review', {});
   if (!('c' in begun.state)) throw new Error('context');
   const c = { ...begun.state.c, round: 1, targetManifest: 'launch.json', reviewedRevision: 'launch-rev', waveRevision: 'launch-rev', effectId: 'wave' };
   return { tag: 'target-check', c, before: { tag: 'wave', c, phase: 'cli' }, pending: { type: 'WAVE_DONE', effectId: 'wave', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding] }, effectId: 'check' };
@@ -56,10 +56,10 @@ const findingsOf = (state: RootState): Row[] => (rootMachine.project(state).data
 
 // SECTION: Matrix
 
-for (const family of FAMILIES) for (const standalone of family === 'standalone' ? ['plan', 'design', 'code'] as const : ['plan'] as const) for (const mode of ['report', 'fix'] as const) {
+for (const family of FAMILIES) for (const standalone of family === 'standalone' ? ['plan', 'design', 'code'] as const : ['plan'] as const) {
   const label = family === 'standalone' ? `standalone ${standalone}` : family;
-  test(`review-reuse: target change retains in-flight revision-bound findings (${label}, ${mode})`, () => {
-    const next = stepRoot(seed(family, inFlight(kindOf(family, standalone), mode)), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
+  test(`review-reuse: target change retains in-flight revision-bound findings (${label})`, () => {
+    const next = stepRoot(seed(family, inFlight(kindOf(family, standalone))), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
     const frame = projectFrame(rootMachine, next.state, 'runs/001');
     assert.equal(frame.await, 'rule', 'a change observation adds no await');
     assert.deepEqual(findingsOf(next.state).map((row) => [row['id'], row['revision']]), [['R1-F001', 'launch-rev']]);
@@ -83,7 +83,7 @@ test('review-reuse: non-review frames reject an applicability selection', () => 
 });
 
 test('review-reuse: rendered history keeps actual coverage apart from host reuse rationale', () => {
-  const next = stepRoot(seed('standalone', inFlight('code', 'report')), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
+  const next = stepRoot(seed('standalone', inFlight('code')), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
   const used = stepRoot(next.state, { type: 'REVIEW_USE', observationId: 'change-1', afterHash: 'live-rev', action: 'reuse', rationale: 'Only comments changed.' });
   if (used.state.tag !== 'review' || !('c' in used.state.child)) throw new Error('review');
   const text = renderResolutionSection(resolutionRounds(used.state.child.c));
@@ -93,18 +93,26 @@ test('review-reuse: rendered history keeps actual coverage apart from host reuse
 });
 
 test('review-reuse: host-selected full review keeps prior rulings and launches one round', () => {
-  const next = stepRoot(seed('standalone', inFlight('code', 'report')), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
+  const next = stepRoot(seed('standalone', inFlight('code')), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
   const used = stepRoot(next.state, { type: 'REVIEW_USE', observationId: 'change-1', afterHash: 'live-rev', action: 'full', rationale: 'Control flow changed.' });
-  const ruled = stepRoot(used.state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-  const check = ruled.effects.find((effect) => effect.kind === 'check-review-target')!;
-  const launched = stepRoot(ruled.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'live.json', result: 'unchanged' });
+  const answerTarget = (from: RootState, event: Parameters<typeof stepRoot>[1]) => {
+    const result = stepRoot(from, event), check = result.effects.find((effect) => effect.kind === 'check-review-target');
+    return check?.kind === 'check-review-target' ? stepRoot(result.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'live.json', result: 'unchanged' }) : result;
+  };
+  const fixing = answerTarget(used.state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  if (fixing.state.tag !== 'review' || fixing.state.child.tag !== 'fix') throw new Error(`expected fix, got ${fixing.state.tag}`);
+  const applied = answerTarget(fixing.state, { type: 'FIXES_APPLIED', clusters: fixing.state.child.clusters.map((row) => ({ clusterId: row.clusterId, status: 'applied' })) });
+  if (applied.state.tag !== 'review' || applied.state.child.tag !== 'fix-verify') throw new Error(`expected fix verification, got ${applied.state.tag}`);
+  const verify = applied.effects.find((effect) => effect.kind === 'verify');
+  if (verify?.kind !== 'verify') throw new Error('verify effect');
+  const launched = answerTarget(applied.state, { type: 'VERIFY_DONE', effectId: verify.id, purpose: 'fix-verify', results: [], fingerprint: {} });
   if (launched.state.tag !== 'review' || launched.state.child.tag !== 'prepare') throw new Error(`expected prepare, got ${launched.state.tag}`);
   assert.equal(launched.state.child.c.round, 1);
   assert.equal(launched.state.child.c.requested, 'change-1');
   assert.equal(launched.state.child.c.observations![0]!.use?.launchedRound, undefined);
   const prepare = launched.effects.find((effect) => effect.kind === 'prepare-review');
   assert.equal(prepare?.kind === 'prepare-review' && prepare.scope['scope'], 'full');
-  assert.deepEqual(launched.state.child.c.findings.map((row) => [row.id, row.status, row.revision]), [['R1-F001', 'accepted', 'launch-rev']]);
+  assert.deepEqual(launched.state.child.c.findings.map((row) => [row.id, row.status, row.revision]), [['R1-F001', 'fixed', 'launch-rev']]);
   assert.ok(prepare?.kind === 'prepare-review');
   const prepared = stepRoot(launched.state, { type: 'REVIEW_PREPARED', effectId: prepare.id, scope: { empty: false, manifestPath: 'selected.json' }, promptPaths: {} });
   const binding = prepared.effects.find((effect) => effect.kind === 'check-review-target');
@@ -114,7 +122,7 @@ test('review-reuse: host-selected full review keeps prior rulings and launches o
   assert.equal(wave.state.child.c.round, 2);
   assert.equal(wave.state.child.c.requested, undefined);
   assert.equal(wave.state.child.c.observations![0]!.use?.launchedRound, 2);
-  assert.deepEqual(wave.state.child.c.findings.map((row) => [row.id, row.status, row.revision]), [['R1-F001', 'accepted', 'launch-rev']]);
+  assert.deepEqual(wave.state.child.c.findings.map((row) => [row.id, row.status, row.revision]), [['R1-F001', 'fixed', 'launch-rev']]);
   assert.equal(wave.effects[0]?.kind, 'wave-start');
   assert.equal(wave.effects[0]?.kind === 'wave-start' && wave.effects[0].round, 2);
 });

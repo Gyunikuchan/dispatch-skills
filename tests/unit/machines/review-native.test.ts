@@ -9,7 +9,7 @@ const CONFIG = {
   phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } },
 };
 const started: RunStartedEvent = {
-  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {},
 };
 const finding = (id: string, source: string) => ({ id, severity: 'MUST', category: 'correctness', locus: `src/${source}.ts:L1`, defect: 'd', requiredChange: 'r', sources: [source], scope: 'in' });

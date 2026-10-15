@@ -85,7 +85,10 @@ stateDiagram-v2
   S6 --> S4: EFFECT_FAILED
   S6 --> S4: REVIEW_PREPARED
   S6 --> S4: RULINGS
+  S6 --> S5: DECISION
   S6 --> S5: RULINGS
+  S6 --> S6: RULINGS
+  S6 --> S9: DECISION
   S6 --> S9: REVISE
   S6 --> S9: RULINGS
   S7 --> S0: ARTIFACT_PARSED

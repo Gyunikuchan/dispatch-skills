@@ -68,7 +68,7 @@ When `/dispatch-implement` (or `dispatch implement`) runs in this checkout, do n
    - Verify removal with `git worktree list --porcelain`.
    - Update `<session>/.state/scratch/worktrees.json` status to `removed`.
 6. **Review, trim, and verify:**
-   - Run a standalone `/dispatch-code-review --fix` on the working tree.
+   - Run a standalone `/dispatch-code-review` on the working tree.
    - Trim temporary test files owned only by `Retain: transient` criteria.
    - Run `npm run hashes` when hash-tracked files changed, then `npm test`.
 7. **Handoff:** Hand off per [Long-Running Work and Handoff](#long-running-work-and-handoff), with evidence for each criterion.

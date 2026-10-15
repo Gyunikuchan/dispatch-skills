@@ -37,7 +37,6 @@ export const answers = (event: Event, effectId: string | null): boolean => 'effe
 
 // SECTION: Specs
 
-export type ReviewMode = 'fix' | 'report';
 export type CriterionOutcome = 'pass' | 'waived';
 export type CriterionProvenance = { outcome: CriterionOutcome; waiver?: { by: 'user'; quote: string }; redProvenance: 'observed' | 'waived' | 'not-required' };
 
@@ -46,7 +45,7 @@ export type WriterConfig = { models: readonly string[]; effort: string | null };
 
 /** Spec §5.5 input; `breadth` is the roster target count and `roster` the resolved targets then reserves. */
 export type ReviewSpec = {
-  kind: ReviewKind; mode: ReviewMode; target: string; cap: number; breadth: number | 'all'; context: string | null;
+  kind: ReviewKind; target: string; cap: number; breadth: number | 'all'; context: string | null;
   roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string; writer?: WriterConfig | null;
   governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
 };

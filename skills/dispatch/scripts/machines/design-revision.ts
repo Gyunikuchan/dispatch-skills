@@ -127,7 +127,7 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   if (design.box['TL;DR'] !== state.c.design?.box['TL;DR']) return stay({ ...state, tag: 'refused', error: 'Design objective cannot change during revision.' });
   const delta = designDelta(state.c.design!, design);
   if (state.afterReview || event.hash === state.c.hash) return proposeScope(state.c, state.workingPath, state.reason, state.evidence, design, event.hash, delta);
-  const built = reviewSpecFromRun(state.c.run, 'design', 'fix', state.workingPath);
+  const built = reviewSpecFromRun(state.c.run, 'design', state.workingPath);
   if (!built.ok) return stay({ ...state, tag: 'refused', error: built.error });
   const offset = state.c.revisionReviewRound;
   const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, 'design.revision.review', state.c.counters, offset);

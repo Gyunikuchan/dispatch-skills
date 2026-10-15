@@ -23,7 +23,7 @@ export async function pausedReview(legacy = false) {
   let current = structuredClone(original);
   const git = { toplevel: async () => cwd, diffNames: async () => Object.keys(current.working), reviewSnapshot: async (_cwd: string, _target: string, paths?: readonly string[]) => ({ ...structuredClone(current), ...(paths ? { governedPaths: [...paths] } : {}) }),
     reviewDelta: async (_cwd: string, prior: ReviewSnapshot, next: ReviewSnapshot = current) => ({ staged: [], unstaged: [], untracked: [], deleted: [], paths: Object.keys(next.working).filter(file => prior.working[file] !== next.working[file]) }) } as unknown as Git;
-  const spec = { kind: 'code', mode: 'fix', target: '', cap: 3, breadth: 1, context: 'Probe', roster: [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }], timeoutMs: 1000 };
+  const spec = { kind: 'code', target: '', cap: 3, breadth: 1, context: 'Probe', roster: [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }], timeoutMs: 1000 };
   const machine: Machine<ReviewState> = { ...reviewMachine, codec: { name: 'fixture-review', version: 1, runtime: () => 'fixture-review-v2', encode: value => structuredClone(value), decode: value => structuredClone(value) as ReviewState },
     step: (state,event) => event.type === 'RUN_STARTED' ? beginReview(spec as Parameters<typeof beginReview>[0], 'review', {}) : stepReview(state,event) };
   const handlers: Handlers = { 'prepare-review': createPrepareReview({ cwd, skillRoot: path.join(path.resolve('skills/dispatch')), git }),
@@ -31,7 +31,7 @@ export async function pausedReview(legacy = false) {
     'wave-start': async effect => [{ type: 'WAVE_STARTED', effectId: effect.id, round: effect.round, waveKey: 'probe', attempt: 1, roster: effect.roster, claimPath: null, inputPath: 'probe', native: [], early: [],
       completed: { type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [{slot: "codex[0]",state:"success"}], findings: [{ id: 'F1', severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Guard', requiredChange: 'Fix', sources: ['codex[0]'], scope: 'in' }] } }],
     verify: async effect => [{ type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, results: effect.commands.map(command=>({command,exit:0})), fingerprint: {} }] };
-  const first = await start({ ports, runDir, machine, handlers, runStarted: { ...RUN_STARTED, verb: 'review', fix: true } });
+  const first = await start({ ports, runDir, machine, handlers, runStarted: { ...RUN_STARTED, verb: 'review' } });
   if (first.frame?.await !== 'rule') throw Error(`not rule: ${JSON.stringify(first)}`);
   if (legacy) {
     const state = loadExecution(machine, ports, runDir).folder.state;

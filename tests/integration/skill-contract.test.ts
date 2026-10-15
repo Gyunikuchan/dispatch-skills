@@ -115,8 +115,8 @@ test('branch references and manuals resolve every local link and use portable re
 });
 
 
-test('aliases forward explicit fix intent and host contract uses emitted envelopes', () => {
-  for (const name of ['dispatch-code-review']) assert.match(read(`skills/${name}/SKILL.md`), /--fix/);
+test('review alias maps to code review and host contract uses emitted envelopes', () => {
+  assert.match(read('skills/dispatch-code-review/SKILL.md'), /start review --kind code/);
   assert.match(read('skills/dispatch/SKILL.md'), /`events`/); assert.match(read('skills/dispatch/SKILL.md'), /outcome:"pass"/);
 });
 

@@ -10,7 +10,7 @@ const CONFIG = {
   phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } },
 };
 const started = (over: Partial<RunStartedEvent> = {}): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, fix: true,
+  type: 'RUN_STARTED', verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {}, ...over,
 });
 const finding = (id: string, over: Record<string, unknown> = {}) => ({
@@ -165,18 +165,12 @@ test('bounded-recovery: exhaustion names pending work as well as exhausted findi
 
 // SECTION: Verification and optional fixes
 
-test('review-report-only-default: report mode records acceptance without fix', () => {
-  const { state, effects } = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]);
-  assert.equal(state.tag, 'settled');
-  assert.equal('c' in state && state.c.findings[0]?.status, 'accepted');
-  assert.deepEqual(effects.map((effect) => effect.kind), ['prepare-review', 'wave-start']);
-});
-
 test('review-adjacent-follow-ups: only accepted adjacent findings become follow-ups', () => {
   const findings = [finding('R1-F001', { scope: 'adjacent' }), finding('R1-F002', { scope: 'adjacent' })];
-  let { state } = drive([started({ fix: false }), prepared(1), waveDone(1, findings),
+  let { state } = drive([started(), prepared(1), waveDone(1, findings),
     { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'reject', reason: 'by design' } } } as Event]);
   if (state.tag === 'prepare') state = drive([prepared(2), waveDone(2, [])], state).state;
+  if (state.tag === 'decide-opt-in') state = drive([{ type: 'DECISION', kind: 'opt-in', answer: [] }], state).state;
   assert.equal(state.tag, 'settled');
   const data = reviewMachine.project(state).data['completion'] as { followUps: string[] };
   assert.deepEqual(data.followUps, ['R1-F001 src/R1-F001.ts:L3: defect R1-F001']);

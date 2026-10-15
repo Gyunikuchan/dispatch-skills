@@ -4,7 +4,7 @@ import { reviewMachine, reviewAwait, reviewData, validateReview, type ReviewStat
 import { createFolder, fold } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { JOURNAL_PROTOCOL_REVISION, type Event, type JournalLine, type RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 
-const started: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } } } };
+const started: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } } } };
 function wave() {
   const prepare = reviewMachine.step(reviewMachine.initial(), started);
   return reviewMachine.step(prepare.state, { type: 'REVIEW_PREPARED', effectId: prepare.effects[0]!.id, scope: { manifestPath: 'prior.json' }, promptPaths: {} });
@@ -32,7 +32,7 @@ for (const tag of ['decide-needs-user', 'decide-opt-in'] as const) test(`review-
 
 test('review-target fix candidates are adopted only after unchanged successful verification', () => {
   const initial = wave(); if (!('c' in initial.state)) throw new Error('context');
-  const c = { ...initial.state.c, spec: { ...initial.state.c.spec, mode: 'fix' as const }, findings: [{ ...finding, round: 1, status: 'accepted' as const }] };
+  const c = { ...initial.state.c, findings: [{ ...finding, round: 1, status: 'accepted' as const }] };
   const state: ReviewState = { tag: 'fix', c, pass: 'main', defects: [], clusters: [{ clusterId: 'C1', findingIds: [finding.id], paths: ['src/a.ts'], verification: [], attemptBudget: 3, parentId: null, dependsOnClusters: [], members: [{ id: finding.id, paths: ['src/a.ts'], dependencies: [], verification: [] }] }] };
   const capture = reviewMachine.step(state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'C1' }] });
   assert.deepEqual(capture.effects[0]?.kind === 'check-review-target' && capture.effects[0].allowedPaths, ['src/a.ts']);

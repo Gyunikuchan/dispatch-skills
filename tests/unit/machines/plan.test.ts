@@ -10,7 +10,7 @@ const config = (rounds: number) => ({
   phases: { 'plan-review': { rounds: { low: rounds }, targets: { low: 1 } } },
 });
 const started = (rounds = 1): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'plan', argument: 'Add a cache', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb: 'plan', argument: 'Add a cache', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: config(rounds), repo: {},
 });
 const authored: Event = { type: 'AUTHORED', path: 'docs/add-a-cache.plan.md' };

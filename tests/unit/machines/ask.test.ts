@@ -5,7 +5,7 @@ import { askMachine } from '../../../skills/dispatch/scripts/machines/ask.ts';
 import { play } from '../../helpers/play.ts';
 
 const started: RunStartedEvent = {
-  type: 'RUN_STARTED', verb: 'ask', argument: 'Where is the lock released?', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb: 'ask', argument: 'Where is the lock released?', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {},
   config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } } },
 };

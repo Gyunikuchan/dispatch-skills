@@ -238,7 +238,7 @@ export function planReviewContext(c: Context, invocationContext: string | null |
 }
 
 function startReview(c0: Context): S {
-  const built = reviewSpecFromRun(c0.run, 'plan', 'fix', c0.planPath);
+  const built = reviewSpecFromRun(c0.run, 'plan', c0.planPath);
   if (!built.ok) return beginFailure(c0, built.error);
   const spec = { ...built.spec, context: planReviewContext(c0, built.spec.context) };
   const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review`, c0.counters);
@@ -1251,7 +1251,7 @@ function continueAfterDelivery(c: Context): S {
 }
 
 function startCodeReview(c0: Context): S {
-  const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
+  const built = reviewSpecFromRun(c0.run, 'code', '');
   if (!built.ok) return beginFailure(c0, built.error);
   const plan = c0.plan!;
   const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: plan.criteria.map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };

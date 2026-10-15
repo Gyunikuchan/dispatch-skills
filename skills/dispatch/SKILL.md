@@ -7,14 +7,14 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument` (default `ask`). `design`, `plan`, and `implement` need an argument; empty `review` targets the working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep levels unless assessed higher; ask the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user selection for `xhigh` and `max`. Pins `(a,b)`, `(3)`, `(all)` select providers, count, or all configured targets. `-m`/`-e` map to `--model`/`--effort`. Map explicit fix requests to `--fix`; review is otherwise report-only.
+Parse `[level] [(pins)] [verb:] argument` (default `ask`). `design`, `plan`, and `implement` need an argument; empty `review` targets the working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep levels unless assessed higher; ask the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user selection for `xhigh` and `max`. Pins `(a,b)`, `(3)`, `(all)` select providers, count, or all configured targets. `-m`/`-e` map to `--model`/`--effort`.
 
 Use `design` for increments, `plan` for one unit, `implement` for delivery; await user choice on mismatches.
 
 ## Run loop
 
 1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain `sessionDir`/`sessionId`; fallback: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
-2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Retain `run`.
+2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] -- <argument>`. Retain `run`.
 3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as background tasks; act on completion notices; rewrite rejected payloads in place. Follow frames with evidence and user quotes. Send one frame `events` object per `await` until `done`; eventless send resumes automation. [Change handling](references/change-handling.md) governs advisory observations and optional dispositions.
 
 When any step creates a worktree, follow [worktree cleanup](references/worktree-cleanup.md).

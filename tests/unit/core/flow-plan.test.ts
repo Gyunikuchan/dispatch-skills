@@ -60,7 +60,7 @@ test('readable artifact ownership: full plan findings go to the review log and t
   const write = ports.fs.writeAtomic;
   ports.fs.writeAtomic = (file, text) => { writes.push(file); write(file, text); };
   const stateOf = (machine: string): RootState => {
-    const begun = beginReview({ kind: 'plan', mode: 'report', target: owner, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machine, {}).state;
+    const begun = beginReview({ kind: 'plan', target: owner, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machine, {}).state;
     if (!('c' in begun)) throw new Error('review');
     return { tag: 'review', run: { verb: 'review', argument: owner, slug: 'plan' }, child: { tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'accepted', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check. More detail belongs in the report.', requiredChange: 'Add the check.', resolution: 'Keep API.\nAdd check.', sources: ['reader'], scope: 'in' }] } } };
   };
@@ -89,7 +89,7 @@ test('readable artifact ownership: full plan findings go to the review log and t
 test('readable artifact ownership: owned review needs no report write or invented rationale', () => {
   const ports = fakePorts(), session = tempDir(), owner = path.join(session, 'plan.md');
   ports.fs.writeAtomic(owner, PLAN);
-  const begun = beginReview({ kind: 'plan', mode: 'report', target: owner, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'review', {}).state;
+  const begun = beginReview({ kind: 'plan', target: owner, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'review', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const state: RootState = { tag: 'review', run: { verb: 'review', argument: owner, slug: 'plan' }, child: { tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'accepted', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } } };
   const write = ports.fs.writeAtomic;
@@ -114,7 +114,7 @@ test('plan end to end: author → AUTHORED → parse → review → rule → don
   const planPath = path.join(tmp, 'add-retry.plan.md');
   const ports = fakePorts();
   const runStarted: RunStartedEvent = {
-    type: 'RUN_STARTED', verb: 'plan', argument: 'Add retry budget', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+    type: 'RUN_STARTED', verb: 'plan', argument: 'Add retry budget', level: 'low', levelSource: 'explicit', pins: null,
     orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {},
     config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
   };

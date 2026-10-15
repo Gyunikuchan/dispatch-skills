@@ -137,7 +137,7 @@ function boot(event: RunStartedEvent): S {
     }
     case 'review': {
       const kind = inferKind(event.argument, event.overrides);
-      const built = reviewSpecFromRun(event, kind, event.fix ? 'fix' : 'report', event.argument.trim());
+      const built = reviewSpecFromRun(event, kind, event.argument.trim());
       if (!built.ok) return failed(run, built.error);
       const result = beginReview(built.spec, 'review', {});
       return wrap(run, { verb: 'review', state: result.state }, result.effects);

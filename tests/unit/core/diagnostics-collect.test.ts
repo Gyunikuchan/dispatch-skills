@@ -147,14 +147,18 @@ function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-revie
 }
 
 type HandoffHandler = NonNullable<Handlers['handoff']>;
-/** A real code review through dispatchMachine with one codex finding per round; diagnostics on, so it ends at retro. */
-function codeReview(finding: (round: number) => Record<string, unknown>, rounds: number, ports: FakePorts = fakePorts(), wrapHandoff = (handoff: HandoffHandler): HandoffHandler => handoff) {
+/** A real code review through dispatchMachine with diagnostics enabled; settled runs continue to retro. */
+function codeReview(finding: (round: number) => Record<string, unknown> | null, rounds: number, ports: FakePorts = fakePorts(), wrapHandoff = (handoff: HandoffHandler): HandoffHandler => handoff) {
   const session = tempDir(), runDir = path.join(session, '.state/runs/001-review');
   memoryRunFs(ports, path.join(session, '.state'));
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts'] }, promptPaths: { 'codex[0]': 'p0.md' } }],
     'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 1, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: 'input.json' }],
-    'wave-finish': async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding(effect.round)] as never }],
+    'wave-finish': async (effect) => {
+      const roundFinding = finding(effect.round);
+      return [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [{ slot: 'codex[0]', state: 'success' }], findings: (roundFinding ? [roundFinding] : []) as never }];
+    },
+    verify: async (effect) => [{ type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, results: [], fingerprint: {} }],
     handoff: wrapHandoff(createHandoff({ tempRoot: session, workspaceRoot: path.dirname(session) })),
   };
   const base = { ports, runDir, machine: dispatchMachine, handlers, diagnosticToggle: () => true, diagnosticRetroInstruction: () => INSTRUCTION };
@@ -168,6 +172,13 @@ function codeReview(finding: (round: number) => Record<string, unknown>, rounds:
     begin: async () => (await start({ ...base, runStarted })).frame?.await,
     /** The next await, or the frame error for a rejected event or a fault. */
     reply: async (rawEvent: unknown) => { const result = await send({ ...base, rawEvent }); return result.frame?.error ?? result.frame?.await; },
+    completeFix: async () => {
+      const current = await send({ ...base, dryRun: true });
+      const clusters = current.frame?.data['clusters'];
+      if (!Array.isArray(clusters)) throw new Error('expected fix clusters in the current frame');
+      const result = await send({ ...base, rawEvent: { type: 'FIXES_APPLIED', clusters: clusters.map((cluster) => ({ clusterId: String((cluster as Record<string, unknown>)['clusterId']), status: 'applied' })) } });
+      return result.frame?.error ?? result.frame?.await;
+    },
   };
 }
 const reviewFinding = (round: number, category = 'correctness') => ({ id: `R${round}-F001`, severity: 'MUST', category, locus: 'src/a.ts:L3', defect: 'null deref', requiredChange: 'guard it', sources: ['codex[0]'], scope: 'in' });
@@ -255,12 +266,13 @@ test('SC10 native receipt records launched model and effort', async () => {
 });
 
 test('SC10 H2 fires when round 2 re-raises a carried rejection', async () => {
-  const review = codeReview((round) => reviewFinding(round), 2);
+  const review = codeReview((round) => round <= 2 ? reviewFinding(round) : null, 2);
   assert.equal(await review.begin(), 'rule');
   assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule', 'the rejection is carried and re-raised in round 2');
-  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R2-F001': { ruling: 'accept' } } }), 'retro');
+  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R2-F001': { ruling: 'accept' } } }), 'fix');
+  assert.equal(await review.completeFix(), 'retro', 'the accepted repair is verified before a clean delta round settles');
   assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
-  assert.match(review.report(), /code review: 2 rounds; 1 finding re-raised across rounds \(R1-F001\)\./);
+  assert.match(review.report(), /code review: 3 rounds; cap reached \(2\); 1 finding re-raised across rounds \(R1-F001\)\./);
 });
 
 test('SC10 later run-end render replaces older snapshot', async () => {
@@ -328,7 +340,8 @@ test('heuristic precision production phases carry review cap', async () => {
   assert.equal(await review.begin(), 'rule');
   assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule');
   assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R2-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule');
-  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R3-F001': { ruling: 'accept' } } }), 'retro');
+  assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R3-F001': { ruling: 'downgrade', severity: 'CONSIDER', reason: 'low-impact observation' } } }), 'decide');
+  assert.equal(await review.reply({ type: 'DECISION', kind: 'opt-in', answer: [] }), 'retro', 'declining the optional CONSIDER fix preserves the cap-boundary trace');
   assert.equal(await review.reply({ type: 'RETRO', observations: [] }), 'done');
   const facts = collectRunFacts(review.ports, review.runDir, {}, testFold(dispatchMachine, (state) => diagnosticPhases(state as RootState)));
   assert.deepEqual(facts.reviews.map((row) => [row.round, row.cap]), [[1, 3], [2, 3], [3, 3]], 'the root machine phases carry the resolved cap on every round');

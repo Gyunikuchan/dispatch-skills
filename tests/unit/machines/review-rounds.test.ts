@@ -10,7 +10,7 @@ const CONFIG = {
   phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 2 } } },
 };
 const started = (over: Partial<RunStartedEvent> = {}): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', verb: 'review', argument: 'main..HEAD', level: 'low', levelSource: 'explicit', pins: null,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: CONFIG, repo: {}, ...over,
 });
 const finding = (id: string, over: Record<string, unknown> = {}) => ({
@@ -31,7 +31,7 @@ for (const [level, expected] of Object.entries({ low: 600_000, medium: 600_000, 
   });
 }
 
-test('diagnostics amendment timeout: failed report spec retains fallback', () => {
+test('diagnostics amendment timeout: failed review spec retains fallback', () => {
   const { state } = drive([started({ level: 'max', config: { 'read-delegates': {} } })]);
   assert.equal(state.tag, 'failed');
   assert.equal('c' in state && state.c.spec.timeoutMs, 600_000);
@@ -46,7 +46,7 @@ test('diagnostics amendment continuation frame: within cap omits reason and expo
 
 for (const scope of ['delta', 'disputes-only'] as const) test(`diagnostics amendment continuation frame: ${scope} beyond cap describes MUST continuation`, () => {
   const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } } };
-  const events: Event[] = [started({ fix: true, config }), prepared(1), waveDone(1, [finding('R1-F001')]),
+  const events: Event[] = [started({ config }), prepared(1), waveDone(1, [finding('R1-F001')]),
     { type: 'RULINGS', rulings: { 'R1-F001': scope === 'delta' ? { ruling: 'accept' } : { ruling: 'reject', reason: 'by design' } } }];
   if (scope === 'delta') {
     const { state } = drive(events);
@@ -84,7 +84,7 @@ test('prepare → wave → rule: frames per transition', () => {
 });
 
 test('disputes-only round when nothing was fixed; affinity carries the rejection to its source slot', () => {
-  const events = [started({ fix: true }), prepared(1), waveDone(1, [finding('R1-F001')]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event];
+  const events = [started(), prepared(1), waveDone(1, [finding('R1-F001')]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event];
   const { state, effects } = drive(events);
   assert.equal(state.tag, 'prepare');
   const next = effects[0];
@@ -97,7 +97,7 @@ test('disputes-only round when nothing was fixed; affinity carries the rejection
 test('orchestrator closure below threshold at the cap', () => {
   const should = finding('R1-F001', { severity: 'SHOULD' });
   const events = [
-    started({ fix: true }), prepared(1), waveDone(1, [should]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } } as Event,
+    started(), prepared(1), waveDone(1, [should]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } } as Event,
     prepared(2), waveDone(2, [{ ...should, id: 'R2-F001' }]), { type: 'RULINGS', rulings: { 'R2-F001': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } } as Event,
   ];
   const { state } = drive(events);
@@ -122,7 +122,7 @@ test('an active review phase with zero resolved reviewers fails; rounds zero sti
 });
 
 for (const coverage of ['failed', 'missing', 'clean'] as const) test(`rewrite SC1 responsible reviewer ${coverage} controls omission`, () => {
-  const events = [started({ fix: true }), prepared(1), waveDone(1, [finding('R1-F001')]),
+  const events = [started(), prepared(1), waveDone(1, [finding('R1-F001')]),
     { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event, prepared(2),
     { ...waveDone(2, []), slots: coverage === 'clean' ? rows : [rows[0]!, ...(coverage === 'failed' ? [{ slot: 'agy[0]', state: 'failed', reason: 'timeout' }] : [])] } as Event];
   const { state } = drive(events);
@@ -175,7 +175,7 @@ test('reviewer-metadata-preservation: model and effort are preserved from wave a
 });
 
 test('round two scope carries settled rulings', () => {
-  const events = [started({ fix: true }), prepared(1), waveDone(1, [
+  const events = [started(), prepared(1), waveDone(1, [
     finding('R1-F001'), finding('R1-F002', { severity: 'CONSIDER', locus: 'src/b.ts:L1' }), finding('R1-F003', { severity: 'CONSIDER', locus: 'src/c.ts:L9' }),
   ]), { type: 'RULINGS', rulings: {
     'R1-F001': { ruling: 'reject', reason: 'by design' },
@@ -215,7 +215,7 @@ function observedRule(cap: number, findings: unknown[] = [finding('R1-F001')]) {
 }
 
 test('review-cap: observations spend no round and cap preserves findings', () => {
-  const ruled = observedRule(1);
+  const ruled = observedRule(1, [finding('R1-F001', { severity: 'CONSIDER' })]);
   assert.equal(ruled.state.tag, 'rule'); if (ruled.state.tag !== 'rule') return;
   assert.equal(ruled.state.c.round, 1);
   assert.equal(ruled.state.c.rounds.length, 1);
@@ -223,14 +223,16 @@ test('review-cap: observations spend no round and cap preserves findings', () =>
   const use = { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action: 'targeted', rationale: 'Recheck the edited file', paths: ['src/a.ts'] } as const;
   assert.match(reviewMachine.validate!(ruled.state, use) ?? '', /cap/);
   assert.equal(reviewMachine.validate!(ruled.state, { ...use, action: 'reuse' }), null);
-  const settled = stepTarget(ruled, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }, capNotice('third'));
+  const offered = stepTarget(ruled, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  assert.equal(offered.state.tag, 'decide-opt-in'); if (offered.state.tag !== 'decide-opt-in') return;
+  const settled = stepTarget(offered, { type: 'DECISION', kind: 'opt-in', answer: [] });
   assert.equal(settled.state.tag, 'settled'); if (settled.state.tag !== 'settled') return;
   assert.equal(settled.state.c.round, 1);
   const kept = settled.state.c.findings.find((row) => row.id === 'R1-F001');
   assert.equal(kept?.status, 'accepted');
   assert.equal(kept?.revision, 'm1.json', 'the finding stays bound to the revision its wave reviewed');
   const coverage = (reviewMachine.project(settled.state).data['completion'] as Record<string, unknown>)['coverage'] as Record<string, unknown>;
-  assert.deepEqual((coverage['unassessed'] as { id: string }[]).map((row) => row.id), ['second', 'third']);
+  assert.deepEqual((coverage['unassessed'] as { id: string }[]).map((row) => row.id), ['second']);
 });
 
 for (const action of ['targeted', 'full'] as const) test(`review-cap: selected ${action} review spends a round only when launched`, () => {

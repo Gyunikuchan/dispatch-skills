@@ -86,7 +86,7 @@ test('seam advisory reaches the host and enters review', async () => {
   const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** user request\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Expose command | The existing command becomes public. | none | SC1 |\n\n## Proposed Changes\n### T1 — Expose command\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
   const ports = fakePorts();
   const started = planMachine.step(planMachine.initial(), { type: 'RUN_STARTED', verb: 'plan', argument: file,
-    level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'codex', orchestratorModel: null,
+    level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'codex', orchestratorModel: null,
     overrides: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } } }, repo: {} });
   const author = planMachine.step(started.state, { type: 'AUTHORED', path: file });
   for (const [declaration, expected] of [['', 1], ['- Seams: none\n', 0]] as const) {
@@ -109,7 +109,7 @@ test('seam advisory reaches the host and enters review', async () => {
 test('effect folder: prepare-review writes one prompt per slot, carried rejections ride their affinity slot; an empty code diff is an empty scope', async () => {
   const runDir = tempDir();
   const roster = [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }, { slot: 'agy[0]', provider: 'agy', index: 0, native: false, reserve: false }];
-  const review = { kind: 'code', mode: 'report', target: 'main..HEAD', cap: 2, breadth: 2, context: 'check the lock', roster, timeoutMs: 1000 };
+  const review = { kind: 'code', target: 'main..HEAD', cap: 2, breadth: 2, context: 'check the lock', roster, timeoutMs: 1000 };
   const carried = [{ id: 'R1-F001', slot: 'agy[0]', locus: 'src/a.ts:L3', defect: 'null deref', reason: 'guarded upstream' }];
   const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: '/repo', git: gitWith('src/a.ts\n') });
   const result = only(await handler({ kind: 'prepare-review', id: 'review.prepare-review.2', review, round: 2, scope: { scope: 'disputes-only', carried } }, fakePorts(), { runDir, attempt: 1 }));
@@ -131,7 +131,7 @@ test('effect folder: prepare-review writes one prompt per slot, carried rejectio
 
 test('settled section lists prior rulings', async () => {
   const roster = [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }];
-  const review = { kind: 'code', mode: 'report', target: 'main..HEAD', cap: 3, breadth: 1, context: 'check the lock', roster, timeoutMs: 1000 };
+  const review = { kind: 'code', target: 'main..HEAD', cap: 3, breadth: 1, context: 'check the lock', roster, timeoutMs: 1000 };
   const carried = [{ id: 'R1-F003', slot: null, locus: 'src/b.ts:L9', defect: 'race', reason: 'single writer' }];
   const settled = [
     { id: 'R1-F001', locus: 'src/a.ts:L3', defect: 'null deref', ruling: 'fixed', reason: 'guard added' },

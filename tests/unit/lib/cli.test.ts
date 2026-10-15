@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ALIASES, parseCommand, parseInvocation } from '../../../skills/dispatch/scripts/lib/cli.ts';
+import { ALIASES, parseCommand, parseInvocation, UsageError } from '../../../skills/dispatch/scripts/lib/cli.ts';
 import { LEVELS, normalizeProvider, parsePins } from '../../../skills/dispatch/scripts/policy/roster.ts';
 const policy = { levels: LEVELS, pins: parsePins, provider: (text: string) => ['codex', 'claude', 'agy', 'opencode', 'copilot'].includes(normalizeProvider(text)) ? normalizeProvider(text) : null };
 const start = ['start', 'ask', '--session-dir', 'chat', '--orchestrator', 'codex'];
@@ -34,6 +34,12 @@ test('leaf CLI enforces flags, duplicate/value guards, providers, pins and comma
   assert.throws(() => parseCommand([...start, '--timeout', 'NaN', '--', 'q'], policy), /positive/);
   for (const verb of ['ask', 'design', 'plan', 'implement']) assert.throws(() => parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--kind', 'code', '--', 'target'], policy), /--kind is for review/);
   for (const kind of ['code', 'design', 'plan']) assert.equal(parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--kind', kind], policy).flags['kind'], kind);
+});
+test('rejects --fix with the generic invalid-flag usage error', () => {
+  assert.throws(
+    () => parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--fix'], policy),
+    (error: unknown) => error instanceof UsageError && error.message === 'Invalid or repeated flag --fix for start',
+  );
 });
 test('compatibility alias parity uses public start mappings', () => {
   assert.deepEqual(Object.values(ALIASES), ['start review --kind code', 'start plan', 'start implement']);

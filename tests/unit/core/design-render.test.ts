@@ -23,7 +23,7 @@ test('readable review rendering: non-plan consumers retain full findings', () =>
 
 test('readable artifact ownership: standalone, active and completed design children share idempotent plan resolution rendering', () => {
   const ports = fakePorts(), session = tempDir(), planPath = path.join(session, 'increment.plan.md');
-  const begun = beginReview({ kind: 'plan', mode: 'report', target: planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'plan.review', {}).state;
+  const begun = beginReview({ kind: 'plan', target: planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'plan.review', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const planReview = stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check. Complete explanation.', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Added check\nKeep API' } } }).state;
   const implementation = { ...approvalState(), c: { ...approvalState().c, planPath, planReview } };
@@ -56,11 +56,11 @@ test('readable artifact ownership: standalone, active and completed design child
 });
 
 
-test('standalone artifact reviews record history in the review log in report mode and preserve successive runs', () => {
+test('standalone artifact reviews record history in the review log and preserve successive runs', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.plan.md');
   ports.fs.writeAtomic(target, '# Feature\n\n## Review Findings & Resolutions\nNo reviews conducted yet.\n\n## Out of Scope\nkeep\n');
   for (const kind of ['plan', 'design'] as const) {
-    const begun = beginReview({ kind, mode: 'report', target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'review', {}).state;
+    const begun = beginReview({ kind, target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'review', {}).state;
     if (!('c' in begun)) throw new Error('review');
     const review = { tag: 'rule' as const, c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full' as const, reviewers: ['reader'], failed: [] }], findings: [] } };
     const state: RootState = { tag: 'review', run: { verb: 'review', argument: target, slug: 'feature' }, child: review };
@@ -82,7 +82,7 @@ test('standalone artifact reviews record history in the review log in report mod
 test('readable artifact ownership: code review records findings in its governing walkthrough', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
   ports.fs.writeAtomic(target, '# Delivered\n');
-  const begun = beginReview({ kind: 'code', mode: 'report', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governing: { planPath: 'feature.plan.md', walkthroughPath: target, criteria: [] } }, 'review', {}).state;
+  const begun = beginReview({ kind: 'code', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governing: { planPath: 'feature.plan.md', walkthroughPath: target, criteria: [] } }, 'review', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const state: RootState = { tag: 'review', run: { verb: 'review', argument: 'HEAD', slug: 'feature' }, child: { tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }] } } };
   rootMachine.render!(state, ports, session);
@@ -113,7 +113,7 @@ test('readable artifact ownership: walkthrough regeneration retains later standa
 test('readable artifact ownership: design integration records review history in the owning design', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.design.md');
   ports.fs.writeAtomic(target, '# Design\n');
-  const begun = beginReview({ kind: 'code', mode: 'report', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.integration', {}).state;
+  const begun = beginReview({ kind: 'code', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.integration', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const integrationReview = { tag: 'rule' as const, c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full' as const, reviewers: ['reader'], failed: [] }] } };
   const active = started();
@@ -157,7 +157,7 @@ test('revision-review-log: a reviewed design revision keeps the source review hi
   const ports = fakePorts(), session = tempDir(), source = path.join(session, 'x.design.md'), workingPath = path.join(session, 'revision-1.design.md');
   ports.fs.writeAtomic(source, '# Design\n');
   const reviewed = (target: string, machinePath: string, defect: string) => {
-    const begun = beginReview({ kind: 'design', mode: 'report', target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machinePath, {}).state;
+    const begun = beginReview({ kind: 'design', target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machinePath, {}).state;
     if (!('c' in begun)) throw new Error('review');
     return stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'x.design.md', defect, requiredChange: 'Fix it', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Fixed' } } }).state;
   };
