@@ -29,3 +29,14 @@ test('integrity ignores the $version key and readVersion returns it', () => {
   assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
   assert.equal(readVersion(skill), '1.2.3');
 });
+
+test('integrity accepts a skill checked out with CRLF line endings against an LF manifest', () => {
+  const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
+  fs.mkdirSync(path.join(skill, 'scripts'));
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n\nbody\n');
+  fs.writeFileSync(path.join(skill, 'scripts', 'a.ts'), 'export {};\nexport const x = 1;\n');
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\r\n\r\nbody\r\n');
+  fs.writeFileSync(path.join(skill, 'scripts', 'a.ts'), 'export {};\r\nexport const x = 1;\r\n');
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+});

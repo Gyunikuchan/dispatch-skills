@@ -11,6 +11,9 @@ const REFERENCE_EXTENSION = /\.(?:md|json)$/;
 
 export const hashFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
+// Manifest hashes ignore CRLF vs LF: `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF.
+const hashSkillFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file, 'utf8').replaceAll('\r\n', '\n')).digest('hex');
+
 const forward = (value: string): string => value.split(path.sep).join('/');
 
 function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<string, string>): void {
@@ -19,7 +22,7 @@ function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<st
   for (const entry of fs.readdirSync(root, { recursive: true })) {
     const relative = `${sub}/${forward(String(entry))}`;
     const absolute = path.join(skillDir, relative);
-    if (pattern.test(relative) && fs.statSync(absolute).isFile()) into[relative] = hashFile(absolute);
+    if (pattern.test(relative) && fs.statSync(absolute).isFile()) into[relative] = hashSkillFile(absolute);
   }
 }
 
@@ -27,7 +30,7 @@ function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<st
 export function generateSkillHashes(skillDir: string): Record<string, string> {
   const entries: Record<string, string> = {};
   const skillMd = path.join(skillDir, 'SKILL.md');
-  if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashFile(skillMd);
+  if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashSkillFile(skillMd);
   collect(skillDir, 'scripts', SCRIPT_EXTENSION, entries);
   collect(skillDir, 'references', REFERENCE_EXTENSION, entries);
   return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key] ?? '']));
