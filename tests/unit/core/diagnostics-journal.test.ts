@@ -178,7 +178,7 @@ test('SC4 records prelaunch failure without launchable mode or prompt paths', as
   assert.deepEqual([config?.['state'], config?.['invocations']], ['failed', [unlaunched('claude', 'sonnet', 'config')]]);
 });
 
-test('SC4 reserve after prelaunch failure journals both records once and H1 counts it', async () => {
+test('SC4 reserve after prelaunch failure journals both records once and emits no H1', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
   const w = setupWave({ 'claude:opus:cli': [result(ok(), attempt('claude', 'opus', 'ok'))] },
     [slot('codex[0]', 'codex', { model: 'gpt-6-sol' }), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })], null, { modes: noCodex });
@@ -190,10 +190,10 @@ test('SC4 reserve after prelaunch failure journals both records once and H1 coun
   assert.deepEqual(row?.['invocations'], [unlaunched('codex', 'gpt-6-sol', 'not-found'), attempt('claude', 'opus', 'ok')]);
   const facts = collectRunFacts(ports, runDir, {}, (lines) => { fold(waveMachine, lines); return { steps: [], orchestratorBytes: 0 }; });
   const report = renderDiagnostics([facts]).text;
-  assert.ok(report.includes('- Evidence: `not-found`: 1 of 2 CLI attempts failed (codex ×1).'), report);
+  assert.ok(!report.includes('`not-found`: 1 of 2 CLI attempts failed'), report);
 });
 
-test('SC4 ok launch with refused output journals the refusal and H1 counts it', async () => {
+test('SC4 ok launch with refused output journals the refusal and emits no H1', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
   const usage = { input: 10, output: 2, scope: 'invocation' as const, provenance: 'claude.result.usage', inputSemantics: 'uncached' as const };
   const w = setupWave({
@@ -208,7 +208,7 @@ test('SC4 ok launch with refused output journals the refusal and H1 counts it', 
   assert.deepEqual(row?.['invocations'], [attempt('claude', 'opus', 'refusal', { usage }), attempt('claude', 'sonnet', 'ok')], 'the refused attempt keeps its duration and usage');
   const facts = collectRunFacts(ports, runDir, {}, (lines) => { fold(waveMachine, lines); return { steps: [], orchestratorBytes: 0 }; });
   const report = renderDiagnostics([facts]).text;
-  assert.ok(report.includes('`refusal`: 1 of 2 CLI attempts failed (claude ×1)'), report);
+  assert.ok(!report.includes('`refusal`: 1 of 2 CLI attempts failed'), report);
 });
 
 test('SC4 measured attempt then throwing launch keeps both records', async () => {

@@ -103,9 +103,9 @@ test('SC1 excludes estimates from measured totals', () => {
 // SECTION: SC2 — heuristics, severity, and model attribution
 
 test('SC2 heuristic H1 fires', () => {
-  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 120_000 }), invocation()] })), 'H1')[0], 'correctness');
-  assert.equal(finding.component, 'scripts/providers/runner.ts');
-  assert.match(finding.evidence, /`timeout`: 1 of 2 CLI attempts failed \(codex ×1\), 2m 0s of driver time/);
+  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
+  assert.equal(finding.component, 'references/providers.md');
+  assert.match(finding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
 });
 
 test('diagnostics amendment convergence keeps H2 signals and suppresses plain known-cap continuation', () => {
@@ -158,7 +158,7 @@ test('SC2 heuristic boundaries stay silent', () => {
 
 test('SC2 orders findings by severity', () => {
   const run = facts({
-    invocations: [invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
+    invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
     reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
     hostGaps: [{ await: 'write', ms: 900_000 }],
     observations: [observation()],
@@ -252,7 +252,7 @@ test('heuristic precision H5 needs three metered invocations and a share above t
 test('heuristic precision H6 makes no driver-repeat claim', () => {
   const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
   assert.equal(finding.impact, 'Long host turns dominate wall time.');
-  assert.equal(finding.proposedFix, "Split the `rule` turn's work and record its sub-steps so the cost can be attributed.");
+  assert.equal(finding.proposedFix, "Record in the retro which sub-steps of the `rule` turn took longest (for example finding verification or test runs) so the next change targets them.");
   assert.doesNotMatch(`${finding.impact} ${finding.proposedFix}`, /driver/);
 });
 
@@ -434,4 +434,34 @@ test('SC3 reduces rejection reasons to class and allowlisted path', () => {
   assert.equal(rejectionReason('invalid-value at event.canary.path'), 'invalid-value at event.*', 'a reduced path is gated again');
   assert.equal(rejectionReason('canary-class at event.path'), 'state-check', 'an unknown class never renders');
   for (const [raw] of cases) assert.ok(!/canary|private/i.test(rejectionReason(raw)), String(raw));
+});
+
+test('absorbed single failure emits no H1', () => {
+  const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
+  assert.deepEqual(only(heuristics(reserve), 'H1'), []);
+  const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
+  assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
+});
+
+test('sanitized slot facts gate H1 in rendered reports', () => {
+  const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
+  assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
+  assert.equal(only(heuristics(run), 'H1').length > 0, true);
+});
+
+test('repeated failures emit actionable H1', () => {
+  const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);
+  for (const cls of ['quota', 'timeout', 'model-not-loaded', 'unclassified']) {
+    const [finding] = only(heuristics(facts({ invocations: [invocation({ outcome: cls, slot: 'codex' }), invocation({ outcome: cls, slot: 'codex' })] })), 'H1');
+    assert.ok(finding, cls);
+    assert.doesNotMatch(finding.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
+  }
+});
+
+test('long host turn advice names sub-steps', () => {
+  const [finding] = only(heuristics(facts({ hostGaps: [{ await: 'evidence', ms: 600_001 }] })), 'H6');
+  assert.match(finding!.proposedFix, /^Record in the retro which sub-steps of the `evidence` turn took longest/);
+  assert.match(finding!.proposedFix, /verification or test runs/);
 });

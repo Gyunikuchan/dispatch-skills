@@ -30,7 +30,7 @@ export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?:
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[];
-  estimated?: boolean; tokens?: number;
+  estimated?: boolean; tokens?: number; slot?: string;
 };
 /**
  * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
@@ -254,7 +254,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
     surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
-    ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])),
+    ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
   }];
 }
 /** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
@@ -315,13 +315,13 @@ function groups<T>(items: readonly T[], key: (item: T) => string): Map<string, T
 const PREFLIGHT = ['scripts/lib/doctor.ts', 'Detect this condition in the preflight check and skip the provider before launch.'] as const;
 const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
-  'model-not-loaded': ['scripts/policy/cascade.ts', 'Cascade to the next model on the first load failure instead of relaunching the same model.'],
-  quota: ['scripts/policy/cascade.ts', 'Treat the first quota failure as provider-wide and route the remaining slots to reserves without another launch.'],
-  timeout: ['scripts/providers/runner.ts', 'Scale the launch timeout with level and prompt size, and resume the provider session instead of relaunching.'],
+  'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
+  quota: ['references/providers.md', 'Check the provider quota or plan before the next run; reserves already absorb quota failures.'],
+  timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
   'context-overflow': ['scripts/effects/prepare-review.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
 };
-const DEFAULT_FIX = ['scripts/providers/runner.ts', 'Classify this failure in the runner and route it through the cascade without a blind retry.'] as const;
+const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the delegate's last output and consider replacing the model or provider."] as const;
 const AWAIT_COMPONENTS: Record<string, string> = {
   author: 'references/templates/plan.md', native: 'references/providers.md', rule: 'references/review-rules.md', fix: 'references/change-handling.md',
   write: 'references/templates/write-brief-task.md', evidence: 'references/verbs/implement.md', retro: 'references/diagnostics.md',
@@ -333,7 +333,13 @@ export function heuristics(run: RunFacts): Finding[] {
   const out: Finding[] = [];
   const add = (source: string, category: Category, component: string, evidence: string, impact: string, proposedFix: string) => out.push({ source, category, component, evidence, impact, proposedFix });
   const cli = run.invocations.filter((i) => i.surface === 'cli');
-  for (const [cls, items] of groups(cli.filter((i) => i.outcome !== 'ok'), (i) => i.outcome)) {
+  // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
+  const failed = cli.filter((i) => i.outcome !== 'ok');
+  const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
+  const bySlot = count((i) => `${i.phase}|${i.slot ?? ''}`);
+  const byProvider = count((i) => i.provider);
+  const wasted = failed.filter((i) => (i.slot !== undefined && (bySlot.get(`${i.phase}|${i.slot}`) ?? 0) >= 2) || (byProvider.get(i.provider) ?? 0) >= 2);
+  for (const [cls, items] of groups(wasted, (i) => i.outcome)) {
     const [component, fix] = FAILURE_FIXES[cls] ?? DEFAULT_FIX;
     const spent = sum(items.map((i) => i.durationMs));
     add('H1', 'correctness', component, `\`${cls}\`: ${items.length} of ${plural(cli.length, 'CLI attempt')} failed (${tally(items.map((i) => i.provider))})${spent === undefined ? '' : `, ${formatDuration(spent)} of driver time`}.`, 'Failed attempts delay the wave and trigger retries or cascade launches.', fix);
@@ -377,7 +383,7 @@ export function heuristics(run: RunFacts): Finding[] {
     if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
   const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
-  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time.', `Split the \`${gap.await}\` turn's work and record its sub-steps so the cost can be attributed.`);
+  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time.', `Record in the retro which sub-steps of the \`${gap.await}\` turn took longest (for example finding verification or test runs) so the next change targets them.`);
   if (run.rejectedEvents.length) {
     const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
     add('H8', 'correctness', 'scripts/core/validate.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');

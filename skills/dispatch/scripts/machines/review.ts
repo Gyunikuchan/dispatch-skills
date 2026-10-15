@@ -164,6 +164,8 @@ export type ReviewCtx = {
   observations?: readonly ReviewObservation[];
   /** Observation whose targeted or full review launches at the next round boundary. */
   requested?: string;
+  /** Set by a spec rebind outside rule/decide; the next prepared round uses full scope. */
+  forceFullScope?: boolean;
 };
 
 export type Pass = 'main' | 'opt-in';
@@ -181,11 +183,14 @@ export type ReviewState =
   | { tag: 'fix-verify'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[] }
   | { tag: 'decide-escalation'; c: ReviewCtx; escalation: Escalation }
   | { tag: 'decide-opt-in'; c: ReviewCtx; items: readonly FindingId[] }
+  | { tag: 'decide-verification'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[]; failures: readonly VerificationFailure[] }
   | { tag: 'settled'; c: ReviewCtx; exit: ExitSummary; followUps: readonly string[] }
   | { tag: 'escalated'; c: ReviewCtx; escalation: Escalation }
   | { tag: 'failed'; c: ReviewCtx; detail: string }
   | { tag: 'skipped'; c: ReviewCtx }
   | { tag: 'empty'; c: ReviewCtx };
+
+export type VerificationFailure = { command: string; exit: number; logPath: string };
 
 export type ReviewTag = ReviewState['tag'];
 export const REVIEW_TERMINALS: readonly ReviewTag[] = ['settled', 'escalated', 'failed', 'skipped', 'empty'];
@@ -220,7 +225,8 @@ function settledRows(findings: readonly ReviewFinding[], round: number): Settled
 }
 
 function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[], requested?: ReviewUse): S {
-  const { pendingSpec, ...bound } = c0;
+  // NOTE: any prepare consumes the rebind flag; the round it prepares is the one that honors it.
+  const { pendingSpec, forceFullScope: _forced, ...bound } = c0;
   const base = { ...bound, spec: pendingSpec ?? c0.spec, preparedRound: round, scope, carried, rows: [], drafts: [], promptPaths: {} };
   const settled = settledRows(base.findings, round);
   const affectedPaths = [...new Set([...base.findings.filter((finding) => finding.round === c0.round && finding.status === 'fixed').flatMap((finding) => finding.fix?.paths ?? []), ...(requested?.paths ?? [])])];
@@ -530,11 +536,13 @@ function decideNext(c0: ReviewCtx): S {
   const c1 = { ...c0, findings, history };
   const next = nextRound({ round: c1.round, cap, findings: roundView(c1) });
   const selected = c1.requested && c1.round < cap ? c1.observations?.find((row) => row.id === c1.requested)?.use : undefined;
-  if (!next.run && !selected) return settleOrOptIn(c1);
+  // NOTE: an outstanding spec rebind blocks settlement until a full round runs under the revised spec.
+  if (!next.run && !selected && !(c1.forceFullScope && c1.round < cap)) return settleOrOptIn(c1);
   // NOTE: a host-selected review launches at this boundary and spends the round it starts; full scope wins over policy scope.
   const round = c1.round + 1;
   const c: ReviewCtx = c1;
-  const scope: RoundScope = !selected ? (next as Extract<typeof next, { run: true }>).scope : selected.action === 'full' || (next.run && next.scope === 'full') ? 'full' : 'delta';
+  const policyScope: RoundScope = !selected ? (next.run ? next.scope : "full") : selected.action === 'full' || (next.run && next.scope === 'full') ? 'full' : 'delta';
+  const scope: RoundScope = c.forceFullScope ? 'full' : policyScope;
   if (!next.run) return prepare(c, round, scope, [], selected);
   const carriedIds = new Set(next.carry);
   const pending = findings.filter((finding) => carriedIds.has(finding.id));
@@ -612,11 +620,31 @@ function onDecision(state: ReviewState, answer: unknown): S {
       const chosen = state.c.findings.filter((finding) => selected.includes(finding.id) && state.items.includes(finding.id));
       return chosen.length ? enterFix(state.c, chosen, 'opt-in') : settle(state.c);
     }
+    case 'decide-verification': {
+      if (!isRecord(answer)) return stay(state);
+      const repairs = new Map(state.clusters.map((cluster) => [cluster.clusterId, verificationRepair(answer[cluster.clusterId])]));
+      if ([...repairs.values()].some((repair) => !repair)) return stay(state);
+      // NOTE: the repaired check replaces the cluster command at no attempt cost; the fix itself was never tested.
+      const clusters = state.clusters.map((cluster) => {
+        const verification = repairs.get(cluster.clusterId)!;
+        return { ...cluster, verification, members: cluster.members.map((member) => ({ ...member, verification })) };
+      });
+      const { tag: _tag, c, failures: _failures, ...recovery } = state;
+      return issueFixVerify(c, { ...recovery, clusters });
+    }
     default: return stay(state);
   }
 }
 
-const DECIDE_KIND = { 'decide-escalation': 'escalation', 'decide-needs-user': 'needs-user', 'decide-opt-in': 'opt-in' } as const;
+/** An orchestrator repair of an unrunnable fix check: non-blank replacement commands with a rationale. */
+function verificationRepair(value: unknown): readonly string[] | null {
+  if (!isRecord(value) || value['by'] !== 'orchestrator' || typeof value['rationale'] !== 'string' || !value['rationale'].trim()) return null;
+  const verification = value['verification'];
+  if (!Array.isArray(verification) || !verification.length || verification.some((command) => typeof command !== 'string' || !command.trim())) return null;
+  return verification as string[];
+}
+
+const DECIDE_KIND = { 'decide-escalation': 'escalation', 'decide-needs-user': 'needs-user', 'decide-opt-in': 'opt-in', 'decide-verification': 'fix-verification' } as const;
 
 export function validateReview(state: ReviewState, event: HostEvent): string | null {
   if (event.type === 'REVISE') return 'event.type: REVISE is unavailable in standalone review; author a new artifact and start a new run';
@@ -628,7 +656,7 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
     case 'rule': return event.type === 'RULINGS' ? validateRulings(state.c, event.rulings) : null;
     case 'native': return event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots, state.slots) : null;
     case 'fix': return event.type === 'FIXES_APPLIED' ? validateFixes(state.clusters, event.clusters) : null;
-    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': {
+    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification': {
       if (event.type !== 'DECISION') return null;
       const kind = DECIDE_KIND[state.tag];
       if (event.kind !== kind) return `event.kind: expected ${kind}, got ${event.kind}`;
@@ -643,6 +671,11 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
         if (!selected) return 'event.answer: expected an array of offered finding ids';
         const unknown = selected.find((id) => !state.items.includes(id));
         if (unknown) return `event.answer: ${unknown} was not offered`;
+      }
+      if (state.tag === 'decide-verification') {
+        const answer = event.answer;
+        const missing = state.clusters.find((cluster) => !isRecord(answer) || !verificationRepair(answer[cluster.clusterId]));
+        if (missing) return `event.answer.${missing.clusterId}: expected { verification: [<non-blank command>, ...], by: "orchestrator", rationale: <non-blank> }`;
       }
       return null;
     }
@@ -699,7 +732,7 @@ export function stepReview(state: ReviewState, event: Event): S {
     || (state.tag === 'rule' && event.type === 'RULINGS' && validateRulings(state.c, event.rulings) === null)
     || (state.tag === 'fix' && event.type === 'FIXES_APPLIED' && validateFixes(state.clusters, event.clusters) === null)
     || (state.tag === 'fix-verify' && (event.type === 'VERIFY_DONE' || event.type === 'ARTIFACT_PARSED') && answers(event, state.c.effectId))
-    || ((state.tag === 'decide-needs-user' || state.tag === 'decide-opt-in') && event.type === 'DECISION' && event.kind === DECIDE_KIND[state.tag] && validateReview(state, event) === null);
+    || ((state.tag === 'decide-needs-user' || state.tag === 'decide-opt-in' || state.tag === 'decide-verification') && event.type === 'DECISION' && event.kind === DECIDE_KIND[state.tag] && validateReview(state, event) === null);
   if (manifest && consumes && 'c' in state) {
     const next = nextId(state.c.counters, state.c.path, 'check-review-target');
     const c = { ...state.c, counters: next.counters };
@@ -732,7 +765,9 @@ function respec(c: ReviewCtx, governingSpec: SpecIdentity): S {
 export function rebindReviewSpec(state: ReviewState, governingSpec: SpecIdentity): S {
   if (!('c' in state)) return stay(state);
   if (state.tag === 'rule' || state.tag === 'decide-needs-user' || state.tag === 'decide-escalation' || state.tag === 'decide-opt-in') return respec(state.c, governingSpec);
-  const rebind = (c: ReviewCtx): ReviewCtx => ({ ...c, spec: { ...c.spec, governingSpec } as ReviewSpec, ...(c.pendingSpec ? { pendingSpec: { ...c.pendingSpec, governingSpec } as ReviewSpec } : {}) });
+  const rebind = (c: ReviewCtx): ReviewCtx => ({ ...c, forceFullScope: true, spec: { ...c.spec, governingSpec } as ReviewSpec, ...(c.pendingSpec ? { pendingSpec: { ...c.pendingSpec, governingSpec } as ReviewSpec } : {}) });
+  // NOTE: a pending delta preparation could return an empty scope under the old spec; replace it with a fresh full one.
+  if (state.tag === 'prepare' && state.c.effectId) return prepare(rebind(state.c), state.c.preparedRound ?? state.c.round + 1, 'full', state.c.carried);
   if (state.tag !== 'target-check') return stay({ ...state, c: rebind(state.c) } as ReviewState);
   return stay({ ...state, c: rebind(state.c), before: 'c' in state.before ? { ...state.before, c: rebind(state.before.c) } as typeof state.before : state.before });
 }
@@ -796,10 +831,16 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }
       }
       if (event.type === 'VERIFY_DONE' && answers(event, state.c.effectId)) {
         const red = event.results.filter((result) => result['exit'] !== 0);
+        // NOTE: when no failing check could run, the fix is untested, so the orchestrator repairs the commands at no attempt cost.
+        if (red.length && red.every((result) => result['loadError'] === true || result['exit'] === 127)) {
+          const failures = red.map((result) => ({ command: String(result['command']), exit: Number(result['exit']), logPath: String(result['logPath']) }));
+          const { tag: _tag, c, ...recovery } = state;
+          return stay({ tag: 'decide-verification', c, ...recovery, failures });
+        }
         return afterFixVerify(state, red.map((result) => `${String(result['command'])} exited ${String(result['exit'])} (${String(result['logPath'])})`));
       }
       return stay(state);
-    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in':
+    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification':
       return event.type === 'DECISION' && event.kind === DECIDE_KIND[state.tag] ? onDecision(state, event.answer) : stay(state);
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return stay(state);
     default: return never(state, 'review state');
@@ -813,14 +854,14 @@ export function reviewAwait(state: ReviewState) {
     case 'native': return 'native' as const;
     case 'rule': return 'rule' as const;
     case 'fix': return 'fix' as const;
-    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
+    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification': return 'decide' as const;
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return 'done' as const;
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return null;
     default: return never(state, 'review state');
   }
 }
 
-function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide-needs-user' | 'decide-opt-in' }>): Decide {
+function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide-needs-user' | 'decide-opt-in' | 'decide-verification' }>): Decide {
   const byId = (ids: readonly FindingId[]) => state.c.findings.filter((finding) => ids.includes(finding.id));
   switch (state.tag) {
     case 'decide-escalation':
@@ -829,6 +870,8 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
       return { kind: 'needs-user', question: 'Ask the user to rule each listed finding; relay { <id>: { ruling: accept|reject|downgrade, quote: <user words>, fix?: { affectedPaths, dependsOn, verification } } }. Accepted in-scope findings enter the fix batch.', options: ['accept', 'reject', 'downgrade'], items: byId(state.ids) };
     case 'decide-opt-in':
       return { kind: 'opt-in', question: 'Offer the user these adjacent and CONSIDER items once; relay the selected ids ([] for none).', options: ['<selected finding ids>'], items: byId(state.items) };
+    case 'decide-verification':
+      return { kind: 'fix-verification', question: `No failing fix check could run: ${state.failures.map((failure) => `${failure.command} exited ${failure.exit} (${failure.logPath})`).join('; ')}. Read the logs, then relay { <clusterId>: { verification: [<corrected command>], by: "orchestrator", rationale } } for every listed cluster; no attempt is charged.`, options: ['<replacement verification per cluster>'], items: state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, findingIds: cluster.findingIds, verification: cluster.verification })) };
     default: return never(state, 'decide state');
   }
 }
@@ -865,7 +908,7 @@ function reviewFrameData(state: ReviewState): Readonly<Record<string, unknown>> 
       ...(state.c.spec.writer ? { writer: state.c.spec.writer } : {}),
       ...(state.defects.length ? { defects: state.defects } : {}),
     };
-    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return decide(state);
+    case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification': return decide(state);
     case 'settled': return { outcome: 'complete', summary: `review settled after ${state.c.round} round(s)`, completion: { exitSummary: state.exit, followUps: state.followUps } };
     case 'escalated': return { outcome: 'stopped', summary: `review escalated: ${state.escalation.kind} (${state.escalation.ids.join(', ')})` };
     case 'failed': return { outcome: 'failed', summary: state.detail };
@@ -923,12 +966,12 @@ export const reviewTransitions = [
   ...[
     ['prepare', 'REVIEW_PREPARED'], ['native', 'NATIVE_RESULTS'], ['wave', 'WAVE_DONE'], ['wave', 'WAVE_STARTED'], ['rule', 'RULINGS'],
     ['fix', 'FIXES_APPLIED'], ['fix-verify', 'VERIFY_DONE'], ['fix-verify', 'ARTIFACT_PARSED'],
-    ['decide-needs-user', 'DECISION'], ['decide-opt-in', 'DECISION'],
+    ['decide-needs-user', 'DECISION'], ['decide-opt-in', 'DECISION'], ['decide-verification', 'DECISION'],
   ].map(([from, on]) => ({ from: from!, on: on!, to: 'target-check' })),
-  ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
+  ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation', 'decide-verification'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
   { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'empty' },
   { from: 'target-check', on: 'EFFECT_FAILED', to: 'failed' },
-  ...['native', 'rule', 'fix', 'decide-escalation', 'decide-needs-user', 'decide-opt-in'].map((tag) => ({ from: tag, on: 'REVIEW_USE', to: tag })),
+  ...['native', 'rule', 'fix', 'decide-escalation', 'decide-needs-user', 'decide-opt-in', 'decide-verification'].map((tag) => ({ from: tag, on: 'REVIEW_USE', to: tag })),
   { from: 'booting', on: 'RUN_STARTED', to: 'prepare' },
   { from: 'booting', on: 'RUN_STARTED', to: 'skipped' },
   { from: 'booting', on: 'RUN_STARTED', to: 'failed' },
@@ -964,6 +1007,9 @@ export const reviewTransitions = [
   { from: 'fix-verify', on: 'VERIFY_DONE', to: 'settled' },
   { from: 'fix-verify', on: 'VERIFY_DONE', to: 'decide-opt-in' },
   { from: 'fix-verify', on: 'EFFECT_FAILED', to: 'failed' },
+  { from: 'fix-verify', on: 'VERIFY_DONE', to: 'decide-verification' },
+  { from: 'decide-verification', on: 'DECISION', to: 'fix-verify' },
+  { from: 'decide-verification', on: 'DECISION', to: 'target-check' },
   { from: 'decide-escalation', on: 'DECISION', to: 'escalated' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'fix' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'settled' },

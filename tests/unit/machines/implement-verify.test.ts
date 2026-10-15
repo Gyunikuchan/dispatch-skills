@@ -303,3 +303,29 @@ test('authority-evidence: reuse cannot pass a failed required gate', () => {
   assert.match(validateImplement(state, event) ?? '', /failed required checks/);
   assert.deepEqual(stepImplement(state, event).state, state);
 });
+
+// SECTION: Nested review fix verification repair
+
+test('nested review repairs unrunnable fix verification at the decide await', () => {
+  const input = afterDelivery();
+  const reviewTag = (state: ReturnType<typeof initialImplement>) => state.tag === 'code-review' ? state.review.tag : state.tag;
+  let result = step(input.state, { type: 'REVIEW_PREPARED', effectId: input.effect.id, scope: {}, promptPaths: { 'codex[0]': 'p0' } });
+  const wave = getEffect(result.effects, 'wave-start');
+  const finding = { id: 'R1-F001', severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L1', defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in', fix: { paths: ['src/a.ts'], dependencies: [], verification: ['node --test missing.test.ts'] } };
+  result = step(result.state, { type: 'WAVE_DONE', effectId: wave.id, round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding] } as never);
+  assert.equal(reviewTag(result.state), 'rule');
+  result = step(result.state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+  if (result.state.tag !== 'code-review' || result.state.review.tag !== 'fix') return assert.fail(`expected nested fix, got ${reviewTag(result.state)}`);
+  const clusters = result.state.review.clusters;
+  result = step(result.state, { type: 'FIXES_APPLIED', clusters: clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) } as never);
+  const verify = getEffect(result.effects, 'verify');
+  result = step(result.state, { type: 'VERIFY_DONE', effectId: verify.id, purpose: 'fix-verify', results: [{ command: 'node --test missing.test.ts', exit: 1, loadError: true, logPath: 'a.log' }], fingerprint: FP } as never);
+  assert.equal(reviewTag(result.state), 'decide-verification');
+  const answer = Object.fromEntries(clusters.map((cluster) => [cluster.clusterId, { verification: ['node --test tests/a.test.ts'], by: 'orchestrator', rationale: 'the test path was wrong' }]));
+  const decision: Event = { type: 'DECISION', kind: 'fix-verification', answer };
+  assert.equal(validateImplement(result.state, decision as never), null);
+  result = step(result.state, decision);
+  assert.equal(reviewTag(result.state), 'fix-verify');
+  const rerun = getEffect(result.effects, 'verify');
+  assert.deepEqual(rerun.kind === 'verify' && rerun.commands.map((row) => row['command']), ['node --test tests/a.test.ts']);
+});

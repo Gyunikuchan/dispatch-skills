@@ -69,7 +69,7 @@ function cliInvocation(phase: string, slot: Record<string, unknown>, value: unkn
   const slotProvider = text(slot['provider']) ?? text(slot['slot'])?.replace(/\[\d+\]$/, '');
   return [{
     phase, provider: text(value['provider']) ?? slotProvider ?? '—', model: text(value['model']) ?? 'default', ...opt('effort', text(value['effort'])), ...opt('mode', text(value['mode'])),
-    surface: 'cli', launched: value['launched'] === true, ...opt('durationMs', count(value['durationMs'])), outcome: text(value['outcome']) ?? '—',
+    ...opt('slot', text(slot['slot'])), surface: 'cli', launched: value['launched'] === true, ...opt('durationMs', count(value['durationMs'])), outcome: text(value['outcome']) ?? '—',
     ...opt('usage', usage), ...opt('reportedModels', reported.length ? reported : undefined),
   }];
 }

@@ -9,7 +9,7 @@ import type { Launch, ProcessPort, ProcessResult } from './types.ts';
 const STDERR_TAIL = 4000;
 
 export const nodeProcess: ProcessPort = {
-  start(launch: Launch, io: { logPath: string; capBytes: number }) {
+  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void }) {
     const started = process.hrtime.bigint();
     const [command, ...args] = launch.argv;
     if (!command) throw new Error('nodeProcess.start: empty argv');
@@ -50,6 +50,7 @@ export const nodeProcess: ProcessPort = {
       capTimer = setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); child.kill('SIGKILL'); }, 1000);
     };
     child.stdout?.on('data', (chunk: Buffer) => {
+      io.onActivity?.();
       const room = io.capBytes - written;
       if (room <= 0) { truncated = true; cancelCap(); return; }
       const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
@@ -59,7 +60,7 @@ export const nodeProcess: ProcessPort = {
       written += piece.length;
       if (truncated) cancelCap();
     });
-    child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_TAIL); });
+    child.stderr?.on('data', (chunk: Buffer) => { io.onActivity?.(); stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_TAIL); });
     const done = new Promise<ProcessResult>((resolve) => {
       let settled = false;
       // 'error' and 'close' can both fire; settle once.

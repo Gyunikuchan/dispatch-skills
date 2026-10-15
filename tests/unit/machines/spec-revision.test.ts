@@ -238,3 +238,35 @@ for (const scope of ['delta', 'disputes-only'] as const) {
     assert.deepEqual(revised.state.child.c.findings.map((row) => [row.id, row.status]), [['R1-F001', 'superseded']]);
   });
 }
+
+test('spec revision outside rule forces full next round through the resumed increment', () => {
+  const delivery = deliveryStarted();
+  assert.ok(delivery.tag === 'increment' && 'c' in delivery.child && delivery.child.c);
+  const context = delivery.child.c;
+  const phases = { ...(context.run.config['phases'] as Record<string, unknown>), 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } };
+  const built = reviewSpecFromRun({ ...context.run, config: { ...context.run.config, phases } }, 'plan', context.planPath, identity);
+  assert.ok(built.ok);
+  const begun = beginReview(built.spec, 'design.i01.implement.plan-review', context.counters);
+  assert.ok(begun.state.tag === 'prepare');
+  // A delta preparation still in flight; under the revised spec it could report an empty scope and end the review.
+  const pending = { ...begun.state, c: { ...begun.state.c, round: 1, preparedRound: 2, scope: 'delta' as const } };
+  const child = { tag: 'plan-review', c: { ...context, governingSpec: identity, planReview: pending }, review: pending } as ImplementState;
+  const reviewing: DesignState = { ...delivery, c: { ...delivery.c, governingSpec: identity }, child };
+  const revisedSpec = { path: SPEC_PATH, hash: specHash(REVISED) };
+  const revision = stepDesign(reviewing, { type: 'SPEC_SETTLED', ...revisedSpec });
+  assert.ok(revision.state.tag === 'revision' && revision.state.child.tag === 'author');
+  const parsing = stepDesign(revision.state, { type: 'AUTHORED', path: revision.state.child.workingPath });
+  const revisedDesign = { ...designFixture, governedText: '# Delivery\nRevised for the spec.' };
+  const revisedHash = `sha256:${'c'.repeat(64)}`;
+  const parsed = stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsing.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] });
+  const resumed = approveDesignScope(stepDesign(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] }));
+  assert.ok(resumed.state.tag === 'increment' && resumed.state.child.tag === 'plan-review');
+  const review = resumed.state.child.review;
+  assert.equal(review.tag, 'prepare');
+  const prepare = resumed.effects.find((effect) => effect.kind === 'prepare-review');
+  assert.ok(prepare && prepare.kind === 'prepare-review');
+  assert.notEqual(prepare.id, begun.effects[0]!.id);
+  assert.ok('c' in review && review.c.effectId === prepare.id);
+  assert.equal((prepare.scope as Record<string, unknown>)['scope'], 'full');
+  assert.deepEqual((prepare.review as Record<string, unknown>)['governingSpec'], revisedSpec);
+});

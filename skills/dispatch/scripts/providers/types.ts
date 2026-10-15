@@ -59,6 +59,8 @@ export type ProcessResult = {
   durationMs: number;
   timedOut: boolean;
   truncated: boolean;
+  /** Silence length when the runner stopped the process for idleness. */
+  idleMs?: number;
 };
 
 export type RunOutcome =
@@ -109,7 +111,7 @@ export type ProviderSpec = {
 };
 
 export interface ProcessPort {
-  /** Launches detached (own process group on POSIX), streaming stdout to `logPath` up to `capBytes`. */
-  start(launch: Launch, io: { logPath: string; capBytes: number }): { pid: number; done: Promise<ProcessResult> };
+  /** Launches detached (own process group on POSIX), streaming stdout to `logPath` up to `capBytes`; `onActivity` fires per stdout or stderr chunk. */
+  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void }): { pid: number; done: Promise<ProcessResult> };
   signal(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void;
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { beginReview, reviewMachine, stepReview, validateReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { beginReview, rebindReviewSpec, reviewMachine, stepReview, validateReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 import type { ChangeNotice, Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { stepRoot, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginPlan } from '../../../skills/dispatch/scripts/machines/plan.ts';
@@ -90,9 +90,9 @@ const FIX_CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
   phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } },
 };
-const fixRun = (kind: 'code' | 'plan'): Event => ({
+const fixRun = (kind: 'code' | 'plan', rounds = 2): Event => ({
   type: 'RUN_STARTED', verb: 'review', argument: kind === 'plan' ? 'x.plan.md' : '', level: 'low', levelSource: 'explicit', pins: null,
-  orchestrator: 'claude', orchestratorModel: null, overrides: { kind }, config: FIX_CONFIG, repo: {},
+  orchestrator: 'claude', orchestratorModel: null, overrides: { kind }, config: rounds === 2 ? FIX_CONFIG : { ...FIX_CONFIG, phases: { ...FIX_CONFIG.phases, 'code-review': { rounds: { low: rounds }, targets: { low: 1 } } } }, repo: {},
 });
 type Driven = { state: ReviewState; effects: readonly Effect[] };
 /** Steps one event and answers each issued target check unchanged unless `changed` is set. */
@@ -105,9 +105,9 @@ function stepChecked(from: Driven, event: Event, changed = false): Driven {
 const fixPath = (kind: 'code' | 'plan') => (kind === 'code' ? 'src/a.ts' : 'x.plan.md');
 const acceptFix = (path: string) => ({ ruling: 'accept', fix: { affectedPaths: [path], dependsOn: [], verification: ['npm test'] } });
 /** Drives a fix review to `rule` with one open MUST finding per id. */
-function toRule(kind: 'code' | 'plan', ids: readonly string[] = ['R1-F001']): Driven {
+function toRule(kind: 'code' | 'plan', ids: readonly string[] = ['R1-F001'], rounds = 2): Driven {
   let driven: Driven = { state: reviewMachine.initial(), effects: [] };
-  driven = stepChecked(driven, fixRun(kind));
+  driven = stepChecked(driven, fixRun(kind, rounds));
   driven = stepChecked(driven, { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { manifestPath: 'm1.json' }, promptPaths: { 'codex[0]': 'p0' } });
   const locus = kind === 'code' ? 'src/a.ts:L3' : '§ Scope';
   const findings = ids.map((id) => ({ id, severity: 'MUST', category: 'correctness', locus, defect: `defect ${id}`, requiredChange: 'fix', sources: ['codex[0]'], scope: 'in' }));
@@ -115,8 +115,8 @@ function toRule(kind: 'code' | 'plan', ids: readonly string[] = ['R1-F001']): Dr
   assert.equal(driven.state.tag, 'rule');
   return driven;
 }
-function toFix(kind: 'code' | 'plan'): Driven {
-  const driven = stepChecked(toRule(kind), { type: 'RULINGS', rulings: { 'R1-F001': acceptFix(fixPath(kind)) } });
+function toFix(kind: 'code' | 'plan', rounds = 2): Driven {
+  const driven = stepChecked(toRule(kind, ['R1-F001'], rounds), { type: 'RULINGS', rulings: { 'R1-F001': acceptFix(fixPath(kind)) } });
   assert.equal(driven.state.tag, 'fix');
   return driven;
 }
@@ -153,6 +153,34 @@ for (const kind of ['code', 'plan'] as const) test(`changed target during verifi
   assert.equal(changed.state.tag, 'failed');
   assert.equal(statusOfFinding(changed.state), 'accepted');
   assert.deepEqual(observed(changed.state), [notice.id]);
+});
+
+/** Applies and verifies the accepted fix; returns the next round's prepare-review scope. */
+function nextPrepareScope(fix: Driven): unknown {
+  const verifying = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+  const first = verifying.effects.find((effect) => effect.kind === 'verify')!;
+  const done = stepChecked(verifying, verifyResult('code', first.id));
+  const prepare = done.effects.find((effect) => effect.kind === 'prepare-review') as { scope: { scope: string } } | undefined;
+  return prepare?.scope.scope;
+}
+
+test('spec rebind forces full scope on the next round that would be delta', () => {
+  // NOTE: a one-round cap makes the MUST continuation round delta by policy.
+  assert.equal(nextPrepareScope(toFix('code', 1)), 'delta');
+  const fix = toFix('code', 1);
+  const rebound = rebindReviewSpec(fix.state, { path: 'x.spec.md', hash: 'revised' });
+  assert.equal(rebound.state.tag, 'fix');
+  assert.equal(nextPrepareScope({ state: rebound.state, effects: fix.effects }), 'full');
+});
+
+test('spec rebind during a clean delta wave runs a full round before settling', () => {
+  let driven: Driven = stepChecked({ state: reviewMachine.initial(), effects: [] }, fixRun('code'));
+  driven = stepChecked(driven, { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { manifestPath: 'm1.json' }, promptPaths: { 'codex[0]': 'p0' } });
+  assert.equal(driven.state.tag, 'wave');
+  const rebound = rebindReviewSpec(driven.state, { path: 'x.spec.md', hash: 'revised' });
+  const done = stepChecked({ state: rebound.state, effects: driven.effects }, { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [] });
+  const prepare = done.effects.find((effect) => effect.kind === 'prepare-review') as { scope: { scope: string } } | undefined;
+  assert.equal(prepare?.scope.scope, 'full');
 });
 
 // SECTION: Edits before RULINGS

@@ -197,6 +197,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
     obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
     obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),
     decision('integration-conflict', ruling(['resolve', 'discard'])),
+    decision('fix-verification', rec(obj({ verification: nonEmptyArr(nonBlank), by: lit('orchestrator'), rationale: nonBlank }))),
     decision('request', ruling(['approve', 'decline', 'escalate'])),
     decision('request-user', obj({ by: lit('user'), requestId: str, choice: lit('accept', 'decline'), quote: nonBlank })),
     decision('failure', byKey('action', {

@@ -271,3 +271,42 @@ test('fix frame writer follows a config refresh', () => {
   assert.equal(next.tag, 'fix');
   assert.deepEqual(reviewMachine.project(next).data['writer'], { models: ['writer-refreshed'], effort: 'high' });
 });
+
+// SECTION: Unrunnable fix verification
+
+const verifyWith = (n: number, results: readonly Record<string, unknown>[]): Event => ({ type: 'VERIFY_DONE', effectId: `review.verify.${n}`, purpose: 'fix-verify', results: results as never, fingerprint: {} });
+const fixWithCheck = () => drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { fix: { paths: ['src/a.ts'], dependencies: [], verification: ['node --test missing.test.ts'] } })]), accept('R1-F001')]).state;
+
+test('unrunnable fix verification asks for replacement commands without charging attempts and reruns them', () => {
+  const fix = fixWithCheck();
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const budgets = fix.clusters.map((cluster) => cluster.attemptBudget);
+  const verify = drive([applied(fix)], fix).state;
+  const decide = drive([verifyWith(1, [{ command: 'node --test missing.test.ts', exit: 1, loadError: true, logPath: 'a.log' }, { command: 'nope', exit: 127, logPath: 'b.log' }])], verify).state;
+  if (decide.tag !== 'decide-verification') return assert.fail(`expected decide-verification, got ${decide.tag}`);
+  assert.deepEqual(decide.clusters.map((cluster) => cluster.attemptBudget), budgets);
+  const frame = reviewMachine.project(decide);
+  assert.equal(frame.data['kind'], 'fix-verification');
+  assert.match(String(frame.data['question']), /a\.log/);
+  const answer = Object.fromEntries(decide.clusters.map((cluster) => [cluster.clusterId, { verification: ['node --test tests/a.test.ts'], by: 'orchestrator', rationale: 'the test file path was wrong' }]));
+  const rerun = drive([{ type: 'DECISION', kind: 'fix-verification', answer }], decide);
+  if (rerun.state.tag !== 'fix-verify') return assert.fail(`expected fix-verify, got ${rerun.state.tag}`);
+  assert.deepEqual(rerun.state.clusters.map((cluster) => cluster.attemptBudget), budgets);
+  assert.deepEqual(rerun.effects.map((effect) => effect.kind === 'verify' && effect.commands), [[{ command: 'node --test tests/a.test.ts' }]]);
+});
+
+test('unrunnable fix verification rejects an answer without an orchestrator rationale', () => {
+  const fix = fixWithCheck();
+  const decide = drive([applied(fix), verifyWith(1, [{ command: 'nope', exit: 127, logPath: 'b.log' }])], fix).state;
+  if (decide.tag !== 'decide-verification') return assert.fail(`expected decide-verification, got ${decide.tag}`);
+  const answer = Object.fromEntries(decide.clusters.map((cluster) => [cluster.clusterId, { verification: ['npm test'], by: 'user', rationale: ' ' }]));
+  assert.match(String(reviewMachine.validate?.(decide, { type: 'DECISION', kind: 'fix-verification', answer }) ?? ''), /orchestrator/);
+  assert.equal(drive([{ type: 'DECISION', kind: 'fix-verification', answer }], decide).state.tag, 'decide-verification');
+});
+
+test('ordinary fix verification failure charges the cluster attempt even beside an unrunnable check', () => {
+  const fix = fixWithCheck();
+  const red = drive([applied(fix), verifyWith(1, [{ command: 'nope', exit: 127, logPath: 'b.log' }, { command: 'npm test', exit: 1, logPath: 'l.log' }])], fix).state;
+  if (red.tag !== 'fix') return assert.fail(`expected fix, got ${red.tag}`);
+  assert.deepEqual(red.clusters.map((cluster) => cluster.attemptBudget), [2]);
+});

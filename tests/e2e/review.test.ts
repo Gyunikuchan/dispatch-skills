@@ -168,6 +168,18 @@ test('rewrite SC4 GPU lock excludes concurrent leases recovers dead owner and re
     assert.equal(await fetchModels('http://127.0.0.1:1/v1', 50), null);
   } finally { f.cleanup(); }
 });
+test('process adapter reports output activity for stdout and stderr chunks', async () => {
+  const f = fixture();
+  try {
+    for (const stream of ['stdout', 'stderr']) {
+      let calls = 0;
+      const child = nodeProcess.start({ argv: [process.execPath, '-e', `process.${stream}.write('x')`], stdin: null, env: process.env as Record<string, string>, cwd: f.dir }, { logPath: path.join(f.dir, `${stream}.log`), capBytes: 1000, onActivity: () => { calls++; } });
+      await child.done;
+      assert.ok(calls > 0, stream);
+    }
+  } finally { f.cleanup(); }
+});
+
 test('rewrite SC4 real child output cap cancels promptly and retains partial capture', async () => {
   const f = fixture();
   try {

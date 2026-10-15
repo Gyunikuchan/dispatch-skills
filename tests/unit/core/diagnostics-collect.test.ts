@@ -228,10 +228,10 @@ describe('completed flow diagnostics', () => {
     const { facts } = collected;
     const cli = { phase: 'plan-review', surface: 'cli', mode: 'cli' } as const;
     assert.deepEqual(facts.invocations, [
-      { ...cli, provider: 'codex', model: 'gpt-x', effort: 'high', launched: true, durationMs: 4_000, outcome: 'effort-unsupported' },
-      { ...cli, provider: 'codex', model: 'gpt-x', launched: true, durationMs: 16_000, outcome: 'ok', usage: { input: 600, output: 200, cacheRead: 400 } },
-      { ...cli, provider: 'claude', model: 'opus', launched: true, durationMs: 12_000, outcome: 'ok', usage: { input: 50, output: 300, cacheRead: 2_000, cacheWrite: 100, models: { opus: { input: 40, output: 250, cacheRead: 2_000, cacheWrite: 100 }, haiku: { input: 10, output: 50 } } }, reportedModels: ['opus', 'haiku'] },
-      { ...cli, provider: 'gemini', model: 'default', launched: false, outcome: 'not-found' },
+      { ...cli, slot: 'codex[0]', provider: 'codex', model: 'gpt-x', effort: 'high', launched: true, durationMs: 4_000, outcome: 'effort-unsupported' },
+      { ...cli, slot: 'codex[0]', provider: 'codex', model: 'gpt-x', launched: true, durationMs: 16_000, outcome: 'ok', usage: { input: 600, output: 200, cacheRead: 400 } },
+      { ...cli, slot: 'claude[0]', provider: 'claude', model: 'opus', launched: true, durationMs: 12_000, outcome: 'ok', usage: { input: 50, output: 300, cacheRead: 2_000, cacheWrite: 100, models: { opus: { input: 40, output: 250, cacheRead: 2_000, cacheWrite: 100 }, haiku: { input: 10, output: 50 } } }, reportedModels: ['opus', 'haiku'] },
+      { ...cli, slot: 'gemini[0]', provider: 'gemini', model: 'default', launched: false, outcome: 'not-found' },
       { phase: 'impl', provider: 'claude', model: 'sonnet', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 5_000, durationMs: 60_000 },
       { phase: 'impl', provider: 'claude', model: '—', surface: 'native', launched: true, outcome: 'ok', estimated: true },
       { phase: 'impl', provider: 'claude', model: 'opus', effort: 'high', mode: 'write', surface: 'native', launched: true, outcome: 'ok', estimated: true, tokens: 1_200, durationMs: 30_000 },

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import { before, test } from 'node:test';
 import { dispatchMachine, send } from '../../../skills/dispatch/scripts/core/interpreter.ts';
@@ -8,6 +7,7 @@ import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Frame, Handlers, Machine, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { createHandoff } from '../../../skills/dispatch/scripts/effects/handoff.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 
 const INSTRUCTION = 'Reply RETRO with at most 3 observations about dispatch-owned components; [] is valid.';
@@ -17,6 +17,7 @@ const OBSERVATION = { id: 'slow-author', component: 'references/templates/plan.m
 /** An empty-scope review: prepare-review finds nothing, so the run goes straight to handoff (and retro when enabled). */
 function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-review', ports: FakePorts = fakePorts()) {
   const runDir = path.join(session, '.state/runs', id);
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: [], empty: true }, promptPaths: {} }],
     handoff: createHandoff({ tempRoot: session, workspaceRoot: path.dirname(session) }),
@@ -50,7 +51,8 @@ const hostMachine: Machine<HostState> = {
   transitions: [{ from: 'author', on: 'AUTHORED', to: 'native' }, { from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 async function hostFrames(on: boolean): Promise<Frame[]> {
-  const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-host');
+  const ports = fakePorts(), root = tempDir(), runDir = path.join(root, '.state/runs/001-host');
+  memoryRunFs(ports, root);
   const base = { ports, runDir, machine: hostMachine, handlers: {}, diagnosticToggle: () => on, diagnosticRetroInstruction: () => INSTRUCTION };
   const frames = [(await start({ ...base, runStarted: RUN_STARTED })).frame];
   frames.push((await send({ ...base, rawEvent: { type: 'AUTHORED', path: 'plan.md' } })).frame);
@@ -59,7 +61,9 @@ async function hostFrames(on: boolean): Promise<Frame[]> {
   frames.push((await send({ ...base, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json', tokens: 5, durationMs: 9 } })).frame);
   return frames.map((frame) => frame ?? assert.fail('missing frame'));
 }
-const stateFiles = (dir: string): string[] => fs.readdirSync(dir, { recursive: true, withFileTypes: false }).map((file) => String(file).replaceAll('\\', '/'));
+/** Run storage is in memory (`memoryRunFs`): no claim here depends on bytes on disk. */
+const stateFiles = (ports: FakePorts, dir: string): string[] => ports.fs.listFiles(dir);
+const readReport = (run: { ports: FakePorts; session: string }): string => run.ports.fs.readText(path.join(run.session, 'diagnostics.md'));
 
 let enabledFrames: Frame[];
 before(async () => { enabledFrames = await hostFrames(true); });
@@ -97,7 +101,7 @@ test('SC5 empty RETRO completes run', async () => {
   assert.equal(done.frame?.await, 'done');
   assert.equal(done.frame?.data['outcome'], 'no-reviewable-changes');
   assert.equal(done.frame?.data['diagnostics'], undefined);
-  assert.match(fs.readFileSync(path.join(run.session, 'diagnostics.md'), 'utf8'), /- Host retro: 0 accepted · 0 rejected/);
+  assert.match(readReport(run), /- Host retro: 0 accepted · 0 rejected/);
 });
 
 test('SC5 invalid retro items are counted', async () => {
@@ -105,7 +109,7 @@ test('SC5 invalid retro items are counted', async () => {
   await run.begin();
   const done = await run.reply({ type: 'RETRO', observations: [OBSERVATION, { id: 'repo', component: 'src/app.ts', category: 'speed', evidence: 'e', impact: 'i', proposedFix: 'f' }, 'free text'] });
   assert.equal(done.frame?.await, 'done');
-  const report = fs.readFileSync(path.join(run.session, 'diagnostics.md'), 'utf8');
+  const report = readReport(run);
   assert.match(report, /- Host retro: 1 accepted · 2 rejected/);
   assert.match(report, /host retro `slow-author`/);
   assert.doesNotMatch(report, /src\/app\.ts|free text/);
@@ -115,6 +119,7 @@ test('SC5 other frames carry no diagnostics', async () => {
   const frames = enabledFrames;
   for (const frame of frames.filter((item) => item.await !== 'native' && item.await !== 'write')) assert.equal(frame.data['diagnostics'], undefined, frame.await);
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   const base = { ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, diagnosticToggle: () => true };
   const author = await start({ ...base, runStarted: RUN_STARTED });
   const rejected = await send({ ...base, rawEvent: { type: 'AUTHORED', path: '../x.md' } });
@@ -143,8 +148,8 @@ test('SC6 disabled run writes no report or state files', async () => {
   await run.begin();
   await run.status();
   await run.reply({ type: 'RETRO', observations: [] });
-  assert.equal(fs.existsSync(path.join(run.session, 'diagnostics.md')), false);
-  assert.deepEqual(stateFiles(path.join(run.session, '.state')).filter((file) => /diagnostics/.test(file)), []);
+  assert.equal(run.ports.fs.exists(path.join(run.session, 'diagnostics.md')), false);
+  assert.deepEqual(stateFiles(run.ports, path.join(run.session, '.state')).filter((file) => /diagnostics/.test(file)), []);
 });
 
 // SECTION: SC7 — the session report
@@ -154,14 +159,14 @@ test('SC7 writes session report at done', async () => {
   const write = run.ports.fs.writeAtomic;
   let lockedAtWrite: boolean | undefined;
   run.ports.fs.writeAtomic = (file, text) => {
-    if (path.basename(file) === 'diagnostics.md') lockedAtWrite = fs.existsSync(path.join(run.runDir, 'lock'));
+    if (path.basename(file) === 'diagnostics.md') lockedAtWrite = run.ports.fs.exists(path.join(run.runDir, 'lock'));
     write(file, text);
   };
   await run.begin();
-  assert.equal(fs.existsSync(path.join(run.session, 'diagnostics.md')), false, 'the retro await precedes the report');
+  assert.equal(run.ports.fs.exists(path.join(run.session, 'diagnostics.md')), false, 'the retro await precedes the report');
   await run.reply({ type: 'RETRO', observations: [] });
   assert.equal(lockedAtWrite, true, 'the report is written under the run lock');
-  const report = fs.readFileSync(path.join(run.session, 'diagnostics.md'), 'utf8');
+  const report = readReport(run);
   for (const heading of ['# Dispatch diagnostics', '## Summary', '## Overview', '## Findings', '## Appendix']) assert.ok(report.includes(heading), heading);
   assert.match(report, /dispatch 0\.7\.1 · build abcdef012345/);
   assert.match(report, /\| 1 · review · low \| code review \| no-reviewable-changes \|/);
@@ -169,14 +174,15 @@ test('SC7 writes session report at done', async () => {
 
 test('SC7 writes report at fault', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state/runs/001-ask');
+  memoryRunFs(ports, session);
   const handlers: Handlers = { snapshot: async () => { throw new Error('disk detail /secret/path'); } };
   const result = await start({ ports, runDir, machine: awaitingMachine, handlers, runStarted: RUN_STARTED, diagnosticToggle: () => true, diagnosticBuild: () => BUILD });
   assert.equal(result.exitCode, 2);
   assert.equal(result.frame?.data['outcome'], 'fault');
-  const report = fs.readFileSync(path.join(session, 'diagnostics.md'), 'utf8');
+  const report = ports.fs.readText(path.join(session, 'diagnostics.md'));
   assert.match(report, /fault: `error` in `fixture\.snapshot\.1`/);
   assert.doesNotMatch(report, /secret|disk detail/);
-  assert.equal(fs.existsSync(path.join(runDir, 'lock')), false);
+  assert.equal(ports.fs.exists(path.join(runDir, 'lock')), false);
 });
 
 test('SC7 leaves no capture or lock files', async () => {
@@ -184,9 +190,9 @@ test('SC7 leaves no capture or lock files', async () => {
   await run.begin();
   await run.status();
   await run.reply({ type: 'RETRO', observations: [OBSERVATION] });
-  const files = stateFiles(path.join(run.session, '.state'));
+  const files = stateFiles(run.ports, path.join(run.session, '.state'));
   assert.deepEqual(files.filter((file) => /diagnostics|capture|pending-|render\.lock|(^|\/)lock$/.test(file)), []);
-  assert.deepEqual(fs.readdirSync(run.session).sort(), ['.state', 'diagnostics.md']);
+  assert.deepEqual([...new Set(run.ports.fs.listFiles(run.session).map((file) => file.split('/')[0]))].sort(), ['.state', 'diagnostics.md']);
 });
 
 test('SC7 done mentions report only with findings', async () => {

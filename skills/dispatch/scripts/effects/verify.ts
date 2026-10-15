@@ -90,7 +90,7 @@ export function testCounts(output: string): { pass: number; fail: number } | nul
   return pass && fail ? { pass: Number(pass[1]), fail: Number(fail[1]) } : null;
 }
 
-const isLoadError = (output: string): boolean => /ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|Cannot find (?:module|package)|Cannot find module|SyntaxError:|SyntaxError \[|Unexpected token|Failed to load|ENOENT:|could not be loaded/i.test(output);
+const isLoadError = (output: string): boolean => /ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|Cannot find (?:module|package)|Cannot find module|SyntaxError:|SyntaxError \[|Unexpected token|Failed to load|ENOENT:|could not be loaded|Could not find '[^']+'/i.test(output);
 
 function stableError(output: string): string {
   const lines = output.split(/\r?\n/).map((line) => line.trim());

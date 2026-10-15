@@ -7,7 +7,7 @@ export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' 
 export const JOURNAL_PROTOCOL_REVISION = 10 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
-  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval';
+  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval' | 'fix-verification';
 
 export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
 

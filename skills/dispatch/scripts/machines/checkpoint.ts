@@ -10,7 +10,7 @@ const variants = {
   spec: 'reading author approval settled stopped failed',
   ask: 'booting preparing wave native done failed',
   plan: 'booting author parsing review complete escalated failed',
-  review: 'target-check booting prepare wave native rule decide-needs-user fix fix-verify decide-escalation decide-opt-in settled escalated failed skipped empty',
+  review: 'target-check booting prepare wave native rule decide-needs-user decide-verification fix fix-verify decide-escalation decide-opt-in settled escalated failed skipped empty',
   implement: 'checking-host-event assessing-host-event drift hotfix-brief hotfix-write hotfix-envelope hotfix-snapshot hotfix-assessment hotfix-verify booting starting author parsing plan-review baseline-preflight baseline baseline-snapshot baseline-decision level-classification level-recommendation integration-conflict request-decision approval needs-user task-checkout task-brief task-prewrite-snapshot tasks plan-replacement task-envelope task-verify delivered-snapshot evidence concerns code-review post-review-snapshot trim-snapshot generated-verify generated-snapshot final-verify failure-snapshot failure complete stopped failed',
   design: 'author parse review approval baseline increment integration revision complete stopped failed',
   revision: 'author parse review scope-adjudication scope-user-decision resume stopped refused',

@@ -155,3 +155,11 @@ test('checkpoint captures only listed files and records absent files as deletion
   assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), { schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'tests/gone.test.ts': null } });
   assert.throws(() => writeCheckpoint(fakePorts(), root, out, ['../escape.ts']), /repository-relative/);
 });
+
+test('missing test file is a load error', async () => {
+  const ports = fakePorts();
+  ports.spawn = { run: async () => ({ exit: 1, stdout: '', stderr: "Could not find '/repo/tests/missing.test.ts'" }) };
+  const result = only(await createVerify({ os: 'linux', cwd: '/repo', git })({ kind: 'verify', id: 'verify.1', purpose: 'fix-verify', commands: [{ command: 'node --test tests/missing.test.ts' }] }, ports, { runDir: tempDir(), attempt: 1 }));
+  assert.ok(result.type === 'VERIFY_DONE');
+  if (result.type === 'VERIFY_DONE') assert.equal(result.results[0]?.['loadError'], true);
+});

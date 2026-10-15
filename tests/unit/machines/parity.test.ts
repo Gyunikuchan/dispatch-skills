@@ -51,6 +51,11 @@ const applyFailed: Step = (_effect, state) => {
   return { type: 'FIXES_APPLIED', clusters: [{ clusterId: found?.[1] ?? '', status: 'failed' }] };
 };
 const verified = (exit = 0): Step => (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit, logPath: 'l' }], fingerprint: {} });
+const unrunnable: Step = (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit: 1, logPath: 'l', loadError: true }], fingerprint: {} });
+const repaired: Step = (_effect, state) => {
+  const found = JSON.stringify(state).match(/"clusterId":"([^"]+)"/);
+  return { type: 'DECISION', kind: 'fix-verification', answer: { [found?.[1] ?? '']: { verification: ['c2'], by: 'orchestrator', rationale: 'original command could not run' } } };
+};
 const parsed = (defects: unknown[] = []): Step => (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: 'h', parsed: {}, defects: defects as never });
 const decide = (kind: 'escalation' | 'needs-user' | 'opt-in', answer: unknown): Step => ({ type: 'DECISION', kind, answer });
 const handed: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null });
@@ -205,6 +210,7 @@ test('review-target transitions table matches step', () => {
   const selections: (readonly [ReviewState, Event])[] = ([
     { tag: 'native', c: observedCtx, slots: [] }, { tag: 'rule', c: observedCtx }, { tag: 'fix', c: observedCtx, clusters: [cluster], pass: 'main', defects: [] },
     { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } }, { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
+    { tag: 'decide-verification', c: observedCtx, clusters: [cluster], pass: 'main', failures: [] },
   ] as ReviewState[]).map((state) => [state, use] as const);
   const respecs: (readonly [ReviewState, Event])[] = ([
     { tag: 'rule', c: observedCtx }, { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } },
@@ -217,6 +223,7 @@ test('review-target transitions table matches step', () => {
   parity(reviewMachine, [
     [run('review'), prepared, wave([f(1)]), rule('accept'), applyFailed, applyFailed, applyFailed],
     [run('review'), prepared, wave([f(1)]), rule('accept'), applied, verified(1), applied, verified(1), applied, verified(1)],
+    [run('review'), prepared, wave([f(1)]), rule('accept'), applied, unrunnable, repaired, verified()],
     [run('review', { ...plan }), prepared, wave([f(1)]), rule('accept'), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }])],
     [run('review', {}, 0)], [run('review', badPins)], [run('review'), failed], [run('review'), empty],
     [run('review'), prepared, failed], [run('review'), prepared, nativeWave, natives, wave([f(1)])],

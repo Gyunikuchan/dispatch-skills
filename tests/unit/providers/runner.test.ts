@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import {
+  IDLE_TIMEOUT_MS,
   batchInvocation, buildAttachmentBlock, findSensitiveMatch, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, Launch, PlatformEnv, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
@@ -47,11 +48,13 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   const signals: string[] = [];
   const clock = manualClock();
   let finish: (r: ProcessResult) => void = () => {};
+  let activity: () => void = () => {};
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
-      start: (launch) => {
+      start: (launch, io) => {
         launches.push(launch);
+        if (io.onActivity) activity = io.onActivity;
         if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
         return { pid: 50, done: new Promise<ProcessResult>((resolve) => { finish = resolve; }) };
       },
@@ -60,7 +63,7 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
     clock, fs, platform, binary: 'claude', nonce: () => 'N0NCE',
     env: { PATH: '/bin', HOME: '/h', ANTHROPIC_API_KEY: 'sk-1', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'x', HTTPS_PROXY: 'http://p' },
   };
-  return { ports, launches, signals, clock, fs, finish: (r: ProcessResult) => finish(r) };
+  return { ports, launches, signals, clock, fs, finish: (r: ProcessResult) => finish(r), activity: () => activity() };
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -220,4 +223,33 @@ test('runDelegate attaches attempt records to a launch that throws', async () =>
   h.ports.process.start = () => { throw new Error('spawn EACCES'); };
   const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', h.ports).then(() => null, (thrown: unknown) => thrown as { invocations?: unknown });
   assert.deepEqual(error?.invocations, [{ provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: false, outcome: 'launch-failed' }]);
+});
+
+test('silent delegate times out idle after the idle window, before the overall deadline', async () => {
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(10_000);
+  h.activity();
+  h.clock.advance(IDLE_TIMEOUT_MS - 30_000);
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(30_000);
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  const done = await run;
+  assert.equal(done.result?.timedOut, true);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /^idle 300s; partial output at \/r\/log$/);
+});
+
+test('active delegate is not idle while output keeps arriving', async () => {
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
+  await flush();
+  for (let elapsed = 0; elapsed < 3 * IDLE_TIMEOUT_MS; elapsed += 60_000) { h.clock.advance(60_000); h.activity(); }
+  assert.deepEqual(h.signals, []);
+  h.finish(ok());
+  const done = await run;
+  assert.equal(done.result?.timedOut, false);
+  assert.equal(done.outcome.status, 'ok');
 });

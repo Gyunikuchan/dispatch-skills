@@ -10,6 +10,8 @@ export const DEFAULT_TIMEOUT_MS = 1800 * 1000;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 export const KILL_ESCALATION_MS = 1000;
+/** Silence on both stdout and stderr that stops a delegate before its overall deadline. */
+export const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
@@ -228,13 +230,16 @@ export type RunnerPorts = {
 /** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
-/** Launches one process; on timeout kills the tree (POSIX: SIGTERM, then SIGKILL after 1 s). */
+/** Launches one process; on deadline or idleness kills the tree (POSIX: SIGTERM, then SIGKILL after 1 s). */
 async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts): Promise<ProcessResult> {
-  const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes });
+  let lastActivity = ports.clock.now();
+  const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); } });
   let timedOut = false;
+  let idleMs: number | undefined;
   let escalate: (() => void) | null = null;
-  const stopTimeout = ports.clock.every(req.timeoutMs, () => {
+  const kill = (): void => {
     stopTimeout();
+    stopIdle();
     if (timedOut) return;
     timedOut = true;
     if (ports.platform.os === 'win32') {
@@ -247,12 +252,21 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
       escalate?.();
       ports.process.signal(-pid, 'SIGKILL');
     });
+  };
+  const stopTimeout = ports.clock.every(req.timeoutMs, kill);
+  const stopIdle = ports.clock.every(Math.min(IDLE_TIMEOUT_MS, 30_000), () => {
+    const silent = ports.clock.now() - lastActivity;
+    if (silent < IDLE_TIMEOUT_MS || timedOut) return;
+    idleMs = silent;
+    kill();
   });
   try {
     const result = await done;
-    return timedOut ? { ...result, timedOut: true } : result;
+    if (!timedOut) return result;
+    return idleMs === undefined ? { ...result, timedOut: true } : { ...result, timedOut: true, idleMs };
   } finally {
     stopTimeout();
+    stopIdle();
     // Stop on exit: a process that died from SIGTERM needs no SIGKILL.
     (escalate as (() => void) | null)?.();
   }
@@ -338,6 +352,7 @@ function settle(spec: ProviderSpec, req: LaunchRequest, result: ProcessResult): 
   if (req.sandbox && spec.sandbox?.inactive.test(result.stderrTail)) {
     return failOutcome('sandbox-unsupported', `${spec.id} reported its sandbox inactive; set sandbox: false to run unsandboxed`);
   }
+  if (result.timedOut && result.idleMs !== undefined) return failOutcome('timeout', `idle ${Math.round(result.idleMs / 1000)}s; partial output at ${result.stdoutPath}`);
   if (result.timedOut) return failOutcome('timeout', `timed out after ${req.timeoutMs} ms; partial output at ${result.stdoutPath}`);
   if (result.truncated) return failOutcome('buffer', `output exceeded ${req.outputCapBytes} bytes; partial output at ${result.stdoutPath}`);
   return spec.parse(result, req);
