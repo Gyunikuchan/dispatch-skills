@@ -5,7 +5,12 @@ import { test } from 'node:test';
 import { REPO_ROOT } from './scan.ts';
 
 // The cutover adds no dependency; native stripping defines the approved engine range.
-export const EXPECTED = { dependencies: [] as string[], devDependencies: ['@types/node', 'husky', 'typescript'], engines: { node: '^22.18 || >=23.6' } };
+// Escalation approved: commitlint tooling for conventional commits.
+export const EXPECTED = {
+  dependencies: [] as string[],
+  devDependencies: ['@commitlint/cli', '@commitlint/config-conventional', '@types/node', 'husky', 'typescript'],
+  engines: { node: '^22.18 || >=23.6' },
+};
 
 export function checkPackage(pkg: Record<string, unknown>): string[] {
   const keys = (value: unknown) => Object.keys(typeof value === 'object' && value !== null ? value : {}).sort();

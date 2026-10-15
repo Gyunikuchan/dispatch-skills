@@ -40,9 +40,12 @@
     "check:diagrams": "node scripts/diagram.ts --check",
     "typecheck": "tsc -p .",
     "test": "npm run typecheck && npm run check:diagrams && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node --test --test-concurrency=8 --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts \"tests/**/*.test.ts\"",
-    "validate:configs": "node scripts/validate-configs.ts"
+    "validate:configs": "node scripts/validate-configs.ts",
+    "commitlint": "commitlint --from=HEAD~1"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
     "@types/node": "^22.20.4",
     "husky": "^9.1.7",
     "typescript": "^7.0.2"
