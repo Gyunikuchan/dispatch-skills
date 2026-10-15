@@ -1,5 +1,5 @@
 {
-  "$version": "0.7.1",
+  "$version": "0.7.2",
   "SKILL.md": "9897a44a184d44e0093135cd728e632f6bfe69e5ae8f2dccf50466770c30a4bc",
   "references/change-handling.md": "0c7d58ec2d48e6383caa616c2a78d12fd9628fd2262eb5970c66d6e9b3da2787",
   "references/diagnostics.md": "5381479747f3bd9a8ddd270ade30185cb7e096188fc9107b3089c95109c2017e",
