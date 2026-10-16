@@ -3,9 +3,9 @@ import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, designScopeGrew } from '../domain/design.ts';
 import { beginBoundImplement, stepImplement, implementAwait, implementData, validateImplement, type Context as ImplementContext, type ImplementState } from './implement.ts';
 import { incrementPathMatches } from '../domain/plan.ts';
-import { beginReview, rebindReviewSpec, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
+import { beginReview, reviewArtifactId, rebindReviewSpec, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
 import { beginDesignRevision, stepDesignRevision, designRevisionAwait, designRevisionData, validateDesignRevision, type DesignRevisionState } from './design-revision.ts';
-import { answers, isRecord, never, nextId, stay, type Counters, type Step } from './types.ts';
+import { answers, isRecord, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { slugOf } from './plan.ts';
 import { activeTasks } from './implement-tasks.ts';
 
@@ -21,7 +21,7 @@ export type DesignContext = {
   revisionReviewRound: number; integrationRound: number;
   designReview: ReviewState | null; integrationReview: ReviewState | null;
   /** Settled governing spec; `specEpoch` counts its revisions so later design reviews use fresh paths. */
-  governingSpec?: SpecIdentity | null; specEpoch?: number;
+  governingSpec?: SpecIdentity | null; specEpoch?: number; revisionReviewEpoch?: number; restartIncrements?: readonly string[];
 };
 export type DesignState =
   | { tag: 'author'; c: DesignContext; defects: readonly Readonly<Record<string, unknown>>[] }
@@ -48,18 +48,18 @@ export function beginDesign(run: RunStartedEvent, counters: Counters = {}, gover
       : sessionDir
         ? `${sessionDir}/${slugOf(run.argument)}.design.md`
         : `${slugOf(run.argument)}.design.md`;
-  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null, governingSpec, specEpoch: 0 };
+  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null, governingSpec, specEpoch: 0, revisionReviewEpoch: 0, restartIncrements: [] };
   return run.verb === 'implement' ? parse(c, false) : stay({ tag: 'author', c, defects: [] });
 }
 function parse(c: DesignContext, afterReview: boolean): S {
   const next = nextId(c.counters, 'design', 'parse-artifact');
-  return { state: { tag: 'parse', c: { ...c, counters: next.counters }, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: c.path, artifact: 'design' }] };
+  return { state: { tag: 'parse', c: { ...c, counters: next.counters }, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: c.path, artifact: 'design', ...(c.governingSpec ? { governing: c.governingSpec.path } : {}) }] };
 }
 function reviewed(c0: DesignContext, result: Step<ReviewState>, integration = false): S {
   const review = result.state;
   const c = { ...c0, counters: 'c' in review ? { ...c0.counters, ...review.c.counters } : c0.counters, integrationRound: integration && 'c' in review ? Math.max(c0.integrationRound, review.c.round) : c0.integrationRound, designReview: integration ? c0.designReview : review, integrationReview: integration ? review : c0.integrationReview };
   if (review.tag === 'settled' || review.tag === 'skipped') return integration ? stay({ tag: 'complete', c, summary: 'Every increment and bounded integration completed.' }) : parse(c, true);
-  if (['failed', 'escalated', 'empty'].includes(review.tag)) return failed(c, `${integration ? 'Integration' : 'Design'} review did not settle: ${review.tag}`);
+  if (['failed', 'escalated', 'empty'].includes(review.tag)) return failed(c, `${integration ? 'Integration' : 'Design'} review did not settle: ${review.tag}${review.tag === 'failed' ? `: ${reviewData(review)['summary']}` : ''}`);
   return { state: { tag: integration ? 'integration' : 'review', c, review }, effects: result.effects };
 }
 export function selectReady(design: ParsedDesign, completed: readonly string[]): string | null {
@@ -97,8 +97,8 @@ function deliver(c: DesignContext): S {
       repair: c.repairs[increment] ?? [], remainingIncrements, governingDesign, levelGatePassed: c.levelGatePassed,
       gateScope: c.gateScope, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice,
       scopeAdjustments: c.scopeAdjustments, scopeNotice: c.scopeNotice,
-    }, c.counters, c.governingSpec ?? null);
-    return { state: { tag: 'increment', c, increment, child: result.state }, effects: result.effects };
+    }, c.counters, c.governingSpec ?? null, c.restartIncrements?.includes(increment) ? ((c.histories[increment]?.at(-1) as { c?: ImplementContext })?.c?.specEpoch ?? 0) + 1 : 0);
+    return { state: { tag: 'increment', c: { ...c, restartIncrements: (c.restartIncrements ?? []).filter(id => id !== increment) }, increment, child: result.state }, effects: result.effects };
   }
   if (c.completed.length !== c.design.increments.length) return failed(c, 'No ready increment remains; prerequisite graph is blocked.');
   if (!c.baseline || c.completed.some((id) => !c.ownership[id]?.length)) return failed(c, 'Integration requires the recorded ancestor baseline and ownership for every increment.');
@@ -157,15 +157,20 @@ function resumeIncrement(c: DesignContext, increment: string, child: ImplementSt
 const staleSpec = (identity: SpecIdentity) => ({ code: 'stale-spec', message: `Governing spec revised to ${identity.hash}; re-author against it.` });
 /** Routes a revised governing spec: re-author before approval, design revision during delivery, defect at a revision's author. */
 function respecDesign(state: DesignState, identity: SpecIdentity): S | null {
-  const c = { ...state.c, governingSpec: identity };
+  let c = { ...state.c, governingSpec: identity };
   if (state.tag === 'revision') {
-    if (state.child.tag !== 'author') return null;
-    return stay({ ...state, c, specTriggered: true, child: { ...state.child, c: { ...state.child.c, governingSpec: identity }, defects: [...state.child.defects, staleSpec(identity)] } });
+    if (!['author', 'parse', 'review'].includes(state.child.tag)) return null;
+    const child = state.child;
+    const review = child.tag === 'review' ? child.review : null;
+    const revisionReviewRound = review && 'c' in review ? Math.max(c.revisionReviewRound, review.c.round) : c.revisionReviewRound;
+    c = { ...c, revisionReviewEpoch: (c.revisionReviewEpoch ?? 0) + 1, revisionReviewRound };
+    return stay({ ...state, c, specTriggered: true, child: { tag: 'author', c, workingPath: child.workingPath, reason: child.reason, evidence: child.evidence, defects: [...(child.tag === 'author' ? child.defects : []), staleSpec(identity)] } });
   }
   if (c.baseline === null && (state.tag === 'author' || state.tag === 'parse' || state.tag === 'review' || state.tag === 'approval')) {
     return stay({ tag: 'author', c: { ...c, specEpoch: (c.specEpoch ?? 0) + 1, designReview: null }, defects: [staleSpec(identity)] });
   }
   if (c.baseline !== null && (state.tag === 'approval' || state.tag === 'increment' || state.tag === 'integration')) {
+    if (state.tag === 'increment') c = { ...c, restartIncrements: [...new Set([...(c.restartIncrements ?? []), state.increment])], histories: { ...c.histories, [state.increment]: [...(c.histories[state.increment] ?? []), state.child] } };
     const result = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'Governing spec revised', evidence: `stale-spec: ${identity.hash}` });
     return { state: { tag: 'revision', c, child: result.state, parent: { ...state, c } as DesignState, specTriggered: true }, effects: result.effects };
   }
@@ -182,6 +187,7 @@ export function stepDesign(state: DesignState, event: Event): S {
     case 'parse': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return failed(state.c, event.detail);
       if (event.type !== 'ARTIFACT_PARSED' || event.kind !== 'design' || !answers(event, state.effectId)) return stay(state);
+      if (staleGoverning(event, state.c.governingSpec)) return stay(state);
       const design = asParsedDesign(event.parsed);
       if (event.defects.length || !design || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', c: state.c, defects: event.defects.length ? event.defects : [{ message: 'Invalid design payload or governed hash.' }] });
       const c = { ...state.c, design, hash: event.hash };
@@ -194,7 +200,9 @@ export function stepDesign(state: DesignState, event: Event): S {
       const built = reviewSpecFromRun(c.run, 'design', c.path, c.governingSpec ?? null);
       return built.ok ? reviewed(c, beginReview(built.spec, (c.specEpoch ?? 0) > 0 ? `design.review.s${c.specEpoch}` : 'design.review', c.counters)) : failed(c, built.error);
     }
-    case 'review': return reviewed(state.c, stepReview(state.review, event));
+    case 'review':
+      if (answers(event, reviewArtifactId(state.review)) && staleGoverning(event, state.c.governingSpec)) return stay(state);
+      return reviewed(state.c, stepReview(state.review, event));
     case 'approval': {
       if (event.type !== 'DECISION' || event.kind !== 'approval' || validateDesign(state, event)) return stay(state);
       if (event.answer === 'stop') return failed(state.c, 'User declined design approval.');
@@ -214,7 +222,7 @@ export function stepDesign(state: DesignState, event: Event): S {
           const revisionsSinceSuspension = startIndex >= 0 ? c.revisions.slice(startIndex) : c.revisions;
           const isInvalidated = revisionsSinceSuspension.some((rev) => rev.invalidated.includes(parent.increment));
           const prereqsMet = incRow ? incRow.prerequisites.every((id) => c.completed.includes(id)) : false;
-          if (incRow && !isInvalidated && prereqsMet && 'c' in child && child.c?.designBinding) {
+          if (incRow && !c.restartIncrements?.includes(parent.increment) && !isInvalidated && prereqsMet && 'c' in child && child.c?.designBinding) {
             const details = c.design.details[parent.increment] ?? {};
             const contract = Object.fromEntries(Object.entries(details).filter(([key]) => ['outcome', 'affected contracts', 'rollback boundary'].includes(key.toLowerCase())));
             if (JSON.stringify(child.c.designBinding.paths) === JSON.stringify(incRow.paths) && JSON.stringify(child.c.designBinding.contract) === JSON.stringify(contract)) {
@@ -314,7 +322,7 @@ export function stepDesign(state: DesignState, event: Event): S {
             : -1;
           const revisionsSinceSuspension = startIndex >= 0 ? c.revisions.slice(startIndex) : c.revisions;
           const isInvalidated = revisionsSinceSuspension.some((rev) => rev.invalidated.includes(effectiveParent.increment));
-          if (!isInvalidated) {
+          if (!c.restartIncrements?.includes(effectiveParent.increment) && !isInvalidated) {
             if (!('c' in child) || !child.c?.designBinding) return failed(c, 'Active increment lost its governing design binding.');
             const context = { ...child.c, counters: { ...child.c.counters, ...c.counters }, designBinding: { ...child.c.designBinding, path: c.path, revision: c.hash, revisionIndex: c.revisions.length, approval }, governingSpec: c.governingSpec ?? null };
             return resumeIncrement(c, effectiveParent.increment, child, context);

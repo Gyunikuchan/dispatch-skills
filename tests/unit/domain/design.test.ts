@@ -19,7 +19,7 @@ const detail = (id: string) => `### ${id} Step
 const DESIGN = `# Importer design
 
 > **TL;DR:** stage the importer.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** med — touches ingestion
 > **Increments:** 2
@@ -32,10 +32,8 @@ const DESIGN = `# Importer design
 
 Next Action: implement:I02
 
-## Context & Intent
-Why.
-
-## Goals & Requirements
+## Approach
+REQ-1 strategy
 What.
 
 ## Alternatives & Decisions
@@ -120,7 +118,7 @@ test('design: Execution Status rejects duplicate increment rows', () => {
 });
 
 test('design-section-order: old order fails and new order passes', () => {
-  const status = DESIGN.slice(DESIGN.indexOf('## Execution Status'), DESIGN.indexOf('## Context & Intent'));
+  const status = DESIGN.slice(DESIGN.indexOf('## Execution Status'), DESIGN.indexOf('## Approach'));
   const architecture = DESIGN.slice(DESIGN.indexOf('## Architecture & Boundaries'), DESIGN.indexOf('## Increment Dependency Graph'));
   const oldOrder = DESIGN.replace(status, '').replace(architecture, '')
     .replace('## Alternatives & Decisions', `${architecture}## Alternatives & Decisions`)
@@ -174,3 +172,12 @@ test('designScopeGrew compares validation case-insensitively', () => {
   assert.equal(designScopeGrew(before, sameCased), false);
   assert.equal(designScopeGrew(before, changedVal), true);
 });
+
+const layeredDesign = () => DESIGN.replace(/## Approach[\s\S]*?(?=## Alternatives)/, '## Approach\nREQ-1 importer\n\n');
+test('Parent rejects user request', () => assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, 'user request')).includes('summary-label')));
+test('Parent rejects unsuffixed pin', () => { for (const parent of ['`notes.txt` · sha256:' + 'a'.repeat(64), 'governing.spec.md · sha256:' + 'a'.repeat(64)]) assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label')); });
+test('Parent rejects increment pin in design', () => assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).includes('summary-label')));
+test('Parent accepts spec pin', () => assert.ok(parseDesign(layeredDesign()).ok));
+test('design retired sections context and goals', () => { for (const heading of ['Context & Intent', 'Goals & Requirements']) assert.ok(codes(layeredDesign() + '\n## ' + heading + '\nOld.').includes('retired-section')); });
+test('design approach requires REQ reference', () => assert.ok(codes(layeredDesign().replace('REQ-1 importer', 'Importer')).includes('missing-requirement-ref')));
+test('design approach precedes alternatives', () => assert.ok(codes(layeredDesign().replace('## Approach\nREQ-1 importer\n\n', '').replace('## Alternatives & Decisions\nChosen.', '## Alternatives & Decisions\nChosen.\n\n## Approach\nREQ-1 importer')).includes('section-order')));

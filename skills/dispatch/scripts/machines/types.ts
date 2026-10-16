@@ -2,7 +2,7 @@
 // at the boundary, plus the small shared helpers every machine needs. Machines may import only policy/, domain/, and
 // types from core/types.ts, so the effect-id rule and `never` guard are restated here (core/effect-id.ts pattern).
 
-import type { DecideKind, DoneOutcome, Effect, EffectKind, Event, FindingId, SlotId } from '../core/types.ts';
+import type { DecideKind, DoneOutcome, Effect, EffectKind, Event, FindingId, SlotId, SpecIdentity } from '../core/types.ts';
 import type { Finding, ReviewKind, RosterSlot, Severity } from '../domain/types.ts';
 import type { ExitSummary, RoundScope } from '../policy/rounds.ts';
 
@@ -35,6 +35,12 @@ export const isString = (value: unknown): value is string => typeof value === 's
 /** Result events carry the effect id they answer; a stale id is ignored by every machine. */
 export const answers = (event: Event, effectId: string | null): boolean => 'effectId' in event && event.effectId === effectId;
 
+/** A resolved pin binds both the artifact and the settled approval to the current spec bytes. */
+export function staleGoverning(event: Event, settled?: SpecIdentity | null): event is Extract<Event, { type: 'ARTIFACT_PARSED' }> & { governing: NonNullable<Extract<Event, { type: 'ARTIFACT_PARSED' }>['governing']> } {
+  return event.type === 'ARTIFACT_PARSED' && !!event.governing?.pinned
+    && (event.governing.pinned !== event.governing.current || (!!settled && settled.hash !== event.governing.current));
+}
+
 // SECTION: Specs
 
 export type CriterionOutcome = 'pass' | 'waived';
@@ -45,6 +51,7 @@ export type WriterConfig = { models: readonly string[]; effort: string | null };
 
 /** Spec §5.5 input; `breadth` is the roster target count and `roster` the resolved targets then reserves. */
 export type ReviewSpec = {
+  governingSpec?: SpecIdentity | null;
   kind: ReviewKind; target: string; cap: number; breadth: number | 'all'; context: string | null;
   roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string; writer?: WriterConfig | null;
   governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
@@ -56,7 +63,7 @@ export type AskSpec = { kind: 'ask'; target: string; breadth: number | 'all'; co
 export type CarriedRejection = { id: FindingId; slot: SlotId | null; locus: string; defect: string; reason: string };
 /** A prior-round finding whose ruling stands; `ruling` is the rendered status label. */
 export type SettledRow = { id: FindingId; locus: string; defect: string; ruling: string; reason: string; revision?: string };
-export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; settled?: readonly SettledRow[]; sinceHash?: string; priorManifest?: string };
+export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; settled?: readonly SettledRow[]; sinceHash?: string; priorTarget?: string; priorManifest?: string };
 
 // SECTION: Rulings and findings
 

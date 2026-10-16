@@ -10,7 +10,7 @@ export const TASK_MAP_HEADING = '## Task Map';
 
 /** Plan section order after the title and summary box; every section is optional to this lint. */
 export const PLAN_SECTION_ORDER = [
-  '## User Review Required', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope',
+  '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope',
   TASK_MAP_HEADING, '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan',
   '## Rollback & Blast Radius', RESOLUTION_HEADING,
 ] as const;
@@ -23,7 +23,7 @@ const unreachable = (value: never): never => { throw new Error(`unhandled lint c
 export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
   switch (code) {
     case 'placeholder': case 'ambiguous-command': case 'automated-tests-unavailable': case 'missing-success-criteria':
-    case 'criterion-red-test-path': case 'overlap': case 'missing-seams':
+    case 'unsatisfied-requirement': case 'criterion-red-test-path': case 'overlap': case 'missing-seams':
       return 'warning';
     case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note': case 'proposed-changes':
     case 'change-heading': case 'unknown-change-marker': case 'invalid-change-path': case 'duplicate-change-path':
@@ -36,7 +36,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
     case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'task-map': case 'generated-inputs':
     case 'task-overlap': case 'transient-coverage': case 'section-order': case 'criterion-retain-required': case 'transient-test-path':
-    case 'plan-id-in-test-name':
+    case 'unknown-requirement': case 'plan-id-in-test-name': case 'retired-section': case 'missing-satisfies': case 'missing-requirement-ref':
       return 'defect';
     default:
       return unreachable(code);
@@ -308,8 +308,10 @@ export function headingPaths(action: ChangeAction, text: string): { paths: Retur
 // SECTION: Plan parse
 
 const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
-/** Parent forms: the user's request, an external spec pinned by checksum, or a design increment. */
-export const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · (?:sha256:[0-9a-f]{64}|I\d{2}))$/;
+/** Parent forms: a governing spec pinned by checksum or a design increment. */
+export const SPEC_PIN_VALUE = /^`([^`\s]+\.spec\.md)` · sha256:([0-9a-f]{64})$/;
+export const DESIGN_PIN_VALUE = /^`([^`\s]+\.design\.md)` · (I\d{2})$/;
+export const PARENT_VALUE = new RegExp(`(?:${SPEC_PIN_VALUE.source})|(?:${DESIGN_PIN_VALUE.source})`);
 const TASK_HEADING = /^###\s+(T[1-9]\d*)\s+[—–-]\s+(\S.*?)\s*$/;
 const TASK_FIELD = /^[-*+]\s+(Outcome|Prerequisites|Criteria):\s*(.*?)\s*$/i;
 const CONSTRAINT_FIELD = /^[-*+]\s+Constraints:\s*(.*?)\s*$/i;
@@ -334,7 +336,7 @@ export function planIdPattern(ids: readonly string[]): RegExp | null {
 const FINDING_ID = /\bR\d+-F\d+\b/gi;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
-type Criterion = PlanCriterion & { retainLine: number | null; verifyLines: number[]; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
+type Criterion = PlanCriterion & { satisfies: readonly string[]; retainLine: number | null; verifyLines: number[]; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
 
 export type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
@@ -366,6 +368,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
   out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
+  for (const entry of lines) if (entry.text.trimEnd() === '## User Review Required') out.push(lint('retired-section', entry.line, 'Move user questions to the governing spec Open Questions.'));
   for (const entry of lines) {
     if (PROSE_PLACEHOLDER.test(entry.text.replace(/`[^`]*`/g, ''))) out.push(lint('placeholder', entry.line, 'Plan contains a prose placeholder.'));
   }
@@ -380,8 +383,8 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     title: documentTitle(source),
     box: boxValues(source),
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
-    criteria: criteria.map(({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
-      ({ id, title, line, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
+    criteria: criteria.map(({ id, title, line, satisfies, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
+      ({ id, title, line, satisfies, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
     tasks: tasks.map(({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
@@ -768,7 +771,7 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
 function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
   const id = criterionHeading(text);
   const base: Criterion = {
-    id: '', title: text, line, changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
+    id: '', title: text, line, satisfies: [], changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
     review: null, enforcementInfeasibility: null, retain: 'durable', retainLine: null, verifyLines: [], coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
     evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
     critical: CRITICAL.test(text), valid: false,
@@ -781,6 +784,14 @@ function startCriterion(text: string, line: number, ids: Set<string>, out: LintD
 
 function readMapping(current: Criterion, entry: StructuralLine, approved: ReadonlySet<string>, out: LintDefect[]): void {
   const field = (name: string) => new RegExp(`^ {2,}[-*+] ${name}:\\s*(.*)$`, 'i').exec(entry.text)?.[1]?.trim();
+  const satisfies = field('Satisfies');
+  if (satisfies !== undefined) {
+    const ids = satisfies.split(',').map((value) => value.trim());
+    if (ids.some((id) => !/^REQ-[1-9]\d*$/.test(id))) {
+      if (!out.some((defect) => defect.code === 'missing-satisfies' && defect.line !== null && defect.line >= current.line)) out.push(lint('missing-satisfies', entry.line, 'Satisfies requires comma-separated REQ-<n> IDs.'));
+    }
+    else current.satisfies = ids;
+  }
   const changes = field('Changes');
   if (changes !== undefined && changes !== '') {
     current.mapped = true;
@@ -928,6 +939,7 @@ function seamsFromDeclarations(declarations: readonly { value: string }[]): stri
 }
 
 function finishCriterion(current: Criterion, out: LintDefect[]): void {
+  if (!current.satisfies?.length && !out.some((defect) => defect.code === 'missing-satisfies' && defect.line !== null && defect.line >= current.line)) out.push(lint('missing-satisfies', current.line, 'Criterion requires Satisfies: REQ-<n>.'));
   const name = current.id || 'without an ID';
   if (!current.mapped) out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
   if (current.evidenceRaw === null) out.push(lint('criterion-evidence', current.line, `Criterion ${name} requires exactly one Evidence mapping: red, verify, or review.`));
@@ -1194,5 +1206,24 @@ export function validateDesignTraceability(plan: ParsedPlan, binding: { path: st
   for (const [key, expected] of Object.entries(binding.contract)) {
     if (value(key) !== expected) defects.push(`Technical-Design Traceability must inherit ${key}: ${expected}.`);
   }
+  return defects;
+}
+
+export function parentPin(source: string): { kind: 'spec'; path: string; hash: string } | { kind: 'design'; path: string; increment: string } | null {
+  const value = parseSummaryBox(source)?.entries.find(entry => entry.label === 'Parent')?.value.trim();
+  if (!value) return null;
+  const spec = SPEC_PIN_VALUE.exec(value);
+  if (spec) return { kind: 'spec', path: spec[1]!, hash: `sha256:${spec[2]!}` };
+  const design = DESIGN_PIN_VALUE.exec(value);
+  return design ? { kind: 'design', path: design[1]!, increment: design[2]! } : null;
+}
+
+export function validateSpecTraceability(plan: ParsedPlan, reqIds: readonly string[]): LintDefect[] {
+  const known = new Set(reqIds), cited = new Set<string>(), defects: LintDefect[] = [];
+  for (const criterion of plan.criteria) for (const id of criterion.satisfies ?? []) {
+    cited.add(id);
+    if (!known.has(id)) defects.push(lint('unknown-requirement', criterion.line, `Criterion ${criterion.id} cites unknown requirement ${id}.`));
+  }
+  for (const id of known) if (!cited.has(id)) defects.push(lint('unsatisfied-requirement', null, `Requirement ${id} is not cited by a criterion.`));
   return defects;
 }

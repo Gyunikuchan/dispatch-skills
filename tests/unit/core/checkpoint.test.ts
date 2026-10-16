@@ -10,6 +10,16 @@ import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.
 import { rootStateCodec } from '../../../skills/dispatch/scripts/machines/checkpoint.ts';
 import { start as startTasks } from '../machines/fixtures/implement-tasks.ts';
 
+test('checkpoint-state: pin continuation rejects empty and mismatched effect identities', () => {
+ const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) } }, 'review', {});
+ assert.ok(begun.state.tag === 'pin-check');
+ const initial = { tag: 'review', run: { verb: 'review', argument: 'x.plan.md', slug: 'x' }, child: begun.state };
+ assert.deepEqual(rootStateCodec.decode(rootStateCodec.encode(initial as never)), initial);
+ for (const child of [{ ...begun.state, effectId: '' }, { ...begun.state, c: { ...begun.state.c, effectId: '' } }, { ...begun.state, pending: { ...begun.state.pending, id: 'other.prepare-review.1' } }]) {
+ assert.throws(() => rootStateCodec.decode(encodePrivate({ ...initial, child })), /review pin/);
+ }
+});
+
 test('checkpoint-state: accepted prefix does not call the changed reducer', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   assert.equal((await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED })).exitCode, 0);

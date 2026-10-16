@@ -12,8 +12,8 @@ import {
   type ExitSummary, type HistoryEntry, type RoundFinding, type RoundScope,
 } from '../policy/rounds.ts';
 import {
-  answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, stay,
-  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewSpec, type Ruling, type SettledRow, type Step,
+  answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, staleGoverning, stay,
+  type ScopeRequest, type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewSpec, type Ruling, type SettledRow, type Step,
 } from './types.ts';
 import { writerConfig } from './implement-types.ts';
 
@@ -139,6 +139,7 @@ export type ReviewCtx = {
   round: number;
   preparedRound?: number;
   scope: RoundScope;
+  scopeOverride?: Partial<Pick<ScopeRequest, 'scope' | 'sinceHash' | 'priorTarget'>>;
   carried: readonly CarriedRejection[];
   findings: readonly ReviewFinding[];
   history: readonly HistoryEntry[];
@@ -172,6 +173,7 @@ export type Pass = 'main' | 'opt-in';
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly FindingId[] };
 
 export type ReviewState =
+  | { tag: 'pin-check'; c: ReviewCtx; effectId: string; pending: Extract<Effect, { kind: 'prepare-review' }> }
   | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' }>; pending: Event; effectId: string }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'prepare'; c: ReviewCtx }
@@ -186,7 +188,7 @@ export type ReviewState =
   | { tag: 'decide-verification'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[]; failures: readonly VerificationFailure[] }
   | { tag: 'settled'; c: ReviewCtx; exit: ExitSummary; followUps: readonly string[] }
   | { tag: 'escalated'; c: ReviewCtx; escalation: Escalation }
-  | { tag: 'failed'; c: ReviewCtx; detail: string }
+  | { tag: 'failed'; c: ReviewCtx; detail: string; code?: 'stale-spec' | 'stale-design-spec' }
   | { tag: 'skipped'; c: ReviewCtx }
   | { tag: 'empty'; c: ReviewCtx };
 
@@ -206,9 +208,9 @@ function withEffect(c: ReviewCtx, kind: Effect['kind'], build: (id: string) => E
 // SECTION: Entry
 
 /** Starts a review at `path` (e.g. `review`, `plan.review`); `cap = 0` → `skipped` with no effect. */
-export function beginReview(spec: ReviewSpec, path: string, counters: Counters, cumulativeOffset = 0): S {
+export function beginReview(spec: ReviewSpec, path: string, counters: Counters, cumulativeOffset = 0, scopeOverride?: ReviewCtx['scopeOverride']): S {
   const c: ReviewCtx = {
-    spec, path, counters, effectId: null, round: cumulativeOffset, scope: 'full', carried: [], findings: [], history: [], rounds: [], fixes: [],
+    ...(scopeOverride ? { scopeOverride } : {}), spec, path, counters, effectId: null, round: cumulativeOffset, scope: 'full', carried: [], findings: [], history: [], rounds: [], fixes: [],
     optInAsked: false, promptPaths: {}, rows: [], drafts: [],
   };
   if (spec.cap <= 0) return stay({ tag: 'skipped', c });
@@ -226,12 +228,18 @@ function settledRows(findings: readonly ReviewFinding[], round: number): Settled
 
 function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[], requested?: ReviewUse): S {
   // NOTE: any prepare consumes the rebind flag; the round it prepares is the one that honors it.
-  const { pendingSpec, forceFullScope: _forced, ...bound } = c0;
+  const { pendingSpec, forceFullScope: _forced, scopeOverride, ...bound } = c0;
+  scope = scopeOverride?.scope ?? scope;
   const base = { ...bound, spec: pendingSpec ?? c0.spec, preparedRound: round, scope, carried, rows: [], drafts: [], promptPaths: {} };
   const settled = settledRows(base.findings, round);
   const affectedPaths = [...new Set([...base.findings.filter((finding) => finding.round === c0.round && finding.status === 'fixed').flatMap((finding) => finding.fix?.paths ?? []), ...(requested?.paths ?? [])])];
   const selection = requested ? { requested: { observationId: requested.observationId, afterHash: requested.afterHash, action: requested.action, paths: [...(requested.paths ?? [])] } } : {};
-  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, ...(settled.length ? { settled } : {}), affectedPaths, ...selection, ...(base.priorManifest ? { priorManifest: base.priorManifest, priorManifestRef: base.priorManifestRef } : {}) } }));
+  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, ...(settled.length ? { settled } : {}), affectedPaths, ...selection, ...(base.priorManifest ? { priorManifest: base.priorManifest, priorManifestRef: base.priorManifestRef } : {}), ...scopeOverride } }));
+  if (c.spec.governingSpec && (c.spec.kind === 'plan' || c.spec.kind === 'design')) {
+    const next = nextId(c.counters, c.path, 'parse-artifact');
+    return { state: { tag: 'pin-check', c: { ...c, counters: next.counters }, effectId: next.id, pending: effect as Extract<Effect, { kind: 'prepare-review' }> },
+      effects: [{ kind: 'parse-artifact', id: next.id, path: c.spec.target, artifact: c.spec.kind, governing: c.spec.governingSpec.path }] };
+  }
   return { state: { tag: 'prepare', c }, effects: [effect] };
 }
 
@@ -484,7 +492,7 @@ function issueFixVerify(c0: ReviewCtx, recovery: FixRecovery): S {
     return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
   }
   const artifact = c0.spec.kind;
-  const { c, effect } = withEffect(c0, 'parse-artifact', (id) => ({ kind: 'parse-artifact', id, path: c0.spec.target, artifact }));
+  const { c, effect } = withEffect(c0, 'parse-artifact', (id) => ({ kind: 'parse-artifact', id, path: c0.spec.target, artifact, ...(c0.spec.governingSpec ? { governing: c0.spec.governingSpec.path } : {}) }));
   return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
 }
 
@@ -679,6 +687,7 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
       }
       return null;
     }
+    case 'pin-check': return 'event: governing pin check is pending';
     case 'target-check': return 'event: review target check is pending';
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty':
       return null;
@@ -767,7 +776,7 @@ export function rebindReviewSpec(state: ReviewState, governingSpec: SpecIdentity
   if (state.tag === 'rule' || state.tag === 'decide-needs-user' || state.tag === 'decide-escalation' || state.tag === 'decide-opt-in') return respec(state.c, governingSpec);
   const rebind = (c: ReviewCtx): ReviewCtx => ({ ...c, forceFullScope: true, spec: { ...c.spec, governingSpec } as ReviewSpec, ...(c.pendingSpec ? { pendingSpec: { ...c.pendingSpec, governingSpec } as ReviewSpec } : {}) });
   // NOTE: a pending delta preparation could return an empty scope under the old spec; replace it with a fresh full one.
-  if (state.tag === 'prepare' && state.c.effectId) return prepare(rebind(state.c), state.c.preparedRound ?? state.c.round + 1, 'full', state.c.carried);
+  if ((state.tag === 'prepare' || state.tag === 'pin-check') && state.c.effectId) return prepare(rebind(state.c), state.c.preparedRound ?? state.c.round + 1, 'full', state.c.carried);
   if (state.tag !== 'target-check') return stay({ ...state, c: rebind(state.c) } as ReviewState);
   return stay({ ...state, c: rebind(state.c), before: 'c' in state.before ? { ...state.before, c: rebind(state.before.c) } as typeof state.before : state.before });
 }
@@ -805,6 +814,19 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }
   }
   switch (state.tag) {
     case 'booting': return stay(state);
+    case 'pin-check': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) {
+        const ancestor = event.detail.startsWith('design pin target unreadable') || event.detail.includes('has no spec pin');
+        return stay({ tag: 'failed', c: state.c, detail: ancestor ? `stale-design-spec: ${event.detail}` : event.detail, ...(ancestor ? { code: 'stale-design-spec' as const } : {}) });
+      }
+      if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId)) return stay(state);
+      if (staleGoverning(event, state.c.spec.governingSpec)) {
+        const code = event.governing.design ? 'stale-design-spec' : 'stale-spec';
+        return stay({ tag: 'failed', c: state.c, code, detail: code + ': governing spec pin differs from current bytes' });
+      }
+      if (event.defects.length) return stay({ tag: 'failed', c: state.c, detail: event.defects.map(row => row['message'] ?? row['code']).join('; ') });
+      return { state: { tag: 'prepare', c: state.c }, effects: [state.pending] };
+    }
     case 'prepare':
       if (event.type !== 'REVIEW_PREPARED' || !answers(event, state.c.effectId)) return stay(state);
       if (event.scope['empty'] === true) return stay({ tag: 'empty', c: state.c });
@@ -827,6 +849,10 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }
       return event.type === 'FIXES_APPLIED' && validateFixes(state.clusters, event.clusters) === null ? onFixesApplied(state, event.clusters) : stay(state);
     case 'fix-verify':
       if (event.type === 'ARTIFACT_PARSED' && answers(event, state.c.effectId)) {
+        if (staleGoverning(event, state.c.spec.governingSpec)) {
+          const code = event.governing.design ? 'stale-design-spec' : 'stale-spec';
+          return stay({ tag: 'failed', c: state.c, code, detail: `${code}: governing spec pin differs from current bytes` });
+        }
         return afterFixVerify(state, event.defects.map((defect) => String(defect['message'] ?? defect['code'] ?? 'lint defect')));
       }
       if (event.type === 'VERIFY_DONE' && answers(event, state.c.effectId)) {
@@ -856,7 +882,7 @@ export function reviewAwait(state: ReviewState) {
     case 'fix': return 'fix' as const;
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification': return 'decide' as const;
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return 'done' as const;
-    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return null;
+    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': case 'pin-check': return null;
     default: return never(state, 'review state');
   }
 }
@@ -911,10 +937,10 @@ function reviewFrameData(state: ReviewState): Readonly<Record<string, unknown>> 
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification': return decide(state);
     case 'settled': return { outcome: 'complete', summary: `review settled after ${state.c.round} round(s)`, completion: { exitSummary: state.exit, followUps: state.followUps } };
     case 'escalated': return { outcome: 'stopped', summary: `review escalated: ${state.escalation.kind} (${state.escalation.ids.join(', ')})` };
-    case 'failed': return { outcome: 'failed', summary: state.detail };
+    case 'failed': return { outcome: 'failed', summary: state.code && !state.detail.startsWith(state.code) ? `${state.code}: ${state.detail}` : state.detail };
     case 'skipped': return { outcome: 'skipped', summary: 'review skipped (rounds 0)' };
     case 'empty': return { outcome: 'no-reviewable-changes', summary: 'no reviewable changes' };
-    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return { round: 'c' in state ? state.c.round : 0 };
+    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': case 'pin-check': return { round: 'c' in state ? state.c.round : 0 };
     default: return never(state, 'review state');
   }
 }
@@ -963,12 +989,15 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
 // SECTION: Standalone machine
 
 export const reviewTransitions = [
+  { from: 'pin-check', on: 'ARTIFACT_PARSED', to: 'prepare' },
+  { from: 'pin-check', on: 'ARTIFACT_PARSED', to: 'failed' },
+  { from: 'pin-check', on: 'EFFECT_FAILED', to: 'failed' },
   ...[
     ['prepare', 'REVIEW_PREPARED'], ['native', 'NATIVE_RESULTS'], ['wave', 'WAVE_DONE'], ['wave', 'WAVE_STARTED'], ['rule', 'RULINGS'],
     ['fix', 'FIXES_APPLIED'], ['fix-verify', 'VERIFY_DONE'], ['fix-verify', 'ARTIFACT_PARSED'],
     ['decide-needs-user', 'DECISION'], ['decide-opt-in', 'DECISION'], ['decide-verification', 'DECISION'],
   ].map(([from, on]) => ({ from: from!, on: on!, to: 'target-check' })),
-  ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation', 'decide-verification'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
+  ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'pin-check', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation', 'decide-verification'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
   { from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to: 'empty' },
   { from: 'target-check', on: 'EFFECT_FAILED', to: 'failed' },
   ...['native', 'rule', 'fix', 'decide-escalation', 'decide-needs-user', 'decide-opt-in', 'decide-verification'].map((tag) => ({ from: tag, on: 'REVIEW_USE', to: tag })),
@@ -1013,7 +1042,7 @@ export const reviewTransitions = [
   { from: 'decide-escalation', on: 'DECISION', to: 'escalated' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'fix' },
   { from: 'decide-opt-in', on: 'DECISION', to: 'settled' },
-  ...['rule', 'decide-needs-user', 'decide-escalation', 'decide-opt-in'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'prepare' })),
+  ...['rule', 'decide-needs-user', 'decide-escalation', 'decide-opt-in'].flatMap((from) => ['prepare', 'pin-check'].map(to => ({ from, on: 'SPEC_SETTLED', to }))),
 ] as const;
 
 /** Standalone reviewer over a code target (root builds specs itself; this machine serves tier-1 tests and parity). */
@@ -1035,3 +1064,7 @@ export const reviewMachine: Machine<ReviewState> = {
   transitions: reviewTransitions,
   validate: validateReview,
 };
+
+export function reviewArtifactId(state: ReviewState): string | null {
+  return state.tag === 'pin-check' ? state.effectId : state.tag === 'fix-verify' && state.c.spec.kind !== 'code' ? state.c.effectId : null;
+}

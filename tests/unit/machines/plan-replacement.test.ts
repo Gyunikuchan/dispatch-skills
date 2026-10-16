@@ -187,7 +187,7 @@ test('replacement-work: replay conflict binds active HEAD and resumes without or
 
 test('replacement-work: retired accepted owner resolves replay with retained scope and remapped history', () => {
   const taskMap3 = '| T3 | Part three | Deliver part three. | none | SC3 |';
-  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
+  const sc3 = '- [SC3] Part 3 works\n  - Satisfies: REQ-1\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
   const task3 = '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
   const revised = replacementText([taskMap3, ''], [sc3, ''], [task3, '']);
   let { result, sim, trace } = running(revised);
@@ -234,7 +234,7 @@ test('replacement-work: retired accepted owner resolves replay with retained sco
 
 test('replacement-work: failed resolved retired replay resumes before delivery and preserves accepted records', () => {
   const taskMap3 = '| T3 | Part three | Deliver part three. | none | SC3 |';
-  const sc3 = '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
+  const sc3 = '- [SC3] Part 3 works\n  - Satisfies: REQ-1\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n';
   const task3 = '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n';
   let { result, sim, trace } = running(replacementText([taskMap3, ''], [sc3, ''], [task3, '']));
   result = submit(result, 'T3', sim, trace);

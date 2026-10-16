@@ -142,7 +142,7 @@ test('task-map-authored: design increment plan keeps its authored Task Map after
   assert.equal(author.frame?.await, 'author');
   const planPath = String(author.frame?.data['path']), designPath = String((author.frame?.data['governedDesign'] as { path: string }).path);
   ports.fs.writeAtomic(planPath, PLAN.replace('# Normalize values', '# First increment')
-    .replace('> **Parent:** user request', `> **Parent:** ${designPath} · I01`)
+    .replace(/^> \*\*Parent:\*\* `[^`]+\.spec\.md` · sha256:[a-f0-9]{64}$/m, `> **Parent:** \`${designPath}\` · I01`)
     .replace('- Approved revision: none', `- Approved revision: ${hash}\n- Increment ID and inherited contract: I01 — First behavior\n- Prerequisite evidence: none\n- Acceptance mapping: SC1`)
     .replaceAll('src/value.ts', 'src/a.ts'));
   const governed = governedPlanText(ports.fs.readText(planPath));

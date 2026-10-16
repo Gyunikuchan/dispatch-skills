@@ -5,8 +5,8 @@ import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
-import { beginReview, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
-import { answers, isRecord, launchDrift, launchMismatch, never, nextId, stay, type Counters, type Step } from './types.ts';
+import { beginReview, reviewArtifactId, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
+import { answers, isRecord, launchDrift, launchMismatch, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
 import { applyDispositions, bindingHash, evidenceAssessment, observe, openObservations, refreshEvidence, resolution, suggestedCriteria, validateDispositions } from './change-resolution.ts';
 import type { EvidenceObligation } from './implement-types.ts';
@@ -25,6 +25,9 @@ type PlanReviewResult = 'initial' | 'rebind';
 export type Context = {
   /** Settled governing spec root passed at boot; null for standalone boots. */
   governingSpec?: SpecIdentity | null;
+  specEpoch?: number; planAuthoredHere?: boolean;
+  designPin?: string | null;
+  existingPlan?: boolean;
   pendingWriter?: WriterConfig;
   designBinding?: DesignBinding;
   machinePath?: string;
@@ -157,7 +160,7 @@ export type ImplementState =
   | { tag: 'failure-snapshot'; c: Context; effectId: string; reason: string }
   | { tag: 'failure'; c: Context; reason: string; changedPaths: readonly string[] }
   | { tag: 'complete'; c: Context; summary: string }
-  | { tag: 'stopped'; c: Context; summary: string }
+  | { tag: 'stopped'; c: Context; summary: string; code?: 'stale-spec' | 'stale-design-spec' }
   | { tag: 'failed'; c: Context | null; summary: string };
 
 type S = Step<ImplementState>;
@@ -189,7 +192,7 @@ function baseContext(run: RunStartedEvent): Context {
   const planPath = planPathFromRun(run);
   const writer = writerConfig(run.config, run.orchestrator, run.level);
   return {
-    governingSpec: null, run, planPath, counters: {}, writer: writer.ok ? writer.value : null, writerError: writer.ok ? null : writer.error,
+    governingSpec: null, specEpoch: 0, planAuthoredHere: false, run, planPath, counters: {}, writer: writer.ok ? writer.value : null, writerError: writer.ok ? null : writer.error,
     plan: null, planHash: null, planReview: null, codeReview: null, startFingerprint: null, lastFingerprint: null,
     mutationEpoch: 0, criterionMutation: {}, baseline: [], acceptedBaseline: [], records: {}, evidence: {}, redMatrix: [], concerns: [],
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, phase: 'setup', tasks: {}, integration: null,
@@ -212,7 +215,7 @@ function snapshot(c0: Context, next: 'author' | 'parse'): S {
 
 function parsePlan(c0: Context, phase: PlanReviewResult): S {
   const { c, id } = effectId(c0, 'parse-artifact');
-  return { state: { tag: 'parsing', c, effectId: id, phase }, effects: [{ kind: 'parse-artifact', id, path: c.planPath, artifact: 'plan' }] };
+  return { state: { tag: 'parsing', c, effectId: id, phase }, effects: [{ kind: 'parse-artifact', id, path: c.planPath, artifact: 'plan', ...(c.governingSpec ? { governing: c.governingSpec.path } : {}) }] };
 }
 
 function authorPlan(c: Context, defects: readonly Readonly<Record<string, unknown>>[] = []): S {
@@ -243,7 +246,7 @@ function startReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'plan', c0.planPath, c0.governingSpec ?? null);
   if (!built.ok) return beginFailure(c0, built.error);
   const spec = { ...built.spec, context: planReviewContext(c0, built.spec.context) };
-  const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review`, c0.counters);
+  const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review${(c0.specEpoch ?? 0) > 0 ? `.s${c0.specEpoch}` : ''}`, c0.counters);
   return fromPlanReview(c0, result);
 }
 
@@ -252,10 +255,10 @@ function fromPlanReview(c0: Context, result: Step<ReviewState>): S {
   const c = { ...c0, counters: reviewCtxCounters(review, c0.counters), planReview: review };
   switch (review.tag) {
     case 'settled': case 'skipped': return parsePlan(c, 'rebind');
-    case 'failed': return beginFailure(c, `plan review failed: ${review.detail}`);
+    case 'failed': return review.code === 'stale-design-spec' ? stay({ tag: 'stopped', c, code: review.code, summary: review.detail }) : beginFailure(c, `plan review failed: ${review.detail}`);
     case 'escalated': case 'empty': return beginFailure(c, `plan review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check': case 'pin-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
     default: return never(review, 'plan review state');
   }
 }
@@ -1270,7 +1273,7 @@ function fromCodeReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `code review failed: ${review.detail}`);
     case 'escalated': return beginFailure(c, `code review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check': case 'pin-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
     default: return never(review, 'code review state');
   }
 }
@@ -1407,9 +1410,9 @@ export function beginImplement(run: RunStartedEvent, governingSpec: SpecIdentity
   return 'c' in result.state && result.state.c ? { ...result, state: withContext(result.state, { ...result.state.c, governingSpec }) } : result;
 }
 
-export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters, governingSpec: SpecIdentity | null = null): S {
+export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters, governingSpec: SpecIdentity | null = null, specEpoch = 0): S {
   const c = {
-    ...baseContext(run), governingSpec, counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
+    ...baseContext(run), governingSpec, specEpoch, counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
     levelGatePassed: binding.levelGatePassed ?? false, gateScope: binding.gateScope ?? null,
     levelAssessment: binding.levelAssessment ?? null, levelChoice: binding.levelChoice ?? null,
     scopeAdjustments: binding.scopeAdjustments ?? [],
@@ -1434,16 +1437,19 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'author': {
       if (event.type !== 'AUTHORED' || event.path !== state.c.planPath) return stay(state);
-      return parsePlan(state.c, 'initial');
+      return parsePlan({ ...state.c, planAuthoredHere: true }, 'initial');
     }
     case 'parsing': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) {
+        if (event.detail.startsWith('design pin target unreadable') || event.detail.includes('has no spec pin')) return stay({ tag: 'stopped', c: state.c, summary: `stale-design-spec: ${event.detail}`, code: 'stale-design-spec' });
         if (state.phase === 'initial' && /not found/i.test(event.detail)) return authorPlan(state.c);
         return startFailureFromEffect(state.c, event.cls, event.detail);
       }
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);
-      if (event.defects.length) return authorPlan(state.c, event.defects as readonly Readonly<Record<string, unknown>>[]);
       const plan = asParsedPlan(event.parsed);
+      const pinned = { ...state.c, existingPlan: state.c.existingPlan || !state.c.planAuthoredHere, designPin: event.governing?.design ?? null, ...(plan ? { plan, planHash: event.hash } : {}) };
+      if (staleGoverning(event, state.c.governingSpec)) return stay({ ...state, c: pinned });
+      if (event.defects.length) return authorPlan(pinned, event.defects as readonly Readonly<Record<string, unknown>>[]);
       if (!plan || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return beginFailure(state.c, 'Plan parser returned an invalid payload or governed hash.');
       const c = { ...state.c, plan, planHash: event.hash, planPath: state.c.planPath };
       if (c.designBinding) {
@@ -1461,6 +1467,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       return runBaseline({ ...state.c, startFingerprint: event.fingerprint, lastFingerprint: event.fingerprint });
     }
     case 'plan-review': {
+      if (answers(event, reviewArtifactId(state.review)) && staleGoverning(event, state.c.governingSpec)) return stay({ ...state, c: { ...state.c, designPin: event.governing.design } });
       if (event.type === 'FIXES_APPLIED') {
         const c = markMutation(state.c, []);
         return fromPlanReview(c, stepReview(state.review, event));
@@ -1646,11 +1653,15 @@ const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLI
 function respecImplement(state: ImplementState, identity: SpecIdentity): S {
   if (!('c' in state) || !state.c) return stay(state);
   const c = { ...state.c, governingSpec: identity };
-  if (c.plan === null) return authorPlan(c, [{ code: 'stale-spec', message: `Governing spec revised to ${identity.hash}; re-author against it.` }]);
+  if (c.designPin) return stay({ tag: 'stopped', c, code: 'stale-design-spec', summary: `stale-design-spec: ${c.designPin} pins a revised spec; revise the design first.` });
+  if (c.plan === null) return c.existingPlan && !c.planAuthoredHere
+    ? stay({ tag: 'stopped', c, code: 'stale-spec', summary: `stale-spec: governing spec revised to ${identity.hash}; re-plan.` })
+    : authorPlan(c, [{ code: 'stale-spec', message: `Governing spec revised to ${identity.hash}; re-author against it.` }]);
   const parent = c.plan.box?.['Parent']?.replace(/`/g, '').trim() ?? '';
   const increment = /^(.+?)\s*·\s*I\d{2}$/.exec(parent);
-  if (increment) return stop(c, `stale-design-spec: ${increment[1]} pins a revised spec; revise the design first.`);
-  return stop(c, `stale-spec: governing spec revised to ${identity.hash}; re-plan.`);
+  if (increment) return stay({ tag: 'stopped', c, code: 'stale-design-spec', summary: `stale-design-spec: ${increment[1]} pins a revised spec; revise the design first.` });
+  if (c.planAuthoredHere && c.phase === 'setup' && !Object.keys(c.tasks).length && !c.integration) return authorPlan({ ...c, specEpoch: (c.specEpoch ?? 0) + 1 }, [{ code: 'stale-spec', message: `Governing spec revised to ${identity.hash}; re-author against it.` }]);
+  return stay({ tag: 'stopped', c, code: 'stale-spec', summary: `stale-spec: governing spec revised to ${identity.hash}; re-plan.` });
 }
 
 export function stepImplement(state: ImplementState, event: Event): S {
@@ -2103,7 +2114,10 @@ const HOST_EVENTS = ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', '
 const TASK_EXITS = ['task-checkout', 'task-brief', 'task-envelope', 'task-verify', 'tasks', 'request-decision', 'integration-conflict', 'failure-snapshot'] as const;
 
 export const implementTransitions = [
-  ...['starting', 'author', 'parsing'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'author' })),
+  ...['starting', 'author', 'parsing', 'plan-review'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'author' })),
+  { from: 'parsing', on: 'SPEC_SETTLED', to: 'stopped' },
+  { from: 'parsing', on: 'EFFECT_FAILED', to: 'stopped' },
+  { from: 'plan-review', on: 'EFFECT_FAILED', to: 'stopped' },
   ...['author', 'plan-review', 'code-review', 'evidence', 'baseline-decision', 'approval', 'level-classification', 'level-recommendation', 'integration-conflict', 'request-decision', 'needs-user', 'concerns', 'failure', 'drift'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'stopped' })),
   { from: 'checking-host-event', on: 'SNAPSHOT', to: 'assessing-host-event' },
   ...['baseline', 'final-verify', 'hotfix-verify', 'task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot', 'trim-snapshot', 'level-classification', 'level-recommendation', 'drift', 'stopped', 'failure-snapshot'].map((to) => ({ from: 'assessing-host-event', on: 'RECOVERY_ASSESSED', to })),

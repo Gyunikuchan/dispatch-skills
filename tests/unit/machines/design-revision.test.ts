@@ -1,3 +1,4 @@
+import { rebindReviewSpec, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision, designRevisionData } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
@@ -7,7 +8,7 @@ import { started } from './fixtures/design-delivery.ts';
 import type { DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { createFolder, fold } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import type { Event, JournalLine } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Event, JournalLine, Ports } from '../../../skills/dispatch/scripts/core/types.ts';
 import { threshold } from '../../../skills/dispatch/scripts/policy/rounds.ts';
 
 function revisionParsing() {
@@ -155,7 +156,7 @@ test('prewrite-level: design growth before the first child gate remains in the r
 });
 test('design revision request approved by orchestrator', () => {
   const base = approval('implement').c;
-  const before = { ...design, governedText: '# Delivery\n\n## Goals & Requirements\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership\n\n## Final Integration\nRun the governed suite' };
+  const before = { ...design, governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership\n\n## Final Integration\nRun the governed suite' };
   const c = { ...base, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
   const working = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'Include final integration obligation', evidence: 'The suite must cover the new contract.' });
   const authored = stepDesignRevision(working.state, { type: 'AUTHORED', path: working.state.workingPath });
@@ -186,7 +187,7 @@ test('design revision request approved by orchestrator', () => {
 });
 
 test('design revision request escalates to user', () => {
-  const before = { ...design, governedText: '# Delivery\n\n## Goals & Requirements\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
+  const before = { ...design, governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
   const c = { ...approval('implement').c, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
   const working = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'add required module', evidence: 'The accepted behavior needs a companion path.' });
   const authored = stepDesignRevision(working.state, { type: 'AUTHORED', path: working.state.workingPath });
@@ -212,7 +213,7 @@ test('design revision request escalates to user', () => {
 });
 
 test('level-journal: design revision retains accepted scope and adjudicates only additional growth', () => {
-  const before = { ...design, governedText: '# Delivery\n\n## Goals & Requirements\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
+  const before = { ...design, governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
   const base = { ...approval('implement').c, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
   const firstDesign = { ...before, increments: before.increments.map((row) => row.id === 'I01' ? { ...row, paths: [...row.paths, 'src/extra.ts'] } : row) };
   const firstHash = `sha256:${'b'.repeat(64)}`;
@@ -328,4 +329,76 @@ test('an unaffected active increment retains its evidence await and progress acr
   assert.equal(resumed.state.child.c.designBinding?.revision, event.hash);
   assert.equal(resumed.state.child.c.designBinding?.approval.by, 'revision');
   assert.deepEqual(resumed.effects, []);
+});
+
+test('approach change is a scope obligation', () => {
+ const { parse, event } = revisionParsing();
+ const revised = { ...design, governedText: design.governedText + '\n## Approach\nREQ-1 strategy\nREQ-1 new strategy\n' };
+ if (parse.state.tag !== 'parse') throw new Error('Expected parse');
+ const proposal = stepDesignRevision({ ...parse.state, c: { ...parse.state.c, levelGatePassed: true }, afterReview: true }, { ...event, parsed: revised, hash: 'sha256:' + 'b'.repeat(64) });
+ assert.equal(proposal.state.tag, 'scope-adjudication');
+ if (proposal.state.tag !== 'scope-adjudication') throw new Error('Expected scope adjudication');
+ assert.ok(proposal.state.request.delta.obligations.some(value => value.includes('## Approach updated')));
+});
+
+const governingSpec = { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) };
+const specUpdate = { type: 'SPEC_SETTLED' as const, path: governingSpec.path, hash: 'sha256:' + 'b'.repeat(64) };
+function governedRevision() {
+ const base = approval('implement').c;
+ const c = { ...base, governingSpec, revisionReviewRound: 2, run: { ...base.run, config: { ...base.run.config, phases: { 'plan-review': { rounds: { low: 3 }, targets: { low: 1 } } } } } };
+ const author = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'Keep intent' }).state;
+ const parse = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath });
+ const event = { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash: 'sha256:' + 'c'.repeat(64), parsed: design, defects: [] };
+ return { c, parse, event, review: stepDesignRevision(parse.state, event) };
+}
+test('stale design spec pin returns revision to author', () => {
+ const { c, parse, event, review } = governedRevision();
+ const stale = stepDesignRevision(parse.state, { ...event, governing: { pinned: governingSpec.hash, current: specUpdate.hash, design: null, reqIds: [] } });
+ assert.equal(stale.state.tag, 'parse'); assert.deepEqual(stale.effects, []);
+ for (const child of [stale.state, review.state]) {
+ const parent: DesignState = { tag: 'revision', c, child };
+ const rebound = stepDesign(parent, specUpdate);
+ assert.ok(rebound.state.tag === 'revision' && rebound.state.child.tag === 'author');
+ assert.equal(rebound.state.child.defects[0]?.['code'], 'stale-spec'); assert.equal(rebound.state.c.revisionReviewEpoch, 1);
+ assert.equal(rebound.state.c.revisionReviewRound, 2); assert.deepEqual(rebound.effects, []);
+ }
+});
+test('successive revision keeps delta scope through pin check', () => {
+ const { review } = governedRevision(); assert.ok(review.state.tag === 'review' && review.state.review.tag === 'pin-check');
+ assert.equal(review.state.review.c.scope, 'delta');
+ const prepared = stepDesignRevision(review.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: review.effects[0]!.id, hash, parsed: design, defects: [], governing: { pinned: governingSpec.hash, current: governingSpec.hash, design: null, reqIds: [] } });
+ const effect = prepared.effects[0]; assert.ok(effect?.kind === 'prepare-review');
+ assert.equal(effect.round, 3); assert.equal(effect.scope['scope'], 'delta'); assert.equal(effect.scope['sinceHash'], hash); assert.equal(effect.scope['priorTarget'], 'x.design.md');
+});
+test('revision review later round takes policy scope', () => {
+ const { review } = governedRevision(); assert.ok(review.state.tag === 'review');
+ const result = rebindReviewSpec(review.state.review, { path: governingSpec.path, hash: specUpdate.hash });
+ assert.ok(result.state.tag === 'pin-check');
+ const prepared = stepReview(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [], governing: { pinned: specUpdate.hash, current: specUpdate.hash, design: null, reqIds: [] } });
+ assert.ok(prepared.effects[0]?.kind === 'prepare-review'); assert.equal(prepared.effects[0].scope['scope'], 'full');
+ assert.equal(prepared.effects[0].scope['priorTarget'], undefined);
+});
+test('revision review stale after findings keeps history', () => {
+ const initial = governedRevision(); let result = initial.review; assert.ok(result.state.tag === 'review');
+ result = stepDesignRevision(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [], governing: { pinned: governingSpec.hash, current: governingSpec.hash, design: null, reqIds: [] } });
+ result = stepDesignRevision(result.state, { type: 'REVIEW_PREPARED', effectId: result.effects[0]!.id, scope: {}, promptPaths: {} });
+ result = stepDesignRevision(result.state, { type: 'WAVE_DONE', effectId: result.effects[0]!.id, round: 3, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [{ id: 'R3-F001', severity: 'MUST', category: 'correctness', locus: 'x.design.md:L1', defect: 'Earlier revision finding', requiredChange: 'Keep invariant', sources: ['codex[0]'], scope: 'in' }] });
+ result = stepDesignRevision(result.state, { type: 'RULINGS', rulings: { 'R3-F001': { ruling: 'reject', reason: 'Earlier revision ruling' } } });
+ assert.ok(result.state.tag === 'review' && result.state.review.tag === 'pin-check');
+ const files = new Map<string, string>([['x.design.md', '# Design\n']]);
+ const ports = { fs: { exists: (file: string) => files.has(file), readText: (file: string) => files.get(file)!, writeAtomic: (file: string, text: string) => files.set(file, text) } } as unknown as Ports;
+ const run = { verb: 'implement' as const, argument: 'x.design.md', slug: 'x' };
+ const parent: DesignState = { tag: 'revision', c: result.state.c, child: result.state };
+ rootMachine.render!({ tag: 'design', run, child: parent }, ports, '/session/.state/runs/run');
+ const next = stepDesign(parent, specUpdate); assert.ok(next.state.tag === 'revision' && next.state.child.tag === 'author');
+ const parsed = stepDesign(next.state, { type: 'AUTHORED', path: next.state.child.workingPath });
+ let accepted = stepDesign(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: 'sha256:' + 'd'.repeat(64), parsed: design, defects: [] });
+ assert.equal(accepted.effects[0]?.id, 'design.revision.review.s1.parse-artifact.1');
+ assert.equal(accepted.state.c.revisionReviewRound, 3);
+ accepted = stepDesign(accepted.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: accepted.effects[0]!.id, hash, parsed: design, defects: [], governing: { pinned: specUpdate.hash, current: specUpdate.hash, design: null, reqIds: [] } });
+ accepted = stepDesign(accepted.state, { type: 'REVIEW_PREPARED', effectId: accepted.effects[0]!.id, scope: {}, promptPaths: {} });
+ accepted = stepDesign(accepted.state, { type: 'WAVE_DONE', effectId: accepted.effects[0]!.id, round: 4, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [{ id: 'R4-F001', severity: 'MUST', category: 'correctness', locus: 'x.design.md:L2', defect: 'Later revision finding', requiredChange: 'Keep invariant', sources: ['codex[0]'], scope: 'in' }] });
+ rootMachine.render!({ tag: 'design', run, child: accepted.state }, ports, '/session/.state/runs/run');
+ const log = [...files.entries()].find(([file]) => file.endsWith('.review-log.md'))?.[1] ?? '';
+ for (const marker of ['Earlier revision finding', 'Earlier revision ruling', 'Later revision finding', 'design.revision.review.s1']) assert.ok(log.includes(marker), marker);
 });

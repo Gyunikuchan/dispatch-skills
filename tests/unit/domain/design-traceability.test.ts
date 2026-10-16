@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateDesignTraceability } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { validateSpecTraceability, validateDesignTraceability } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { hash } from '../machines/fixtures/design.ts';
 import { started } from '../machines/fixtures/design-delivery.ts';
 
@@ -43,4 +43,24 @@ test('template traceability binds Parent path, revision, increment, contract and
   const plan = { box: { Parent: `\`${binding.path}\` · I01` }, traceability: { 'Approved revision': hash, 'Increment ID and inherited contract': 'I01 — First behavior', 'Prerequisite evidence': 'None', 'Acceptance mapping': 'src/a.ts → SC1' }, changes: [{ path: 'src/a.ts' }] } as never;
   assert.deepEqual(validateDesignTraceability(plan, binding), []);
   for (const other of [{ ...binding, path: 'other.design.md' }, { ...binding, revision: `sha256:${'b'.repeat(64)}` }, { ...binding, increment: 'I02' }, { ...binding, contract: { Outcome: 'Other behavior' } }, { ...binding, paths: ['src/b.ts'] }]) assert.ok(validateDesignTraceability(plan, other).length);
+});
+
+import { validateApproachRequirements } from '../../../skills/dispatch/scripts/domain/design.ts';
+const requirements = ['REQ-1', 'REQ-2', 'REQ-3'];
+const tracedPlan = (ids: string[]) => ({ criteria: [{ id: 'SC1', line: 12, satisfies: ids }] }) as never;
+test('spec traceability rejects unknown requirement', () => {
+  const defects = validateSpecTraceability(tracedPlan(['REQ-9']), requirements);
+  assert.deepEqual(defects.filter(item => item.severity === 'defect').map(item => item.code), ['unknown-requirement']);
+  assert.match(defects[0]!.message, /REQ-9/);
+});
+test('spec traceability warns on uncited requirement', () => {
+  const defects = validateSpecTraceability(tracedPlan(['REQ-1']), requirements);
+  assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unsatisfied-requirement', 'warning'], ['unsatisfied-requirement', 'warning']]);
+  assert.match(defects[0]!.message, /REQ-2/); assert.match(defects[1]!.message, /REQ-3/);
+});
+test('spec traceability passes full coverage', () => assert.deepEqual(validateSpecTraceability(tracedPlan(requirements), requirements), []));
+test('approach requirements reject unknown requirement', () => {
+  const defects = validateApproachRequirements({ approachRequirements: ['REQ-1', 'REQ-9'] } as never, requirements);
+  assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unknown-requirement', 'defect']]);
+  assert.match(defects[0]!.message, /REQ-9/);
 });

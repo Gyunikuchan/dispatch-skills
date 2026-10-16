@@ -11,7 +11,7 @@ const splitMessage = (action: string, text: string) => `List one path per [${act
 const PLAN = `# Add retry budget
 
 > **TL;DR:** fetch retries forever; cap them.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** low — isolated helper
 > **Scope:** src/fetch.ts
@@ -41,12 +41,14 @@ const PLAN = `# Add retry budget
 
 ## Success Criteria
 - [SC1] Fetch stops after three attempts
+  - Satisfies: REQ-1
   - Changes: src/fetch.ts, tests/fetch.test.ts
   - Verify: \`node --test tests/fetch.test.ts\`
   - Evidence: red
   - Test rationale: fails today because the loop never stops retrying.
   - Retain: durable
 - [SC2] Whole suite stays green
+  - Satisfies: REQ-1
   - Verify: \`npm test\` [FINAL]
   - Evidence: verify
   - Test rationale: aggregate regression gate over every package.
@@ -155,7 +157,7 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
   assert.ok(result.ok, JSON.stringify(result));
   const { plan } = result;
   assert.equal(plan.title, 'Add retry budget');
-  assert.equal(plan.box['Parent'], 'user request');
+  assert.equal(plan.box['Parent'], '`governing.spec.md` · sha256:' + 'a'.repeat(64));
   assert.deepEqual(plan.keyDecisions, ['Cap at three attempts (user)']);
   assert.deepEqual(plan.criteria.map((item) => [item.id, item.evidence]), [['SC1', 'red'], ['SC2', 'verify']]);
   assert.deepEqual(plan.criteria[0]?.changes, ['src/fetch.ts', 'tests/fetch.test.ts']);
@@ -227,7 +229,7 @@ test('implement-plan-lint: a fence inside an HTML comment does not swallow later
 const TASKS = `# Shared contract with consumers
 
 > **TL;DR:** consumers need one shared contract.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** low — isolated modules
 > **Scope:** src/
@@ -263,21 +265,25 @@ const TASKS = `# Shared contract with consumers
 
 ## Success Criteria
 - [SC1] Contract exports the shape
+  - Satisfies: REQ-1
   - Changes: src/contract.ts
   - Verify: \`node --test tests/contract.test.ts\`
   - Evidence: verify
   - Test rationale: pins the exported shape consumers rely on.
 - [SC2] Reader consumes the contract
+  - Satisfies: REQ-1
   - Changes: src/reader.ts
   - Verify: \`node --test tests/reader.test.ts\`
   - Evidence: verify
   - Test rationale: covers the reader path through the contract.
 - [SC3] Writer consumes the contract
+  - Satisfies: REQ-1
   - Changes: src/writer.ts
   - Verify: \`node --test tests/writer.test.ts\`
   - Evidence: verify
   - Test rationale: covers the writer path through the contract.
 - [SC4] Reader and writer round-trip
+  - Satisfies: REQ-1
   - Verify: \`node --test tests/roundtrip.test.ts\` [FINAL]
   - Evidence: verify
   - Integration: spans reader and writer tasks.
@@ -383,6 +389,13 @@ test('task-plan: the journal boundary preserves the task graph and rejects pre-t
 const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
 const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === code); };
+
+test('missing satisfies emits one diagnostic per criterion', () => {
+  for (const replacement of ['', '  - Satisfies:\n', '  - Satisfies: REQ-x\n', '  - Satisfies: REQ-x\n  - Satisfies: wrong\n']) {
+    const source = PLAN.replace('  - Satisfies: REQ-1\n', replacement);
+    assert.equal(defectsOf(source, 'missing-satisfies').length, 1, replacement);
+  }
+});
 
 test('SC1 grouped delete registers every path', () => {
   const source = withDelete('src/old-a.ts, src/old-b.ts');
@@ -539,7 +552,7 @@ test('seam advisory permits explicit none and populated declarations', () => {
 });
 
 test('seam advisory ignores review-only criteria', () => {
-  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace('- [SC2] Whole suite stays green\n', '- [SC2] Whole suite stays green\n  - Changes: src/fetch.ts\n').replace(/  - Evidence: (red|verify)/g,
+  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: src/fetch.ts\n').replace(/  - Evidence: (red|verify)/g,
     '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.deepEqual(seamWarnings(source), []);
 });
@@ -623,7 +636,7 @@ test('isolates transient test files: rejects a basename without transient', () =
 });
 
 test('isolates transient test files: rejects a path a durable criterion also lists', () => {
-  const source = isolated.replace('- [SC2] Whole suite stays green\n', '- [SC2] Whole suite stays green\n  - Changes: tests/fetch.transient.test.ts\n  - Retain: durable\n');
+  const source = isolated.replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: tests/fetch.transient.test.ts\n  - Retain: durable\n');
   assert.equal(transientPathDefects(source).length, 1);
 });
 
@@ -666,13 +679,13 @@ test('plan-section-order: old order fails and new order with absent optional sec
   const criteria = PLAN.slice(PLAN.indexOf('## Success Criteria'), PLAN.indexOf('## Verification Plan'));
   const criteriaFirst = PLAN.replace(criteria, '').replace('## Proposed Changes', `${criteria}## Proposed Changes`);
   const oldOrder = PLAN.replace('## Key Decisions & Context\n', '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
-    .replace('## Technical-Design Traceability\n', '## User Review Required\n- None.\n\n## Technical-Design Traceability\n')
+    .replace('## Technical-Design Traceability\n', '## Background\n- Current behavior.\n\n## Technical-Design Traceability\n')
     .replace('## Review Findings', '## Out of Scope\n- Backoff.\n\n## Review Findings');
   const orderDefects = (source: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === 'section-order'); };
   assert.deepEqual(orderDefects(criteriaFirst).map((item) => item.line), [criteriaFirst.split('\n').indexOf('## Proposed Changes') + 1]);
-  assert.deepEqual(orderDefects(oldOrder).map((item) => item.line), ['## User Review Required', '## Out of Scope'].map((heading) => oldOrder.split('\n').indexOf(heading) + 1));
-  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## User Review Required" before "## Task Map"/);
-  const full = PLAN.replace('## Key Decisions & Context\n', '## User Review Required\n- None.\n\n## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
+  assert.deepEqual(orderDefects(oldOrder).map((item) => item.line), ['## Background', '## Out of Scope'].map((heading) => oldOrder.split('\n').lastIndexOf(heading) + 1));
+  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## Background" before "## Task Map"/);
+  const full = PLAN.replace('## Key Decisions & Context\n', '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
     .replace('## Task Map\n', '## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Task Map\n')
     .replace('## Review Findings', '## Rollback & Blast Radius\n- Revert the helper.\n\n## Review Findings');
   parsed(full);
@@ -777,3 +790,22 @@ test('task-map-shared-context: authored map bytes reach the writer and bind the 
   assert.notEqual(parsed(edited).sharedContext, plan.sharedContext);
   assert.equal(governedPlanText(source), governedPlanText(source.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')));
 });
+
+test('Parent rejects user request', () => assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, 'user request')).includes('summary-label')));
+
+test('Parent rejects unsuffixed pin', () => { for (const parent of ['`notes.txt` · sha256:' + 'a'.repeat(64), 'governing.spec.md · sha256:' + 'a'.repeat(64)]) assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label')); });
+
+test('Parent accepts spec pin', () => assert.ok(parsePlan(PLAN).ok));
+
+test('Parent accepts design increment pin in plan', () => assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok));
+
+test('plan retired section user review required', () => assert.ok(defects(PLAN + '\n## User Review Required\nNone.').includes('retired-section')));
+
+test('plan criterion satisfies ids parsed', () => {
+  const plan = parsed(PLAN.replace('Satisfies: REQ-1', 'Satisfies: REQ-1, REQ-2'));
+  assert.deepEqual(plan.criteria[0]?.satisfies, ['REQ-1', 'REQ-2']);
+  assert.deepEqual(asParsedPlan(plan)?.criteria[0]?.satisfies, ['REQ-1', 'REQ-2']);
+  for (const satisfies of ['REQ-1', [1], ['DEC-1']]) assert.equal(asParsedPlan({ ...plan, criteria: plan.criteria.map((criterion) => ({ ...criterion, satisfies })) }), null);
+});
+
+test('plan criterion missing satisfies rejected', () => { for (const value of ['', '  - Satisfies: \n', '  - Satisfies: REQ-1, DEC-1\n']) assert.ok(defects(PLAN.replace('  - Satisfies: REQ-1\n', value)).includes('missing-satisfies')); });

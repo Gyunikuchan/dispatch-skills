@@ -9,12 +9,12 @@ import type { ReviewKind } from '../domain/types.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
 import {
-  beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState,
+  beginReview, reviewArtifactId, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState,
 } from './review.ts';
 import { beginImplement, implementAwait, implementData, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { activeTasks } from './implement-tasks.ts';
 import { beginSpec, beginSpecApproval, beginSpecRead, specApprovalRequired, specAwait, specData, stepSpec, validateSpec, type SpecCtx, type SpecState } from './spec.ts';
-import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
+import { answers, isRecord, never, nextId, staleGoverning, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
 import { executionBindingDeferred, reconfigureRoot } from './execution-config.ts';
 import { refreshedRun } from '../domain/execution-config.ts';
 import { pathIdentity } from '../domain/path-identity.ts';
@@ -29,7 +29,7 @@ export type RootState =
   | { tag: 'design'; run: RunInfo; child: DesignState }
   | { tag: 'booting' }
   /** Spec stage; `parked` is the child suspended for a gate or revision (null before the first child boots). */
-  | { tag: 'spec'; run: RunInfo; stage: SpecState; parked: Child | null }
+  | { tag: 'spec'; run: RunInfo; stage: SpecState; parked: Child | null; stalePin?: boolean }
   | { tag: 'ask'; run: RunInfo; child: AskState }
   | { tag: 'plan'; run: RunInfo; child: PlanState }
   | { tag: 'review'; run: RunInfo; child: ReviewState }
@@ -222,13 +222,45 @@ function stepSpecStage(state: Extract<RootState, { tag: 'spec' }>, event: Event)
   const prior = state.run.spec?.identity ?? null;
   const run: RunInfo = { ...state.run, spec: { identity: stage.identity, approvals: stage.c.approvals, counters: stage.c.counters } };
   if (!state.parked) return bootChild(run, stage.identity);
-  if (prior && prior.path === stage.identity.path && prior.hash === stage.identity.hash) return wrap(run, state.parked, result.effects);
+  if (state.stalePin && specApprovalRequired(runLevel(run), stage.identity.hash, stage.c.approvals)) {
+    const approval = beginSpecApproval(specCtx(run, run.spec!, stage.identity.path), stage.identity);
+    return { state: { ...state, run, stage: approval.state }, effects: approval.effects };
+  }
+  if (!state.stalePin && prior && prior.path === stage.identity.path && prior.hash === stage.identity.hash) return wrap(run, state.parked, result.effects);
   // KD-9: SPEC_SETTLED is synthesized here only; replay reproduces it from the journaled parse and decision.
   const resumed = stepChild(state.parked, { type: 'SPEC_SETTLED', path: stage.identity.path, hash: stage.identity.hash });
   return wrap(run, resumed.child, resumed.effects);
 }
 
+function implementArtifactId(state: ImplementState): string | null {
+  return state.tag === 'parsing' ? state.effectId : state.tag === 'plan-review' ? reviewArtifactId(state.review) : null;
+}
+
+/** Only a pending artifact parse can send its owner through spec settlement. */
+function pendingArtifactId(child: Child): string | null {
+  switch (child.verb) {
+    case 'plan': return child.state.tag === 'parsing' ? child.state.c.effectId : child.state.tag === 'review' ? reviewArtifactId(child.state.review) : null;
+    case 'implement': return implementArtifactId(child.state);
+    case 'design': {
+      const state = child.state;
+      if (state.tag === 'parse') return state.effectId;
+      if (state.tag === 'review') return reviewArtifactId(state.review);
+      if (state.tag === 'increment') return implementArtifactId(state.child);
+      if (state.tag === 'revision') return state.child.tag === 'parse' ? state.child.effectId : state.child.tag === 'review' ? reviewArtifactId(state.child.review) : null;
+      return null;
+    }
+    case 'review': case 'ask': return null;
+    default: return never(child, 'child');
+  }
+}
+
 export function stepRoot(state: RootState, event: Event): S {
+  if ((state.tag === 'plan' || state.tag === 'design' || state.tag === 'implement') && state.run.spec?.identity
+    && staleGoverning(event, state.run.spec.identity) && answers(event, pendingArtifactId(childOf(state)!))) {
+    const stepped = stepChild(childOf(state)!, event);
+    const read = beginSpecRead(specCtx(state.run, state.run.spec, state.run.spec.identity.path), state.run.spec.identity.path);
+    return { state: { tag: 'spec', run: state.run, stage: read.state, parked: stepped.child, stalePin: true }, effects: read.effects };
+  }
   // KD-4: a revision parks the child; it receives nothing until the new hash settles.
   if (event.type === 'SPEC_REVISED' && (state.tag === 'design' || state.tag === 'plan' || state.tag === 'review' || state.tag === 'implement') && state.run.spec?.identity) {
     const read = beginSpecRead(specCtx(state.run, state.run.spec, state.run.spec.identity.path), state.run.spec.identity.path);
@@ -445,6 +477,7 @@ function render(state0: RootState, ports: Ports, runDir: string): void {
 // SECTION: Machine
 
 export const rootTransitions = [
+  ...['plan', 'design', 'implement'].map(from => ({ from, on: 'ARTIFACT_PARSED', to: 'spec' })),
   { from: 'design', on: 'DECISION', to: 'handoff' },
   { from: 'design', on: 'EFFECT_FAILED', to: 'handoff' },
   { from: 'implement', on: 'RECOVERY_ASSESSED', to: 'handoff' },

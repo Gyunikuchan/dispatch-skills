@@ -2,16 +2,15 @@
 // graph priority belongs to the design machine, not here.
 
 import {
-  boxValues, documentTitle, findPlaceholders, isFillerNote, lint, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
+  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, isFillerNote, lint, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
   structuralLines, withoutSections, type PlaceholderVocabulary, type StructuralLine,
 } from './plan.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
 
 const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments'];
-const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · sha256:[0-9a-f]{64})$/;
 export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
-  'Context & Intent', 'Goals & Requirements', 'Alternatives & Decisions', 'Risks, Security & Operations',
+  'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
   'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',
 ];
 /** Design section order after the title and summary box: status and intent before architecture and increment detail. */
@@ -148,7 +147,7 @@ export function governedDesignText(source: string): string {
 
 export function sharedDesignSections(source: string): string {
   const lines = structuralLines(source);
-  const sections = ['## Goals & Requirements', '## Architecture & Boundaries', '## Final Integration'];
+  const sections = ['## Approach', '## Architecture & Boundaries', '## Final Integration'];
   return sections.map((heading) => {
     const body = (sectionBody(lines, heading) ?? []).map((l) => l.text.trim()).filter(Boolean).join('\n');
     return `${heading}\n${body}`;
@@ -184,6 +183,13 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
     if (!sectionRanges(lines, `## ${heading}`).length) defects.push(lint('missing-section', null, `Design requires ## ${heading}.`));
   }
   defects.push(...lintSectionOrder(lines, DESIGN_SECTION_ORDER));
+  for (const entry of lines) {
+    if (entry.text.trimEnd() === '## Context & Intent') defects.push(lint('retired-section', entry.line, 'move intent and problem to the governing spec; keep tactical context in ## Approach'));
+    if (entry.text.trimEnd() === '## Goals & Requirements') defects.push(lint('retired-section', entry.line, 'requirements live in the spec as REQ-<n>; map them in ## Approach'));
+  }
+  const approach = (sectionBody(lines, '## Approach') ?? []).map((entry) => entry.text).join('\n');
+  const approachRequirements = [...new Set(approach.match(/\bREQ-[1-9]\d*\b/g) ?? [])];
+  if (!approachRequirements.length) defects.push(lint('missing-requirement-ref', null, '## Approach requires a REQ-<n> reference.'));
   const graph = parseIncrementGraph(lines);
   const blocks = incrementDetails(lines);
   const details: Record<string, Record<string, string>> = {};
@@ -208,7 +214,7 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   const increments = (value: string) => /^[1-9]\d*$/.test(value)
     ? (Number(value) === count ? null : `Summary Increments ${value} must equal the graph increment count ${count}.`)
     : `Summary Increments value "${value}" must be a positive integer.`;
-  defects.push(...lintSummaryBox(source, BOX_LABELS, { Parent: PARENT_VALUE, Increments: increments }));
+  defects.push(...lintSummaryBox(source, BOX_LABELS, { Parent: SPEC_PIN_VALUE, Increments: increments }));
   if (options.placeholders) {
     for (const { token, line } of findPlaceholders(source, options.placeholders)) defects.push(lint('leftover-placeholder', line, `Leftover template placeholder ${token}.`));
   }
@@ -217,6 +223,11 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   if (defects.length) return { ok: false, defects };
   return {
     ok: true,
-    design: { title: documentTitle(source), box: boxValues(source), increments: graph.increments, details, executionStatus, governedText: governedDesignText(source) },
+    design: { approachRequirements, title: documentTitle(source), box: boxValues(source), increments: graph.increments, details, executionStatus, governedText: governedDesignText(source) },
   };
+}
+
+export function validateApproachRequirements(design: ParsedDesign, reqIds: readonly string[]): LintDefect[] {
+  const known = new Set(reqIds);
+  return [...new Set(design.approachRequirements ?? [])].filter(id => !known.has(id)).map(id => lint('unknown-requirement', null, `Approach cites unknown requirement ${id}.`));
 }

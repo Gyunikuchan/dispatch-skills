@@ -6,6 +6,7 @@ import type { ParsedPlan } from '../../../../skills/dispatch/scripts/domain/type
 // SECTION: Parseable plan — AMEND edits governed text, so amendment fixtures need a plan that round-trips through parsePlan.
 
 const criterion = (n: number, files: string) => `- [SC${n}] Part ${n} works
+  - Satisfies: REQ-1
   - Changes: ${files}
   - Verify: \`node --test tests/part-${n}.test.ts\`
   - Evidence: verify
@@ -16,7 +17,7 @@ ${/tests\//.test(files) ? '  - Retain: durable\n' : ''}`;
 export const AMEND_TEXT = `# Parts
 
 > **TL;DR:** deliver three parts.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** low — isolated
 > **Scope:** src
@@ -84,4 +85,4 @@ export function replacementText(...swaps: readonly (readonly [string, string])[]
 }
 
 export const T2_SECTION = '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n';
-export const SC2_SECTION = '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';
+export const SC2_SECTION = '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n';

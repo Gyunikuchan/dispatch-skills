@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { implementData, initialImplement, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import type { Effect, Event, Ports, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import { beginImplement, implementData, initialImplement, stepImplement, validateImplement, type Context } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { settledPlanInput, writerConfig } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { reviewSpecFromRun } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { beginReview, stepReview, reviewSpecFromRun } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { start as startTasks, launch, submit } from './fixtures/implement-tasks.ts';
 
 const HASH = `sha256:${'a'.repeat(64)}`;
 const FP = { head: 'head', index: 'index', worktree: 'tree' };
@@ -264,3 +266,79 @@ test('implement: default plan path is scoped to sessionDir', () => {
   }
 });
 
+
+function parsedForSpec(parent?: string, own = false) {
+ let r = step(initialImplement(), run({ path: 'x.plan.md' }));
+ r = step(r.state, { type: 'SNAPSHOT', effectId: effectOf(r.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+ if (own) {
+ r = step(r.state, { type: 'EFFECT_FAILED', effectId: effectOf(r.effects, 'parse-artifact').id, cls: 'io', detail: 'not found' });
+ r = step(r.state, { type: 'AUTHORED', path: 'x.plan.md' });
+ }
+ return step(r.state, { type: 'ARTIFACT_PARSED', effectId: effectOf(r.effects, 'parse-artifact').id, kind: 'plan', hash: HASH, parsed: { ...PLAN, box: { ...PLAN.box, ...(parent ? { Parent: parent } : {}) } }, defects: [], governing: { pinned: HASH, current: 'sha256:' + 'b'.repeat(64), design: parent ? 'x.design.md' : null, reqIds: [] } });
+}
+test('spec revision stops an authored plan after task ledger initialization', () => {
+ const parsed = parsedForSpec(undefined, true); assert.ok('c' in parsed.state && parsed.state.c);
+ for (const phase of ['tasks', 'delivered'] as const) {
+ const c: Context = { ...parsed.state.c, phase, levelGatePassed: true };
+ const result = step({ ...parsed.state, c }, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: HASH });
+ assert.equal(result.state.tag, 'stopped'); assert.ok('c' in result.state && result.state.c);
+ assert.equal(result.state.c.tasks, c.tasks); assert.equal(result.state.c.integration, c.integration);
+ assert.deepEqual(result.effects, []);
+ }
+});
+test('spec revision after accepted task preserves ledger and refuses task addition', () => {
+ const begun = startTasks(1); const launched = launch(begun.result, {}, begun.trace);
+ const accepted = submit(launched, 'T1', {}, begun.trace);
+ assert.ok('c' in accepted.state && accepted.state.c); const c = { ...accepted.state.c, planAuthoredHere: true };
+ assert.equal(c.tasks['T1']?.status, 'accepted');
+ const stopped = step({ ...accepted.state, c }, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: HASH });
+ assert.ok(stopped.state.tag === 'stopped'); assert.equal(stopped.state.code, 'stale-spec');
+ assert.equal(stopped.state.c.tasks, c.tasks); assert.equal(stopped.state.c.plan, c.plan); assert.equal(stopped.state.c.integration, c.integration);
+ const proposed = step(stopped.state, { type: 'AUTHORED', path: 'plan-with-additional-task.plan.md' });
+ assert.equal(proposed.state, stopped.state); assert.deepEqual(proposed.effects, []);
+});
+test('invalid increment parse retains resolved ancestor through settlement', () => {
+ let r = step(initialImplement(), run({ path: 'x.plan.md' }));
+ r = step(r.state, { type: 'SNAPSHOT', effectId: effectOf(r.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+ r = step(r.state, { type: 'ARTIFACT_PARSED', effectId: effectOf(r.effects, 'parse-artifact').id, kind: 'plan', hash: HASH, parsed: {}, defects: [{ code: 'missing-satisfies' }], governing: { pinned: HASH, current: 'sha256:' + 'b'.repeat(64), design: 'x.design.md', reqIds: [] } });
+ assert.equal(r.state.tag, 'parsing');
+ const stopped = step(r.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: HASH });
+ assert.ok(stopped.state.tag === 'stopped'); assert.equal(stopped.state.code, 'stale-design-spec');
+});
+for (const [name, parent, own, expected] of [
+ ['stops increment plan', '`x.design.md` · I01', false, 'stopped'], ['stops existing plan', undefined, false, 'stopped'], ['re-authors own plan', undefined, true, 'author'],
+] as const) test('implement respec ' + name, () => {
+ const parsed = parsedForSpec(parent, own); assert.equal(parsed.state.tag, 'parsing'); assert.deepEqual(parsed.effects, []);
+ const result = step(parsed.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) });
+ assert.equal(result.state.tag, expected);
+ if (result.state.tag === 'stopped') assert.equal(result.state.code, parent ? 'stale-design-spec' : 'stale-spec');
+ if (result.state.tag === 'author') assert.equal(result.state.c.specEpoch, 1);
+});
+for (const [name, detail] of [['unreadable design pin', 'design pin target unreadable: x.design.md not found'], ['design without spec pin', 'x.design.md has no spec pin']] as const) test('implement start halts on ' + name, () => {
+ let r = step(initialImplement(), run({ path: 'x.plan.md' })); r = step(r.state, { type: 'SNAPSHOT', effectId: effectOf(r.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+ r = step(r.state, { type: 'EFFECT_FAILED', effectId: effectOf(r.effects, 'parse-artifact').id, cls: 'io', detail });
+ assert.equal(r.state.tag, 'stopped'); assert.equal(r.state.tag === 'stopped' && r.state.code, 'stale-design-spec'); assert.deepEqual(r.effects, []);
+});
+test('implement start proceeds with current spec pin', () => {
+ const identity = { path: 'x.spec.md', hash: HASH };
+ let result = beginImplement({ ...run({ path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }), argument: 'x.plan.md' }, identity);
+ result = step(result.state, { type: 'SNAPSHOT', effectId: effectOf(result.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+ const effect = effectOf(result.effects, 'parse-artifact'); assert.ok(effect.kind === 'parse-artifact' && 'governing' in effect && effect.governing === identity.path);
+ result = step(result.state, { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [], governing: { pinned: HASH, current: HASH, design: null, reqIds: [] } });
+ assert.equal(result.state.tag, 'baseline-preflight'); assert.equal(result.effects[0]?.kind, 'snapshot');
+});
+test('implement re-authored plan keeps earlier review history', () => {
+ const old = parsedForSpec(undefined, true); const author = step(old.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: HASH });
+ let r = step(author.state, { type: 'AUTHORED', path: 'x.plan.md' });
+ r = step(r.state, { type: 'ARTIFACT_PARSED', effectId: effectOf(r.effects, 'parse-artifact').id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
+ assert.ok(r.state.tag === 'plan-review'); assert.equal(r.effects[0]?.id, 'implement.plan-review.s1.parse-artifact.1');
+ const files = new Map<string, string>([['x.plan.md', '# Plan\n']]);
+ const ports = { fs: { exists: (file: string) => files.has(file), readText: (file: string) => files.get(file)!, writeAtomic: (file: string, text: string) => files.set(file, text) } } as unknown as Ports;
+ for (const [path, marker] of [['implement.plan-review', 'Earlier finding'], ['implement.plan-review.s1', 'Later finding']]) {
+   const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, path!, {}); assert.ok('c' in begun.state);
+   const review = stepReview({ tag: 'rule', c: { ...begun.state.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'x.plan.md:L1', defect: marker!, requiredChange: 'Keep the invariant.', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: marker + ' ruling' } } }).state;
+   rootMachine.render!({ tag: 'implement', run: { verb: 'implement', argument: 'x.plan.md', slug: 'x' }, child: { ...r.state, c: { ...r.state.c, planReview: review }, review } }, ports, '/session/.state/runs/run');
+ }
+ const log = files.get('x.review-log.md') ?? '';
+ for (const marker of ['Earlier finding', 'Later finding', 'Earlier finding ruling', 'Later finding ruling', 'plan-review.s1']) assert.ok(log.includes(marker), marker);
+});

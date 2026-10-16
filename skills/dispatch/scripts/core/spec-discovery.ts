@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { pathIdentity } from '../domain/path-identity.ts';
-import { parseSummaryBox } from '../domain/plan.ts';
+import { parentPin } from '../domain/plan.ts';
 import type { FsPort, Verb } from './types.ts';
 
 export type SpecDiscoveryInput = { verb: Verb; argument: string; specFlag: string | null; sessionDir: string; repoRoot: string };
@@ -10,29 +10,24 @@ export type SpecDiscovery =
   | { ok: true; candidate: string | null }
   | { ok: false; code: 'ambiguous-spec' | 'spec-conflict' | 'spec-not-found'; message: string };
 
-const SPEC_PIN = /^`([^`]+\.spec\.md)`\s*·\s*sha256:[0-9a-f]+$/i;
-const DESIGN_PIN = /^`([^`]+\.design\.md)`\s*·\s*I\d{2}$/i;
-
-function parentOf(fs: FsPort, file: string): string | null {
-  if (!fs.exists(file)) return null;
-  const box = parseSummaryBox(fs.readText(file));
-  return box?.entries.find((entry) => entry.label === 'Parent')?.value.trim() ?? null;
+function parentOf(fs: FsPort, file: string): ReturnType<typeof parentPin> {
+  return fs.exists(file) ? parentPin(fs.readText(file)) : null;
 }
 
 /** Follows a plan or design Parent to a `.spec.md` pin; any other Parent (e.g. `user request`) yields none. */
 function chainCandidate(fs: FsPort, target: string, repoRoot: string): SpecDiscovery {
   let parent = parentOf(fs, target);
-  const design = parent ? DESIGN_PIN.exec(parent) : null;
+  const design = parent?.kind === 'design' ? parent : null;
   // NOTE: increment plans pin their design; the design's own Parent names the spec.
   if (design) {
-    const designFile = path.resolve(repoRoot, design[1]!);
-    if (!fs.exists(designFile)) return { ok: false, code: 'spec-not-found', message: `spec-not-found: design ${design[1]} (pinned by ${path.basename(target)}) does not exist` };
+    const designFile = path.resolve(repoRoot, design.path);
+    if (!fs.exists(designFile)) return { ok: false, code: 'spec-not-found', message: `spec-not-found: design ${design.path} (pinned by ${path.basename(target)}) does not exist` };
     parent = parentOf(fs, designFile);
   }
-  const spec = parent ? SPEC_PIN.exec(parent) : null;
+  const spec = parent?.kind === 'spec' ? parent : null;
   if (!spec) return { ok: true, candidate: null };
-  const candidate = path.resolve(repoRoot, spec[1]!);
-  if (!fs.exists(candidate)) return { ok: false, code: 'spec-not-found', message: `spec-not-found: ${spec[1]} (pinned by ${path.basename(target)}) does not exist` };
+  const candidate = path.resolve(repoRoot, spec.path);
+  if (!fs.exists(candidate)) return { ok: false, code: 'spec-not-found', message: `spec-not-found: ${spec.path} (pinned by ${path.basename(target)}) does not exist` };
   return { ok: true, candidate };
 }
 

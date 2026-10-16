@@ -1,3 +1,4 @@
+import { specHash } from '../helpers/spec-fixture.ts';
 import { hashes } from '../../scripts/generate-hashes.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +22,7 @@ function plan(tasks: readonly TaskSpec[]): string {
   return `# Deliver values
 
 > **TL;DR:** Deliver values.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated fixture files
 > **Scope:** ${[...new Set(tasks.map((task) => task.file))].join(', ')}
@@ -42,6 +43,7 @@ ${tasks.map((task) => `### ${task.id} — Value ${task.id}
 `).join('\n')}
 ## Success Criteria
 ${tasks.map((task) => `- [${task.criterion}] ${task.file} holds ${task.text}
+  - Satisfies: REQ-1
   - Changes: ${task.file}
   - Verify: \`${includes(task.file, task.text)}\`
   - Evidence: verify

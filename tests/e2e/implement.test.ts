@@ -1,3 +1,4 @@
+import { specHash } from '../helpers/spec-fixture.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -25,7 +26,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
     fs.writeFileSync(plan, `# Normalize values
 
 > **TL;DR:** Normalize values before use.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated helper
 > **Scope:** src/a.ts
@@ -48,6 +49,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
 
 ## Success Criteria
 - [SC1] Values are normalized
+  - Satisfies: REQ-1
   - Changes: src/a.ts
   - Verify: \`node -e "process.exit(0)"\`
   - Evidence: verify
@@ -116,7 +118,7 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
     fs.writeFileSync(plan, `# Repair a value
 
 > **TL;DR:** Preserve the accepted value contract.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — one local value
 > **Scope:** src/a.ts
@@ -139,6 +141,7 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
 
 ## Success Criteria
 - [SC1] The value contract remains stable
+  - Satisfies: REQ-1
   - Changes: src/a.ts
   - Verify: \`node -e "const fs=require('node:fs');process.exit(fs.readFileSync('src/a.ts','utf8').includes('value = 2') ? 1 : 0)"\` [FINAL]
   - Evidence: verify
@@ -196,7 +199,7 @@ test('reuses settled plan from session journal and rejects stale or failed candi
     fs.writeFileSync(plan, `# Normalize values
 
 > **TL;DR:** Normalize values before use.
-> **Parent:** user request
+> **Parent:** \`${path.join(session, 'fixture.spec.md').split(path.sep).join('/')}\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated helper
 > **Scope:** src/a.ts
@@ -219,6 +222,7 @@ test('reuses settled plan from session journal and rejects stale or failed candi
 
 ## Success Criteria
 - [SC1] Values are normalized
+  - Satisfies: REQ-1
   - Changes: src/a.ts
   - Verify: \`node -e "process.exit(0)"\`
   - Evidence: verify
@@ -521,6 +525,7 @@ async function taskGraph(cap: number, independent = false) {
     const files = ['a', 'b', 'c'];
     const nodeTest = 'node --test --test-reporter=tap';
     const criteria = files.map((file, index) => `- [SC${index + 1}] ${names[index]}
+  - Satisfies: REQ-1
   - Changes: src/${file}.ts, tests/${file}.test.js
   - Verify: \`${nodeTest} tests/${file}.test.js\`
   - Evidence: ${index === 0 ? 'red' : 'verify'}
@@ -537,7 +542,7 @@ async function taskGraph(cap: number, independent = false) {
     fs.writeFileSync(plan, `# Deliver task graph
 
 > **TL;DR:** Deliver a checked contract and independent consumers.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated fixture interfaces
 > **Scope:** src and tests
@@ -553,6 +558,7 @@ ${tasks}
 ## Success Criteria
 ${criteria}
 - [SC4] Accumulated interfaces agree
+  - Satisfies: REQ-1
   - Changes: src/a.ts, src/b.ts, src/c.ts
   - Verify: \`${nodeTest} tests/*.test.js\` [FINAL]
   - Evidence: verify
@@ -735,7 +741,7 @@ function governedPlan(title: string, criteria: PlanCriterionSpec[], tasks: PlanT
   return `# ${title}
 
 > **TL;DR:** ${title}.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated fixture files
 > **Scope:** ${scope}
@@ -754,6 +760,7 @@ ${(task.extra ?? []).map((line) => `- ${line}\n`).join('')}
 ${task.changes.map((change) => `#### [${change.action}] ${change.path}\n- ${change.note}\n`).join('\n')}`).join('\n')}
 ## Success Criteria
 ${criteria.map((row) => `- [${row.id}] ${row.title}
+  - Satisfies: REQ-1
   - Changes: ${row.changes.join(', ')}
   - Verify: \`${row.verify}\`
   - Evidence: verify

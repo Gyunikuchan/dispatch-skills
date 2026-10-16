@@ -43,7 +43,7 @@ export type LintDefectCode =
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
-  | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'plan-id-in-test-name'
+  | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
   | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
@@ -51,7 +51,7 @@ export type LintDefectCode =
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
   | 'execution-status'
   // Shared document structure
-  | 'section-order';
+  | 'section-order' | 'unknown-requirement' | 'unsatisfied-requirement';
 
 export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
 
@@ -63,6 +63,7 @@ export type ChangeAction = 'NEW' | 'MODIFY' | 'DELETE' | 'GENERATED';
 export type PlanCommand = { command: string; final: boolean };
 
 export type PlanCriterion = {
+  satisfies?: readonly string[];
   id: string;
   title: string;
   line: number;
@@ -129,6 +130,7 @@ export type IncrementState = 'complete' | 'active' | 'ready' | 'blocked' | 'inva
 export type ExecutionStatusRow = { id: string; state: IncrementState; summary: string; nextAction: string };
 
 export type ParsedDesign = {
+  approachRequirements?: readonly string[];
   title: string | null;
   box: Readonly<Record<string, string>>;
   increments: readonly DesignIncrement[];

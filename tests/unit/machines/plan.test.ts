@@ -98,3 +98,18 @@ test('bare path slugs use the basename across separators, spaces, and artifact e
     ['C:\\Users\\John Smith\\work\\foo-bar.design.md', 'foo-bar'],
   ]) assert.equal(slugOf(input!), expected, input);
 });
+
+test('plan stays on stale pin', () => {
+ const boot = planMachine.step(planMachine.initial(), started());
+ const parsing = planMachine.step(boot.state, authored);
+ const event = { ...parsed(1, []), governing: { pinned: specHash(), current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } } as Event;
+ const result = planMachine.step(parsing.state, event);
+ assert.equal(result.state.tag, 'parsing'); assert.deepEqual(result.effects, []);
+});
+test('stale design spec pin fails plan run', () => {
+ const boot = planMachine.step(planMachine.initial(), started());
+ const parsing = planMachine.step(boot.state, authored);
+ const stale = planMachine.step(parsing.state, { ...parsed(1, []), governing: { pinned: specHash(), current: 'sha256:' + 'b'.repeat(64), design: 'x.design.md', reqIds: [] } } as Event);
+ const result = planMachine.step(stale.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) });
+ assert.equal(result.state.tag, 'failed'); assert.match(String(planMachine.project(result.state).data['summary']), /stale-design-spec/);
+});

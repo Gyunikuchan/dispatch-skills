@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { writeRendered } from '../../../skills/dispatch/scripts/effects/artifacts.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
-import { parseArtifact } from '../../../skills/dispatch/scripts/effects/parse-artifact.ts';
+import { createParseArtifact, sha256, parseArtifact } from '../../../skills/dispatch/scripts/effects/parse-artifact.ts';
 import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
 import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
@@ -25,7 +25,7 @@ test('parse-artifact hashes authored Task Map metadata, excludes review history,
   const source = `# Plan
 
 > **TL;DR:** deliver the task.
-> **Parent:** user request
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** low — isolated fixture
 > **Scope:** src/a.ts
@@ -45,6 +45,7 @@ ${row}
 
 ## Success Criteria
 - [SC1] Task output works
+  - Satisfies: REQ-1
   - Changes: src/a.ts
   - Verify: \`node --test tests/a.test.ts\`
   - Evidence: verify
@@ -83,7 +84,7 @@ test('parse-artifact reports a missing file as EFFECT_FAILED io', async () => {
 test('seam advisory reaches the host and enters review', async () => {
   const dir = tempDir();
   const file = path.join(dir, 'seams.plan.md');
-  const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** user request\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Expose command | The existing command becomes public. | none | SC1 |\n\n## Proposed Changes\n### T1 — Expose command\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
+  const source = '# Plan\n\n> **TL;DR:** expose the existing command.\n> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n> **Decide:** none\n> **Risk:** low — local helper\n> **Scope:** src/a.ts\n\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Expose command | The existing command becomes public. | none | SC1 |\n\n## Proposed Changes\n### T1 — Expose command\n#### [MODIFY] src/a.ts\n- Changes: export the command.\n\n## Success Criteria\n- [SC1] Command is available\n  - Satisfies: REQ-1\n  - Changes: src/a.ts\n  - Verify: `node --test tests/a.test.ts`\n  - Evidence: verify\n  - Test rationale: exercise the public command.\n\n## Verification Plan\n### Automated Tests\n- `npm test`\n';
   const ports = fakePorts();
   const started = planMachine.step(planMachine.initial(), { type: 'RUN_STARTED', verb: 'plan', argument: file,
     level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'codex', orchestratorModel: null,
@@ -218,4 +219,152 @@ test('parse-artifact: spec reports a missing file as EFFECT_FAILED io', async ()
   const file = path.join(dir, 'nope.spec.md');
   const missing = only(await parseArtifact({ kind: 'parse-artifact', id: 'spec.parse-artifact.1', path: file, artifact: 'spec', level: 'low' }, fakePorts(), { runDir: dir, attempt: 1 }));
   assert.deepEqual(missing, { type: 'EFFECT_FAILED', effectId: 'spec.parse-artifact.1', cls: 'io', detail: `spec not found: ${file}` });
+});
+
+const GOVERNED_PLAN = `# Plan
+
+> **TL;DR:** deliver the task.
+> **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+> **Decide:** none
+> **Risk:** low — isolated fixture
+> **Scope:** src/a.ts
+
+## Key Decisions & Context
+- Keep the fixture bounded.
+
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Task | Deliver task output. | none | SC1 |
+
+## Proposed Changes
+### T1 — Task
+#### [MODIFY] src/a.ts
+- Changes: deliver the task output.
+
+## Success Criteria
+- [SC1] Task output works
+  - Satisfies: REQ-1
+  - Changes: src/a.ts
+  - Verify: \`node --test tests/a.test.ts\`
+  - Evidence: verify
+  - Test rationale: exercise the task output.
+
+## Verification Plan
+### Automated Tests
+- \`npm test\`
+`;
+
+import { SPEC_SOURCE, specHash } from '../../helpers/spec-fixture.ts';
+const GOVERNED_DESIGN = `# Design
+
+> **TL;DR:** Deliver behavior.
+> **Parent:** \`governing.spec.md\` · ${specHash()}
+> **Decide:** none
+> **Risk:** low — fixture
+> **Increments:** 1
+
+## Approach
+REQ-1 maps to I01.
+## Alternatives & Decisions
+Keep one increment.
+## Risks, Security & Operations
+Bounded.
+## Architecture & Boundaries
+One module.
+## Increment Dependency Graph
+| ID | Priority | Summary | Prerequisites | Paths |
+| --- | --- | --- | --- | --- |
+| I01 | 1 | Deliver | none | src/a.ts |
+## Increment Details
+### I01 Deliver
+- Outcome: behavior delivered
+- Scope: src/a.ts
+- Non-scope: other modules
+- Observable behavior: behavior works
+- Affected contracts: module API
+- Validation: npm test
+- Rollback boundary: revert increment
+- Parallel safety: unsafe beside others
+## Final Integration
+Run all checks.
+`;
+function governingFixture() {
+  const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
+  const file = path.join(dir, 'a.plan.md'), spec = path.join(dir, 'governing.spec.md');
+  ports.fs.writeAtomic(spec, SPEC_SOURCE);
+  const source = GOVERNED_PLAN.replace(/sha256:a{64}/, specHash());
+  const parse = async (text = source, artifact: 'plan' | 'design' = 'plan', governing: string | undefined = spec) => {
+    ports.fs.writeAtomic(file, text);
+    return only(await createParseArtifact({ cwd: dir })({ kind: 'parse-artifact', id: 'pin.1', path: file, artifact, ...(governing ? { governing } : {}) }, ports, { runDir: dir, attempt: 1 }));
+  };
+  return { ports, dir, spec, source, parse };
+}
+test('governing pin rejects a different spec path despite equal hashes', async () => {
+ for (const transitive of [false, true]) for (const exists of [false, true]) {
+ const f = governingFixture(); if (exists) f.ports.fs.writeAtomic(path.join(f.dir, 'other.spec.md'), SPEC_SOURCE);
+ f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), GOVERNED_DESIGN.replace('`governing.spec.md`', '`other.spec.md`'));
+ const source = transitive ? f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01') : f.source.replace('`governing.spec.md`', '`other.spec.md`');
+ const result = await f.parse(source);
+ assert.ok(result.type === 'EFFECT_FAILED', JSON.stringify({ transitive, exists, result }));
+ assert.match(result.detail, /spec pin path conflicts/);
+ }
+});
+test('governing pin accepts normalized spec path identity', async () => {
+ for (const transitive of [false, true]) {
+ const f = governingFixture();
+ f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), GOVERNED_DESIGN.replace('`governing.spec.md`', '`nested/../governing.spec.md`'));
+ const source = transitive ? f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01') : f.source.replace('`governing.spec.md`', '`nested/../governing.spec.md`');
+ const result = await f.parse(source);
+ assert.ok(result.type === 'ARTIFACT_PARSED'); assert.deepEqual(result.defects, []);
+ }
+});
+for (const kind of ['standalone plan', 'increment plan', 'design'] as const) test(`governing pin resolves ${kind}`, async () => {
+  const f = governingFixture();
+  f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), GOVERNED_DESIGN);
+  const result = await f.parse(kind === 'design' ? GOVERNED_DESIGN : kind === 'increment plan' ? f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01') : f.source, kind === 'design' ? 'design' : 'plan');
+  assert.ok(result.type === 'ARTIFACT_PARSED', JSON.stringify(result));
+  assert.deepEqual(result.defects, []);
+  assert.deepEqual(result.governing, { pinned: specHash(), current: specHash(), design: kind === 'increment plan' ? 'child.design.md' : null, reqIds: ['REQ-1'] });
+});
+test('governing spec rejects unknown requirement', async () => {
+  const f = governingFixture(), result = await f.parse(f.source.replace('Satisfies: REQ-1', 'Satisfies: REQ-9'));
+  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.ok(result.defects.some(item => item['code'] === 'unknown-requirement'));
+});
+test('governing pin fails on missing design', async () => {
+  const f = governingFixture(), result = await f.parse(f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`missing.design.md` · I01'));
+  assert.ok(result.type === 'EFFECT_FAILED' && result.cls === 'io'); assert.match(result.detail, /^design pin target unreadable:/); assert.doesNotMatch(result.detail, /not found/);
+});
+test('governing pin fails on design without spec pin', async () => {
+  for (const parent of ['', '> **Parent:** user request', '> **Parent:** `notes.txt` · sha256:' + 'a'.repeat(64)]) {
+    const f = governingFixture(); f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), '# Design\n' + parent);
+    const result = await f.parse(f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01'));
+    assert.ok(result.type === 'EFFECT_FAILED' && result.cls === 'io'); assert.match(result.detail, /has no spec pin/);
+  }
+});
+test('governing spec fails lint with current pin', async () => {
+  const f = governingFixture(); f.ports.fs.writeAtomic(f.spec, '# Invalid');
+  const result = await f.parse(f.source.replace(specHash(), `sha256:${sha256('# Invalid')}`));
+  assert.ok(result.type === 'EFFECT_FAILED' && result.cls === 'io'); assert.match(result.detail, /governing spec fails lint/);
+});
+test('governing spec stale malformed bytes skip traceability', async () => {
+  const f = governingFixture(); f.ports.fs.writeAtomic(f.spec, '# Invalid');
+  const result = await f.parse(f.source.replace('Satisfies: REQ-1', 'Satisfies: REQ-9'));
+  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.deepEqual(result.governing, { pinned: specHash(), current: `sha256:${sha256('# Invalid')}`, design: null, reqIds: [] }); assert.deepEqual(result.defects, []);
+});
+test('governing omitted without field', async () => {
+  const f = governingFixture(), result = await f.parse(f.source, 'plan', '');
+  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.equal('governing' in result, false);
+});
+
+test('governing spec rejects unknown approach requirement', async () => {
+  const f = governingFixture(), result = await f.parse(GOVERNED_DESIGN.replace('REQ-1 maps', 'REQ-9 maps'), 'design');
+  assert.ok(result.type === 'ARTIFACT_PARSED');
+  assert.deepEqual(result.defects.map(item => item['code']), ['unknown-requirement']);
+});
+test('governing pin preserves lint defects for malformed Parent', async () => {
+  const f = governingFixture(), result = await f.parse(f.source.replace(/`governing.spec.md` \u00b7 sha256:[a-f0-9]{64}/, 'user request'));
+  assert.ok(result.type === 'ARTIFACT_PARSED');
+  assert.equal(result.governing?.pinned, null);
+  assert.ok(result.defects.some(item => item['code'] === 'summary-label'));
 });

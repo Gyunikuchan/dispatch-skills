@@ -1,3 +1,4 @@
+import { sharedSpecPath, specHash } from '../../../helpers/spec-fixture.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -19,7 +20,7 @@ export const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 export const PLAN = `# Normalize values
 
 > **TL;DR:** values need normalization before use.
-> **Parent:** user request
+> **Parent:** \`${sharedSpecPath().replace(/\\/g, '/')}\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated helper
 > **Scope:** src/value.ts
@@ -42,6 +43,7 @@ export const PLAN = `# Normalize values
 
 ## Success Criteria
 - [SC1] Values are normalized
+  - Satisfies: REQ-1
   - Changes: src/value.ts
   - Verify: \`node --test tests/value.test.ts\`
   - Evidence: verify

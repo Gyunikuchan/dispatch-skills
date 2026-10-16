@@ -69,7 +69,10 @@ test('grammar-review-infers: --kind wins, then .plan.md / .design.md, else code'
   assert.equal(inferKind('docs/X.DESIGN.md', {}), 'design');
   assert.equal(inferKind('main..HEAD', {}), 'code');
   assert.equal(inferKind('', {}), 'code');
-  const effects = drive([started('review', { argument: 'docs/x.plan.md' })]).effects;
+  const begun = drive([started('review', { argument: 'docs/x.plan.md' })]);
+  const pin = begun.effects[0]!;
+  assert.equal(pin.kind, 'parse-artifact');
+  const { effects } = rootMachine.step(begun.state, { type: 'ARTIFACT_PARSED', effectId: pin.id, kind: 'plan', parsed: {}, hash: 'h', defects: [], governing: { pinned: specHash(), current: specHash(), design: null, reqIds: [] } });
   assert.equal(effects[0]?.kind === 'prepare-review' && effects[0].review['kind'], 'plan');
 });
 

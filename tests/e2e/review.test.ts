@@ -1,3 +1,4 @@
+import { specHash } from '../helpers/spec-fixture.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,10 +38,10 @@ for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} arti
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, `target.${kind}.md`);
-    fs.writeFileSync(target, '# Target\n\n## Goal\nOriginal condition\n');
+    fs.writeFileSync(target, reviewArtifact(kind));
     const frame = await f.begin('review', session, target, ['--kind', kind]);
     assert.equal(frame.await, 'rule', JSON.stringify(frame));
-    fs.writeFileSync(target, '# Target\n\n## Goal\nExternal condition\n');
+    fs.writeFileSync(target, reviewArtifact(kind, 'External condition'));
     const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
     assert.equal(done.await, 'done', JSON.stringify(done)); assert.equal(done.data['outcome'], 'failed', JSON.stringify(done));
     assert.match(String(done.data['summary']), /Fix admission failed/);
@@ -54,7 +55,7 @@ test('review-target artifact managed resolution changes do not block accepted fi
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
   try {
     const session = await f.initialize(), target = path.join(f.repo, 'target.plan.md');
-    fs.writeFileSync(target, '# Target\n\n## Goal\nOriginal condition\n');
+    fs.writeFileSync(target, reviewArtifact('plan'));
     const frame = await f.begin('review', session, target, ['--kind', 'plan']);
     assert.equal(frame.await, 'rule');
     fs.appendFileSync(target, '\n## Review Findings & Resolutions\nDriver evidence\n');
@@ -266,3 +267,21 @@ test('review code with --context passes semantic intent through CLI to reviewer 
     assert.match(f.launches()[0]!.prompt, /- Task: CLI semantic intent/);
   } finally { f.cleanup(); }
 });
+
+function reviewArtifact(kind: 'plan' | 'design', condition = 'Original condition'): string {
+ const parent = '> **Parent:** `governing.spec.md` · ' + specHash();
+ const summary = ['# Target', '', '> **TL;DR:** Keep a bounded condition.', parent, '> **Decide:** none', '> **Risk:** low — one local condition'];
+ return [...summary, ...(kind === 'plan' ? [
+  '> **Scope:** src/a.ts', '', '## Key Decisions & Context', '- ' + condition, '',
+  '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | Keep condition | The caller receives a bounded condition. | none | SC1 |', '',
+  '## Proposed Changes', '### T1 — Keep condition', '#### [MODIFY] src/a.ts', '- Changes: Keep condition explicit.', '',
+  '## Success Criteria', '- [SC1] Condition stays explicit', '  - Satisfies: REQ-1', '  - Changes: src/a.ts', '  - Verify: `node -e "process.exit(0)"` [FINAL]', '  - Evidence: verify', '  - Test rationale: Protect the caller condition.', '',
+  '## Verification Plan', '- Seams: none', '### Automated Tests', '- None: criterion Verify commands cover the condition.',
+ ] : [
+  '> **Increments:** 1', '', '## Approach', '- REQ-1 is delivered by I01. ' + condition, '',
+  '## Alternatives & Decisions', '- AD-1: Keep one condition.', '', '## Risks, Security & Operations', '- Keep caller state.', '',
+  '## Architecture & Boundaries', '- One helper owns the condition.', '', '## Increment Dependency Graph', '| ID | Priority | Summary | Prerequisites | Paths |', '| --- | ---: | --- | --- | --- |', '| I01 | 1 | Keep condition | none | src/a.ts |', '',
+  '## Increment Details', '### I01', '- Outcome: Condition stays explicit.', '- Scope: src/a.ts', '- Non-scope: Other modules.', '- Observable behavior: The caller receives a bounded condition.', '- Affected contracts: Helper condition.', '- Validation: node --test', '- Rollback boundary: Restore the helper.', '- Parallel safety: Unsafe beside changes to the helper.', '',
+  '## Final Integration', '- Check the helper condition.',
+ ]), ''].join('\n');
+}

@@ -30,6 +30,29 @@ function drive(events: readonly Event[], from: ReviewState = reviewMachine.initi
 const applied = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId })) : [] });
 
 const freshFix = (kind: 'code' | 'plan' = 'code') => drive([started({ argument: kind === 'plan' ? 'x.plan.md' : '', overrides: { kind } }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]).state;
+test('artifact fix verification retains governing and rejects stale final bytes', () => {
+ const fix = freshFix('plan'); assert.ok(fix.tag === 'fix');
+ const governingSpec = { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) };
+ const governed = { ...fix, c: { ...fix.c, spec: { ...fix.c.spec, governingSpec, cap: 1 } } };
+ const verify = drive([applied(governed)], governed);
+ assert.ok(verify.effects[0]?.kind === 'parse-artifact' && verify.effects[0].artifact !== 'spec');
+ assert.equal(verify.effects[0].governing, governingSpec.path);
+ const stale = drive([{ type: 'ARTIFACT_PARSED', effectId: verify.effects[0].id, kind: 'plan', hash: 'h', parsed: {}, defects: [], governing: { pinned: governingSpec.hash, current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } }], verify.state);
+ assert.ok(stale.state.tag === 'failed'); assert.equal(stale.state.code, 'stale-spec');
+ assert.ok(stale.state.c.findings.every(row => row.status !== 'fixed'));
+});
+test('final and opt-in artifact fixes cannot settle unknown requirement defects', () => {
+ for (const kind of ['plan', 'design'] as const) for (const pass of ['main', 'opt-in'] as const) {
+ const fix = freshFix('plan'); assert.ok(fix.tag === 'fix');
+ const governingSpec = { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) };
+ const governed = { ...fix, pass, c: { ...fix.c, spec: { ...fix.c.spec, kind, governingSpec, cap: 1 } } };
+ const verify = drive([applied(governed)], governed);
+ const effect = verify.effects[0]; assert.ok(effect?.kind === 'parse-artifact' && effect.artifact !== 'spec'); assert.equal(effect.governing, governingSpec.path);
+ const invalid = drive([{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind, hash: 'h', parsed: {}, defects: [{ code: 'unknown-requirement', message: 'REQ-999 is not in the governing spec' }], governing: { pinned: governingSpec.hash, current: governingSpec.hash, design: null, reqIds: ['REQ-1'] } }], verify.state);
+ assert.notEqual(invalid.state.tag, 'settled'); assert.ok('c' in invalid.state);
+ assert.ok(invalid.state.c.findings.every(row => row.status !== 'fixed')); assert.deepEqual(invalid.state.c.fixes, []);
+ }
+});
 const failApply = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'failed' })) : [] });
 
 // SECTION: Fix attempts and receipt recovery

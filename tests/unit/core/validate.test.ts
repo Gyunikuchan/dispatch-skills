@@ -188,5 +188,5 @@ test('host events: spec approval requires a user quote and hash or stop', () => 
   assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { ...answer, quote: ' ' } }).ok, false);
   assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { by: 'user', quote: 'yes' } }).ok, false);
   assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'spec-approval', answer: { ...answer, by: 'orchestrator' } }).ok, false);
-  assert.equal(JOURNAL_PROTOCOL_REVISION, 10);
+  assert.equal(JOURNAL_PROTOCOL_REVISION, 11);
 });

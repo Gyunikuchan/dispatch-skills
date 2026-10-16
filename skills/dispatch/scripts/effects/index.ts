@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { createCheckout, checkoutRecovery, type CheckoutDeps } from './checkout.ts';
 import { createCheckEnvelope, changedPaths, pathHashes } from './check-envelope.ts';
 import { createHandoff } from './handoff.ts';
-import { parseArtifact } from './parse-artifact.ts';
+import { createParseArtifact } from './parse-artifact.ts';
 import { runPaths } from '../lib/session.ts';
 import { createPrepareReview } from './prepare-review.ts';
 import { createCheckReviewTarget } from './check-review-target.ts';
@@ -67,7 +67,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     : createWaveHandler({ ...deps.wave, context: (effect) => waveContext(effect as WaveEffect, deps) });
   const wave: Handler<WaveEffect> = (effect, ports, ctx) => (isNativeRoster(effect.roster) ? nativeWave(effect, ports) : cli(effect, ports, ctx));
   const handlers: Handlers = {
-    'parse-artifact': parseArtifact,
+    'parse-artifact': createParseArtifact({ cwd: deps.cwd }),
     'prepare-review': createPrepareReview(deps),
     'check-review-target': createCheckReviewTarget(deps),
     wave,

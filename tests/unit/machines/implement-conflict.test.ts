@@ -123,7 +123,7 @@ test('discard requires user-gated amendment', () => {
   assert.match(validateImplement(state.result.state, discard() as never) ?? '', /user-gated AMEND/);
   const removeT2 = [
     { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
-    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
     { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   const amend = (by?: { by: 'user'; quote: string }) => ({ type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', ...(by ? { by } : {}) }) as unknown as Event;
@@ -249,7 +249,7 @@ test('resolve rejected after amendment removes conflicting task', () => {
   const state = conflicted();
   const removeT2 = [
     { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
-    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+    { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
     { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
   ];
   send(state, { type: 'AMEND', delta: removeT2, notify: [], rationale: 'T2 is no longer wanted.', by: { by: 'user', quote: 'Drop part two.' } } as unknown as Event);
@@ -266,7 +266,7 @@ const NARROW_T2 = [
 ];
 const REMOVE_T2 = [
   { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
-  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
   { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ];
 const discardAmend1 = { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2 work.', amendment: 'amend-1' } } as Event;

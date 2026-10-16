@@ -1,8 +1,8 @@
 import type { Event, HostEvent, RevisionScopeProposal, ScopeAdjustment, ScopeDelta } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, sharedDesignSections } from '../domain/design.ts';
-import { beginReview, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
-import { answers, never, nextId, stay, type Step } from './types.ts';
+import { beginReview, reviewArtifactId, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
+import { answers, never, nextId, staleGoverning, stay, type Step } from './types.ts';
 import type { DesignContext } from './design.ts';
 
 export function designDelta(before: ParsedDesign, after: ParsedDesign): { changed: string[]; invalidated: string[]; removed: string[] } {
@@ -45,7 +45,7 @@ function scopeDelta(before: ParsedDesign, after: ParsedDesign, delta: ReturnType
   }));
   const oldShared = sharedBodies(sharedDesignSections(before.governedText).split(/\n\n(?=## )/));
   const newShared = sharedBodies(sharedDesignSections(after.governedText).split(/\n\n(?=## )/));
-  for (const heading of ['## Goals & Requirements', '## Architecture & Boundaries', '## Final Integration']) {
+  for (const heading of ['## Approach', '## Architecture & Boundaries', '## Final Integration']) {
     const oldBody = oldShared.get(heading) ?? '', newBody = newShared.get(heading) ?? '';
     if (oldBody !== newBody) obligations.push(`${heading} ${newBody ? 'updated' : 'cleared'}:\n${newBody || '(empty)'}`);
   }
@@ -101,19 +101,21 @@ function decision(state: Extract<DesignRevisionState, { tag: 'scope-adjudication
 }
 function parse(state: DesignRevisionState, afterReview: boolean): S {
   const next = nextId(state.c.counters, 'design.revision', 'parse-artifact');
-  return { state: { tag: 'parse', c: { ...state.c, counters: next.counters }, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: state.workingPath, artifact: 'design' }] };
+  return { state: { tag: 'parse', c: { ...state.c, counters: next.counters }, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: state.workingPath, artifact: 'design', ...(state.c.governingSpec ? { governing: state.c.governingSpec.path } : {}) }] };
 }
 function reviewed(state: DesignRevisionState, result: Step<ReviewState>): S {
   const c = { ...state.c, counters: 'c' in result.state ? result.state.c.counters : state.c.counters, revisionReviewRound: 'c' in result.state ? Math.max(state.c.revisionReviewRound, result.state.c.round) : state.c.revisionReviewRound };
   const base = { c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence };
   if (result.state.tag === 'settled' || result.state.tag === 'skipped') return parse({ ...state, c }, true);
-  if (['failed', 'escalated', 'empty'].includes(result.state.tag)) return stay({ ...base, tag: 'refused', error: `Design revision review did not settle: ${result.state.tag}` });
+  if (['failed', 'escalated', 'empty'].includes(result.state.tag)) return stay({ ...base, tag: 'refused', error: `Design revision review did not settle: ${result.state.tag}${result.state.tag === 'failed' ? `: ${reviewData(result.state)['summary']}` : ''}` });
   return { state: { ...base, tag: 'review', review: result.state }, effects: result.effects };
 }
 export function stepDesignRevision(state: DesignRevisionState, event: Event): S {
   switch (state.tag) {
     case 'author': return event.type === 'AUTHORED' && event.path === state.workingPath ? parse(state, false) : stay(state);
-    case 'review': return reviewed(state, stepReview(state.review, event));
+    case 'review':
+      if (answers(event, reviewArtifactId(state.review)) && staleGoverning(event, state.c.governingSpec)) return stay(state);
+      return reviewed(state, stepReview(state.review, event));
     case 'scope-adjudication': case 'scope-user-decision': return decision(state, event as HostEvent);
     case 'resume': case 'stopped': case 'refused': return stay(state);
     case 'parse': break;
@@ -121,6 +123,7 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   }
   if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ ...state, tag: 'refused', error: event.detail });
   if (event.type !== 'ARTIFACT_PARSED' || event.kind !== 'design' || !answers(event, state.effectId)) return stay(state);
+  if (staleGoverning(event, state.c.governingSpec)) return stay(state);
   const design = asParsedDesign(event.parsed);
   if (event.defects.length || !design || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', c: state.c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence,
     defects: event.defects.length ? event.defects : [{ message: 'Invalid design payload or governed hash.' }] });
@@ -130,9 +133,7 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   const built = reviewSpecFromRun(state.c.run, 'design', state.workingPath, state.c.governingSpec ?? null);
   if (!built.ok) return stay({ ...state, tag: 'refused', error: built.error });
   const offset = state.c.revisionReviewRound;
-  const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, 'design.revision.review', state.c.counters, offset);
-  if ('c' in result.state) result.state = { ...result.state, c: { ...result.state.c, scope: 'delta' } };
-  result.effects = result.effects.map((effect) => effect.kind === 'prepare-review' ? { ...effect, scope: { ...effect.scope, scope: 'delta', sinceHash: state.c.hash, priorTarget: state.c.path } } : effect);
+  const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, (state.c.revisionReviewEpoch ?? 0) > 0 ? `design.revision.review.s${state.c.revisionReviewEpoch}` : 'design.revision.review', state.c.counters, offset, { scope: 'delta', sinceHash: state.c.hash!, priorTarget: state.c.path });
   return reviewed(state, result);
 }
 export function designRevisionAwait(state: DesignRevisionState) {

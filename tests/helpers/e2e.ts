@@ -30,6 +30,7 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
   git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
   fs.mkdirSync(path.join(repo, 'src')); fs.writeFileSync(path.join(repo, 'src/a.ts'), 'export const value = 1;\n');
+  fs.writeFileSync(path.join(repo, 'governing.spec.md'), SPEC_SOURCE);
   fs.writeFileSync(path.join(repo, '.gitignore'), '.scratch/\n'); git('add', '.'); git('commit', '-qm', 'fixture');
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}`, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' };
   for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete (env as Record<string, string | undefined>)[key];

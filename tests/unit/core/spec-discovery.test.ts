@@ -114,3 +114,16 @@ test('spec discovery: a --spec naming the chain spec through dot segments is not
 test('spec discovery: a --spec naming the chain spec with backslashes is not a conflict on Windows', { skip: process.platform !== 'win32' && 'backslash separators are Windows-only' }, () => {
   assertDotSegmentSpecFlag('docs\\sub\\..\\x.spec.md');
 });
+
+test('discovery follows increment pin through design', () => {
+  const { write, discover } = setup(); const spec = write('docs/x.spec.md', SPEC_SOURCE);
+  write('docs/x.design.md', artifact('`docs/x.spec.md` · ' + PIN));
+  write('docs/x.plan.md', artifact('`docs/x.design.md` · I01'));
+  assert.deepEqual(discover({ verb: 'implement', argument: 'docs/x.plan.md' }), { ok: true, candidate: spec });
+});
+test('discovery ignores non-spec pin', () => {
+  for (const parent of ['`notes.txt` · ' + PIN, '`docs/x.spec.md` · sha256:abc', '`docs/x.spec.md` · sha256:' + 'A'.repeat(64)]) {
+    const { write, discover } = setup(); write('docs/x.spec.md', SPEC_SOURCE); write('docs/x.plan.md', artifact(parent));
+    assert.deepEqual(discover({ verb: 'review', argument: 'docs/x.plan.md' }), { ok: true, candidate: null });
+  }
+});

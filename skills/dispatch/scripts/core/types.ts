@@ -4,7 +4,7 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'retro' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 10 as const;
+export const JOURNAL_PROTOCOL_REVISION = 11 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
   | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval' | 'fix-verification';
@@ -276,7 +276,7 @@ type HostEventBody =
 
 export type ResultEvent =
   | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; result?: 'unchanged' | 'expected' | 'changed'; notice?: ChangeNotice }
-  | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design' | 'spec'; hash: string; parsed: ParsedPlan | ParsedDesign | ParsedSpec; defects: LintDefect[] }
+  | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design' | 'spec'; hash: string; parsed: ParsedPlan | ParsedDesign | ParsedSpec; defects: LintDefect[]; governing?: { pinned: string | null; current: string; design: string | null; reqIds: readonly string[] } }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
   | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
   | { type: 'WAVE_PROGRESS'; effectId: string; slot: SlotId; status: SlotStatus }
@@ -303,7 +303,7 @@ export type ResultEventType = ResultEvent['type'];
 
 export type Effect =
   | { kind: 'check-review-target'; id: string; review: ReviewSpec; manifestPath: string; manifestRef?: ReviewManifestRef | undefined; allowedPaths: readonly string[] }
-  | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
+  | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design'; governing?: string }
   | { kind: 'parse-artifact'; id: string; path: string; artifact: 'spec'; level: Level }
   | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
   | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }

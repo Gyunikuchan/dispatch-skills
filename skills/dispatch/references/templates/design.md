@@ -7,7 +7,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 > **TL;DR:** <outcome>
 >
-> **Parent:** <`<spec path>` · sha256:<hex> | user request>
+> **Parent:** <`<spec path>` · sha256:<hex>>
 >
 > **Decide:** <reader decision, or none>
 >
@@ -23,14 +23,12 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | resolve-amendment:<id> | resolve-ruling:<key> | final-integration | complete>
 
-## Context & Intent
-*Problem, context, and clarified intent.*
-
-## Goals & Requirements
-*Goals, non-goals, requirements, acceptance criteria.*
+## Approach
+*Strategy: REQ → component/increment mapping; cite REQ IDs, do not restate them.*
+- REQ-<n> → <component or increment>
 
 ## Alternatives & Decisions
-*Settled architectural choices with trade-offs, rationale, and rejected alternatives, plus open questions; tag user-made choices `(user)`. Reviews treat settled entries as final.*
+*Architectural decisions AD-<n>, with trade-offs, rationale, and rejected alternatives. Intent-level and user decisions live in the governing spec DEC log.*
 
 ## Risks, Security & Operations
 *Failure modes, security, observability, migration, rollout, rollback.*
@@ -68,6 +66,6 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Execution Status and Review Findings & Resolutions: machine-managed; excluded from governed content.
 - Execution Status: every increment's state (completed, active, ready, blocked, invalidated) and one ledger-derived Next Action line.
 
-- Keep the template section order: live status, intent, and decisions first, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
+- Keep the template section order: live status, approach, and decisions first, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
 - Retain required sections and increment fields; omit optional empty subsections. Use no fixed word limit or second manually maintained summary.
 - Review history: follow [review rules](../review-rules.md) for the compact findings table and the sibling review log.

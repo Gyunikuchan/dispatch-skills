@@ -1,3 +1,4 @@
+import { sharedSpecPath, specHash } from '../../helpers/spec-fixture.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +17,7 @@ const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const PLAN = `# Add retry budget
 
 > **TL;DR:** fetch retries forever; cap them.
-> **Parent:** user request
+> **Parent:** \`${sharedSpecPath().replace(/\\/g, '/')}\` · ${specHash()}
 > **Decide:** none
 > **Risk:** low — isolated helper
 > **Scope:** src/fetch.ts
@@ -39,6 +40,7 @@ const PLAN = `# Add retry budget
 
 ## Success Criteria
 - [SC1] Whole suite stays green
+  - Satisfies: REQ-1
   - Changes: src/fetch.ts
   - Verify: \`npm test\` [FINAL]
   - Evidence: verify

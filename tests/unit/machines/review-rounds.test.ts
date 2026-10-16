@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, Level, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { reviewMachine, resolutionRounds, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { beginReview, stepReview, reviewSpecFromRun, reviewMachine, resolutionRounds, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { renderResolutionSection } from '../../../skills/dispatch/scripts/domain/render.ts';
 import { play } from '../../helpers/play.ts';
 
@@ -279,4 +279,67 @@ for (const outcome of ['failed', 'empty'] as const) test(`review-cap: first prep
   const result = reviewMachine.step(preparing.state, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
   assert.equal(result.state.tag, outcome);
   assert.ok('c' in result.state && result.state.c.round === 0);
+});
+
+test('pin check before first round', () => {
+ const invocation = started({ argument: 'x.plan.md', config: { ...CONFIG, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } } });
+ const built = reviewSpecFromRun(invocation, 'plan', invocation.argument, { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) });
+ assert.ok(built.ok); if (!built.ok) return;
+ const first = beginReview(built.spec, 'review', {});
+ assert.equal(first.state.tag, 'pin-check'); assert.equal(first.effects[0]?.kind, 'parse-artifact');
+ const failed = stepReview(first.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: first.effects[0]!.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: 'sha256:' + 'a'.repeat(64), current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } });
+ assert.equal(failed.state.tag, 'failed'); assert.equal('code' in failed.state && failed.state.code, 'stale-spec'); assert.deepEqual(failed.effects, []);
+});
+
+const governingIdentity = { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) };
+function governedReview(kind: 'plan' | 'design' = 'plan') {
+ const built = reviewSpecFromRun(started({ config: { ...CONFIG, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } } }), kind, 'x.' + kind + '.md', governingIdentity);
+ assert.ok(built.ok); return beginReview(built.spec, 'review', {});
+}
+function pinAnswer(effect: Effect, design: string | null = null, stale = false): Event {
+ return { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: governingIdentity.hash, current: stale ? 'sha256:' + 'b'.repeat(64) : governingIdentity.hash, design, reqIds: [] } };
+}
+test('pin check current pin proceeds', () => {
+ for (const kind of ['plan', 'design'] as const) {
+ const first = governedReview(kind); const next = stepReview(first.state, pinAnswer(first.effects[0]!));
+ assert.equal(next.state.tag, 'prepare'); assert.equal(next.effects[0]?.kind, 'prepare-review');
+ assert.equal(reviewMachine.awaitOf(first.state), null); assert.match(reviewMachine.validate!(first.state, { type: 'RULINGS', rulings: {} }) ?? '', /pending/);
+ }
+});
+test('pin check rejects matching live bytes outside settled identity', () => {
+ const first = governedReview(); const event = pinAnswer(first.effects[0]!, null, true);
+ assert.ok(event.type === 'ARTIFACT_PARSED' && event.governing);
+ event.governing.pinned = event.governing.current;
+ const failed = stepReview(first.state, event);
+ assert.ok(failed.state.tag === 'failed'); assert.equal(failed.state.code, 'stale-spec');
+});
+test('pin check stale ancestor outranks lint and surfaces code', () => {
+ const first = governedReview(); const event = pinAnswer(first.effects[0]!, 'x.design.md', true);
+ assert.ok(event.type === 'ARTIFACT_PARSED'); event.defects = [{ code: 'missing-satisfies' }];
+ const failed = stepReview(first.state, event);
+ assert.ok(failed.state.tag === 'failed'); assert.equal(failed.state.code, 'stale-design-spec');
+ const ancestor = stepReview(first.state, { type: 'EFFECT_FAILED', effectId: first.effects[0]!.id, cls: 'io', detail: 'design pin target unreadable: x.design.md not found' });
+ assert.match(String(reviewMachine.project(ancestor.state).data['summary']), /stale-design-spec/);
+});
+test('pin check after rejected findings', () => {
+ let r = governedReview(); r = stepReview(r.state, pinAnswer(r.effects[0]!));
+ r = stepReview(r.state, prepared(1)); r = stepReview(r.state, waveDone(1, [finding('R1-F001')]));
+ r = stepReview(r.state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } });
+ assert.equal(r.state.tag, 'pin-check'); assert.equal(r.effects[0]?.kind, 'parse-artifact');
+ const failed = stepReview(r.state, pinAnswer(r.effects[0]!, 'x.design.md', true));
+ assert.equal(failed.state.tag, 'failed'); assert.equal('code' in failed.state && failed.state.code, 'stale-design-spec');
+ assert.ok('c' in failed.state && failed.state.c.findings.length === 1); assert.deepEqual(failed.effects, []);
+});
+test('pin check missing design fails with stale-design-spec', () => {
+ for (const detail of ['design pin target unreadable: x.design.md not found', 'x.design.md has no spec pin', 'permission denied']) {
+ const first = governedReview(); const failed = stepReview(first.state, { type: 'EFFECT_FAILED', effectId: first.effects[0]!.id, cls: 'io', detail });
+ assert.equal(failed.state.tag, 'failed'); if (failed.state.tag !== 'failed') return;
+ assert.equal(failed.state.code, detail === 'permission denied' ? undefined : 'stale-design-spec'); assert.deepEqual(failed.effects, []);
+ }
+});
+
+test('pin check before first round rejects increment design pin', () => {
+ const first = governedReview();
+ const result = stepReview(first.state, pinAnswer(first.effects[0]!, 'x.design.md', true));
+ assert.ok(result.state.tag === 'failed'); assert.equal(result.state.code, 'stale-design-spec'); assert.deepEqual(result.effects, []);
 });

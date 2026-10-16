@@ -12,6 +12,7 @@ import { AMEND_PLAN, AMEND_TEXT, governedHash } from '../machines/fixtures/imple
 import { answer, launch, run, start, type Sim } from '../machines/fixtures/implement-tasks.ts';
 
 const criterion = (id: string) => `- [${id}] Added numeric criterion works
+  - Satisfies: REQ-1
   - Changes: src/a.ts, tests/part-1.test.ts
   - Verify: \`node --test tests/part-1.test.ts\`
   - Evidence: red

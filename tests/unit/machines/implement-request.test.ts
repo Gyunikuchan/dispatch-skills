@@ -234,7 +234,7 @@ test('failure rejects root cause field', () => {
 
 const REMOVE_T2 = [
   { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
-  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
   { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
 ] as const;
 
@@ -329,7 +329,7 @@ function atAdmission(id: string): { result: Result; sim: Sim; trace: Trace } {
 }
 const REMOVE_T3 = [
   { kind: 'remove', target: 'T3', current: '| T3 | Part three | Deliver part three. | none | SC3 |' },
-  { kind: 'remove', target: 'SC3', current: '- [SC3] Part 3 works\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n' },
+  { kind: 'remove', target: 'SC3', current: '- [SC3] Part 3 works\n  - Satisfies: REQ-1\n  - Changes: src/c.ts\n  - Verify: `node --test tests/part-3.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 3.\n' },
   { kind: 'remove', target: 'T3', current: '### T3 — Part three\n#### [MODIFY] src/c.ts\n- Changes: part three.\n\n' },
 ];
 

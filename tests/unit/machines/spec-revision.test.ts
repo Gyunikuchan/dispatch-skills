@@ -82,7 +82,7 @@ test('spec revision: the parked child receives no event until the new hash settl
 test('spec revision: plan review returns to author with stale-spec and reviews again at a fresh path', () => {
   const authored = drive([{ type: 'AUTHORED', path: '/session/a-ts.plan.md' }], settled('plan').state);
   const reviewing = drive([{ type: 'ARTIFACT_PARSED', effectId: 'plan.parse-artifact.1', kind: 'plan', hash: `sha256:${'b'.repeat(64)}`, parsed: {}, defects: [] }], authored.state);
-  assert.deepEqual(reviewing.effects.map((effect) => effect.id), ['plan.review.prepare-review.1']);
+  assert.deepEqual(reviewing.effects.map((effect) => effect.id), ['plan.review.parse-artifact.1']);
   const revised = revise(reviewing.state).state;
   assert.equal(at(revised), 'plan › author');
   assert.deepEqual((data(revised)['defects'] as { code: string }[]).map((row) => row.code), ['stale-spec']);
@@ -92,7 +92,7 @@ test('spec revision: plan review returns to author with stale-spec and reviews a
     { type: 'ARTIFACT_PARSED', effectId: 'plan.parse-artifact.2', kind: 'plan', hash: `sha256:${'c'.repeat(64)}`, parsed: {}, defects: [] },
   ], revised);
   // The earlier review keeps its own path (and review-log key); the re-review cannot overwrite it.
-  assert.deepEqual(again.effects.map((effect) => effect.id), ['plan.parse-artifact.2', 'plan.review.s1.prepare-review.1']);
+  assert.deepEqual(again.effects.map((effect) => effect.id), ['plan.parse-artifact.2', 'plan.review.s1.parse-artifact.1']);
 });
 
 test('spec revision: design before approval returns to author with stale-spec', () => {
@@ -182,14 +182,15 @@ test('spec revision: implement before a plan returns to author with stale-spec',
   assert.deepEqual((data(revised)['defects'] as { code: string }[]).map((row) => row.code), ['stale-spec']);
 });
 
-test('spec revision: a resumed increment re-prepares its pending plan review under the revised spec', () => {
+test('spec revision restarts an increment from ruling and retains prior plan review', () => {
   const delivery = deliveryStarted();
   assert.ok(delivery.tag === 'increment' && 'c' in delivery.child && delivery.child.c);
   const context = delivery.child.c;
   const phases = { ...(context.run.config['phases'] as Record<string, unknown>), 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } };
   const built = reviewSpecFromRun({ ...context.run, config: { ...context.run.config, phases } }, 'plan', context.planPath, identity);
   assert.ok(built.ok);
-  const prepared = beginReview(built.spec, 'design.i01.implement.plan-review', context.counters);
+  const pin = beginReview(built.spec, 'design.i01.implement.plan-review', context.counters);
+  const prepared = stepReview(pin.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: pin.effects[0]!.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: identity.hash, current: identity.hash, design: null, reqIds: [] } });
   const waved = stepReview(prepared.state, { type: 'REVIEW_PREPARED', effectId: prepared.effects[0]!.id, scope: {}, promptPaths: { 'codex[0]': 'p0' } });
   const ruling = stepReview(waved.state, {
     type: 'WAVE_DONE', effectId: waved.effects[0]!.id, round: 1, slots: [{ slot: 'codex[0]', state: 'success' }],
@@ -206,13 +207,10 @@ test('spec revision: a resumed increment re-prepares its pending plan review und
   const revisedHash = `sha256:${'c'.repeat(64)}`;
   const parsed = stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsing.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] });
   const resumed = approveDesignScope(stepDesign(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] }));
-  assert.ok(resumed.state.tag === 'increment' && resumed.state.child.tag === 'plan-review');
-  assert.equal(resumed.state.child.review.tag, 'prepare');
-  const prepare = resumed.effects.find((effect) => effect.kind === 'prepare-review');
-  assert.ok(prepare && prepare.kind === 'prepare-review');
-  assert.deepEqual((prepare.review as Record<string, unknown>)['governingSpec'], revisedSpec);
-  assert.ok('c' in resumed.state.child.review);
-  assert.deepEqual(resumed.state.child.review.c.findings.map((row) => [row.id, row.status]), [['R1-F001', 'superseded']]);
+  const approved = resumed;
+  assert.ok(approved.state.tag === 'increment' && approved.state.child.tag === 'starting');
+  assert.equal(approved.state.child.c.specEpoch, 1);
+  assert.deepEqual(approved.state.c.histories['I01']?.map(row => row.tag), ['plan-review']);
 });
 
 /** A standalone review awaiting rulings in a round of the given scope. */
@@ -239,7 +237,7 @@ for (const scope of ['delta', 'disputes-only'] as const) {
   });
 }
 
-test('spec revision outside rule forces full next round through the resumed increment', () => {
+test('spec revision restarts an increment from pending pin check at a fresh epoch', () => {
   const delivery = deliveryStarted();
   assert.ok(delivery.tag === 'increment' && 'c' in delivery.child && delivery.child.c);
   const context = delivery.child.c;
@@ -247,10 +245,8 @@ test('spec revision outside rule forces full next round through the resumed incr
   const built = reviewSpecFromRun({ ...context.run, config: { ...context.run.config, phases } }, 'plan', context.planPath, identity);
   assert.ok(built.ok);
   const begun = beginReview(built.spec, 'design.i01.implement.plan-review', context.counters);
-  assert.ok(begun.state.tag === 'prepare');
-  // A delta preparation still in flight; under the revised spec it could report an empty scope and end the review.
-  const pending = { ...begun.state, c: { ...begun.state.c, round: 1, preparedRound: 2, scope: 'delta' as const } };
-  const child = { tag: 'plan-review', c: { ...context, governingSpec: identity, planReview: pending }, review: pending } as ImplementState;
+  assert.ok(begun.state.tag === 'pin-check');
+  const child = { tag: 'plan-review', c: { ...context, governingSpec: identity, planReview: begun.state }, review: begun.state } as ImplementState;
   const reviewing: DesignState = { ...delivery, c: { ...delivery.c, governingSpec: identity }, child };
   const revisedSpec = { path: SPEC_PATH, hash: specHash(REVISED) };
   const revision = stepDesign(reviewing, { type: 'SPEC_SETTLED', ...revisedSpec });
@@ -260,13 +256,8 @@ test('spec revision outside rule forces full next round through the resumed incr
   const revisedHash = `sha256:${'c'.repeat(64)}`;
   const parsed = stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsing.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] });
   const resumed = approveDesignScope(stepDesign(parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: revisedHash, parsed: revisedDesign, defects: [] }));
-  assert.ok(resumed.state.tag === 'increment' && resumed.state.child.tag === 'plan-review');
-  const review = resumed.state.child.review;
-  assert.equal(review.tag, 'prepare');
-  const prepare = resumed.effects.find((effect) => effect.kind === 'prepare-review');
-  assert.ok(prepare && prepare.kind === 'prepare-review');
-  assert.notEqual(prepare.id, begun.effects[0]!.id);
-  assert.ok('c' in review && review.c.effectId === prepare.id);
-  assert.equal((prepare.scope as Record<string, unknown>)['scope'], 'full');
-  assert.deepEqual((prepare.review as Record<string, unknown>)['governingSpec'], revisedSpec);
+  const approved = resumed;
+  assert.ok(approved.state.tag === 'increment' && approved.state.child.tag === 'starting');
+  assert.equal(approved.state.child.c.specEpoch, 1);
+  assert.deepEqual(approved.state.child.c.governingSpec, revisedSpec);
 });

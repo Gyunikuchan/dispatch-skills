@@ -2,14 +2,14 @@
 // Approval belongs to implement; a disabled plan review (rounds 0) completes with the skip recorded.
 
 import type { Event, HostEvent, Machine, RunStartedEvent, SpecIdentity } from '../core/types.ts';
-import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
-import { answers, isString, never, nextId, stay, type Counters, type ReviewSpec, type Step } from './types.ts';
+import { beginReview, reviewArtifactId, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
+import { answers, isString, never, nextId, staleGoverning, stay, type Counters, type ReviewSpec, type Step } from './types.ts';
 
 export const PLAN_TEMPLATE = 'references/templates/plan.md';
 
 export type PlanInput = { path: string; spec: ReviewSpec; governingSpec?: SpecIdentity | null };
 /** `specEpoch` counts governing-spec revisions; epoch k > 0 reviews at `<path>.review.s<k>` so earlier review history stays intact. */
-export type PlanCtx = { input: PlanInput; path: string; counters: Counters; effectId: string | null; specEpoch?: number };
+export type PlanCtx = { input: PlanInput; path: string; counters: Counters; effectId: string | null; specEpoch?: number; designPin?: string | null };
 
 export type PlanState =
   | { tag: 'booting'; counters: Counters }
@@ -59,7 +59,7 @@ function fromReview(c0: PlanCtx, result: Step<ReviewState>): S {
     case 'failed': return stay({ tag: 'failed', c, detail: review.detail, review });
     case 'empty': return stay({ tag: 'failed', c, detail: 'plan review found no reviewable scope', review });
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check':
+    case 'decide-escalation': case 'decide-opt-in': case 'decide-verification': case 'target-check': case 'pin-check':
       return { state: { tag: 'review', c, review }, effects: result.effects };
     default: return never(review, 'review state');
   }
@@ -69,6 +69,7 @@ function fromReview(c0: PlanCtx, result: Step<ReviewState>): S {
 function respec(c0: PlanCtx, governingSpec: SpecIdentity): S {
   const input = { ...c0.input, governingSpec, spec: { ...c0.input.spec, governingSpec } as ReviewSpec };
   const c = { ...c0, input, effectId: null, specEpoch: (c0.specEpoch ?? 0) + 1 };
+  if (c.designPin) return stay({ tag: 'failed', c, detail: `stale-design-spec: ${c.designPin} pins a revised spec; revise the design first`, review: null });
   return stay({ tag: 'author', c, defects: [{ code: 'stale-spec', message: `Governing spec revised to ${governingSpec.hash}; re-author against it.` }] });
 }
 
@@ -82,14 +83,18 @@ export function stepPlan(state: PlanState, event: Event): S {
       if (event.type !== 'AUTHORED') return stay(state);
       const input = { ...state.c.input, path: event.path, spec: { ...state.c.input.spec, target: event.path } };
       const { id, counters } = nextId(state.c.counters, state.c.path, 'parse-artifact');
-      return { state: { tag: 'parsing', c: { ...state.c, input, counters, effectId: id } }, effects: [{ kind: 'parse-artifact', id, path: event.path, artifact: 'plan' }] };
+      return { state: { tag: 'parsing', c: { ...state.c, input, counters, effectId: id } }, effects: [{ kind: 'parse-artifact', id, path: event.path, artifact: 'plan', ...(input.governingSpec ? { governing: input.governingSpec.path } : {}) }] };
     }
     case 'parsing':
       if (event.type === 'EFFECT_FAILED' && answers(event, state.c.effectId)) return stay({ tag: 'failed', c: state.c, detail: `${event.cls}: ${event.detail}`, review: null });
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.c.effectId)) return stay(state);
-      if (event.defects.length) return stay({ tag: 'author', c: state.c, defects: event.defects });
-      return fromReview(state.c, beginReview(state.c.input.spec, reviewPath(state.c), state.c.counters));
-    case 'review': return fromReview(state.c, stepReview(state.review, event));
+      const c = { ...state.c, designPin: event.governing?.design ?? null };
+      if (staleGoverning(event, c.input.governingSpec)) return stay({ ...state, c });
+      if (event.defects.length) return stay({ tag: 'author', c, defects: event.defects });
+      return fromReview(c, beginReview(state.c.input.spec, reviewPath(state.c), state.c.counters));
+    case 'review':
+      if (answers(event, reviewArtifactId(state.review)) && staleGoverning(event, state.c.input.governingSpec)) return stay({ ...state, c: { ...state.c, designPin: event.governing.design } });
+      return fromReview(state.c, stepReview(state.review, event));
     case 'complete': case 'escalated': case 'failed': return stay(state);
     default: return never(state, 'plan state');
   }
@@ -125,6 +130,7 @@ export function validatePlan(state: PlanState, event: HostEvent): string | null 
 }
 
 export const planTransitions = [
+  ...['author', 'parsing', 'review'].map(from => ({ from, on: 'SPEC_SETTLED', to: 'failed' })),
   { from: 'booting', on: 'RUN_STARTED', to: 'author' },
   { from: 'booting', on: 'RUN_STARTED', to: 'failed' },
   { from: 'author', on: 'AUTHORED', to: 'parsing' },

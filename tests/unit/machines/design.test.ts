@@ -181,7 +181,7 @@ test('invalidates completed increments when shared architecture changes', () => 
 
   const alteredDesign = {
     ...design,
-    governedText: '# Delivery\n\n## Goals & Requirements\nAltered global goals\n\n## Architecture & Boundaries\nAltered boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n',
+    governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nAltered global goals\n\n## Architecture & Boundaries\nAltered boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n',
   };
   const newHash = `sha256:${'d'.repeat(64)}`;
   rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
@@ -214,7 +214,7 @@ test('preserves completed increments when only increment details or non-contract
 
   const baseDesign = {
     ...design,
-    governedText: '# Delivery\n\n## Context & Intent\nOriginal background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nOriginal background context\n\n## Approach\nREQ-1 strategy\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const withCompleted: DesignState = {
     ...s.state,
@@ -230,7 +230,7 @@ test('preserves completed increments when only increment details or non-contract
       ...design.details,
       I02: { ...design.details.I02, Scope: 'Modified scope for I02' },
     },
-    governedText: '# Delivery\n\n## Context & Intent\nUpdated non-contract background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nUpdated non-contract background context\n\n## Approach\nREQ-1 strategy\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const newHash = `sha256:${'e'.repeat(64)}`;
   rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
@@ -328,7 +328,7 @@ test('expansion followed by non-expanding revision before approval preserves sus
   assert.equal(rev2.state.tag, 'revision');
   const tweakedDesign = {
     ...expandedDesign,
-    governedText: '# Delivery\n\n## Context & Intent\nTweaked prose\n\n## Goals & Requirements\nSame\n\n## Architecture & Boundaries\nSame\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nTweaked prose\n\n## Approach\nREQ-1 strategy\nSame\n\n## Architecture & Boundaries\nSame\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const hash2 = `sha256:${'2'.repeat(64)}`;
   rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
@@ -375,7 +375,7 @@ test('intervening invalidating expansion followed by non-contract edit restarts 
   let rev2 = stepDesign(pending1.state, { type: 'REVISE', artifact: 'design', reason: 'prose tweak', evidence: 'test' });
   const proseDesign = {
     ...expandedDesign,
-    governedText: '# Delivery\n\n## Context & Intent\nNon-contract background prose edit\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nNon-contract background prose edit\n\n## Approach\nREQ-1 strategy\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const hash2 = `sha256:${'4'.repeat(64)}`;
   rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
@@ -403,7 +403,7 @@ test('revert after invalidating revision resets binding index so later non-inval
 
   const baseDesign = {
     ...design,
-    governedText: '# Delivery\n\n## Context & Intent\nOriginal background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nOriginal background context\n\n## Approach\nREQ-1 strategy\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const hashBase = `sha256:${'a'.repeat(64)}`;
 
@@ -455,7 +455,7 @@ test('revert after invalidating revision resets binding index so later non-inval
   // 5. Revision 3 (hashBase -> hashC): non-invalidating prose edit
   const designC = {
     ...baseDesign,
-    governedText: '# Delivery\n\n## Context & Intent\nMinor background prose update\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+    governedText: '# Delivery\n\n## Implementation Notes\nMinor background prose update\n\n## Approach\nREQ-1 strategy\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
   };
   const hashC = `sha256:${'c'.repeat(64)}`;
   let rev3 = stepDesign(withProgress, { type: 'REVISE', artifact: 'design', reason: 'prose update', evidence: 'test' });

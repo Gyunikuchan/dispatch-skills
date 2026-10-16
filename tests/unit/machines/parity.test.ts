@@ -149,6 +149,14 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[], bindReview = fal
       triples.add(`target-check --REVIEW_TARGET_CHECKED--> ${(resumed.state as Tagged).tag}`);
       state = resumed.state; open.push(...resumed.effects); ids.push(...resumed.effects.map((effect) => effect.id));
     }
+    const pin = open.at(-1);
+    if (pin?.kind === 'parse-artifact' && 'governing' in pin && pin.governing && /(?:^review|\.review|\.plan-review)\./.test(pin.id)) {
+      const before = (state as Tagged).tag;
+      const resumed = machine.step(state, { type: 'ARTIFACT_PARSED', kind: pin.artifact, effectId: pin.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: specHash(), current: specHash(), design: null, reqIds: [] } } as Event);
+      const after = (resumed.state as Tagged).tag;
+      if (before !== after) triples.add(`${before} --ARTIFACT_PARSED--> ${after}`);
+      state = resumed.state; open.push(...resumed.effects); ids.push(...resumed.effects.map(effect => effect.id));
+    }
     const pending = state as unknown as { tag: string; child?: { tag: string }; c?: { lastFingerprint?: Record<string, unknown> } };
     if (pending.tag === 'checking-host-event' || pending.child?.tag === 'checking-host-event') {
       const snapshot = result.effects.find((effect) => effect.kind === 'snapshot');
@@ -207,6 +215,10 @@ test('review-target transitions table matches step', () => {
   const observedCtx = { ...checking.state.c, observations: [{ id: notice.id, afterHash: notice.afterHash, beforeHash: notice.beforeHash, round: 1, paths: notice.paths, pathCount: 1, reason: notice.reason, rawDeltaRef: notice.rawDeltaRef }] };
   const use: Event = { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'reuse', rationale: 'Findings still apply' };
   const cluster = { clusterId: 'C1', findingIds: ['R1-F001'], paths: ['a'], verification: [], attemptBudget: 3, parentId: null, dependsOnClusters: [], members: [{ id: 'R1-F001', paths: ['a'], dependencies: [], verification: [] }] };
+  const pin = beginReview({ ...observedCtx.spec, kind: 'plan', target: 'x.plan.md', governingSpec: { path: 'x.spec.md', hash: specHash() } }, 'review', {});
+  assert.ok(pin.state.tag === 'pin-check');
+  const pinEvent: Event = { type: 'ARTIFACT_PARSED', effectId: pin.effects[0]!.id, kind: 'plan', hash: 'h', parsed: {}, defects: [], governing: { pinned: specHash(), current: specHash(), design: null, reqIds: [] } };
+  const pinFixtures: (readonly [ReviewState, Event])[] = [[pin.state, pinEvent], [pin.state, { ...pinEvent, governing: { ...pinEvent.governing!, current: 'sha256:' + 'c'.repeat(64) } }], [pin.state, { type: 'EFFECT_FAILED', effectId: pin.effects[0]!.id, cls: 'io', detail: 'failed' }]];
   const selections: (readonly [ReviewState, Event])[] = ([
     { tag: 'native', c: observedCtx, slots: [] }, { tag: 'rule', c: observedCtx }, { tag: 'fix', c: observedCtx, clusters: [cluster], pass: 'main', defects: [] },
     { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } }, { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
@@ -216,6 +228,7 @@ test('review-target transitions table matches step', () => {
     { tag: 'rule', c: observedCtx }, { tag: 'decide-escalation', c: observedCtx, escalation: { kind: 'deadlock', ids: [] } },
     { tag: 'decide-needs-user', c: observedCtx, ids: [] }, { tag: 'decide-opt-in', c: observedCtx, items: [] },
   ] as ReviewState[]).map((state) => [state, specSettledEvent] as const);
+  const rejectedCheck: ReviewState = { tag: 'target-check', c: { ...observedCtx, spec: { ...observedCtx.spec, kind: 'plan', cap: 2, governingSpec: { path: 'x.spec.md', hash: specHash() } } }, before: { tag: 'rule', c: { ...observedCtx, round: 1, findings: [{ ...f(1), severity: 'MUST', scope: 'in', status: 'open', round: 1 } as never], spec: { ...observedCtx.spec, kind: 'plan', governingSpec: { path: 'x.spec.md', hash: specHash() } } } }, pending: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } }, effectId: 'check' };
   const emptyParent: ReviewState = { tag: 'prepare', c: { ...checking.state.c, effectId: 'prepare' } };
   const emptyPrepared = reviewMachine.step(emptyParent, { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: true }, promptPaths: {} });
   if (emptyPrepared.state.tag !== 'target-check') throw new Error('empty target check');
@@ -250,7 +263,10 @@ test('review-target transitions table matches step', () => {
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
   ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }],
-    [checking.state, changed], ...selections, ...respecs,
+    [checking.state, changed], ...selections, ...respecs, ...pinFixtures, [rejectedCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', result: 'unchanged', manifestPath: 'x' }],
+    ...respecs.map(([state, event]) => [
+      { ...state, c: { ...(state as Exclude<ReviewState, { tag: 'booting' }>).c, spec: { ...observedCtx.spec, kind: 'plan' as const, governingSpec: { path: 'x.spec.md', hash: specHash() } } } } as ReviewState, event,
+    ] as const),
     [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
 });
 
@@ -277,7 +293,7 @@ function planRespecs() {
   const author = planMachine.step(planMachine.initial(), run('plan'));
   const parsing = planMachine.step(author.state, authored as Event);
   const review = planMachine.step(parsing.state, (parsed() as (effect: Effect | undefined) => Event)(parsing.effects[0]));
-  return [author.state, parsing.state, review.state].map((state) => [state, specSettledEvent] as const);
+  return [author.state, parsing.state, review.state].flatMap((state) => [[state, specSettledEvent] as const, [{ ...state, c: { ...('c' in state && state.c ? state.c : author.state.tag === 'author' ? author.state.c : {}), designPin: 'x.design.md' } } as typeof state, specSettledEvent] as const]);
 }
 
 test('spec transitions table matches step', () => {
@@ -293,9 +309,27 @@ test('spec transitions table matches step', () => {
   ]);
 });
 
+function replayRootState(verb: 'plan' | 'design' | 'implement'): RootState {
+  const first = rootMachine.step(rootMachine.initial(), withSpec(run(verb)));
+  return rootMachine.step(first.state, specParsed(first.effects[0]!.id)).state;
+}
+
 test('root transitions table matches step', () => {
   const runInfo = { verb: 'implement' as const, argument: 'x.plan.md', slug: 'x' };
+  const staleRoots: (readonly [RootState, Event])[] = (['plan', 'design', 'implement'] as const).map(verb => {
+    const base = replayRootState(verb);
+    const pending = base.tag === 'plan' && base.child.tag === 'author'
+      ? rootMachine.step(base, { type: 'AUTHORED', path: base.child.c.input.path })
+      : base.tag === 'design' && base.child.tag === 'author'
+        ? rootMachine.step(base, { type: 'AUTHORED', path: base.child.c.path })
+        : base.tag === 'implement' && base.child.tag === 'starting'
+          ? rootMachine.step(base, { type: 'SNAPSHOT', effectId: base.child.effectId, fingerprint: { head: 'a'.repeat(40), index: 'i', worktree: 'w' }, diff: { paths: [] } })
+          : null;
+    assert.ok(pending?.effects[0]?.kind === 'parse-artifact');
+    return [pending.state, { type: 'ARTIFACT_PARSED', effectId: pending.effects[0].id, kind: verb === 'design' ? 'design' : 'plan', hash: 'h', parsed: {}, defects: [], governing: { pinned: specHash(), current: 'sha256:' + 'c'.repeat(64), design: null, reqIds: [] } }] as const;
+  });
   const terminalRevisionEvents: readonly (readonly [RootState, Event])[] = [
+    ...staleRoots,
     ...(['escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
   ];
   parity(rootMachine, [
@@ -344,7 +378,17 @@ test('implementation transition declarations include every observed reducer boun
     [implementRun(), implementSnapshot, implementBadParsed, implementSnapshot],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
   ];
-  const observed = new Set(scenarios.flatMap((scenario) => [...replay(implementMachine, scenario).triples]));
+  const base = approvalState();
+  const review = beginReview({ kind: 'plan', target: base.c.planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: { path: 'fixture.spec.md', hash: specHash() } }, 'implement.plan-review', base.c.counters);
+  assert.ok(review.state.tag === 'pin-check');
+  const parsing: ImplementState = { tag: 'parsing', c: base.c, phase: 'initial', effectId: 'parse' };
+  const reviewing: ImplementState = { tag: 'plan-review', c: { ...base.c, planAuthoredHere: true }, review: review.state };
+  const additional: (readonly [ImplementState, Event])[] = [
+    [parsing, specSettledEvent], [reviewing, specSettledEvent],
+    [parsing, { type: 'EFFECT_FAILED', effectId: 'parse', cls: 'io', detail: 'design pin target unreadable: missing' }],
+    [reviewing, { type: 'EFFECT_FAILED', effectId: review.state.effectId, cls: 'io', detail: 'missing.design.md has no spec pin' }],
+  ];
+  const observed = new Set([...scenarios.flatMap((scenario) => [...replay(implementMachine, scenario).triples]), ...additional.map(([state, event]) => `${state.tag} --${event.type}--> ${implementMachine.step(state, event).state.tag}`)]);
   const declared = new Set(implementMachine.transitions.map((row) => `${row.from} --${row.on}--> ${row.to}`));
   assert.deepEqual([...observed].filter((triple) => !declared.has(triple)), []);
   assert.ok(declared.has('booting --RUN_STARTED--> starting'));

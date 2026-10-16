@@ -93,6 +93,8 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     if (!isRecord(item) || !isCriterionId(item['id']) || !Array.isArray(item['changes']) || !item['changes'].every(NON_EMPTY)
       || !Array.isArray(item['verify']) || !['red', 'verify', 'review'].includes(String(item['evidence']))) return null;
     if (typeof item['coveredBy'] === 'string' && item['coveredBy'] !== 'FINAL' && !isCriterionId(item['coveredBy'])) return null;
+    const satisfies = item['satisfies'];
+    if (satisfies !== undefined && (!Array.isArray(satisfies) || !satisfies.every((id) => typeof id === 'string' && /^REQ-[1-9]\d*$/.test(id)))) return null;
     const verify: PlanCommand[] = [];
     for (const command of item['verify']) {
       if (!isRecord(command) || !NON_EMPTY(command['command']) || typeof command['final'] !== 'boolean') return null;
@@ -100,6 +102,7 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     }
     criteria.push({
       id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], line: typeof item['line'] === 'number' ? item['line'] : index + 1,
+      ...(satisfies === undefined ? {} : { satisfies: satisfies as string[] }),
       changes: item['changes'] as string[], verify, evidence: item['evidence'] as PlanCriterion['evidence'],
       preExisting: typeof item['preExisting'] === 'boolean' ? item['preExisting'] : null,
       redException: typeof item['redException'] === 'string' ? item['redException'] : null,

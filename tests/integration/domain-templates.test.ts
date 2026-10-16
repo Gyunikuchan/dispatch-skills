@@ -12,17 +12,17 @@ const KEPT = [
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
 
-test('readable artifact templates: populated design preserves executable fields and exclusions', () => {
+test('design template parses under layered lint and preserves executable fields and exclusions', () => {
   const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
   assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
   assert.equal((template.match(/^>$/gm) ?? []).length, 4);
-  const order = ['> **TL;DR:**', '## Execution Status', '## Context & Intent', '## Goals & Requirements', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
+  const order = ['> **TL;DR:**', '## Execution Status', '## Approach', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
   for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;
-  source = source.replace('<`<spec path>` · sha256:<hex> | user request>', 'user request')
+  source = source.replace('<`<spec path>` · sha256:<hex>>', '`governing.spec.md` · sha256:' + 'a'.repeat(64))
     .replace('<low|med|high>', 'low').replace('<count>', '1')
     .replace(/\| I02 .*\n/, '').replace(/Next Action: .*\n/, 'Next Action: complete\n');
-  source = source.replace(/<[^>]+>/g, 'Concrete behavior');
+  source = source.replace('REQ-<n>', 'REQ-1').replace(/<[^>]+>/g, 'Concrete behavior');
   const parsed = parseDesign(source);
   assert.ok(parsed.ok, JSON.stringify(parsed));
   assert.equal(parsed.design.increments[0]!.id, 'I01');
@@ -41,9 +41,9 @@ test('readable artifact templates: walkthrough hierarchy and ownership match ren
   assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
 });
 
-test('readable plan template: hierarchy, quote paragraphs and conditional contracts stay executable', () => {
+test('plan template parses under layered lint and preserves executable contracts', () => {
   const template = readFileSync(new URL('plan.md', root), 'utf8');
-  const order = ['> **TL;DR:**', '## User Review Required', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
+  const order = ['> **TL;DR:**', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
   for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
   assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
   assert.equal((template.match(/^>$/gm) ?? []).length, 4);
@@ -51,9 +51,9 @@ test('readable plan template: hierarchy, quote paragraphs and conditional contra
   for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;
   source = source.replace(/## Background[\s\S]*?(?=## Task Map)/, '## Key Decisions & Context\n- Keep API (user)\n\n');
-  source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
+  source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Satisfies: REQ-1\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
   source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
-  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>': 'user request', '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
+  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>': '`governing.spec.md` · sha256:' + 'a'.repeat(64), '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
   for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
   const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
   for (const file of paths) source = source.replace('<relative-path>', file);
@@ -166,3 +166,5 @@ test('templates: task brief applies the durable bar and isolates transient tests
   for (const text of ['only in their transient files', "the quality bar's test rules", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
   assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the durable bar in the plan template'));
 });
+
+test('template parses under layered lint', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });

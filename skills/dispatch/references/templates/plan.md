@@ -11,7 +11,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 > **TL;DR:** <problem and outcome>
 >
-> **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>
+> **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>
 >
 > **Decide:** <reader decision, or none>
 >
@@ -19,20 +19,17 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 >
 > **Scope:** <paths or components>
 
-## User Review Required
-*Breaking changes or trade-offs needing user attention (or "None").*
-
 ## Background
 *Optional: current behaviour a fresh reader needs, with `file:line` pointers.*
 
 ## Key Decisions & Context
-*Settled architectural choices with trade-offs, rationale, and rejected alternatives; tag user-made choices `(user)`. Reviews treat entries as settled.*
+*Tactical decisions with rationale; cite spec DEC-<n> and design AD-<n> by ID.*
 
 ## Open Questions & Assumptions
-*Questions, assumptions, or defaults (or "None").*
+*Tactical assumptions and defaults. Open user questions belong in the governing spec Open Questions.*
 
 ## Out of Scope
-*Non-goals and deferred follow-ups.*
+*Plan-local exclusions and deferred follow-ups.*
 
 ## Task Map
 
@@ -69,6 +66,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 ## Success Criteria
 - [SC1] <checkable outcome>
+  - Satisfies: REQ-<n>[, REQ-<n>...]
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>` [FINAL]
   - Evidence: <red|verify|review>
@@ -118,3 +116,5 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add a helper, module, or type; name the equivalents searched by name and behaviour, or `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
 - `[GENERATED]`: the driver reruns Command before completion verification; a task producing an Input must be a (transitive) prerequisite.
+
+- Satisfies: required on every criterion; name the governing spec REQ IDs.

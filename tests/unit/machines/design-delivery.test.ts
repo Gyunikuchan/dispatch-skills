@@ -1,3 +1,6 @@
+import type { Ports } from '../../../skills/dispatch/scripts/core/types.ts';
+import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { stepDesign, selectReady, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
@@ -77,4 +80,62 @@ test('bound child baseline derives approval without an approval await', () => {
   assert.equal(result.state.child.tag, 'task-checkout');
   assert.equal(result.state.child.c.approval?.by, 'design');
   assert.ok(result.state.child.c.designBinding && result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
+});
+
+const revisedSpec = { path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) };
+test('stale design spec pin returns design to author', () => {
+ const base = approval();
+ const parsed = { tag: 'parse' as const, c: { ...base.c, approval: null }, effectId: 'design.parse-artifact.1', afterReview: false };
+ const stale = stepDesign(parsed, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effectId, hash, parsed: design, defects: [], governing: { pinned: hash, current: revisedSpec.hash, design: null, reqIds: [] } });
+ assert.equal(stale.state.tag, 'parse'); assert.deepEqual(stale.effects, []);
+ const result = stepDesign(stale.state, { type: 'SPEC_SETTLED', ...revisedSpec });
+ assert.ok(result.state.tag === 'author'); assert.equal(result.state.defects[0]?.['code'], 'stale-spec');
+});
+function restartedIncrement() {
+ const delivery = started(); assert.ok(delivery.tag === 'increment');
+ const revision = stepDesign(delivery, { type: 'SPEC_SETTLED', ...revisedSpec });
+ assert.ok(revision.state.tag === 'revision' && revision.state.child.tag === 'author');
+ assert.deepEqual(revision.state.c.restartIncrements, ['I01']);
+ const parse = stepDesign(revision.state, { type: 'AUTHORED', path: revision.state.child.workingPath });
+ const nextHash = 'sha256:' + 'c'.repeat(64);
+ const reviewed = stepDesign(parse.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parse.effects[0]!.id, hash: nextHash, parsed: design, defects: [] });
+ const accepted = approveDesignScope(stepDesign(reviewed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: reviewed.effects[0]!.id, hash: nextHash, parsed: design, defects: [] }));
+ assert.ok(accepted.state.tag === 'increment' && accepted.state.child.tag === 'starting');
+ return accepted;
+}
+test('stale design spec revision approval restarts increment', () => {
+ const restarted = restartedIncrement(); assert.ok(restarted.state.tag === 'increment' && restarted.state.child.tag === 'starting');
+ assert.equal(restarted.state.child.c.specEpoch, 1); assert.deepEqual(restarted.state.c.restartIncrements, []);
+ assert.deepEqual(restarted.state.child.c.governingSpec, revisedSpec);
+ assert.equal(restarted.effects.at(-1)?.kind, 'snapshot');
+ const complete = { ...restarted.state, child: { tag: 'complete' as const, c: { ...restarted.state.child.c, changedPaths: ['src/a.ts'] }, summary: 'Complete' } };
+ const next = stepDesign(complete, { type: 'LOCK_BROKEN', stalePid: 1 });
+ assert.ok(next.state.tag === 'increment' && next.state.increment === 'I02'); assert.deepEqual(next.state.c.completed, ['I01']);
+});
+test('restarted increment keeps earlier plan review history', () => {
+ const restarted = restartedIncrement(); assert.ok(restarted.state.tag === 'increment');
+ assert.equal(restarted.state.c.histories['I01']?.length, 1);
+ assert.equal(restarted.state.c.histories['I01']?.[0]?.tag, 'starting');
+ assert.equal('c' in restarted.state.child && restarted.state.child.c?.specEpoch, 1);
+});
+
+function historyReview(machinePath: string, target: string, marker: string) {
+ const begun = beginReview({ kind: 'plan', target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machinePath, {});
+ assert.ok('c' in begun.state);
+ return stepReview({ tag: 'rule', c: { ...begun.state.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'x.plan.md:L1', defect: marker, requiredChange: 'Keep the invariant.', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: marker + ' ruling' } } }).state;
+}
+test('restarted increment keeps earlier plan review history in rendered log blocks', () => {
+ const restarted = restartedIncrement(); assert.ok(restarted.state.tag === 'increment' && 'c' in restarted.state.child && restarted.state.child.c);
+ const context = restarted.state.child.c, target = context.planPath;
+ const files = new Map<string, string>([[target, '# Plan\n']]);
+ const ports = { fs: { exists: (file: string) => files.has(file), readText: (file: string) => files.get(file)!, writeAtomic: (file: string, text: string) => files.set(file, text) } } as unknown as Ports;
+ const old = restarted.state.c.histories['I01']![0]!; assert.ok('c' in old && old.c);
+ const prior = { ...old, c: { ...old.c, planPath: target, planReview: historyReview('design.i01.implement.plan-review', target, 'Earlier finding') } };
+ const current = { ...restarted.state.child, c: { ...context, planReview: historyReview('design.i01.implement.plan-review.s1', target, 'Later finding') } };
+ const state: DesignState = { ...restarted.state, c: { ...restarted.state.c, histories: { I01: [prior] } }, child: current };
+ rootMachine.render!({ tag: 'design', run: { verb: 'implement', argument: 'x.design.md', slug: 'x' }, child: state }, ports, '/session/.state/runs/run');
+ const log = [...files.entries()].find(([file]) => file.endsWith('.review-log.md'))?.[1] ?? '';
+ assert.match(log, /Earlier finding/); assert.match(log, /Later finding/);
+ assert.match(log, /Earlier finding ruling/); assert.match(log, /Later finding ruling/);
+ assert.match(log, /plan-review.s1/);
 });
