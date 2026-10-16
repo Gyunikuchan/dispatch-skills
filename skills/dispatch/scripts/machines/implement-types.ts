@@ -3,7 +3,7 @@
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask, PlanWarning } from '../domain/types.ts';
 import { CRITERION_ID_SOURCE, isCriterionId } from '../domain/criterion-id.ts';
-import { isTestPath, planIdPattern } from '../domain/plan.ts';
+import { planIdPattern } from '../domain/plan.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord, type WriterConfig } from './types.ts';
 
@@ -32,7 +32,10 @@ export type VerifyRecord = {
   failureId: string | null;
   failedTests: readonly string[];
   diagnostic: string;
-  loadError: boolean;
+  /** Expected RED names the verify effect found in the scanned baseline logs. */
+  baselineHits: readonly string[];
+  /** Scanned baseline logs the verify effect could not read. */
+  scanUnreadable: readonly string[];
   inputFingerprint: string;
   mutationEpoch: number;
   status: VerificationStatus;
@@ -82,8 +85,6 @@ const NON_EMPTY = (value: unknown): value is string => typeof value === 'string'
 const CRITERION_ROW = new RegExp(`^CRITERION\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*(.+)$`);
 const RED_ROW = new RegExp(`^RED-MATRIX\\s+(${CRITERION_ID_SOURCE})\\s*\\|\\s*([^|]+?)\\s*\\|\\s*exit\\s+([1-9]\\d*)\\s+((?:test|error):.+)$`, 'i');
 
-export { isTestPath };
-
 /** Boundary guard for the domain parser's payload, which crosses the event journal as a generic payload. */
 export function asParsedPlan(value: unknown): ParsedPlan | null {
   if (!isRecord(value) || !Array.isArray(value['criteria']) || !Array.isArray(value['changes']) || !isRecord(value['verification'])) return null;
@@ -103,9 +104,12 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     criteria.push({
       id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], line: typeof item['line'] === 'number' ? item['line'] : index + 1,
       ...(satisfies === undefined ? {} : { satisfies: satisfies as string[] }),
-      changes: item['changes'] as string[], verify, evidence: item['evidence'] as PlanCriterion['evidence'],
+      changes: item['changes'] as string[],
+      tests: Array.isArray(item['tests']) && item['tests'].every(NON_EMPTY) ? item['tests'] as string[] : [],
+      verify, evidence: item['evidence'] as PlanCriterion['evidence'],
       preExisting: typeof item['preExisting'] === 'boolean' ? item['preExisting'] : null,
       redException: typeof item['redException'] === 'string' ? item['redException'] : null,
+      red: typeof item['red'] === 'string' ? item['red'] : null,
       testRationale: typeof item['testRationale'] === 'string' ? item['testRationale'] : null,
       review: typeof item['review'] === 'string' ? item['review'] : null,
       enforcementInfeasibility: typeof item['enforcementInfeasibility'] === 'string' ? item['enforcementInfeasibility'] : null,
@@ -160,6 +164,20 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
 }
 
 export function approvedPaths(plan: ParsedPlan): string[] { return [...new Set(plan.changes.map((change) => change.path))].sort(); }
+
+/** Union of every criterion's declared `Tests:` paths; hotfix production paths are the approved paths outside it. */
+export function declaredTestPaths(plan: ParsedPlan): string[] { return [...new Set(plan.criteria.flatMap((criterion) => criterion.tests))].sort(); }
+
+/** A red criterion without `RED exception:` that lacks `RED:` or `Tests:` cannot replay RED, so its evidence downgrades to verify. */
+export function effectiveEvidence(criterion: PlanCriterion): PlanCriterion['evidence'] {
+  return criterion.evidence === 'red' && criterion.redException === null && (criterion.red === null || !criterion.tests.length) ? 'verify' : criterion.evidence;
+}
+
+/** Why a red criterion downgraded to verify; null when it keeps red evidence. */
+export function downgradeReason(criterion: PlanCriterion): string | null {
+  if (criterion.evidence !== 'red' || effectiveEvidence(criterion) === 'red') return null;
+  return criterion.red === null ? 'no RED command declared' : 'no Tests declared';
+}
 
 export function commandMappings(plan: ParsedPlan): CommandMapping[] {
   const byCommand = new Map<string, { criteria: Set<string>; paths: Set<string>; final: boolean }>();
@@ -256,9 +274,11 @@ export function criterionEvidenceRows(evidence: readonly string[], criteria: rea
   return criteria.flatMap((criterion) => rows.some((row) => row.id === criterion.id && criterion.changes.includes(row.path) && row.behavior.length > 0) ? [] : [criterion.id]);
 }
 
-export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[], planIds: readonly string[]): { rows: RedMatrixRow[]; defects: string[] } {
+/** `ignored` names task criteria whose red evidence downgraded to verify; their rows are skipped, not rejected. */
+export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[], planIds: readonly string[], ignored: readonly string[] = []): { rows: RedMatrixRow[]; defects: string[] } {
   const planId = planIdPattern(planIds);
-  const source = evidence.filter((row) => row.startsWith('RED-MATRIX '));
+  const skip = new Set(ignored.map((id) => id.toUpperCase()));
+  const source = evidence.filter((row) => row.startsWith('RED-MATRIX ') && !skip.has(/^RED-MATRIX\s+([^\s|]+)/.exec(row)?.[1]?.toUpperCase() ?? ''));
   const rows: RedMatrixRow[] = [];
   const defects: string[] = [];
   for (const line of source) {
@@ -271,7 +291,12 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
     const file = split === -1 ? target : target.slice(0, split);
     const leaf = split === -1 ? '' : target.slice(split + 1).trim();
     const failureTests = (match[4] ?? '').split(';').map((part) => part.trim()).filter(Boolean);
-    if (!isTestPath(file) || !leaf || !failureTests.length || failureTests.some((test) => !/^(?:test|error):\S/.test(test))) {
+    // NOTE: RED proof searches the log for each name, so an `error:` entry could never be observed.
+    if (failureTests.some((test) => /^error:/i.test(test))) {
+      defects.push(`RED-MATRIX ${match[1]} error: entries cannot be observed; list each failing test as test:<exact failing test name>.`);
+      continue;
+    }
+    if (!file || !leaf || !failureTests.length || failureTests.some((test) => !/^test:\S/.test(test))) {
       defects.push(`RED-MATRIX ${match[1]} must name an approved test file, one leaf test, and test:<exact failing test name> entries joined by '; '.`);
       continue;
     }
@@ -285,7 +310,7 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
   for (const criterion of criteria) {
     const matches = rows.filter((row) => row.id === criterion.id);
     if (matches.length !== 1) defects.push(`Exactly one RED-MATRIX row required for ${criterion.id}; list every failure in that row.`);
-    else if (!criterion.changes.includes(matches[0]?.path ?? '')) defects.push(`${criterion.id} RED-MATRIX path is outside its declared Changes paths.`);
+    else if (!criterion.tests.includes(matches[0]?.path ?? '')) defects.push(`${criterion.id} RED-MATRIX path is not one of its declared Tests paths.`);
     else if (criterion.redException) defects.push(`${criterion.id} has a RED exception and cannot claim a failing-state matrix row.`);
   }
   for (const row of rows) if (!criteria.some((criterion) => criterion.id === row.id)) defects.push(`RED-MATRIX names unknown criterion ${row.id}.`);
@@ -294,6 +319,8 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
 
 export function redactOneLine(value: string): string { return value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
-export function commandEffect(command: string, mapping: CommandMapping | null, inputPaths: readonly string[], environment: string): VerifyCommand {
-  return { command, criteria: mapping?.criteria ?? [], paths: mapping?.paths ?? [], inputPaths, environment };
+/** `red` carries the expected RED names and the baseline logs to scan for them; other verify purposes omit it. */
+export function commandEffect(command: string, mapping: CommandMapping | null, inputPaths: readonly string[], environment: string, red?: RedProbe): VerifyCommand {
+  return { command, criteria: mapping?.criteria ?? [], paths: mapping?.paths ?? [], inputPaths, environment, ...(red ? { expectedTests: red.expectedTests, scanLogs: red.scanLogs } : {}) };
 }
+export type RedProbe = { expectedTests: readonly string[]; scanLogs: readonly string[] };

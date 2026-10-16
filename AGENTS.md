@@ -13,6 +13,7 @@ The `dispatch` skill should support high-confidence development across native ag
 - **Informed handoffs:** At each handoff to or from an agent, provide the objective, relevant decisions and rationale, constraints, current state, next action, and evidence the recipient needs to act or review. Link to supporting artifacts for detail.
 - **Structural least privilege:** Keep provider delegates read-only and scope native writes explicitly. See `skills/dispatch/references/providers.md`; independently check submitted changes before acceptance.
 - **Recoverable autonomy:** Automate routine progress within approved scope. Preserve work and durable evidence, recover without duplicate effects, and escalate unresolved blockers or intent decisions.
+- **Stack neutrality:** Assume no host language, package manager, build tool, test runner, or reporter format. Host-specific behavior comes from plan-declared commands and paths. This repository's Node tooling is a maintainer choice, not a product default.
 - **Simple, portable composition:** Respect host conventions and maintain clear ownership between layers. Keep `dispatch` independent of its aliases; prefer one coherent execution path over added coordination machinery. Keep skills standalone or composable without writing conventions into host repositories.
 
 ## Communication

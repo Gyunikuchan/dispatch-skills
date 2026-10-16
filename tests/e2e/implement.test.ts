@@ -527,7 +527,8 @@ async function taskGraph(cap: number, independent = false) {
     const criteria = files.map((file, index) => `- [SC${index + 1}] ${names[index]}
   - Satisfies: REQ-1
   - Changes: src/${file}.ts, tests/${file}.test.js
-  - Verify: \`${nodeTest} tests/${file}.test.js\`
+  - Tests: tests/${file}.test.js
+  - Verify: \`${nodeTest} tests/${file}.test.js\`${index === 0 ? `\n  - RED: \`${nodeTest} {files}\`` : ''}
   - Evidence: ${index === 0 ? 'red' : 'verify'}
   - Pre-existing: no
   - Retain: durable
@@ -923,7 +924,7 @@ test('trims transient tests before final gate', async () => {
   try {
     const source = governedPlan('Deliver a checked value', [
       { id: 'SC1', title: 'Value is two', changes: ['src/a.ts'], verify: includes('src/a.ts', 'value = 2') },
-      { id: 'SC2', title: 'Scaffold check passes', changes: ['tests/scaffold.transient.test.js'], verify: 'node tests/scaffold.transient.test.js', extra: ['Retain: transient', 'Covered by: SC1'] },
+      { id: 'SC2', title: 'Scaffold check passes', changes: ['tests/scaffold.transient.test.js'], verify: 'node tests/scaffold.transient.test.js', extra: ['Tests: tests/scaffold.transient.test.js', 'Retain: transient', 'Covered by: SC1'] },
     ], [
       { id: 'T1', title: 'Checked value', criteria: ['SC1', 'SC2'], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Export value two.' }, { action: 'NEW', path: 'tests/scaffold.transient.test.js', note: 'Check the value during delivery.' }] },
     ]);

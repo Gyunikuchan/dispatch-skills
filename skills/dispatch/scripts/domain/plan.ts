@@ -24,6 +24,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
   switch (code) {
     case 'placeholder': case 'ambiguous-command': case 'automated-tests-unavailable': case 'missing-success-criteria':
     case 'unsatisfied-requirement': case 'criterion-red-test-path': case 'overlap': case 'missing-seams':
+    case 'red-downgraded': case 'undeclared-test-path':
       return 'warning';
     case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note': case 'proposed-changes':
     case 'change-heading': case 'unknown-change-marker': case 'invalid-change-path': case 'duplicate-change-path':
@@ -31,6 +32,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'automated-tests-owner': case 'automated-command': case 'automated-test-duplicates-verify': case 'success-criteria':
     case 'criterion-format': case 'criterion-id': case 'criterion-mapping': case 'criterion-change-path': case 'criterion-verify':
     case 'final-in-code-span': case 'criterion-evidence': case 'criterion-test-rationale': case 'criterion-red-exception':
+    case 'criterion-tests-path': case 'criterion-red-command':
     case 'criterion-review': case 'criterion-critical-review': case 'missing-section': case 'missing-increment-details':
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
@@ -322,9 +324,13 @@ const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/i;
 const EVIDENCE: readonly EvidenceClass[] = ['red', 'verify', 'review'];
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
-// Common test-path conventions shared by plan lint, implement machines, and envelope checks; a heuristic, so a red-path miss only warns.
+// Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/i;
 export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
+// Lint hint only: paths under these segments look like support files, so transient naming and `undeclared-test-path` skip them; trim never uses path shape.
+const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//i;
+/** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` and transient naming lints; a RED stage that changes or needs it must still list it in `Tests:`. */
+export const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
 
 /** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
 export function planIdPattern(ids: readonly string[]): RegExp | null {
@@ -336,7 +342,7 @@ export function planIdPattern(ids: readonly string[]): RegExp | null {
 const FINDING_ID = /\bR\d+-F\d+\b/gi;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
-type Criterion = PlanCriterion & { satisfies: readonly string[]; retainLine: number | null; verifyLines: number[]; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
+type Criterion = PlanCriterion & { satisfies: readonly string[]; retainLine: number | null; verifyLines: number[]; testsLine: number | null; redCommandLine: number | null; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
 
 export type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
@@ -361,6 +367,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
   lintTransientCoverage(criteria, finalCommands, out);
   lintTransientTestPaths(criteria, changes, out);
+  lintUndeclaredTestPaths(criteria, out);
   const planIds = collectPlanIds(lines, criteria);
   lintPlanIdNames(criteria, changes, planIds, out);
   lintTaskSections(sections, out);
@@ -383,8 +390,8 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     title: documentTitle(source),
     box: boxValues(source),
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
-    criteria: criteria.map(({ id, title, line, satisfies, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
-      ({ id, title, line, satisfies, changes: paths, verify, evidence, preExisting, redException, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
+    criteria: criteria.map(({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
+      ({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
     tasks: tasks.map(({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
@@ -771,8 +778,8 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
 function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
   const id = criterionHeading(text);
   const base: Criterion = {
-    id: '', title: text, line, satisfies: [], changes: [], verify: [], evidence: null, preExisting: null, redException: null, testRationale: null,
-    review: null, enforcementInfeasibility: null, retain: 'durable', retainLine: null, verifyLines: [], coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
+    id: '', title: text, line, satisfies: [], changes: [], tests: [], verify: [], evidence: null, preExisting: null, redException: null, red: null, testRationale: null,
+    review: null, enforcementInfeasibility: null, retain: 'durable', retainLine: null, verifyLines: [], testsLine: null, redCommandLine: null, coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
     evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
     critical: CRITICAL.test(text), valid: false,
   };
@@ -803,6 +810,26 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
       if (normalized.path) paths.push(normalized.path);
     }
     current.changes = paths;
+  }
+  const tests = field('Tests');
+  if (tests !== undefined) {
+    current.testsLine ??= entry.line;
+    const paths: string[] = [...current.tests];
+    for (const value of tests.split(',')) {
+      const normalized = normalizePlanPath(value);
+      if (normalized.path) paths.push(normalized.path);
+      else out.push(lint('criterion-tests-path', entry.line, `Tests requires comma-separated relative test paths; "${value.trim()}" is ${normalized.reason}.`));
+    }
+    current.tests = [...new Set(paths)];
+  }
+  // `RED exception:` cannot match: the field name must end at the colon.
+  const redCommand = field('RED');
+  if (redCommand !== undefined) {
+    const command = /^`([^`]+)`\s*$/.exec(redCommand)?.[1]?.trim();
+    if (current.redCommandLine !== null) out.push(lint('criterion-red-command', entry.line, 'Criterion requires at most one RED command.'));
+    else if (!command) out.push(lint('criterion-red-command', entry.line, 'RED requires exactly one inline-code command.'));
+    else current.red = command;
+    current.redCommandLine = entry.line;
   }
   const verify = field('Verify');
   if (verify !== undefined) {
@@ -871,18 +898,31 @@ function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: re
   }
 }
 
-/** Trim is file-level, so a transient test must live in a [NEW] transient-named file that no durable criterion lists. */
+/** Trim is file-level, so a transient test must live in a [NEW] transient-named file that no durable criterion lists; support-shaped paths are exempt as a hint, and a file shared with a durable criterion is never trimmed. */
 function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonly PlanChange[], out: LintDefect[]): void {
   const actions = new Map(changes.map((change) => [change.path, change.action]));
   const durable = new Set(criteria.filter((criterion) => criterion.retain === 'durable').flatMap((criterion) => criterion.changes));
   for (const criterion of criteria) {
     if (criterion.retain !== 'transient') continue;
-    for (const path of criterion.changes.filter(isTestPath)) {
+    for (const path of criterion.tests.filter((file) => !isTestSupportPath(file))) {
       const fail = (reason: string) => out.push(lint('transient-test-path', criterion.retainLine ?? criterion.line, `Criterion ${criterion.id} transient test ${path} ${reason}`));
       const action = actions.get(path);
       if (action !== 'NEW') fail(`is [${action ?? 'unknown'}]; transient tests need a [NEW] file.`);
       else if (!/transient/i.test(path.slice(path.lastIndexOf('/') + 1))) fail('needs "transient" in its file name.');
       else if (durable.has(path)) fail('is also listed by a durable criterion; isolate transient tests in their own file.');
+    }
+  }
+}
+
+/** A test-like Changes path outside every `Tests:` gets no RED, trim, or envelope handling, so the author declares it or confirms it is not a test. */
+function lintUndeclaredTestPaths(criteria: readonly Criterion[], out: LintDefect[]): void {
+  const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
+  const warned = new Set<string>();
+  for (const criterion of criteria) {
+    for (const path of criterion.changes) {
+      if (declared.has(path) || warned.has(path) || !isTestPath(path) || isTestSupportPath(path)) continue;
+      warned.add(path);
+      out.push(lint('undeclared-test-path', criterion.line, `Criterion ${criterion.id} changes test-like path ${path} that no criterion lists in Tests:.`));
     }
   }
 }
@@ -906,9 +946,11 @@ function lintPlanIdNames(criteria: readonly Criterion[], changes: readonly PlanC
   };
   for (const criterion of criteria) {
     criterion.verify.forEach((item, index) => check(`Criterion ${criterion.id} Verify`, item.command, criterion.verifyLines[index] ?? criterion.line));
+    if (criterion.red !== null) check(`Criterion ${criterion.id} RED`, criterion.red, criterion.redCommandLine ?? criterion.line);
   }
+  const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
   for (const change of changes) {
-    if (isTestPath(change.path)) check(`Test path ${change.path}`, change.path.slice(change.path.lastIndexOf('/') + 1), change.line);
+    if (declared.has(change.path)) check(`Test path ${change.path}`, change.path.slice(change.path.lastIndexOf('/') + 1), change.line);
   }
 }
 
@@ -948,10 +990,17 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(lint('criterion-red-exception', current.redLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   }
-  if (current.evidence === 'red' && current.redException === null && current.changes.length && !current.changes.some(isTestPath)) {
-    out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but its Changes line names no conventional test path.`));
+  const changes = new Set(current.changes);
+  for (const path of current.tests.filter((item) => !changes.has(item))) {
+    out.push(lint('criterion-tests-path', current.testsLine ?? current.line, `Criterion ${name} Tests path ${path} is not in its Changes.`));
   }
-  if (current.retainLine === null && current.changes.some(isTestPath)) {
+  if (current.evidence === 'red' && current.redException === null && !current.tests.length) {
+    out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but declares no Tests: path; its red evidence downgrades to verify.`));
+  }
+  if (current.evidence === 'red' && current.redException === null && current.red === null) {
+    out.push(lint('red-downgraded', current.line, `Criterion ${name} declares no RED: \`<command>\`; its red evidence downgrades to verify.`));
+  }
+  if (current.retainLine === null && current.tests.length) {
     out.push(lint('criterion-retain-required', current.line, `Criterion ${name} changes tests; state Retain: transient or Retain: durable (durable tests meet the durable bar in the plan template).`));
   }
   if (current.evidence !== 'review') return;

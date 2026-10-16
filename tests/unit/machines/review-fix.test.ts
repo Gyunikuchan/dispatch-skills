@@ -305,7 +305,7 @@ test('unrunnable fix verification asks for replacement commands without charging
   if (fix.tag !== 'fix') return assert.fail('expected fix');
   const budgets = fix.clusters.map((cluster) => cluster.attemptBudget);
   const verify = drive([applied(fix)], fix).state;
-  const decide = drive([verifyWith(1, [{ command: 'node --test missing.test.ts', exit: 1, loadError: true, logPath: 'a.log' }, { command: 'nope', exit: 127, logPath: 'b.log' }])], verify).state;
+  const decide = drive([verifyWith(1, [{ command: 'node --test missing.test.ts', exit: 127, logPath: 'a.log' }, { command: 'nope', exit: 127, logPath: 'b.log' }])], verify).state;
   if (decide.tag !== 'decide-verification') return assert.fail(`expected decide-verification, got ${decide.tag}`);
   assert.deepEqual(decide.clusters.map((cluster) => cluster.attemptBudget), budgets);
   const frame = reviewMachine.project(decide);
@@ -316,6 +316,13 @@ test('unrunnable fix verification asks for replacement commands without charging
   if (rerun.state.tag !== 'fix-verify') return assert.fail(`expected fix-verify, got ${rerun.state.tag}`);
   assert.deepEqual(rerun.state.clusters.map((cluster) => cluster.attemptBudget), budgets);
   assert.deepEqual(rerun.effects.map((effect) => effect.kind === 'verify' && effect.commands), [[{ command: 'node --test tests/a.test.ts' }]]);
+});
+
+test('a fix check that runs and exits nonzero counts as a failed fix, not an unrunnable one', () => {
+  const fix = fixWithCheck();
+  // A legacy journal result may still carry `loadError`; only exit 127 marks a check unrunnable.
+  const next = drive([applied(fix), verifyWith(1, [{ command: 'node --test missing.test.ts', exit: 1, loadError: true, logPath: 'a.log' }])], fix).state;
+  assert.notEqual(next.tag, 'decide-verification');
 });
 
 test('unrunnable fix verification rejects an answer without an orchestrator rationale', () => {

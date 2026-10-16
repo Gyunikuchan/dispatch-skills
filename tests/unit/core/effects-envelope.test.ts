@@ -182,3 +182,18 @@ test('amendment with missing or invalid fields is rejected', async () => {
     assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /^amendment/.test(defect)), JSON.stringify(value));
   }
 });
+
+test('self-check preview admits a RED_READY receipt that changes the task declared tests', async () => {
+  const { previewReceipt: preview } = await import('../../../skills/dispatch/scripts/core/interpreter.ts');
+  const { cwd, runDir, handler, ports } = setup(['tests/a.test.ts']);
+  fs.mkdirSync(path.join(cwd, 'tests'));
+  fs.writeFileSync(path.join(cwd, 'tests/a.test.ts'), 'red');
+  ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
+  const envelopePath = path.join(runDir, 'outcome.json');
+  fs.writeFileSync(envelopePath, JSON.stringify({ ...complete, stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/a.test.ts:rejects value | exit 1 test:rejects value'] }));
+  const plan = { tasks: [{ id: 'T1', paths: ['src/a.ts', 'tests/a.test.ts'], criteria: ['SC1'] }], criteria: [{ id: 'SC1', tests: ['tests/a.test.ts'] }] };
+  const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: { worktree: cwd, baseline: { head: 'h', index: 'i', worktree: 'w' }, attempt: 1, signature: 'sig', handle: 'h1' } } } } };
+  const event = { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: 1, signature: 'sig', handle: 'h1', envelopePath };
+  const verdict = await preview(state as never, event as never, { 'check-envelope': handler } as never, ports, runDir);
+  assert.equal(verdict, null);
+});

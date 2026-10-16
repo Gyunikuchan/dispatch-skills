@@ -5,7 +5,7 @@ import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEv
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
-import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
+import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, reviewArtifactId, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
@@ -13,7 +13,7 @@ import { applyDispositions, bindingHash, evidenceAssessment, observe, openObserv
 import type { EvidenceObligation } from './implement-types.ts';
 import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, taskMapRows, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskDeclaredTests, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { amendPlan, replacementPlan, type RevisedPlan } from './revision.ts';
 import { reconcilePlan } from './plan-reconciliation.ts';
 import { slugOf } from './plan.ts';
@@ -285,11 +285,12 @@ function recordsFrom(results: readonly Readonly<Record<string, unknown>>[], c: C
   for (const raw of results) {
     if (!nonEmpty(raw['command']) || typeof raw['exit'] !== 'number' || !nonEmpty(raw['logPath'])) return null;
     const failureId = typeof raw['failureId'] === 'string' ? raw['failureId'] : null;
-    const failedTests = Array.isArray(raw['failedTests']) ? raw['failedTests'].filter((item): item is string => typeof item === 'string') : [];
+    const strings = (key: string): string[] => Array.isArray(raw[key]) ? (raw[key] as unknown[]).filter((item): item is string => typeof item === 'string') : [];
+    const failedTests = strings('failedTests');
     const status = raw['exit'] === 0 ? 'pass' : purpose === 'baseline' ? 'red' : failureId && c.acceptedBaseline.includes(failureId) ? 'known-red — unchanged' : 'regression';
     rows.push({
       command: raw['command'], exit: raw['exit'], logPath: raw['logPath'], failureId, failedTests,
-      diagnostic: typeof raw['diagnostic'] === 'string' ? raw['diagnostic'] : '', loadError: raw['loadError'] === true,
+      diagnostic: typeof raw['diagnostic'] === 'string' ? raw['diagnostic'] : '', baselineHits: strings('baselineHits'), scanUnreadable: strings('scanUnreadable'),
       inputFingerprint: typeof raw['inputFingerprint'] === 'string' ? raw['inputFingerprint'] : '', mutationEpoch: c.mutationEpoch, status,
     });
   }
@@ -363,9 +364,16 @@ function redCriteria(c: Context): PlanCriterion[] {
   return c.plan!.criteria.filter((criterion) => criterion.evidence === 'red');
 }
 
-function activeRedCriteria(c: Context): PlanCriterion[] { return redCriteria(c).filter((criterion) => !criterion.redException); }
+function activeRedCriteria(c: Context): PlanCriterion[] { return redCriteria(c).filter((criterion) => !criterion.redException && effectiveEvidence(criterion) === 'red'); }
 
-function beginPostApproval(c: Context): S {
+/** A red criterion without `RED:` or `Tests:` never stalls; it proves itself by verify and the run records one downgrade concern naming the reason. */
+function withDowngradeConcerns(c: Context): Context {
+  const downgraded = redCriteria(c).flatMap((criterion) => { const reason = downgradeReason(criterion); return reason ? [`${criterion.id} RED evidence downgraded to verify: ${reason}`] : []; });
+  return downgraded.some((concern) => !c.concerns.includes(concern)) ? { ...c, concerns: [...new Set([...c.concerns, ...downgraded])] } : c;
+}
+
+function beginPostApproval(c0: Context): S {
+  const c = withDowngradeConcerns(c0);
   const exceptionIds = redCriteria(c).filter((criterion) => criterion.redException).map((criterion) => criterion.id);
   if (exceptionIds.some((id) => !c.approvedRedExceptions.includes(id))) return stay({ tag: 'needs-user', c, ids: exceptionIds.filter((id) => !c.approvedRedExceptions.includes(id)) });
   return beginLevelGate(c, { kind: 'tasks' });
@@ -529,7 +537,7 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
       revisionNotice: { notice, revision: c.amendments.at(-1)?.id ?? null, rationale: c.amendments.at(-1)?.rationale ?? null },
       previousBriefs: (record.briefs ?? []).map((row) => ({ path: row.path, sha256: row.sha256, scope: row.scope })),
     } : {}),
-    criteria: brief.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence, preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
+    criteria: brief.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, tests: criterion.tests, red: criterion.red, verify: criterion.verify, evidence: effectiveEvidence(criterion), preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
     envelopeSchema: {
       schemaVersion: 1, stage: 'COMPLETE',
       status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string',
@@ -557,7 +565,7 @@ function taskVerifyCommands(c: Context, id: string): { command: string; mapping:
   return [...mappings.values()].filter((mapping) => !mapping.final && (!mapping.criteria.length || mapping.criteria.some((criterion) => task.criteria.includes(criterion)))).map((mapping) => ({ command: mapping.command, mapping }));
 }
 
-function taskVerify(c0: Context, id: string, purpose: 'red' | 'green' | 'integration', cwd: string, commands: readonly { command: string; mapping: CommandMapping | null }[], previous: string | null = null): S {
+function taskVerify(c0: Context, id: string, purpose: 'red' | 'green' | 'integration', cwd: string, commands: readonly { command: string; mapping: CommandMapping | null; red?: RedProbe }[], previous: string | null = null): S {
   const batch = beginVerify(c0, purpose === 'red' ? 'red' : 'scoped', commands, cwd);
   return { state: { tag: 'task-verify', c: batch.c, effectId: batch.id, task: id, purpose, previous }, effects: [batch.effect] };
 }
@@ -587,10 +595,11 @@ function transientEvidence(c: Context, id: string, revision: string): Context {
   if (!task) return c;
   const evidence = { ...c.evidence };
   for (const criterion of taskCriteria(c.plan!, task).filter((row) => row.retain === 'transient')) {
-    const redProvenance = criterion.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === criterion.id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
+    const source = effectiveEvidence(criterion);
+    const redProvenance = source !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === criterion.id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const waiver = c.redExceptionRulings[criterion.id];
     if (redProvenance === 'waived' && !waiver) continue;
-    evidence[criterion.id] = { id: criterion.id, outcome: 'pass', evidence: `verified at ${revision}`, transient: true, planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion.evidence, redProvenance, ...(redProvenance === 'waived' ? { waiver } : {}) } as EvidenceRecord;
+    evidence[criterion.id] = { id: criterion.id, outcome: 'pass', evidence: `verified at ${revision}`, transient: true, planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source, redProvenance, ...(redProvenance === 'waived' ? { waiver } : {}) } as EvidenceRecord;
   }
   return { ...c, evidence };
 }
@@ -672,8 +681,10 @@ function briefScopePaths(record: TaskRecord): string[] {
 function checkEnvelope(c0: Context, id: string, envelopePath: string): S {
   const record = c0.tasks[id] as TaskRecord;
   const permitted = [...new Set([...(planTask(c0, id)?.paths ?? []), ...briefScopePaths(record), ...(record.admittedPaths ?? [])])].sort();
+  const task = planTask(c0, id);
+  const tests = task ? taskDeclaredTests(c0.plan!, task) : [];
   const { c, id: effect } = effectId(withTask(c0, id, { status: 'submitted' }), 'check-envelope');
-  return { state: { tag: 'task-envelope', c, effectId: effect, task: id }, effects: [{ kind: 'check-envelope', id: effect, envelopePath, permitted, ...(record.baseline ? { since: record.baseline } : {}), cwd: record.worktree as string }] };
+  return { state: { tag: 'task-envelope', c, effectId: effect, task: id }, effects: [{ kind: 'check-envelope', id: effect, envelopePath, permitted, tests, ...(record.baseline ? { since: record.baseline } : {}), cwd: record.worktree as string }] };
 }
 
 function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'ENVELOPE_CHECKED' }>): S {
@@ -692,7 +703,9 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   const redCriteriaOfTask = taskRedCriteria(plan, task);
   // Amendment overlays add criteria after parse, so their IDs join the recorded plan IDs.
   const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
-  const red = redCriteriaOfTask.length ? parseRedMatrix(envelope.evidence, redCriteriaOfTask, planIds) : { rows: [], defects: [] };
+  // NOTE: the plan text still shows `Evidence: red` for a downgraded criterion, so a writer may report its row; skip it instead of stalling the run.
+  const downgraded = taskCriteria(plan, task).filter((criterion) => criterion.evidence === 'red' && effectiveEvidence(criterion) !== 'red').map((criterion) => criterion.id);
+  const red = redCriteriaOfTask.length ? parseRedMatrix(envelope.evidence, redCriteriaOfTask, planIds, downgraded) : { rows: [], defects: [] };
   if (red.defects.length) return taskFailed(c, id, `RED matrix rejected: ${red.defects.join('; ')}`);
   const concerns = envelope.status === 'DONE_WITH_CONCERNS' ? (envelope.concerns ?? []).map((item) => `${id}: ${item}`) : [];
   const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: red.rows });
@@ -863,7 +876,8 @@ function commitRevision(c: Context, event: RevisionEvent, revised: Extract<Revis
   // NOTE: a retained consumer of a new prerequisite stays accepted; its criteria are re-proved before delivery.
   const consumers = [...new Set(result.validate.flatMap((task) => after.tasks.find((row) => row.id === task)?.criteria ?? []))];
   if (consumers.length) next = refreshEvidence(next, consumers, id, `${id}: ${result.validate.join(', ')} gained an unfinished prerequisite; ${event.rationale}`);
-  return { ok: true, c: next };
+  // NOTE: an approved revision can install a red criterion without `RED:`; it records the same downgrade concern.
+  return { ok: true, c: withDowngradeConcerns(next) };
 }
 
 function prepareAmend(c: Context, event: AmendEvent, conflict: Conflict | null): { ok: true; c: Context } | { ok: false; error: string } {
@@ -936,19 +950,33 @@ function redReplay(c: Context, id: string): S {
   return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, candidate: record.candidate, permitted: taskTestPaths(plan, planTask(c, id)!), links: c.integration!.links, ignored: c.integration!.ignored }, id);
 }
 
-function redCommands(c: Context, id: string): { command: string; mapping: CommandMapping | null }[] | string {
+type RedRun = { command: string; mapping: CommandMapping; red: RedProbe };
+
+/** One plan-declared RED command per red criterion, with `{files}` expanded to its RED-MATRIX paths. */
+function redRun(c: Context, criterion: PlanCriterion, rows: readonly RedMatrixRow[]): RedRun | string {
+  const own = rows.filter((row) => row.id === criterion.id);
+  const paths = [...new Set(own.map((row) => row.path))];
+  const command = expandRed(criterion.red ?? '', paths);
+  if (command === null) return `${criterion.id} RED command cannot take unsafe test path ${paths.find(unsafeRedPath) ?? paths.join(', ')}.`;
+  const baselineCommands = new Set(criterion.verify.map((item) => item.command));
+  const scanLogs = [...new Set(c.baseline.filter((record) => baselineCommands.has(record.command) && record.exit !== 0).map((record) => record.logPath))].sort();
+  const expectedTests = [...new Set(own.flatMap((row) => row.tests).map((name) => name.slice('test:'.length)))].sort();
+  return { command, mapping: { command, criteria: [criterion.id], paths: [...criterion.changes].sort(), final: false }, red: { expectedTests, scanLogs } };
+}
+
+function redCommands(c: Context, id: string): RedRun[] | string {
   const plan = c.plan!, rows = (c.tasks[id] as TaskRecord).redRows;
-  const mappings = commandMappings(plan);
-  const commands = new Map<string, { command: string; mapping: CommandMapping | null }>();
+  const commands = new Map<string, RedRun>();
   for (const criterion of taskRedCriteria(plan, planTask(c, id)!)) {
-    const paths = [...new Set(rows.filter((row) => row.id === criterion.id).map((row) => row.path))];
-    for (const verify of criterion.verify) {
-      const mapping = mappings.find((entry) => entry.command === verify.command) ?? null;
-      if (!mapping) return `RED command ${verify.command} has no criterion mapping.`;
-      const narrowed = narrowToTests(verify.command, paths);
-      if (!narrowed) return `RED command cannot be narrowed safely to ${paths.join(', ')}: ${verify.command}`;
-      commands.set(narrowed, { command: narrowed, mapping });
-    }
+    const run = redRun(c, criterion, rows);
+    if (typeof run === 'string') return run;
+    const prior = commands.get(run.command);
+    // Criteria sharing one expanded command share its run; expected names and scan logs merge.
+    commands.set(run.command, prior ? {
+      command: run.command,
+      mapping: { ...prior.mapping, criteria: [...new Set([...prior.mapping.criteria, ...run.mapping.criteria])].sort(), paths: [...new Set([...prior.mapping.paths, ...run.mapping.paths])].sort() },
+      red: { expectedTests: [...new Set([...prior.red.expectedTests, ...run.red.expectedTests])].sort(), scanLogs: [...new Set([...prior.red.scanLogs, ...run.red.scanLogs])].sort() },
+    } : run);
   }
   return [...commands.values()];
 }
@@ -1141,8 +1169,9 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
         return failVerify(state, failing.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; '));
       }
       if (state.purpose === 'red') {
-        const defects = actualRedDefects(state.c, (state.c.tasks[state.task] as TaskRecord).redRows, rows);
-        return defects.length ? taskFailed(state.c, state.task, `RED replay rejected: ${defects.join('; ')}`) : greenVerify(state.c, state.task);
+        const { defects, concerns } = actualRedDefects(state.c, (state.c.tasks[state.task] as TaskRecord).redRows, rows);
+        if (defects.length) return taskFailed(state.c, state.task, `RED replay rejected: ${defects.join('; ')}`);
+        return greenVerify(concerns.length ? { ...state.c, concerns: [...new Set([...state.c.concerns, ...concerns])] } : state.c, state.task);
       }
       const regression = rows.filter((row) => row.status === 'regression');
       if (regression.length) return failVerify(state, `${state.purpose === 'green' ? 'Task' : 'Integration'} verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
@@ -1185,62 +1214,52 @@ function markMutation(c: Context, paths: readonly string[]): Context {
   return { ...c, mutationEpoch: epoch, criterionMutation };
 }
 
-function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generated', commands: readonly { command: string; mapping?: CommandMapping | null; reuse?: VerifyRecord | null }[], cwd?: string): { c: Context; id: string; effect: Effect } {
+function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generated', commands: readonly { command: string; mapping?: CommandMapping | null; reuse?: VerifyRecord | null; red?: RedProbe }[], cwd?: string): { c: Context; id: string; effect: Effect } {
   const mappings = commandMappings(c0.plan!);
   const prepared: VerifyCommand[] = commands.map((item) => {
     const mapping = item.mapping ?? mappings.find((row) => row.command === item.command) ?? null;
-    const command = commandEffect(item.command, mapping, scopePaths(c0), environmentKey(c0));
+    const command = commandEffect(item.command, mapping, scopePaths(c0), environmentKey(c0), item.red);
     return { ...command, planHash: c0.planHash, ...(item.reuse && item.reuse.exit === 0 && item.reuse.mutationEpoch === c0.mutationEpoch ? { reuse: { inputFingerprint: item.reuse.inputFingerprint, exit: item.reuse.exit, logPath: item.reuse.logPath } } : {}) };
   });
   const { c, id } = effectId(c0, 'verify');
   return { c, id, effect: { kind: 'verify', id, purpose, commands: prepared, ...(cwd ? { cwd } : {}) } };
 }
 
-// narrowToTests rejects quotes, expansions, and a trailing backslash (escapes the closing quote on Windows), so plain quoting is safe.
+// NOTE: an unsafe path is rejected, and a trailing backslash would escape the closing quote on Windows, so plain quoting is safe.
+const UNSAFE_RED_PATH = /["`$%\r\n]|\\$/;
+const unsafeRedPath = (file: string): boolean => UNSAFE_RED_PATH.test(file);
 function quoteArg(value: string): string { return `"${value}"`; }
 
-function narrowToTests(command: string, paths: readonly string[]): string | null {
-  if (!paths.length || /[;&|<>`$\r\n]/.test(command) || paths.some((file) => /["`$%\r\n]|\\$/.test(file))) return null;
-  const tokenPattern = /--[a-z-]+=(?:"[^"\n]*"|'[^'\n]*')|"[^"\n]*"|'[^'\n]*'|[^\s"']+/g;
-  const tokens: string[] = command.match(tokenPattern) ?? [];
-  if (command.replace(tokenPattern, '').trim()) return null;
-  if (!/^node(?:\.exe)?$/i.test(tokens[0] ?? '') || !tokens.includes('--test')) return null;
-  const kept = [tokens[0] as string];
-  const valued = new Set(['--import', '--require', '-r', '--loader', '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-concurrency', '--test-shard', '--test-timeout', '--conditions']);
-  const boolean = new Set(['--test', '--test-only', '--test-force-exit', '--experimental-strip-types', '--no-warnings']);
-  for (let index = 1; index < tokens.length; index++) {
-    const token = tokens[index] as string;
-    if (token === '--') { kept.push(token); break; }
-    if (valued.has(token)) {
-      const value = tokens[++index];
-      if (!value || value.startsWith('-')) return null;
-      kept.push(token, value);
-    } else if (boolean.has(token) || /^--[a-z-]+=/.test(token)) kept.push(token);
-    else if (token.startsWith('-')) return null;
-  }
-  return `${kept.join(' ')} ${paths.map(quoteArg).join(' ')}`;
+/** Replaces each `{files}` with the quoted test paths; a command without `{files}` runs unchanged. Null on an unsafe substituted path. */
+function expandRed(command: string, paths: readonly string[]): string | null {
+  if (!command.includes('{files}')) return command;
+  if (paths.some(unsafeRedPath)) return null;
+  return command.split('{files}').join(paths.map(quoteArg).join(' '));
 }
 
-function actualRedDefects(c: Context, rows: readonly RedMatrixRow[], records: readonly VerifyRecord[]): string[] {
-  const defects: string[] = [];
+/** RED proof is exit code plus every expected name in the failing log; no reporter output is parsed. */
+function actualRedDefects(c: Context, rows: readonly RedMatrixRow[], records: readonly VerifyRecord[]): { defects: string[]; concerns: string[] } {
+  const defects: string[] = [], concerns: string[] = [];
   const criteria = activeRedCriteria(c);
   for (const row of rows) {
     const criterion = criteria.find((item) => item.id === row.id);
-    const commands = criterion?.verify.map((item) => narrowToTests(item.command, [row.path])).filter((command): command is string => command !== null) ?? [];
-    const results = records.filter((record) => commands.includes(record.command));
-    if (!results.length) defects.push(`${row.id} has no RED verification result.`);
-    if (results.some((record) => record.exit !== 0 && record.loadError)) defects.push(`${row.id} RED run contains a load, syntax, or missing-file error.`);
-    const observed = new Set(results.flatMap((record) => record.failedTests));
+    const run = criterion ? redRun(c, criterion, rows) : null;
+    const results = run && typeof run !== 'string' ? records.filter((record) => record.command === run.command) : [];
+    if (!results.length) { defects.push(`${row.id} has no RED verification result.`); continue; }
+    const failing = results.filter((record) => record.exit !== 0);
+    if (!failing.length) defects.push(`${row.id} RED command exited 0; the declared tests must fail before the change.`);
+    const observed = new Set(failing.flatMap((record) => record.failedTests));
     if (!row.tests.every((identifier) => observed.has(identifier))) defects.push(`${row.id} expected failures were not observed: ${row.tests.filter((identifier) => !observed.has(identifier)).join(', ')}. Observed: ${[...observed].join('; ') || 'none'}.`);
-    if (!results.some((record) => record.exit !== 0 && record.failedTests.some((identifier) => identifier.startsWith('test:')))) defects.push(`${row.id} did not produce a discriminating asserted test failure.`);
-    const baselineCommands = criterion?.verify.map((item) => item.command) ?? [];
-    const baseline = c.baseline.filter((record) => baselineCommands.includes(record.command) && record.exit !== 0);
-    const redFailures = results.filter((record) => record.exit !== 0 && record.failureId !== null);
-    if (baseline.length && redFailures.length && redFailures.some((red) => baseline.some((prior) => prior.failedTests.some((identifier) => red.failedTests.includes(identifier)))) && criterion?.preExisting !== true) {
-      defects.push(`${row.id} collides with a pre-existing baseline failure; declare Pre-existing: yes only when this is the intended signal.`);
+    const unreadable = [...new Set(results.flatMap((record) => record.scanUnreadable))];
+    if (unreadable.length) defects.push(`${row.id} baseline log unreadable: ${unreadable.join(', ')}.`);
+    const hits = new Set(results.flatMap((record) => record.baselineHits));
+    // NOTE: reporters also print passing names, so a baseline hit is a concern for review, never a task defect.
+    const collided = row.tests.filter((identifier) => hits.has(identifier));
+    if (collided.length && criterion?.preExisting !== true) {
+      concerns.push(`${row.id} expected test names also appear in a failing baseline log (${collided.join(', ')}); confirm the RED signal is new, or declare Pre-existing: yes.`);
     }
   }
-  return defects;
+  return { defects, concerns };
 }
 
 function askEvidence(c0: Context, verify: readonly VerifyRecord[]): S {
@@ -1322,19 +1341,25 @@ function observedBoundary(c: Context, input: { durable: readonly string[]; rebin
   return runGeneratedOrFinal({ ...c, deliveredBlobs });
 }
 
-/** Test files listed only by transient criteria whose delivered blob is known; production paths are never trimmed. */
-function trimmable(c: Context): string[] {
-  const plan = c.plan!;
-  const files = new Set(plan.criteria.flatMap((row) => row.changes.filter(isTestPath)));
-  return [...files].filter((file) => !!c.deliveredBlobs[file] && plan.criteria.filter((row) => row.changes.includes(file)).every((row) => row.retain === 'transient')).sort();
+/** True when a non-transient criterion declares the file in Tests or Changes; trim never deletes such a file. */
+function sharedWithDurable(plan: ParsedPlan, file: string): boolean {
+  return plan.criteria.some((row) => row.retain !== 'transient' && (row.tests.includes(file) || row.changes.includes(file)));
 }
 
-/** Drops a command mapping only when every owning criterion is transient with all its test files trimmed; `[FINAL]` and durable commands stay. */
+/** Tests paths of transient criteria whose delivered blob is known and that no durable criterion shares; production paths are never trimmed. */
+function trimmable(c: Context): string[] {
+  const plan = c.plan!;
+  const files = new Set(plan.criteria.filter((row) => row.retain === 'transient').flatMap((row) => row.tests));
+  return [...files].filter((file) => !!c.deliveredBlobs[file] && !sharedWithDurable(plan, file)).sort();
+}
+
+/** Drops a command mapping only when every owning criterion is transient with all its trim-eligible test files trimmed; `[FINAL]` and durable commands stay. */
 function finalMappings(c: Context): CommandMapping[] {
   const plan = c.plan!, trimmed = new Set(c.trimmed ?? []);
   const gone = (id: string): boolean => {
     const row = plan.criteria.find((item) => item.id === id);
-    const tests = row?.changes.filter(isTestPath) ?? [];
+    // A file shared with a durable criterion is never trimmed, so only the criterion's own tests decide whether the command lost its subject.
+    const tests = (row?.tests ?? []).filter((file) => !sharedWithDurable(plan, file));
     return row?.retain === 'transient' && tests.length > 0 && tests.every((file) => trimmed.has(file));
   };
   return commandMappings(plan).filter((mapping) => mapping.final || !mapping.criteria.length || !mapping.criteria.every(gone));
@@ -1380,10 +1405,11 @@ function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Rec
     const dependencies = value['dependencies'];
     if (dependencies !== undefined && (!isRecord(dependencies) || typeof dependencies['complete'] !== 'boolean' || !nonEmpty(dependencies['rationale']) || !Array.isArray(dependencies['inputs']) || !dependencies['inputs'].every((file) => typeof file === 'string' && file.length > 0 && !file.includes('\\') && !file.startsWith('/') && !file.includes(':') && !file.split('/').includes('..')))) return null;
     const criterion = c.plan!.criteria.find((criterion) => criterion.id === id);
-    const redProvenance = criterion?.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
+    const source = criterion ? effectiveEvidence(criterion) ?? 'verify' : 'verify';
+    const redProvenance = source !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const attribution = waiver ?? c.redExceptionRulings[id];
     if (redProvenance === 'waived' && !attribution) return null;
-    evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], ...(dependencies !== undefined ? { dependencies } : {}), planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion?.evidence ?? 'verify', redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
+    evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], ...(dependencies !== undefined ? { dependencies } : {}), planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source, redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
   }
   const obligations = Object.fromEntries(Object.entries(c.obligations ?? {}).filter(([id]) => !ids.includes(id)));
   return { ...c, evidence, obligations };
@@ -1643,8 +1669,6 @@ function applyImplement(state: ImplementState, event: Event): S {
   }
 }
 
-function redTestPaths(c: Context): string[] { return c.plan ? [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort() : []; }
-
 function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(c.plan!) : []])].sort(); }
 function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
 const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_RECEIPT', 'REQUEST', 'AMEND', 'REPLACE_PLAN', 'EVIDENCE', 'DECISION', 'REVISE', 'REVIEW_USE']);
@@ -1806,7 +1830,7 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId)) return stay(state);
       if (!recoveryRef(state.before) || !recoveryRef(event.fingerprint)) return beginFailure(state.c, 'Hotfix snapshot metadata is malformed.');
       const { c, id } = effectId(state.c, 'assess-recovery');
-      return { state: { tag: 'hotfix-assessment', c, origin: state.origin, before: state.before, fingerprint: event.fingerprint, effectId: id, answer: state.answer }, effects: [{ kind: 'assess-recovery', id, purpose: 'hotfix', before: state.before, after: event.fingerprint, phase: 'hotfix', pendingId: state.effectId, input: { external: state.answer.external, productionPaths: scopePaths(c).filter((file) => !isTestPath(file)), ...evidenceAssessment(c) } }] };
+      return { state: { tag: 'hotfix-assessment', c, origin: state.origin, before: state.before, fingerprint: event.fingerprint, effectId: id, answer: state.answer }, effects: [{ kind: 'assess-recovery', id, purpose: 'hotfix', before: state.before, after: event.fingerprint, phase: 'hotfix', pendingId: state.effectId, input: { external: state.answer.external, productionPaths: scopePaths(c).filter((file) => !declaredTestPaths(c.plan!).includes(file)), ...evidenceAssessment(c) } }] };
     }
     case 'hotfix-assessment': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, event.detail);

@@ -13,7 +13,7 @@ type VerifyEffect = Extract<Effect, { kind: 'verify' }>;
 export type VerifyDeps = { os: OsId; cwd: string; git: Git };
 export type CommandResult = {
   command: string; exit: number; logPath: string; failureId: string | null; failedTests: string[];
-  testCounts: { pass: number; fail: number } | null; loadError: boolean; diagnostic: string; inputFingerprint: string; reused?: boolean;
+  baselineHits: string[]; scanUnreadable: string[]; diagnostic: string; inputFingerprint: string; reused?: boolean;
 };
 
 /** `cmd.exe /d /s /c` on Windows (no AutoRun, verbatim quoting), `sh -c` elsewhere. */
@@ -44,59 +44,49 @@ function normalizeDiagnostic(value: string): string {
     .replace(/[ \t]+/g, ' ').trim().slice(0, 4000);
 }
 
-const DURATION = /\s+\(\d+(?:\.\d+)?m?s\)\s*$/;
-function parseFailureNames(output: string): string[] {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, '').split(/\r?\n/);
-  let names: string[] = [];
-  const start = lines.findIndex((line) => /^✖ failing tests:\s*$/.test(line));
-  if (start !== -1) {
-    for (let index = start + 1; index < lines.length; index++) {
-      if (!/^test at \S/.test(lines[index] ?? '')) continue;
-      const match = /^✖ (.+)$/.exec(lines[index + 1] ?? '');
-      if (match?.[1]) names.push(match[1].replace(DURATION, ''));
-    }
-  }
-  if (!names.length) for (let index = 0; index + 1 < lines.length; index++) {
-    const match = /^✖ (.+)$/.exec(lines[index] ?? '');
-    if (match?.[1] && /^\s+Location:\s/.test(lines[index + 1] ?? '')) names.push(match[1]);
-  }
-  if (!names.length) for (let index = 0; index < lines.length; index++) {
-    const match = /^\s*not ok \d+ - (.+?)(?:\s+#\s+(?:SKIP|TODO)\b.*)?$/.exec(lines[index] ?? '');
-    if (!match?.[1]) continue;
-    let parent = false;
-    for (let cursor = index + 1; cursor < lines.length && !/^\s*\.\.\.\s*$/.test(lines[cursor] ?? ''); cursor++) {
-      if (/^\s*(?:not )?ok \d+ - /.test(lines[cursor] ?? '')) break;
-      if (/failureType:\s*'subtestsFailed'/.test(lines[cursor] ?? '')) { parent = true; break; }
-    }
-    if (!parent) names.push(match[1].replace(/\\([\\#])/g, '$1'));
-  }
-  if (!names.length) {
-    const suites = new Set(lines.map((line) => /^\s*▶ (.+)$/.exec(line)?.[1]?.trim()).filter((name): name is string => Boolean(name)));
-    names = lines.flatMap((line) => {
-      const match = /^\s*✖ (.+\(\d+(?:\.\d+)?m?s\))\s*$/.exec(line)?.[1]?.replace(DURATION, '').trim();
-      return match && !suites.has(match) ? [match] : [];
+// SECTION: Expected names in log
+
+// NOTE: the plan supplies the names, so no reporter format is parsed and any tool that prints test names works.
+const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const QUOTES = new Set(['"', "'", '`']);
+
+/** Log text without ANSI codes or the `$ <command>` echo line, which can name the tests it selects. */
+function logBody(log: string): string {
+  const lines = log.replace(ANSI, '').split(/\r?\n/);
+  return (lines[0]?.startsWith('$ ') ? lines.slice(1) : lines).join('\n');
+}
+
+/** Sorted `test:<name>` for each expected name in the log, bounded by a line edge or a character outside letters, digits, and `_`. */
+function namesInLog(log: string, expected: readonly string[]): string[] {
+  const text = logBody(log);
+  // NOTE: a name directly enclosed in quotes is a selector echo (`-t "name"`, `matching "name"`), not an observed test.
+  // NOTE: accepted risk: a longer name that starts with the expected name (`parses plan with tasks` for `parses plan`) also matches.
+  const observed = (name: string): boolean => [...text.matchAll(new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(name)}(?![\\p{L}\\p{N}_])`, 'gmu'))]
+    .some((match) => {
+      const before = text[match.index - 1] ?? '';
+      return !(QUOTES.has(before) && text[match.index + name.length] === before);
     });
-  }
-  return [...new Set(names.map((name) => `test:${name.trim()}`))].sort();
+  const found = expected.filter((name) => name.length > 0 && observed(name));
+  return [...new Set(found)].map((name) => `test:${name}`).sort();
 }
 
-export function testCounts(output: string): { pass: number; fail: number } | null {
-  const text = output.replace(/\u001b\[[0-9;]*m/g, '');
-  const quietFail = /✖ (\d+) of (\d+) test\(s\) failed \((\d+) passed/.exec(text);
-  if (quietFail) return { pass: Number(quietFail[3]), fail: Number(quietFail[1]) };
-  const quietPass = /✔ All (\d+) test\(s\) passed/.exec(text);
-  if (quietPass) return { pass: Number(quietPass[1]), fail: 0 };
-  const pass = /^(?:ℹ|#) pass (\d+)\s*$/m.exec(text), fail = /^(?:ℹ|#) fail (\d+)\s*$/m.exec(text);
-  return pass && fail ? { pass: Number(pass[1]), fail: Number(fail[1]) } : null;
-}
-
-const isLoadError = (output: string): boolean => /ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|Cannot find (?:module|package)|Cannot find module|SyntaxError:|SyntaxError \[|Unexpected token|Failed to load|ENOENT:|could not be loaded|Could not find '[^']+'/i.test(output);
-
-function stableError(output: string): string {
-  const lines = output.split(/\r?\n/).map((line) => line.trim());
-  const error = lines.find((line) => /(?:error|ERR_[A-Z_]+|E[A-Z]{3,}:|failed|cannot|could not)/i.test(line)) ?? 'nonzero exit';
-  return normalizeDiagnostic(error).replace(/\b(?:pid|port)\s*[:=]?\s*\d+/gi, '<runtime-id>')
-    .replace(/\b[0-9a-f]{16,}\b/gi, '<hash>').slice(0, 512);
+/**
+ * Short hash of the sorted unique normalized log lines. Output order, the run root, absolute path prefixes, hex runs, and
+ * digit runs never change it, so an unchanged failure keeps one identity across cwd and parallel output; a new failing line changes it.
+ */
+function logIdentity(log: string, cwd: string): string {
+  const roots = [...new Set([cwd, cwd.replace(/\\/g, '/')])].filter(Boolean).sort((a, b) => b.length - a.length);
+  const lines = logBody(log).split(/\r?\n/).map((line) => {
+    const rooted = roots.reduce((value, root) => value.split(root).join('<root>'), line);
+    return normalizeDiagnostic(rooted)
+      .replace(/\\/g, '/')
+      .replace(/(?<=^|[\s('"=])(?:[A-Za-z]:)?\/(?:[^\s/:'"()<>]+\/)+/g, '<abs>/')
+      .replace(/[0-9a-f]{7,}/gi, '<hex>')
+      .replace(/\d+/g, '0');
+  }).filter((line) => line.length > 0);
+  return crypto.createHash('sha256').update([...new Set(lines)].sort().join('\n')).digest('hex').slice(0, 16);
 }
 
 async function inputFingerprint(command: string, raw: unknown, ports: Parameters<Handler<VerifyEffect>>[1], deps: VerifyDeps): Promise<string> {
@@ -124,8 +114,8 @@ export function createVerify(base: VerifyDeps): Handler<VerifyEffect> {
         const candidate = reuse as Record<string, unknown>;
         if (candidate['inputFingerprint'] === currentInput && candidate['exit'] === 0 && typeof candidate['logPath'] === 'string') {
           results.push({
-            command, exit: 0, logPath: candidate['logPath'], failureId: null, failedTests: [], testCounts: null,
-            loadError: false, diagnostic: '', inputFingerprint: currentInput, reused: true,
+            command, exit: 0, logPath: candidate['logPath'], failureId: null, failedTests: [], baselineHits: [],
+            scanUnreadable: [], diagnostic: '', inputFingerprint: currentInput, reused: true,
           });
           continue;
         }
@@ -149,11 +139,16 @@ export function createVerify(base: VerifyDeps): Handler<VerifyEffect> {
       try { ports.fs.writeAtomic(logPath, log); } catch (error) {
         return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `log: ${error instanceof Error ? error.message : String(error)}` }];
       }
-      const failedTests = parseFailureNames(combined);
-      const loadError = failedTests.length === 0 && isLoadError(combined);
+      const expected = listOfStrings(fields['expectedTests']);
+      const failedTests = namesInLog(log, expected);
+      const scanUnreadable: string[] = [];
+      const hits = listOfStrings(fields['scanLogs']).flatMap((scanLog) => {
+        try { return namesInLog(ports.fs.readText(scanLog), expected); } catch { scanUnreadable.push(scanLog); return []; }
+      });
+      const baselineHits = [...new Set(hits)].sort();
       const diagnostic = normalizeDiagnostic(combined);
-      const failureId = exit === 0 ? null : `${command}::${failedTests.length ? failedTests.join(',') : `${loadError ? 'load-error' : 'exit'}:${exit === 127 ? 'spawn' : 'nonzero'}:${stableError(combined)}`}`;
-      results.push({ command, exit, logPath, failureId, failedTests, testCounts: testCounts(combined), loadError, diagnostic, inputFingerprint: currentInput });
+      const failureId = exit === 0 ? null : `${command}::${failedTests.length ? failedTests.join(',') : `exit:${exit === 127 ? 'spawn' : 'nonzero'}:${logIdentity(log, deps.cwd)}`}`;
+      results.push({ command, exit, logPath, failureId, failedTests, baselineHits, scanUnreadable, diagnostic, inputFingerprint: currentInput });
     }
     let fingerprint;
     try { fingerprint = await deps.git.fingerprint(deps.cwd, runOwnedPaths(ports, await deps.git.toplevel(deps.cwd), ctx.runDir, ctx.ownedArtifacts)); } catch (error) {

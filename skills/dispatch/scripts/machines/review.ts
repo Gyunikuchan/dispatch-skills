@@ -857,8 +857,8 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }
       }
       if (event.type === 'VERIFY_DONE' && answers(event, state.c.effectId)) {
         const red = event.results.filter((result) => result['exit'] !== 0);
-        // NOTE: when no failing check could run, the fix is untested, so the orchestrator repairs the commands at no attempt cost.
-        if (red.length && red.every((result) => result['loadError'] === true || result['exit'] === 127)) {
+        // NOTE: when no failing check could spawn, the fix is untested, so the orchestrator repairs the commands at no attempt cost; any other nonzero exit counts as a failed fix.
+        if (red.length && red.every((result) => result['exit'] === 127)) {
           const failures = red.map((result) => ({ command: String(result['command']), exit: Number(result['exit']), logPath: String(result['logPath']) }));
           const { tag: _tag, c, ...recovery } = state;
           return stay({ tag: 'decide-verification', c, ...recovery, failures });

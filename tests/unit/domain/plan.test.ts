@@ -43,7 +43,9 @@ const PLAN = `# Add retry budget
 - [SC1] Fetch stops after three attempts
   - Satisfies: REQ-1
   - Changes: src/fetch.ts, tests/fetch.test.ts
+  - Tests: tests/fetch.test.ts
   - Verify: \`node --test tests/fetch.test.ts\`
+  - RED: \`node --test {files}\`
   - Evidence: red
   - Test rationale: fails today because the loop never stops retrying.
   - Retain: durable
@@ -68,6 +70,7 @@ const defects = (source: string) => {
   return result.ok ? [] : result.defects.map((item) => item.code);
 };
 
+const TESTS_LINE = '  - Tests: tests/fetch.test.ts\n';
 const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
 const parsed = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result.plan; };
 
@@ -95,7 +98,7 @@ test('readable plan syntax: nested and mixed entries preserve executable contrac
   assert.deepEqual(parsed(readable().replace('- #### [NEW]', '#### [NEW]').replace('  - Purpose:', '- Purpose:')).changes, plain.changes);
   assert.deepEqual(parsed(readable().replace('- #### [NEW]', '- #### [DELETE]')).changes.map(c => c.action), ['MODIFY', 'DELETE', 'GENERATED']);
   const consecutive = readable().replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.\n', '');
-  const generated = parsed(consecutive.replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts'));
+  const generated = parsed(consecutive.replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts').replace(TESTS_LINE, ''));
   assert.equal(generated.changes[0]?.command, null);
   assert.equal(generated.changes[0]?.note, 'add a retry counter to fetchWithRetry.');
   assert.equal(generated.changes[1]?.command, 'npm run docs');
@@ -611,8 +614,10 @@ test('requires explicit Retain on a criterion that changes tests', () => {
   assert.deepEqual(found.map((item) => item.message), ['Criterion SC1 changes tests; state Retain: transient or Retain: durable (durable tests meet the durable bar in the plan template).']);
 });
 
-test('requires explicit Retain only when Changes name a test path', () => {
-  const productionOnly = PLAN.replace('  - Retain: durable\n', '').replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts')
+test('declared test paths: Retain is required only when Tests names a path', () => {
+  const undeclared = PLAN.replace('  - Retain: durable\n', '').replace(TESTS_LINE, '');
+  assert.deepEqual(defectsOf(undeclared, 'criterion-retain-required'), []);
+  const productionOnly = PLAN.replace('  - Retain: durable\n', '').replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts').replace(TESTS_LINE, '')
     .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.equal(parsed(productionOnly).criteria[0]?.retain, 'durable');
 });
@@ -640,9 +645,109 @@ test('isolates transient test files: rejects a path a durable criterion also lis
   assert.equal(transientPathDefects(source).length, 1);
 });
 
+test('isolates transient test files: exempts a declared MODIFY support file from naming rules', () => {
+  const fixture = 'tests/fixtures/fetch.json';
+  const source = isolated.replace(NEW_TRANSIENT, `${NEW_TRANSIENT}\n#### [MODIFY] ${fixture}\n- Changes: adds a retry case.`)
+    .replace('  - Changes: src/fetch.ts, tests/fetch.transient.test.ts\n  - Tests: tests/fetch.transient.test.ts\n', `  - Changes: src/fetch.ts, tests/fetch.transient.test.ts, ${fixture}\n  - Tests: tests/fetch.transient.test.ts, ${fixture}\n`);
+  assert.deepEqual(parsed(source).criteria[0]?.tests, ['tests/fetch.transient.test.ts', fixture]);
+  assert.deepEqual(transientPathDefects(source), []);
+});
+
 test('detects test paths across runners', () => {
   for (const path of ['test_x.py', 'pkg/x_transient_test.go', 'tests/x.rs', 'tests/test_x_transient.py', 'src/x.transient.test.ts']) assert.ok(isTestPath(path), path);
   for (const path of ['src/testing.ts', 'src/contest.ts']) assert.ok(!isTestPath(path), path);
+});
+
+// SECTION: Declared tests and RED command
+
+const RED_LINE = '  - RED: `node --test {files}`\n';
+const NEW_FETCH_TEST = '#### [NEW] tests/fetch.test.ts\n- Purpose: pins the retry cap.';
+const warningsOf = (source: string, code: string) => okPlan(source).warnings.filter((item) => item.code === code);
+const criterionLine = (source: string, heading: string) => source.split('\n').indexOf(heading) + 1;
+
+test('declared test paths: Tests parses normalized paths into the criterion', () => {
+  assert.deepEqual(parsed(PLAN).criteria.map((criterion) => criterion.tests), [['tests/fetch.test.ts'], []]);
+  const backticked = PLAN.replace(TESTS_LINE, '  - Tests: `./tests/fetch.test.ts`\n');
+  assert.deepEqual(parsed(backticked).criteria[0]?.tests, ['tests/fetch.test.ts']);
+});
+
+test('declared test paths: a Tests path outside the criterion Changes is a defect', () => {
+  const source = PLAN.replace(TESTS_LINE, '  - Tests: tests/fetch.test.ts, tests/other.test.ts\n');
+  const found = defectsOf(source, 'criterion-tests-path');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.line, source.split('\n').indexOf('  - Tests: tests/fetch.test.ts, tests/other.test.ts') + 1);
+  assert.match(found[0]?.message ?? '', /tests\/other\.test\.ts/);
+  assert.equal(defectsOf(PLAN.replace(TESTS_LINE, '  - Tests:\n'), 'criterion-tests-path').length, 1, 'empty Tests');
+  assert.equal(defectsOf(PLAN.replace(TESTS_LINE, '  - Tests: ../tests/fetch.test.ts\n'), 'criterion-tests-path').length, 1, 'unsafe path');
+});
+
+test('declared test paths: a red criterion without Tests warns criterion-red-test-path that its evidence downgrades', () => {
+  assert.deepEqual(warningsOf(PLAN, 'criterion-red-test-path'), []);
+  const found = warningsOf(PLAN.replace(TESTS_LINE, ''), 'criterion-red-test-path');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.severity, 'warning');
+  assert.match(JSON.stringify(found[0]), /red evidence downgrades to verify/);
+});
+
+test('declared test paths: transient and plan-ID file checks read Tests, not path shape', () => {
+  const modified = isolated.replace(NEW_TRANSIENT, '#### [MODIFY] tests/fetch.transient.test.ts');
+  assert.equal(transientPathDefects(modified).length, 1);
+  assert.deepEqual(transientPathDefects(modified.replace('  - Tests: tests/fetch.transient.test.ts\n', '')), []);
+  const named = PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts');
+  const heading = criterionLine(named, '#### [NEW] tests/sc1.test.ts');
+  assert.ok(namedDefects(named).some((item) => item.line === heading));
+  assert.ok(!namedDefects(named.replace('  - Tests: tests/sc1.test.ts\n', '')).some((item) => item.line === heading));
+});
+
+test('RED command field: parses one inline-code command per criterion', () => {
+  assert.deepEqual(parsed(PLAN).criteria.map((criterion) => criterion.red), ['node --test {files}', null]);
+});
+
+test('RED command field: RED exception stays a separate field', () => {
+  const exception = parsed(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n')).criteria[0];
+  assert.equal(exception?.red, null);
+  assert.equal(exception?.redException, 'behavior-preserving');
+  const both = parsed(PLAN.replace(RED_LINE, `${RED_LINE}  - RED exception: already-satisfied\n`)).criteria[0];
+  assert.equal(both?.red, 'node --test {files}');
+  assert.equal(both?.redException, 'already-satisfied');
+});
+
+test('RED command field: rejects a missing code span, extra spans, and a repeated line', () => {
+  for (const line of ['  - RED: node --test {files}\n', '  - RED: `node --test` `{files}`\n', '  - RED:\n', `${RED_LINE}${RED_LINE}`]) {
+    const source = PLAN.replace(RED_LINE, line);
+    assert.equal(defectsOf(source, 'criterion-red-command').length, 1, line);
+  }
+});
+
+test('RED command field: a plan ID in the RED command is a plan-id-in-test-name defect', () => {
+  assert.equal(namedDefects(PLAN.replace(RED_LINE, '  - RED: `node --test --test-name-pattern="sc1" {files}`\n')).length, 1);
+});
+
+test('downgrade warning: a red criterion without RED or RED exception warns red-downgraded', () => {
+  const source = PLAN.replace(RED_LINE, '');
+  const found = warningsOf(source, 'red-downgraded');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.severity, 'warning');
+  assert.equal(found[0]?.line, criterionLine(source, '- [SC1] Fetch stops after three attempts'));
+  assert.match(found[0]?.message ?? '', /SC1/);
+  assert.deepEqual(warningsOf(PLAN, 'red-downgraded'), []);
+  assert.deepEqual(warningsOf(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n'), 'red-downgraded'), []);
+});
+
+test('undeclared test path warning: a test-like Changes path outside every Tests warns', () => {
+  assert.deepEqual(warningsOf(PLAN, 'undeclared-test-path'), []);
+  const source = PLAN.replace(TESTS_LINE, '');
+  const found = warningsOf(source, 'undeclared-test-path');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.severity, 'warning');
+  assert.match(found[0]?.message ?? '', /tests\/fetch\.test\.ts/);
+});
+
+test('undeclared test path warning: fixture, helper, and mock paths are exempt', () => {
+  const support = ['tests/fixtures/fetch.ts', 'tests/helpers/fetch.ts', 'tests/mocks/fetch.ts'];
+  const source = PLAN.replace(NEW_FETCH_TEST, `${NEW_FETCH_TEST}\n${support.map((path) => `#### [NEW] ${path}\n- Purpose: adds the shared retry ${path.split('/')[1]} module.`).join('\n')}`)
+    .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts\n', `  - Changes: src/fetch.ts, tests/fetch.test.ts, ${support.join(', ')}\n`);
+  assert.deepEqual(warningsOf(source, 'undeclared-test-path'), []);
 });
 
 const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');

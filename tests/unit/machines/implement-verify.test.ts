@@ -33,8 +33,8 @@ const FP: Fingerprint = { head: 'head', index: 'index', worktree: 'tree' };
 const PLAN: ParsedPlan = {
   title: 'Generated feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [],
   criteria: [
-    { id: 'SC1', title: 'Source behavior works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'node --test tests/a.test.ts', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
-    { id: 'SC2', title: 'Generated output works', line: 2, changes: ['src/b.ts', 'src/generated.ts'], verify: [{ command: 'node --test tests/b.test.ts', final: true }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
+    { id: 'SC1', title: 'Source behavior works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'node --test tests/a.test.ts', final: false }], evidence: 'verify', preExisting: false, tests: [], red: null, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
+    { id: 'SC2', title: 'Generated output works', line: 2, changes: ['src/b.ts', 'src/generated.ts'], verify: [{ command: 'node --test tests/b.test.ts', final: true }], evidence: 'verify', preExisting: false, tests: [], red: null, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null },
   ],
   changes: [
     { action: 'MODIFY', path: 'src/a.ts', note: 'Source change', command: null, line: 1 },
@@ -92,7 +92,7 @@ test('implement-final-deferral, implement-final-gate-coverage, implement-complet
   assert.equal(postReview.effect.kind, 'verify');
   if (postReview.effect.kind !== 'verify') return;
   assert.deepEqual(postReview.effect.commands.map((item) => item['command']), ['node scripts/gen.mjs']);
-  let result = step(postReview.state, { type: 'VERIFY_DONE', effectId: postReview.effect.id, purpose: 'generated', results: [{ command: 'node scripts/gen.mjs', exit: 0, logPath: 'generate.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'generated-input' }], fingerprint: postReview.fingerprint });
+  let result = step(postReview.state, { type: 'VERIFY_DONE', effectId: postReview.effect.id, purpose: 'generated', results: [{ command: 'node scripts/gen.mjs', exit: 0, logPath: 'generate.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'generated-input' }], fingerprint: postReview.fingerprint });
   assert.equal(result.state.tag, 'generated-snapshot');
   if (result.state.tag !== 'generated-snapshot') return;
   const snapshot = getEffect(result.effects, 'snapshot');
@@ -106,8 +106,8 @@ test('implement-final-deferral, implement-final-gate-coverage, implement-complet
     ['node --test tests/a.test.ts', false], ['node --test tests/b.test.ts', false],
   ]);
   result = step(result.state, { type: 'VERIFY_DONE', effectId: final.id, purpose: 'final', results: [
-    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'scope-a.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'input-a' },
-    { command: 'node --test tests/b.test.ts', exit: 0, logPath: 'final-b.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'input-b' },
+    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'scope-a.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'input-a' },
+    { command: 'node --test tests/b.test.ts', exit: 0, logPath: 'final-b.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'input-b' },
   ], fingerprint: postReview.fingerprint });
   assert.equal(result.state.tag, 'evidence');
   if (result.state.tag !== 'evidence') return;
@@ -121,7 +121,7 @@ test('implement-evidence-postdates and implement-generated-rerun: mutations stal
   let postReview = throughReview(scoped, true);
   if (postReview.state.tag !== 'generated-verify') return assert.fail('generated verify should follow review snapshot');
   const generated = getEffect(postReview.effects, 'verify');
-  let result = step(postReview.state, { type: 'VERIFY_DONE', effectId: generated.id, purpose: 'generated', results: [{ command: 'node scripts/gen.mjs', exit: 0, logPath: 'generate.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'generated' }], fingerprint: postReview.fingerprint });
+  let result = step(postReview.state, { type: 'VERIFY_DONE', effectId: generated.id, purpose: 'generated', results: [{ command: 'node scripts/gen.mjs', exit: 0, logPath: 'generate.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'generated' }], fingerprint: postReview.fingerprint });
   if (result.state.tag !== 'generated-snapshot') return assert.fail('generated snapshot expected');
   const snapshot = getEffect(result.effects, 'snapshot');
   const afterGenerate = { ...postReview.fingerprint, worktree: 'generated' };
@@ -132,8 +132,8 @@ test('implement-evidence-postdates and implement-generated-rerun: mutations stal
   if (final.kind !== 'verify') return;
   assert.ok(final.commands.every((item) => item['reuse'] === undefined));
   result = step(result.state, { type: 'VERIFY_DONE', effectId: final.id, purpose: 'final', results: [
-    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'final-a.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'final-a' },
-    { command: 'node --test tests/b.test.ts', exit: 0, logPath: 'final-b.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'final-b' },
+    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'final-a.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'final-a' },
+    { command: 'node --test tests/b.test.ts', exit: 0, logPath: 'final-b.log', failedTests: [], failureId: null, diagnostic: '', inputFingerprint: 'final-b' },
   ], fingerprint: afterGenerate });
   assert.equal(result.state.tag, 'evidence');
   if (result.state.tag === 'evidence') assert.deepEqual(result.state.ids, ['SC1', 'SC2']);
@@ -147,7 +147,7 @@ function transientPlan(specs: CriterionSpec[], finalCommands: string[] = []): Pa
   const paths = [...new Set(specs.flatMap((row) => row.changes))].sort();
   return {
     title: 'Transient feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], seams: [], warnings: [], traceability: null, governedText: '# Transient feature', sharedContext: '# Transient feature', planIds: specs.map((row) => row.id).sort(),
-    criteria: specs.map((row, index) => ({ id: row.id, title: row.id, line: index + 1, changes: row.changes, verify: row.verify, evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: row.retain ?? 'durable', coveredBy: row.retain === 'transient' ? 'SC2' : null })),
+    criteria: specs.map((row, index) => ({ id: row.id, title: row.id, line: index + 1, changes: row.changes, verify: row.verify, evidence: 'verify', preExisting: false, tests: row.changes.filter((file) => file.startsWith('tests/')), red: null, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: row.retain ?? 'durable', coveredBy: row.retain === 'transient' ? 'SC2' : null })),
     changes: paths.map((path, index) => ({ action: 'MODIFY', path, note: path, command: null, line: index + 1 })),
     verification: { automated: [], none: 'criterion commands', manual: [] }, finalCommands,
     tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: specs.map((row) => row.id), paths, generated: [], overlaps: [] }],
@@ -195,6 +195,23 @@ test('trim keeps production path of transient criterion', () => {
   const [input] = trims(trace);
   assert.ok(!(input?.['allowed'] as string[]).includes('src/t.ts'));
   assert.deepEqual((input?.['files'] as { path: string }[]).map((row) => row.path), ['tests/a.test.ts']);
+});
+
+test('trim deletes a support-shaped file only a transient criterion declares', () => {
+  const plan = transientPlan([{ ...SC1(), changes: ['src/t.ts', 'tests/a.test.ts', 'tests/helpers/a.ts'] }, SC2()]);
+  assert.deepEqual(plan.criteria[0]?.tests, ['tests/a.test.ts', 'tests/helpers/a.ts']);
+  const { trace } = delivered(plan);
+  assert.deepEqual(trims(trace).map((input) => input['allowed']), [['tests/a.test.ts', 'tests/helpers/a.ts']]);
+  assert.deepEqual(finalCommands(trace), ['node --test tests/b.test.ts']);
+});
+
+test('trim never deletes a transient Tests file a durable criterion also declares', () => {
+  const shared = ['conftest.py', 'pkg/testdata/x.json'];
+  const base = transientPlan([{ ...SC1(), changes: [...SC1().changes, ...shared] }, { ...SC2(), changes: [...SC2().changes, ...shared] }]);
+  const plan: ParsedPlan = { ...base, criteria: base.criteria.map((row) => ({ ...row, tests: [...row.tests, ...shared] })) };
+  const { trace } = delivered(plan);
+  assert.deepEqual(trims(trace).map((input) => input['allowed']), [['tests/a.test.ts']]);
+  assert.deepEqual(finalCommands(trace), ['node --test tests/b.test.ts']);
 });
 
 test('shared transient durable command is kept', () => {
@@ -256,7 +273,7 @@ function accepted() {
   const c0 = approvalState().c;
   const T1 = { ...c0.tasks['T1'] ?? { id: 'T1', signature: '', input: null, worktree: null, handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, redRows: [], reason: null, failures: 0 }, status: 'accepted' as const, attempt: 2, candidate: 'candidate-1', integrated: 'integrated-1' };
   return { ...c0, phase: 'tasks' as const, tasks: { T1 } as typeof c0.tasks, integration: { path: 'integration', base: 'base', head: 'integrated-1', links: [], ignored: [] }, evidence: { SC1: passed(c0) },
-    records: { check: { command: 'check', exit: 0, logPath: 'check.log', failureId: null, failedTests: [], diagnostic: '', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'pass' as const } }, observations: [OBSERVATION] };
+    records: { check: { command: 'check', exit: 0, logPath: 'check.log', failureId: null, failedTests: [], diagnostic: '', baselineHits: [], scanUnreadable: [], inputFingerprint: 'input', mutationEpoch: 0, status: 'pass' as const } }, observations: [OBSERVATION] };
 }
 const bind = { observationId: 'obs-1', afterHash: 'after-1', rationale: 'README edits cannot affect the SC1 check.' };
 
@@ -297,7 +314,7 @@ test('authority-evidence: a pending obligation clears only with fresh evidence',
 
 test('authority-evidence: reuse cannot pass a failed required gate', () => {
   const base = approvalState().c;
-  const failing = { ...base.records, check: { command: 'check', exit: 1, logPath: 'check.log', failureId: 'f', failedTests: ['test:a'], diagnostic: 'failed', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' as const } };
+  const failing = { ...base.records, check: { command: 'check', exit: 1, logPath: 'check.log', failureId: 'f', failedTests: ['test:a'], diagnostic: 'failed', baselineHits: [], scanUnreadable: [], inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' as const } };
   const state = { tag: 'failure' as const, c: { ...base, phase: 'delivered' as const, records: failing, evidence: { SC1: passed(base) }, observations: [OBSERVATION] }, reason: 'Final verification failed: check', changedPaths: [] };
   const event = { type: 'DECISION' as const, kind: 'failure' as const, answer: { by: 'orchestrator', action: 'retry', rationale: 'retry' }, changeDispositions: [{ ...bind, retain: ['SC1'] }] };
   assert.match(validateImplement(state, event) ?? '', /failed required checks/);
@@ -319,7 +336,7 @@ test('nested review repairs unrunnable fix verification at the decide await', ()
   const clusters = result.state.review.clusters;
   result = step(result.state, { type: 'FIXES_APPLIED', clusters: clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) } as never);
   const verify = getEffect(result.effects, 'verify');
-  result = step(result.state, { type: 'VERIFY_DONE', effectId: verify.id, purpose: 'fix-verify', results: [{ command: 'node --test missing.test.ts', exit: 1, loadError: true, logPath: 'a.log' }], fingerprint: FP } as never);
+  result = step(result.state, { type: 'VERIFY_DONE', effectId: verify.id, purpose: 'fix-verify', results: [{ command: 'node --test missing.test.ts', exit: 127, logPath: 'a.log' }], fingerprint: FP } as never);
   assert.equal(reviewTag(result.state), 'decide-verification');
   const answer = Object.fromEntries(clusters.map((cluster) => [cluster.clusterId, { verification: ['node --test tests/a.test.ts'], by: 'orchestrator', rationale: 'the test path was wrong' }]));
   const decision: Event = { type: 'DECISION', kind: 'fix-verification', answer };

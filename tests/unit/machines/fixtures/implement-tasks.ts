@@ -14,12 +14,12 @@ export const briefSha = (effectId: string) => `sha256:${createHash('sha256').upd
 export const FP = { head: 'h', index: 'i', worktree: 'w' };
 export const criterion = (id: string, file: string, evidence: 'red' | 'verify', extra: string[] = []): PlanCriterion => ({
   id, title: `${id} works`, line: 1, changes: [file, ...extra], verify: [{ command: `node --test tests/${id.toLowerCase()}.test.ts`, final: false }],
-  evidence, preExisting: false, redException: null, testRationale: evidence === 'red' ? 'discriminates' : null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null,
+  evidence, preExisting: false, tests: [], red: null, redException: null, testRationale: evidence === 'red' ? 'discriminates' : null, review: null, enforcementInfeasibility: null, retain: 'durable', coveredBy: null,
 });
 export const task = (id: string, paths: string[], criteria: string[], prerequisites: string[] = []): PlanTask => ({ id, title: id, summary: `Deliver ${id}`, line: 1, paths, criteria, prerequisites, generated: [], overlaps: [] });
 export const PLAN: ParsedPlan = {
   title: 'Tasks', box: { 'TL;DR': 'Deliver tasks' }, keyDecisions: [],
-  criteria: [criterion('SC1', 'src/a.ts', 'red', ['tests/validation.test.ts']), criterion('SC2', 'src/b.ts', 'verify'), criterion('SC3', 'src/c.ts', 'verify')],
+  criteria: [{ ...criterion('SC1', 'src/a.ts', 'red', ['tests/validation.test.ts']), tests: ['tests/validation.test.ts'], red: 'node --test {files}' }, criterion('SC2', 'src/b.ts', 'verify'), criterion('SC3', 'src/c.ts', 'verify')],
   changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'a', command: null, line: 1 }, { action: 'NEW', path: 'tests/validation.test.ts', note: 'tests', command: null, line: 2 }, { action: 'MODIFY', path: 'src/b.ts', note: 'b', command: null, line: 3 }, { action: 'MODIFY', path: 'src/c.ts', note: 'c', command: null, line: 4 }],
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks', planIds: ['SC1', 'SC2', 'SC3'], sharedContext: '# Tasks', seams: [], warnings: [],
   tasks: [task('T1', ['src/a.ts', 'tests/validation.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
@@ -33,7 +33,7 @@ export const RED_ROW = 'RED-MATRIX SC1 | tests/validation.test.ts:rejects bad in
 
 // SECTION: Simulated driver — answers every effect, stopping at host awaits
 
-export type Outcome = { exit: number; failedTests?: string[]; loadError?: boolean };
+export type Outcome = { exit: number; failedTests?: string[]; baselineHits?: string[]; scanUnreadable?: string[] };
 export type Sim = {
   plan?: ParsedPlan;
   planHash?: string;
@@ -72,7 +72,7 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
       results: effect.commands.map((row) => {
         const outcome = sim.verify?.(effect.purpose, String(row['command']), id) ?? defaultVerify(effect.purpose);
         const failed = outcome.failedTests ?? [];
-        return { command: String(row['command']), exit: outcome.exit, logPath: `${effect.id}.log`, failedTests: failed, failureId: outcome.exit ? `${row['command']}::${failed[0] ?? 'load'}` : null, diagnostic: '', loadError: outcome.loadError ?? false, inputFingerprint: effect.id };
+        return { command: String(row['command']), exit: outcome.exit, logPath: `${effect.id}.log`, failedTests: failed, failureId: outcome.exit ? `${row['command']}::${failed[0] ?? 'exit'}` : null, diagnostic: '', baselineHits: outcome.baselineHits ?? [], scanUnreadable: outcome.scanUnreadable ?? [], inputFingerprint: effect.id };
       }),
     };
     case 'checkout': {

@@ -174,7 +174,8 @@ export type PathDiff = Payload;
 export type ReviewSpec = Payload;
 export type ScopeRequest = Payload;
 export type RosterSlot = Payload;
-export type VerifyCommand = Payload;
+/** `expectedTests`: names a RED run must print; `scanLogs`: absolute baseline log paths searched for the same names. */
+export type VerifyCommand = Payload & { readonly expectedTests?: readonly string[]; readonly scanLogs?: readonly string[] };
 export type BriefInput = Payload;
 export type IntegrationScope = { baseline: string; revision: string; ownership: Readonly<Record<string, readonly string[]>> };
 export type PathSet = readonly string[];
@@ -311,7 +312,7 @@ export type Effect =
   | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[]; cwd?: string }
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
-  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; since?: TreeFingerprint; cwd?: string }
+  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; tests?: PathSet; since?: TreeFingerprint; cwd?: string }
   | { kind: 'snapshot'; id: string; since: TreeFingerprint | null; cwd?: string }
   | { kind: 'assess-recovery'; id: string; purpose: 'drift' | 'hotfix'; before: TreeFingerprint; after: TreeFingerprint; phase: string; pendingId: string; input: Payload }
   | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }

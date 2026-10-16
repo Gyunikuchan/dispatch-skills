@@ -61,7 +61,7 @@ function classificationGate(parsedPlan = PLAN, invocation = run()) {
 }
 
 function toDecision(state: ReturnType<typeof initialImplement>, effectId: string, exit = 0, failureId: string | null = null, after = FP) {
-  let result = step(state, { type: 'VERIFY_DONE', effectId, purpose: 'baseline', results: [{ command: 'node --test tests/example.test.ts', exit, logPath: 'baseline.log', failureId, failedTests: [], diagnostic: 'baseline', loadError: false, inputFingerprint: 'input' }], fingerprint: after });
+  let result = step(state, { type: 'VERIFY_DONE', effectId, purpose: 'baseline', results: [{ command: 'node --test tests/example.test.ts', exit, logPath: 'baseline.log', failureId, failedTests: [], diagnostic: 'baseline', inputFingerprint: 'input' }], fingerprint: after });
   state = result.state;
   const snapshot = effectOf(result.effects, 'snapshot');
   result = step(state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: after, diff: { paths: [] } });

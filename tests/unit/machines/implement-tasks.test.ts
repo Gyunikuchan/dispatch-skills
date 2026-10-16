@@ -6,6 +6,7 @@ import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implem
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskScope, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
+import { FP as RECOVERY_FP, failure, host as recoveryHost } from './fixtures/implement-recovery.ts';
 
 test('governing spec reaches standalone task briefs through scheduling', () => {
   const sim: Sim = {};
@@ -180,7 +181,7 @@ test('tasks: writer failure resets the worktree and advances the model and attem
 const rejections: [string, Sim, RegExp][] = [
   ['missing RED matrix', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: ['CRITERION SC1 | src/a.ts | behavior'] }) }, /RED matrix rejected/],
   ['unapproved checkpoint', { redDefects: ['T1'] }, /RED checkpoint rejected/],
-  ['setup-only RED', { verify: (purpose) => purpose === 'red' ? { exit: 1, loadError: true } : { exit: 0 } }, /load, syntax, or missing-file/],
+  ['RED without the expected names', { verify: (purpose) => purpose === 'red' ? { exit: 1 } : { exit: 0 } }, /expected failures were not observed/],
   ['fabricated RED', { verify: () => ({ exit: 0 }) }, /expected failures were not observed/],
   ['failing GREEN', { verify: (purpose, _command, _task) => purpose === 'red' ? defaultVerify('red') : purpose === 'scoped' ? { exit: 1, failedTests: ['test:x'] } : { exit: 0 } }, /Task verification failed/],
 ];
@@ -338,7 +339,8 @@ const redCommand = (trace: Trace) => trace.effects.flatMap((effect) => effect.ki
 test('tasks: admission RED matrix requires one asserted failure row per active criterion on a declared test path', () => {
   const criteria = [PLAN.criteria[0]!];
   assert.deepEqual(parseRedMatrix([RED_ROW], criteria, PLAN.planIds).defects, []);
-  assert.ok(parseRedMatrix(['RED-MATRIX SC1 | src/a.ts:rejects bad input | exit 1 test:rejects bad input'], criteria, PLAN.planIds).defects.some((defect) => /approved test file/.test(defect)));
+  assert.ok(parseRedMatrix(['RED-MATRIX SC1 | src/a.ts:rejects bad input | exit 1 test:rejects bad input'], criteria, PLAN.planIds).defects.some((defect) => /declared Tests paths/.test(defect)));
+  assert.ok(parseRedMatrix([RED_ROW.replace('test:rejects bad input', 'error:ENOENT')], criteria, PLAN.planIds).defects.some((defect) => /error: entries cannot be observed/.test(defect)));
   assert.ok(parseRedMatrix([], criteria, PLAN.planIds).defects.some((defect) => /Exactly one/.test(defect)));
   assert.ok(parseRedMatrix([RED_ROW, RED_ROW.replace('rejects bad input', 'other')], criteria, PLAN.planIds).defects.some((defect) => /Exactly one/.test(defect)));
 });
@@ -365,57 +367,213 @@ test('RED-MATRIX names stay plan-free: rejects a recorded finding ID and accepts
   assert.deepEqual(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:SC10 and ESC1 reject bad input'), ids), []);
 });
 
-test('tasks: admission narrows RED to the matrix test file while keeping runner options', () => {
-  const command = 'node --test --test-name-pattern="rejects bad input" --import=./hook.ts tests/all.test.ts';
-  const sim: Sim = { plan: withRed({ verify: [{ command, final: false }] }) };
+const redEffects = (trace: Trace) => trace.effects.flatMap((effect) => effect.kind === 'verify' && effect.purpose === 'red' ? effect.commands : []);
+
+test('tasks: declared RED command expands {files} for a non-node runner and passes on expected names in the log', () => {
+  const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }) };
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  const [narrowed] = redCommand(trace);
-  assert.match(narrowed ?? '', /--test-name-pattern="rejects bad input" --import=\.\/hook.ts "tests\/validation.test.ts"$/);
-  assert.doesNotMatch(narrowed ?? '', /tests\/all.test.ts/);
+  assert.deepEqual(redCommand(trace), ['npx jest --ci "tests/validation.test.ts"']);
+  assert.deepEqual(redEffects(trace).map((row) => [row.expectedTests, row.scanLogs]), [[['rejects bad input'], []]]);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
-test('tasks: admission fails a task whose RED command cannot be narrowed', () => {
-  const sim: Sim = { plan: withRed({ verify: [{ command: 'npm run check', final: false }] }) };
+test('tasks: declared RED command without {files} runs unchanged', () => {
+  const sim: Sim = { plan: withRed({ red: 'npx nx test web --testFile=validation' }) };
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.match(record(result, 'T1')?.reason ?? '', /cannot be narrowed safely/);
+  assert.deepEqual(redCommand(trace), ['npx nx test web --testFile=validation']);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
-test('tasks: admission refuses to narrow RED to a test path that could break its quoting', () => {
+test('tasks: declared RED command rejects a failing run whose log lacks an expected name', () => {
+  const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify: (purpose) => purpose === 'red' ? { exit: 1 } : { exit: 0 } };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.match(record(result, 'T1')?.reason ?? '', /expected failures were not observed: test:rejects bad input/);
+});
+
+test('tasks: declared RED command rejects a run that exits 0', () => {
+  const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify: (purpose) => purpose === 'red' ? { exit: 0, failedTests: ['test:rejects bad input'] } : { exit: 0 } };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.match(record(result, 'T1')?.reason ?? '', /RED command exited 0/);
+});
+
+test('tasks: declared RED command refuses a test path that could break its quoting', () => {
   for (const unsafe of ['tests/validation.test.ts\\', 'tests/"validation".test.ts']) {
     const swap = (path: string) => path === 'tests/validation.test.ts' ? unsafe : path;
-    const base = withRed({ verify: [{ command: 'node --test tests/all.test.ts', final: false }] });
     const plan: ParsedPlan = {
-      ...base,
-      criteria: base.criteria.map((row) => ({ ...row, changes: row.changes.map(swap) })),
-      changes: base.changes.map((row) => ({ ...row, path: swap(row.path) })),
-      tasks: base.tasks.map((row) => ({ ...row, paths: row.paths.map(swap) })),
+      ...PLAN,
+      criteria: PLAN.criteria.map((row) => ({ ...row, changes: row.changes.map(swap), tests: row.tests.map(swap) })),
+      changes: PLAN.changes.map((row) => ({ ...row, path: swap(row.path) })),
+      tasks: PLAN.tasks.map((row) => ({ ...row, paths: row.paths.map(swap) })),
     };
     const envelope = (id: string) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.map((row) => row.replace('tests/validation.test.ts', unsafe)) });
     const sim: Sim = { plan, envelope };
     let { result, trace } = start(1, sim);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
     assert.deepEqual(redCommand(trace), [], unsafe);
-    assert.match(record(result, 'T1')?.reason ?? '', /cannot be narrowed safely/, unsafe);
+    assert.match(record(result, 'T1')?.reason ?? '', /unsafe test path/, unsafe);
   }
 });
 
-test('tasks: admission collides RED with a baseline failure unless Pre-existing is yes', () => {
-  for (const preExisting of [false, true]) {
-    const failing = (purpose: string): Outcome => purpose === 'baseline' || purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'] } : { exit: 0 };
-    const sim: Sim = { plan: withRed({ preExisting }), verify: failing };
-    const trace: Trace = { effects: [], events: [] };
-    let result = pump(stepImplement(initialImplement(), run(1)), sim, trace);
-    assert.equal(result.state.tag, 'baseline-decision');
-    const ids = (implementData(result.state)['items'] as { failureId: string }[]).map((row) => row.failureId);
-    result = host(result, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } }, sim, trace);
-    result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
-    result = classify(result, sim, trace);
+test('tasks: declared RED command without {files} runs unchanged beside a test path {files} could not quote', () => {
+  const unsafe = 'tests/"validation".test.ts';
+  const swap = (path: string) => path === 'tests/validation.test.ts' ? unsafe : path;
+  const base = withRed({ red: 'npx nx test web --testFile=validation' });
+  const plan: ParsedPlan = {
+    ...base,
+    criteria: base.criteria.map((row) => ({ ...row, changes: row.changes.map(swap), tests: row.tests.map(swap) })),
+    changes: base.changes.map((row) => ({ ...row, path: swap(row.path) })),
+    tasks: base.tasks.map((row) => ({ ...row, paths: row.paths.map(swap) })),
+  };
+  const envelope = (id: string) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.map((row) => row.replace('tests/validation.test.ts', unsafe)) });
+  const sim: Sim = { plan, envelope };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.deepEqual(redCommand(trace), ['npx nx test web --testFile=validation']);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+});
+
+const isRecordLike = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+
+test('tasks: RED envelope tests and the RED checkpoint carry a fixture only when Tests declares it', () => {
+  const fixture = 'tests/fixtures/input.json';
+  for (const declared of [true, false]) {
+    const plan: ParsedPlan = {
+      ...PLAN,
+      criteria: PLAN.criteria.map((row) => row.id === 'SC1' ? { ...row, changes: [...row.changes, fixture], tests: declared ? [...row.tests, fixture] : row.tests } : row),
+      changes: [...PLAN.changes, { action: 'NEW', path: fixture, note: 'fixture', command: null, line: 5 }],
+      tasks: PLAN.tasks.map((row) => row.id === 'T1' ? { ...row, paths: [...row.paths, fixture] } : row),
+    };
+    const sim: Sim = { plan };
+    let { result, trace } = start(1, sim);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
-    if (preExisting) assert.equal(record(result, 'T1')?.status, 'accepted');
-    else assert.match(record(result, 'T1')?.reason ?? '', /collides with a pre-existing baseline failure/);
+    const expected = declared ? [fixture, 'tests/validation.test.ts'] : ['tests/validation.test.ts'];
+    const envelope = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
+    assert.deepEqual(envelope?.kind === 'check-envelope' && envelope.tests, expected);
+    const brief = trace.effects.find((effect) => effect.kind === 'write-brief' && isRecordLike(effect.input['task']) && effect.input['task']['id'] === 'T1');
+    const checkpoint = brief?.kind === 'write-brief' && isRecordLike(brief.input['task']) ? brief.input['task']['checkpoint'] : null;
+    assert.deepEqual(isRecordLike(checkpoint) && checkpoint['paths'], expected);
+    const red = trace.effects.find((effect) => effect.kind === 'checkout' && effect.op === 'red');
+    assert.deepEqual(red?.kind === 'checkout' && red.input['permitted'], expected);
   }
+});
+
+test('tasks: RED checkpoint carries a support file declared under a sibling verify criterion', () => {
+  const helper = 'tests/helpers/setup.ts';
+  const plan: ParsedPlan = {
+    ...PLAN,
+    criteria: [...PLAN.criteria, { ...criterion('SC4', helper, 'verify'), tests: [helper] }],
+    changes: [...PLAN.changes, { action: 'NEW', path: helper, note: 'helper', command: null, line: 5 }],
+    tasks: PLAN.tasks.map((row) => row.id === 'T1' ? { ...row, paths: [...row.paths, helper], criteria: [...row.criteria, 'SC4'] } : row),
+  };
+  const sim: Sim = { plan };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  const expected = [helper, 'tests/validation.test.ts'];
+  const envelope = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
+  assert.deepEqual(envelope?.kind === 'check-envelope' && envelope.tests, expected);
+  const brief = trace.effects.find((effect) => effect.kind === 'write-brief' && isRecordLike(effect.input['task']) && effect.input['task']['id'] === 'T1');
+  const checkpoint = brief?.kind === 'write-brief' && isRecordLike(brief.input['task']) ? brief.input['task']['checkpoint'] : null;
+  assert.deepEqual(isRecordLike(checkpoint) && checkpoint['paths'], expected);
+  const red = trace.effects.find((effect) => effect.kind === 'checkout' && effect.op === 'red');
+  assert.deepEqual(red?.kind === 'checkout' && red.input['permitted'], expected);
+});
+
+/** Runs a baseline where SC1's Verify command fails, accepts it as known red, and submits T1. */
+function afterFailingBaseline(sim: Sim): { result: Result; trace: Trace } {
+  const trace: Trace = { effects: [], events: [] };
+  let result = pump(stepImplement(initialImplement(), run(1)), sim, trace);
+  assert.equal(result.state.tag, 'baseline-decision');
+  const ids = (implementData(result.state)['items'] as { failureId: string }[]).map((row) => row.failureId);
+  result = host(result, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } }, sim, trace);
+  result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
+  result = classify(result, sim, trace);
+  return { result: submit(launch(result, sim, trace), 'T1', sim, trace), trace };
+}
+const baselineLog = (trace: Trace) => trace.effects.flatMap((effect) => effect.kind === 'verify' && effect.purpose === 'baseline' ? [`${effect.id}.log`] : []);
+
+test('tasks: a RED baseline collision is a recorded concern unless Pre-existing is yes, never a task defect', () => {
+  for (const preExisting of [false, true]) {
+    const failing = (purpose: string): Outcome => purpose === 'baseline' ? { exit: 1, failedTests: [] } : purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'], baselineHits: ['test:rejects bad input'] } : { exit: 0 };
+    const sim: Sim = { plan: withRed({ preExisting }), verify: failing };
+    const { result, trace } = afterFailingBaseline(sim);
+    assert.deepEqual(redEffects(trace).map((row) => row.scanLogs), [baselineLog(trace)]);
+    assert.equal(record(result, 'T1')?.status, 'accepted');
+    const concerns = 'c' in result.state ? result.state.c?.concerns ?? [] : [];
+    assert.equal(concerns.some((item) => /SC1 expected test names also appear in a failing baseline log \(test:rejects bad input\)/.test(item)), !preExisting, JSON.stringify(concerns));
+  }
+});
+
+test('tasks: declared RED command fails the task when a failing baseline log is unreadable', () => {
+  const sim: Sim = { verify: (purpose) => purpose === 'baseline' ? { exit: 1 } : purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'], scanUnreadable: ['gone.log'] } : { exit: 0 } };
+  const { result } = afterFailingBaseline(sim);
+  assert.match(record(result, 'T1')?.reason ?? '', /baseline log unreadable: gone\.log/);
+});
+
+test('tasks: downgraded RED evidence skips RED replay, verifies GREEN, names the criterion in concerns, and settles evidence', () => {
+  const sim: Sim = { plan: withRed({ red: null }), envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((row) => !row.startsWith('RED-MATRIX')) }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.deepEqual(redCommand(trace), []);
+  assert.ok(trace.effects.some((effect) => effect.kind === 'verify' && effect.purpose === 'scoped' && effect.cwd === 'run/wt/task-t1'));
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  result = submit(launch(result, sim, trace), 'T3', sim, trace);
+  assert.equal(result.state.tag, 'concerns');
+  if (result.state.tag === 'concerns') assert.deepEqual(result.state.items, ['SC1 RED evidence downgraded to verify: no RED command declared']);
+  result = host(result, { type: 'DECISION', kind: 'concerns', answer: { decision: 'accept', by: 'user', quote: 'Accept the downgrade' } }, sim, trace);
+  assert.equal(result.state.tag, 'evidence');
+  result = host(result, { type: 'EVIDENCE', criteria: Object.fromEntries(PLAN.criteria.map((row) => [row.id, { outcome: 'pass', evidence: 'verify passed' }])) }, sim, trace);
+  assert.equal(result.state.tag, 'complete');
+  if (result.state.tag === 'complete') assert.deepEqual([result.state.c.evidence['SC1']?.['source'], result.state.c.evidence['SC1']?.['redProvenance']], ['verify', 'not-required']);
+});
+
+test('tasks: a red criterion with RED but no Tests downgrades to verify, skips RED replay, and names the reason in concerns', () => {
+  const sim: Sim = { plan: withRed({ tests: [] }), envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((row) => !row.startsWith('RED-MATRIX')) }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.deepEqual(redCommand(trace), []);
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  result = submit(launch(result, sim, trace), 'T3', sim, trace);
+  assert.equal(result.state.tag, 'concerns');
+  if (result.state.tag === 'concerns') assert.deepEqual(result.state.items, ['SC1 RED evidence downgraded to verify: no Tests declared']);
+});
+
+test('tasks: admission ignores a RED-MATRIX row for a downgraded sibling criterion and accepts the task', () => {
+  const plan: ParsedPlan = {
+    ...PLAN,
+    criteria: [...PLAN.criteria, criterion('SC4', 'src/d.ts', 'red')],
+    changes: [...PLAN.changes, { action: 'MODIFY', path: 'src/d.ts', note: 'd', command: null, line: 5 }],
+    planIds: [...PLAN.planIds, 'SC4'],
+    tasks: PLAN.tasks.map((row) => row.id === 'T1' ? { ...row, paths: [...row.paths, 'src/d.ts'], criteria: [...row.criteria, 'SC4'] } : row),
+  };
+  const downgradedRow = 'RED-MATRIX SC4 | tests/validation.test.ts:handles d | exit 1 test:handles d';
+  const sim: Sim = { plan, envelope: (id) => { const base = defaultEnvelope(id, plan); return id === 'T1' ? { ...base, evidence: [...base.evidence, downgradedRow] } : base; } };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted', record(result, 'T1')?.reason ?? '');
+  assert.ok(parseRedMatrix([RED_ROW, downgradedRow.replace('SC4', 'SC9')], [PLAN.criteria[0]!], [...PLAN.planIds, 'SC9'], ['SC4']).defects.some((defect) => /unknown criterion SC9/.test(defect)));
+});
+
+test('hotfix production paths exclude declared tests, not test-like paths', () => {
+  const f = failure();
+  const plan = f.c.plan!;
+  const changes = ['src/a.ts', 'checks/a.ts', 'tests/helper.test.ts'];
+  const state = { ...f, c: { ...f.c, plan: {
+    ...plan,
+    criteria: plan.criteria.map((row) => ({ ...row, changes, tests: ['checks/a.ts'] })),
+    changes: changes.map((path, index) => ({ action: 'MODIFY' as const, path, note: path, command: null, line: index + 1 })),
+  } } };
+  const after = { ...RECOVERY_FP, worktree: 'edited' };
+  let r = recoveryHost(state, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'bad branch' } }, after, ['src/a.ts']);
+  assert.equal(r.state.tag, 'hotfix-snapshot');
+  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: after, diff: { paths: ['src/a.ts'] } });
+  const assess = r.effects.find((effect) => effect.kind === 'assess-recovery');
+  assert.deepEqual(assess?.kind === 'assess-recovery' && assess.input['productionPaths'], ['src/a.ts', 'tests/helper.test.ts']);
 });
 
 test('tasks: admission skips RED replay after an attributed RED exception ruling', () => {

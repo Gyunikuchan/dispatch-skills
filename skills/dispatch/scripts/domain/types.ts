@@ -42,7 +42,8 @@ export type LintDefectCode =
   // Plan criteria
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
-  | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
+  | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
+  | 'criterion-review' | 'criterion-critical-review'
   | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
   | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
@@ -68,10 +69,14 @@ export type PlanCriterion = {
   title: string;
   line: number;
   changes: readonly string[];
+  /** Declared `Tests:` paths, a subset of `changes`; RED checkpoint, trim, and envelope decisions read these, never path shape. */
+  tests: readonly string[];
   verify: readonly PlanCommand[];
   evidence: EvidenceClass | null;
   preExisting: boolean | null;
   redException: string | null;
+  /** Focused failing-test command from `RED:`; `{files}` expands to RED-MATRIX test paths. Null on a red criterion downgrades its evidence to verify. */
+  red: string | null;
   testRationale: string | null;
   review: string | null;
   enforcementInfeasibility: string | null;

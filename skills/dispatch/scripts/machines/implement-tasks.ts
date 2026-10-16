@@ -3,7 +3,7 @@
 
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../domain/types.ts';
 import type { PlanAmendment, TreeFingerprint } from '../core/types.ts';
-import { isTestPath, type RedMatrixRow } from './implement-types.ts';
+import { effectiveEvidence, type RedMatrixRow } from './implement-types.ts';
 
 export type TaskStatus = 'pending' | 'running' | 'submitted' | 'accepted' | 'failed';
 export type TaskBriefPaths = { path: string; sha256: string; envelopePath: string; checkpointPath: string };
@@ -140,12 +140,20 @@ export function taskCriteria(plan: ParsedPlan, task: PlanTask): PlanCriterion[] 
   return plan.criteria.filter((criterion) => task.criteria.includes(criterion.id));
 }
 
+/** Red criteria that replay RED; a downgraded criterion (no `RED:`) proves itself by verify instead. */
 export function taskRedCriteria(plan: ParsedPlan, task: PlanTask): PlanCriterion[] {
-  return taskCriteria(plan, task).filter((criterion) => criterion.evidence === 'red' && !criterion.redException);
+  return taskCriteria(plan, task).filter((criterion) => effectiveEvidence(criterion) === 'red' && !criterion.redException);
 }
 
+/** Declared `Tests:` paths of the task's criteria within its approved paths; a RED_READY envelope may change only these. */
+export function taskDeclaredTests(plan: ParsedPlan, task: PlanTask): string[] {
+  return [...new Set(taskCriteria(plan, task).flatMap((criterion) => criterion.tests.filter((file) => task.paths.includes(file))))].sort();
+}
+
+/** RED checkpoint paths: every path RED_READY admits (taskDeclaredTests), so a support file declared under a sibling criterion replays too; empty when no red criterion declares an in-scope test. */
 export function taskTestPaths(plan: ParsedPlan, task: PlanTask): string[] {
-  return [...new Set(taskRedCriteria(plan, task).flatMap((criterion) => criterion.changes.filter((file) => isTestPath(file) && task.paths.includes(file))))].sort();
+  const red = taskRedCriteria(plan, task).some((criterion) => criterion.tests.some((file) => task.paths.includes(file)));
+  return red ? taskDeclaredTests(plan, task) : [];
 }
 
 export function checkpointPathOf(envelopePath: string): string {

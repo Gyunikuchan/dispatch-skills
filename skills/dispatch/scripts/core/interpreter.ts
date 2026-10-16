@@ -9,6 +9,7 @@ import { governedDesignText } from '../domain/design.ts';
 import { governedPlanText } from '../domain/plan.ts';
 import { attemptOf, restoreSessionPaths, runPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
+import { taskDeclaredTests } from '../machines/implement-tasks.ts';
 import { dryRunGuidance, faultFrame, oneLine, projectFrame, recoveryFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, LayoutUnsupported, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
@@ -45,7 +46,7 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
     const record = event.task ? child.c.tasks[event.task] : undefined;
     const task = child.c.plan!.tasks.find((item) => item.id === event.task);
     if (!record?.worktree || !task || !record.baseline || event.task === undefined || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], tests: taskDeclaredTests(child.c.plan!, task), since: record.baseline, cwd: record.worktree };
   } else if (child.tag === 'hotfix-write') {
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...child.c.plan!.changes.map((change) => change.path)])], since: child.before };
   } else return null;

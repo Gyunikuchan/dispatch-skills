@@ -35,3 +35,28 @@ test('amend-brief-task-map: a brief regenerated after AMEND carries the authored
   if (brief?.type !== 'BRIEF_READY') return;
   assert.match(fs.readFileSync(brief.path, 'utf8'), /## Shared plan context\n[\s\S]*\| T1 \| Part one, faster \| Deliver part one\. \| none \| SC1 \|/);
 });
+
+// SECTION: AMEND downgrade — an approved revision that installs a red criterion without RED records one concern.
+
+test('amend-red-downgrade: an AMEND that installs a red criterion without RED records one downgrade concern', () => {
+  const sim: Sim = { plan: AMEND_PLAN };
+  const started = start(3, sim);
+  const trace = started.trace;
+  let result = launch(started.result, sim, trace);
+  const toRed = [{
+    kind: 'modify', target: 'SC1',
+    current: '  - Changes: src/a.ts, tests/part-1.test.ts\n  - Verify: `node --test tests/part-1.test.ts`\n  - Evidence: verify',
+    proposed: '  - Changes: src/a.ts, tests/part-1.test.ts\n  - Tests: tests/part-1.test.ts\n  - Verify: `node --test tests/part-1.test.ts`\n  - Evidence: red',
+  }];
+  result = host(result, { type: 'AMEND', delta: toRed, notify: [{ task: 'T1', notice: 'SC1 is now red.' }], rationale: 'SC1 needs a failing test first.' } as unknown as Event, sim, trace);
+  assert.equal(result.state.tag, 'tasks');
+  const concern = 'SC1 RED evidence downgraded to verify: no RED command declared';
+  const concerns = () => ('c' in result.state && result.state.c ? result.state.c.concerns : []);
+  assert.deepEqual(concerns().filter((row) => row === concern), [concern]);
+  const retitle = [
+    { kind: 'modify', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |', proposed: '| T2 | Part two, faster | Deliver part two. | none | SC2 |' },
+    { kind: 'modify', target: 'T2', current: '### T2 — Part two', proposed: '### T2 — Part two, faster' },
+  ];
+  result = host(result, { type: 'AMEND', delta: retitle, notify: [], rationale: 'Retitle T2.' } as unknown as Event, sim, trace);
+  assert.deepEqual(concerns().filter((row) => row === concern), [concern]);
+});

@@ -3,7 +3,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, WriteEnvelope, PlanAmendment, Ports } from '../core/types.ts';
-import { isTestPath } from '../domain/plan.ts';
 import type { Git } from './git.ts';
 import { loadRecovery } from './recovery-manifest.ts';
 import { runOwnedPaths } from './snapshot.ts';
@@ -242,11 +241,13 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
     const changed = [...new Set(paths.map((file) => cleanRepoPath(file) ?? file))].sort();
     const outside = changed.filter((file) => !allowed.has(file));
     if (outside.length && testsOnly) defects.push(`Tests-only writer changed paths outside the approved scope: ${outside.join(', ')}.`);
-    if (testsOnly && changed.some((file) => !isTestPath(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !isTestPath(file)).join(', ')}.`);
+    // RED_READY admits only the task's declared `Tests:` paths, never a path-shape guess.
+    const tests = new Set((effect.tests ?? []).map((file) => cleanRepoPath(file)).filter((file): file is string => file !== null));
+    if (testsOnly && changed.some((file) => !tests.has(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !tests.has(file)).join(', ')}.`);
     if (envelope?.files) for (const file of envelope.files) {
       const normalized = cleanRepoPath(file.path);
       if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
-      if (normalized !== null && envelope.stage === 'RED_READY' && !isTestPath(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
+      if (normalized !== null && envelope.stage === 'RED_READY' && !tests.has(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
     }
     return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };

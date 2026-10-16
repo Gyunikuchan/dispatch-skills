@@ -51,6 +51,10 @@ test('dry-run-guidance: new authority and recovery fields retain privacy-safe di
   assert.equal(rejectionReason('event.criterionDefinitions[0].id: expected string, got "secret"'), 'invalid-value at event.*');
 });
 
+test('diagnostic paths name plan criterion tests and red fields', () => {
+  for (const field of ['criteria[0].tests[1]', 'criteria[0].red']) assert.equal(rejectionReason(`event.${field}: expected string, got "secret"`), `invalid-value at event.${field}`);
+});
+
 test('start drives the machine to its await and returns one frame', async () => {
   const ports = fakePorts();
   const { runDir, result } = await startAwaiting(ports);

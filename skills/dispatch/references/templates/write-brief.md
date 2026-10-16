@@ -27,7 +27,7 @@ When Governing spec is present, read the whole spec it names before the bounded 
 
 ### Verification and editing
 - Put agent-created helpers, captured logs, intermediate data, and backups in `<run>/scratch/<envelope-dir-name>/`. Derive `<run>` from `<Expected Envelope Path>` (`<run>/<envelope-dir-name>/outcome.json`); copy its parent directory name exactly, without reconstructing an effect id. Create working directories only when needed. Classify backups by purpose even when named like deliverables. Keep the outcome envelope and driver-owned evidence at supplied paths and production edits within the brief's scoped repository paths.
-- Verify with your mapped `commands` only; after each change, rerun just the commands it affects. Never run an aggregate suite such as `npm test`: the driver runs every gate after you return.
+- Verify with your mapped `commands` only; after each change, rerun just the commands it affects. Never run the repository's aggregate test suite: the driver runs every gate after you return.
 - Edit with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.
 
 <<slot:kind-rules>>

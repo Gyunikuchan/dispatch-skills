@@ -22,7 +22,7 @@ test('user-only manual completion requires explicit quote and per-criterion evid
 });
 
 test('rewrite SC1 manual waiver retains user attribution and RED provenance', () => {
-  const base = failure(); const f = { ...base, c: { ...base.c, plan: { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const })) } } };
+  const base = failure(); const f = { ...base, c: { ...base.c, plan: { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const, red: 'check', changes: [...criterion.changes, 'tests/a.test.ts'], tests: ['tests/a.test.ts'] })) } } };
   const r = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'Waive SC1 and its RED requirement', criteria: { SC1: { outcome: 'waived', evidence: 'Accepted limitation' } } } });
   assert.equal(r.state.tag, 'complete');
   if (r.state.tag !== 'complete') return;
@@ -87,7 +87,7 @@ test('unchanged failure withdraws hotfix for stage', () => {
   assert.equal(host(r.state, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'again' } }).state.tag, 'baseline-decision');
 });
 test('rewrite SC1 observed RED stays distinct from a manual waived RED requirement', () => {
-  const base = failure(); const plan = { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const })) };
+  const base = failure(); const plan = { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const, red: 'check', changes: [...criterion.changes, 'tests/a.test.ts'], tests: ['tests/a.test.ts'] })) };
   const f = { ...base, c: { ...base.c, plan, redMatrix: [{ id: 'SC1', path: 'tests/a.test.ts', leaf: 'check', exit: 1, tests: ['expected failure'] }] } };
   const result = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I observed the behavior pass', criteria: { SC1: { outcome: 'pass', evidence: 'Behavior passed' } } } });
   assert.equal(result.state.tag, 'complete'); if (result.state.tag !== 'complete') return;

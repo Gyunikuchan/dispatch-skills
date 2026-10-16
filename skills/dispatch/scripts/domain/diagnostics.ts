@@ -131,7 +131,7 @@ const EVENT_FIELDS: ReadonlySet<string> = new Set((
   + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScope '
   + 'choice request ruling requestId source baseArtifactHash writerRationale delta proposedArtifactHash affectedTasks affectedIncrements paths '
   + 'obligations commands finalCommands phaseDuties increments id prerequisites acceptance title changes verify command final '
-  + 'preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
+  + 'tests red preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
   + 'baselineEvidence phaseObligations writer remainingIncrements design status exit inputFingerprint priority outcome dependencies hash fields '
   + 'slot sourceKey outputPath mapping configuredModel launcherModel launcherEffort provider clusterId affectedPaths fix dependsOn verification '
   + 'severity decision selected ids hotfix mode rootCause status briefHash detail need notify notice delta current proposed target amendment external '

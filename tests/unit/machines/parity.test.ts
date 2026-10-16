@@ -51,7 +51,7 @@ const applyFailed: Step = (_effect, state) => {
   return { type: 'FIXES_APPLIED', clusters: [{ clusterId: found?.[1] ?? '', status: 'failed' }] };
 };
 const verified = (exit = 0): Step => (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit, logPath: 'l' }], fingerprint: {} });
-const unrunnable: Step = (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit: 1, logPath: 'l', loadError: true }], fingerprint: {} });
+const unrunnable: Step = (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit: 127, logPath: 'l' }], fingerprint: {} });
 const repaired: Step = (_effect, state) => {
   const found = JSON.stringify(state).match(/"clusterId":"([^"]+)"/);
   return { type: 'DECISION', kind: 'fix-verification', answer: { [found?.[1] ?? '']: { verification: ['c2'], by: 'orchestrator', rationale: 'original command could not run' } } };
@@ -76,7 +76,7 @@ const governed = (scenario: readonly Step[]): readonly Step[] => {
 const IMPLEMENT_HASH = `sha256:${'a'.repeat(64)}`;
 const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
-  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable' as const, coveredBy: null }] : [],
+  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, tests: [], red: null, redException: null, testRationale: null, review: null, enforcementInfeasibility: null, retain: 'durable' as const, coveredBy: null }] : [],
   changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example', planIds: ['SC1'], sharedContext: '# Example', seams: [], warnings: [],
   tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [], overlaps: [] }] : [],
