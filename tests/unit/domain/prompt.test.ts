@@ -2,14 +2,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { assembleTemplate, extractTemplate, fillTemplate } from '../../../skills/dispatch/scripts/domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualitySections, type QualityConsumer } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../fixtures/review-prompt-inputs.ts';
 
 const templates = new URL('../../../skills/dispatch/references/templates/', import.meta.url);
 const golden = new URL('../../fixtures/review-prompt-golden/', import.meta.url);
 const read = (base: URL, name: string) => readFileSync(new URL(name, base), 'utf8');
-// Code reviews merge the shared quality bar, as `prepare-review` does.
-const shared = (kind: string) => (kind === 'code' ? [read(templates, 'quality-bar.md')] : []);
+const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind)];
 
 test('prompt: fill rejects missing declared values and undeclared value names', () => {
   assert.throws(() => fillTemplate('<A> <B>', ['A', 'B'], { A: '1' }), /Missing value\(s\) for declared variable\(s\): B/);
@@ -56,7 +55,7 @@ test('prompt: a section declared in both a kind and a shared kind block throws',
 // SECTION: Plan-review severity calibration
 
 const CALIBRATION = "In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Verify gates would surface deterministically during implementation, such as a fixture update or a test assertion, is SHOULD.";
-const assembled = (kind: string) => assembleTemplate(read(templates, 'review-prompt.md'), read(templates, `review-prompt-${kind}.md`), undefined, shared(kind)).template;
+const assembled = (kind: QualityConsumer) => assembleTemplate(read(templates, 'review-prompt.md'), read(templates, `review-prompt-${kind}.md`), undefined, shared(kind)).template;
 
 test('SC4 plan prompt calibrates MUST', () => {
   const flat = assembled('plan').replace(/\s+/g, ' ');
@@ -65,7 +64,7 @@ test('SC4 plan prompt calibrates MUST', () => {
 
 test('SC4 code and design prompts omit severity calibration', () => {
   assert.match(extractTemplate(read(templates, 'review-prompt.md')).template, /improvement; no defect\.\n<<slot:severity>>\nIn `defect`/);
-  for (const kind of ['code', 'design']) {
+  for (const kind of ['code', 'design'] as const) {
     const template = assembled(kind);
     assert.match(template, /improvement; no defect\.\nIn `defect`/, kind);
     assert.ok(!template.includes('In plan reviews') && !template.includes('<<slot:'), kind);
@@ -74,11 +73,10 @@ test('SC4 code and design prompts omit severity calibration', () => {
 
 // SECTION: Grounding, tooling, and reuse rules
 
-const flat = (kind: string) => assembled(kind).replace(/\s+/g, ' ');
-const tagsBlock = (kind: string) => flat(kind).split('### Tags')[1]!.split('### Budget')[0]!;
+const flat = (kind: QualityConsumer) => assembled(kind).replace(/\s+/g, ' ');
 
 test('review prompts: every kind grounds findings and reports a defective local convention once', () => {
-  for (const kind of ['code', 'design', 'plan']) {
+  for (const kind of ['code', 'design', 'plan'] as const) {
     const text = flat(kind);
     for (const rule of [
       'Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known vulnerability class.',
@@ -89,42 +87,55 @@ test('review prompts: every kind grounds findings and reports a defective local 
   }
 });
 
-test('review prompts: only code review searches for existing equivalents and skips tool-enforced issues', () => {
-  const rules = [
-    'skip issues that configured linters, formatters, or type checkers enforce.',
-    'for each new exported or shared symbol, search the repository by name and behaviour for an existing equivalent',
-    'anchored on the new symbol, with the existing `path:L<line>` in `defect`',
-    'Reuse searches do not count toward the target.',
-  ];
-  for (const rule of rules) assert.ok(flat('code').includes(rule), rule);
-  for (const kind of ['design', 'plan']) for (const rule of rules) assert.ok(!flat(kind).includes(rule), `${kind}: ${rule}`);
+test('quality selection: reuse applies to every consumer and code tooling applies to code and plan', () => {
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    assert.ok(flat(kind).includes('search the repository by name and behaviour for an existing equivalent'));
+    assert.equal(flat(kind).includes('skip issues that configured linters, formatters, or type checkers enforce.'), kind !== 'design');
+    assert.equal(flat(kind).includes('anchored on the new symbol, with the existing `path:L<line>` in `defect`'), kind === 'code');
+    assert.equal(flat(kind).includes('Reuse searches do not count toward the target.'), kind === 'code');
+  }
 });
 
-// Code reviews take these rules from the merged quality bar; plan reviews keep them in tag glosses.
-const ruleText = (kind: string) => (kind === 'code' ? flat('code') : tagsBlock(kind));
+const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind).replace(/\s+/g, ' ');
 
-test('review prompts: code and plan reviews name data-access and exposure risks', () => {
-  for (const kind of ['code', 'plan']) {
-    const text = ruleText(kind);
-    for (const term of ['N+1', 'unpaginated reads', /\bunindexed|without an index\b|index new filter or sort columns/, 'object ownership', 'sensitive data in logs']) {
-      assert.ok(typeof term === 'string' ? text.includes(term) : term.test(text), `${kind}: ${String(term)}`);
-    }
+test('quality selection: code and plan reviews name data-access and exposure risks', () => {
+  for (const kind of ['code', 'plan'] as const) {
+    for (const term of ['N+1', 'unpaginated reads', 'index new filter or sort columns', 'object ownership', 'sensitive data in logs']) assert.ok(ruleText(kind).includes(term), `${kind}: ${term}`);
   }
 });
 
 // SECTION: Quality bar and host-rule precedence
 
-const qualitySection = read(templates, 'quality-bar.md').replace(/\r\n/g, '\n').split(/^## quality\n/m)[1]!.trim();
+test('quality selection: every review contains each selected rule once and excludes other sections', () => {
+  const bar = read(templates, 'quality-bar.md');
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const quality = qualityBar(bar, kind).split('## quality\n\n')[1]!;
+    assert.equal(assembled(kind).split(quality).length, 2, kind);
+    for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+      assert.equal(assembled(kind).split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
+    }
+  }
+});
 
-test('review prompts: code review carries the quality bar exactly once; plan and design carry none of its rules', () => {
-  assert.equal(assembled('code').split(qualitySection).length, 2);
-  const rules = qualitySection.split('\n').filter((line) => line.startsWith('- '));
-  assert.ok(rules.length > 0);
-  for (const kind of ['design', 'plan']) for (const rule of rules) assert.ok(!assembled(kind).includes(rule), `${kind}: ${rule}`);
+test('quality selection rejects missing, empty, duplicate sections and invalid consumers', () => {
+  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'plan', 'code'], design: ['shared', 'design'] };
+  assert.deepEqual(qualitySections, expected);
+  const sections = ['shared', 'code', 'plan', 'design'];
+  const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
+  for (const [consumer, selected] of Object.entries(expected)) {
+    assert.equal(qualityBar(bar, consumer as QualityConsumer), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);
+    for (const section of selected) {
+      assert.throws(() => qualityBar(bar.replace(`## ${section}\n${section} rule`, ''), consumer as QualityConsumer), { message: `Missing quality section: ${section}` });
+      assert.throws(() => qualityBar(bar.replace(`${section} rule`, '  \n\t'), consumer as QualityConsumer), { message: `Empty quality section: ${section}` });
+    }
+  }
+  assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code'), /declares section "shared" twice/);
+  for (const consumer of ['ask', '__proto__', 'toString']) assert.throws(() => qualityBar(bar, consumer as QualityConsumer), { message: `Unknown quality consumer: ${consumer}` });
+  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal', 'code'), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal');
 });
 
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
-  for (const kind of ['code', 'design', 'plan']) {
+  for (const kind of ['code', 'design', 'plan'] as const) {
     const text = flat(kind);
     assert.equal(text.split('follows a host rule is not a finding, even when it contradicts').length, 2, kind);
     assert.equal(text.split('Where host rules are silent,').length, 2, kind);
@@ -133,8 +144,8 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 
 // SECTION: Durable test bar and plan-free naming
 
-test('review prompts: reviews hold retained tests to the durable bar', () => {
-  for (const kind of ['code', 'plan']) {
+test('quality selection: reviews hold retained tests to the durable bar', () => {
+  for (const kind of ['code', 'plan'] as const) {
     const text = ruleText(kind);
     for (const term of ['the durable bar in the plan template', 'demote', 'delete', ...(kind === 'plan' ? ['rewrite', 'transient-named file'] : [])]) assert.ok(text.includes(term), `${kind}: ${term}`);
   }
@@ -144,4 +155,15 @@ test('review prompts: reviews hold retained tests to the durable bar', () => {
 test('review prompts: prompts keep plan IDs out of tests', () => {
   const text = flat('code');
   for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'criterion, task, or finding IDs; plan or session paths']) assert.ok(text.includes(term), term);
+});
+
+test('quality selection keeps artifact finding loci out of code and writer criteria', () => {
+  const bar = read(templates, 'quality-bar.md');
+  for (const consumer of ['code', 'writer'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
+  for (const consumer of ['plan', 'design'] as const) {
+    const selected = qualityBar(bar, consumer);
+    assert.match(selected, new RegExp(`nearest ${consumer} heading as locus`));
+    assert.equal(selected.split('- Adjacent findings:').length, 2);
+    assert.doesNotMatch(selected, new RegExp(`nearest ${consumer === 'plan' ? 'design' : 'plan'} heading`));
+  }
 });

@@ -1,7 +1,8 @@
+import { qualitySections } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, Ports, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { beginImplement, implementData, initialImplement, stepImplement, validateImplement, type Context } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { beginBoundImplement, beginImplement, implementData, initialImplement, stepImplement, validateImplement, type Context } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { settledPlanInput, writerConfig } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginReview, stepReview, reviewSpecFromRun } from '../../../skills/dispatch/scripts/machines/review.ts';
@@ -341,4 +342,13 @@ test('implement re-authored plan keeps earlier review history', () => {
  }
  const log = files.get('x.review-log.md') ?? '';
  for (const marker of ['Earlier finding', 'Later finding', 'Earlier finding ruling', 'Later finding ruling', 'plan-review.s1']) assert.ok(log.includes(marker), marker);
+});
+
+test('author quality reads match the shared consumer map for nested plan', () => {
+  const binding = { path: 'x.design.md', revision: HASH, increment: 'I01', contract: {}, paths: ['src/a.ts'], approval: { by: 'user' as const, quote: 'Approved', hash: HASH }, repair: [] };
+  const initial = beginBoundImplement(run(), binding, {});
+  assert.equal(initial.state.tag, 'starting');
+  const state = step(initial.state, { type: 'SNAPSHOT', effectId: initial.effects[0]!.id, fingerprint: FP, diff: { paths: [] } }).state;
+  assert.equal(state.tag, 'author');
+  assert.deepEqual(implementData(state), { artifact: 'plan', path: 'implement-example.plan.md', template: 'references/templates/plan.md', read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.plan }] });
 });

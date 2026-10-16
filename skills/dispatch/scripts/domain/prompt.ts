@@ -70,6 +70,27 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
   return { variables, sections };
 }
 
+export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer';
+export const qualitySections = {
+  code: ['shared', 'code'],
+  writer: ['shared', 'code'],
+  plan: ['shared', 'plan', 'code'],
+  design: ['shared', 'design'],
+} as const satisfies Record<QualityConsumer, readonly string[]>;
+
+/** Selects the consumer's criteria as the frame's single quality block. */
+export function qualityBar(markdown: string, consumer: QualityConsumer): string {
+  if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
+  const { sections } = parseKindBlock(markdown);
+  const bodies = qualitySections[consumer].map((section) => {
+    const body = sections.get(section);
+    if (body === undefined) throw new Error(`Missing quality section: ${section}`);
+    if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
+    return body.trim();
+  });
+  return `## quality\n\n${bodies.join('\n\n')}`;
+}
+
 /**
  * Fills every `<<slot:NAME>>` of the frame's template with the `## NAME` body of the kind block or a shared
  * kind block; variables are the union of all declarations. A slot without a section, a section without a

@@ -1,3 +1,4 @@
+import { qualitySections } from '../domain/prompt.ts';
 import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment, SpecIdentity } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, designScopeGrew } from '../domain/design.ts';
@@ -347,7 +348,7 @@ export function designAwait(state: DesignState): Await | null {
   }
 }
 function projectDesignData(state: DesignState): Readonly<Record<string, unknown>> {
-  if (state.tag === 'author') return { artifact: 'design', path: state.c.path, template: 'references/templates/design.md', defects: state.defects };
+  if (state.tag === 'author') return { artifact: 'design', path: state.c.path, template: 'references/templates/design.md', read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }], defects: state.defects };
   if (state.tag === 'approval') return { kind: 'approval', hash: state.c.hash, question: 'Approve this governed design revision.', options: ['approve', 'stop'], required: { by: 'user', quote: 'non-empty', hash: state.c.hash } };
   if (state.tag === 'increment') return { ...implementData(state.child), increment: state.increment, revision: state.c.hash };
   if (state.tag === 'revision') return designRevisionData(state.child);

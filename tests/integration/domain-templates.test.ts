@@ -1,3 +1,4 @@
+import { qualityBar } from '../../skills/dispatch/scripts/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -110,9 +111,11 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
   assert.ok(!plan.includes('<Component Name>'));
 });
 
-test('templates: plan review prompt requires inspecting task dependencies, ownership, and independence', () => {
+test('quality selection: plan review checks task dependencies, ownership, and independence', () => {
   const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
-  assert.match(prompt, /claimed independence checked against\s+producer\/consumer interfaces/);
+  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  assert.match(bar, /claimed independence checked against\s+producer\/consumer interfaces/);
+  assert.match(prompt, /The plan summary, success criteria and task graph/);
   assert.match(prompt, /`dependency-graph`, `parallel-safety`/);
 });
 
@@ -128,7 +131,7 @@ test('templates: every tag a review prompt offers is accepted by the validator a
   };
   for (const kind of ['code', 'plan', 'design'] as const) {
     const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
-    const offered = [...block.matchAll(/^- [^:\n]+: (.*?) —/gm)].flatMap((line) => [...line[1]!.matchAll(/`([^`]+)`/g)].map((tag) => tag[1]!));
+    const offered = [...block.matchAll(/^- [^:\n]+: (.*?)(?: \u2014 .*)?$/gm)].flatMap((line) => [...line[1]!.matchAll(/`([^`]+)`/g)].map((tag) => tag[1]!));
     assert.ok(offered.length, `${kind} prompt lists tags`);
     const schema = enumOf(JSON.parse(readFileSync(new URL(`schemas/report-${kind}.json`, root), 'utf8')));
     for (const tag of offered) {
@@ -138,11 +141,11 @@ test('templates: every tag a review prompt offers is accepted by the validator a
   }
 });
 
-test('templates: plans name searched equivalents and plan review checks them', () => {
+test('quality selection: plans name searched equivalents and plan review checks them', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
   assert.match(plan, /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/);
   assert.match(plan, /^- Reuse: on `\[NEW\]` entries and on `\[MODIFY\]` entries that add a helper, module, or type;/m);
-  const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8').replace(/\s+/g, ' ');
+  const prompt = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(prompt.includes('each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search'));
 });
 
@@ -168,3 +171,26 @@ test('templates: task brief applies the durable bar and isolates transient tests
 });
 
 test('template parses under layered lint', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });
+
+test('quality selection keeps judging rules single-sourced', () => {
+  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
+  assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'code', 'plan', 'design']);
+  for (const consumer of ['code', 'writer'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
+  for (const consumer of ['plan', 'design'] as const) {
+    const selected = qualityBar(bar, consumer);
+    assert.match(selected, new RegExp(`nearest ${consumer} heading as locus`));
+    assert.equal(selected.split('- Adjacent findings:').length, 2);
+  }
+  assert.doesNotMatch(bar, /^- Standards:/m);
+  for (const kind of ['plan', 'design']) {
+    const prompt = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
+    assert.doesNotMatch(prompt, /^## quality$/m);
+    assert.match(prompt, /Apply the selected quality bar to these governing targets/);
+    const tags = prompt.split('## tags')[1]!.split('## severity')[0]!;
+    assert.match(tags, /`dependency-graph`, `parallel-safety`/);
+    assert.doesNotMatch(tags, /\u2014|findings/);
+    for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- [^:]+: `[^`]+`(?:, `[^`]+`)*$/);
+    for (const rule of ['claimed independence checked against', 'each new helper, module, or type names the equivalents searched', 'real alternatives weighed', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
+  }
+  for (const rule of ['Spec alignment:', 'claimed independence checked against', 'each new helper, module, or type names the equivalents searched', 'real alternatives weighed', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
+});

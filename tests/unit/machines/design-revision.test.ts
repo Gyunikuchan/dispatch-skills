@@ -1,8 +1,10 @@
+import { qualitySections } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import { rebindReviewSpec, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision, designRevisionData } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
-import { stepDesign } from '../../../skills/dispatch/scripts/machines/design.ts';
+import { integration } from './fixtures/design-integration.ts';
+import { designData, stepDesign } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { approval, approveDesignScope, design, hash } from './fixtures/design.ts';
 import { started } from './fixtures/design-delivery.ts';
 import type { DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
@@ -60,11 +62,12 @@ test('review-cap: successive design revisions launch cumulative rounds and findi
 
 // SECTION: Revision author handoff
 
-test('revision-handoff: initial author exposes the canonical design template', () => {
+test('author quality reads: revision author exposes the canonical design template', () => {
   const { author } = revisionParsing();
   const data = designRevisionData(author);
   assert.equal(data['template'], 'references/templates/design.md');
-  assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'evidence', 'path', 'reason', 'template']);
+  assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'evidence', 'path', 'read', 'reason', 'template']);
+  assert.deepEqual(data['read'], [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }]);
   assert.equal(data['evidence'], 'User constraint: keep the existing public API.');
   assert.deepEqual(data['defects'], []);
 });
@@ -351,7 +354,7 @@ function governedRevision() {
  const event = { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash: 'sha256:' + 'c'.repeat(64), parsed: design, defects: [] };
  return { c, parse, event, review: stepDesignRevision(parse.state, event) };
 }
-test('stale design spec pin returns revision to author', () => {
+test('author quality reads: stale design spec pin returns revision to author', () => {
  const { c, parse, event, review } = governedRevision();
  const stale = stepDesignRevision(parse.state, { ...event, governing: { pinned: governingSpec.hash, current: specUpdate.hash, design: null, reqIds: [] } });
  assert.equal(stale.state.tag, 'parse'); assert.deepEqual(stale.effects, []);
@@ -359,6 +362,7 @@ test('stale design spec pin returns revision to author', () => {
  const parent: DesignState = { tag: 'revision', c, child };
  const rebound = stepDesign(parent, specUpdate);
  assert.ok(rebound.state.tag === 'revision' && rebound.state.child.tag === 'author');
+ assert.deepEqual(designData(rebound.state)['read'], [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }]);
  assert.equal(rebound.state.child.defects[0]?.['code'], 'stale-spec'); assert.equal(rebound.state.c.revisionReviewEpoch, 1);
  assert.equal(rebound.state.c.revisionReviewRound, 2); assert.deepEqual(rebound.effects, []);
  }
@@ -401,4 +405,14 @@ test('revision review stale after findings keeps history', () => {
  rootMachine.render!({ tag: 'design', run, child: accepted.state }, ports, '/session/.state/runs/run');
  const log = [...files.entries()].find(([file]) => file.endsWith('.review-log.md'))?.[1] ?? '';
  for (const marker of ['Earlier revision finding', 'Earlier revision ruling', 'Later revision finding', 'design.revision.review.s1']) assert.ok(log.includes(marker), marker);
+});
+
+test('author quality reads match the shared consumer map after an integration contract conflict', () => {
+  const state = integration();
+  if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('Expected integration review');
+  state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, severity: 'CONSIDER' })) } };
+  const offered = stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: '[shared-contract]' } } });
+  const revision = stepDesign(offered.state, { type: 'DECISION', kind: 'opt-in', answer: [] }).state;
+  assert.ok(revision.tag === 'revision' && revision.child.tag === 'author');
+  assert.deepEqual(designData(revision)['read'], [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }]);
 });

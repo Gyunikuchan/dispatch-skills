@@ -1,7 +1,8 @@
+import { qualitySections } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LevelGateScope, RunStartedEvent, ScopeProposal } from '../../../skills/dispatch/scripts/core/types.ts';
-import { beginDesign, stepDesign, validateDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
+import { beginDesign, designData, stepDesign, validateDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { implementData, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { launch, record, start } from './fixtures/implement-tasks.ts';
 import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
@@ -501,3 +502,13 @@ test('design: explicit design path is preserved when a session directory is conf
 
 
 
+
+test('author quality reads match the shared consumer map for initial design', () => {
+  const state = beginDesign(run('design')).state;
+  assert.equal(state.tag, 'author');
+  assert.deepEqual(designData(state), {
+    artifact: 'design', path: 'x.design.md', template: 'references/templates/design.md', defects: [],
+    read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }],
+    governedDesign: { path: 'x.design.md', revision: null }, settledLevel: 'low', levelAssessment: null, scopeAdjustments: [], scopeNotice: null,
+  });
+});

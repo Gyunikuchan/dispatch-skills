@@ -1,5 +1,6 @@
 // @ts-check
 
+import { qualitySections } from '../domain/prompt.ts';
 import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
@@ -1890,7 +1891,7 @@ function stateData(state: ImplementState): Readonly<Record<string, unknown>> {
 
 function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
-    case 'author': return { artifact: 'plan', path: state.c.planPath, template: IMPLEMENT_TEMPLATE, ...(state.defects.length ? { defects: state.defects } : {}) };
+    case 'author': return { artifact: 'plan', path: state.c.planPath, template: IMPLEMENT_TEMPLATE, read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.plan }], ...(state.defects.length ? { defects: state.defects } : {}) };
     case 'plan-review': case 'code-review': return reviewData(state.review);
     case 'tasks': return {
       stage: 'task', effort: state.c.writer?.effort, concurrency: writeConcurrency(state.c.run.config), settledLevel: state.c.run.level,

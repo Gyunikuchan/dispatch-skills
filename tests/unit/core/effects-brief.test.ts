@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import { qualityBar, qualitySections, type QualityConsumer } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
 import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
@@ -102,24 +103,69 @@ test('prewrite-level: task briefs request scope live and echo briefHash; hotfix 
   assert.doesNotMatch(hotfixText, /writer request before that edit/);
 });
 
-test('task and hotfix briefs render the same quality bar as the code review prompt, with fixed precedence limits', async () => {
-  const quality = fs.readFileSync(path.join(SKILL_ROOT, 'references', 'templates', 'quality-bar.md'), 'utf8').replace(/\r\n/g, '\n').split(/^## quality\n/m)[1]!.trim();
-  assert.ok(quality.includes('Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed.'));
+test('quality selection assembles every review and writer kind and reports selector failures', async () => {
+  const dir = path.join(SKILL_ROOT, 'references', 'templates');
+  const bar = fs.readFileSync(path.join(dir, 'quality-bar.md'), 'utf8');
   const runDir = tempDir(), ports = fakePorts();
-  const once = (text: string, label: string) => assert.equal(text.split(quality).length, 2, label);
-  const brief = createWriteBrief({ skillRoot: SKILL_ROOT });
-  for (const [index, stage] of (['task', 'hotfix'] as const).entries()) {
-    const event = only(await brief({ kind: 'write-brief', id: `implement.write-brief.${7 + index}`, stage, input: {} }, ports, { runDir, attempt: 1 }));
-    assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') return;
-    once(fs.readFileSync(event.path, 'utf8'), stage);
-  }
+  const read = ports.fs.readText;
+  let selectedBar = bar;
+  ports.fs.readText = (file) => file === path.join(dir, 'quality-bar.md') ? selectedBar : file === path.join(dir, 'review-prompt-unexpected.md') ? read(path.join(dir, 'review-prompt-design.md')) : read(file);
   const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], log: async () => '' };
-  const [review] = await createPrepareReview({ cwd: tempDir(), skillRoot: SKILL_ROOT, git })({
-    kind: 'prepare-review', id: 'p-quality', round: 1,
-    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: 'Quality bar' }, scope: { scope: 'full' },
-  }, ports, { runDir, attempt: 1 });
-  assert.equal(review?.type, 'REVIEW_PREPARED'); if (review?.type !== 'REVIEW_PREPARED') return;
-  once(ports.fs.readText(review.promptPaths['codex[0]']!), 'code review');
+  const prepare = createPrepareReview({ cwd: tempDir(), skillRoot: SKILL_ROOT, git });
+  const brief = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const target = path.join(runDir, 'artifact.md');
+  fs.writeFileSync(target, '# Artifact\n');
+  let id = 0;
+  const review = (kind: string) => prepare({ kind: 'prepare-review', id: `review.${++id}`, round: 1, review: { kind, target: kind === 'code' ? 'HEAD' : target, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 });
+  const writer = (stage: 'task' | 'hotfix') => brief({ kind: 'write-brief', id: `write-brief.${++id}`, stage, input: {} }, ports, { runDir, attempt: 1 });
+  const assertQuality = (text: string, consumer: QualityConsumer) => {
+    const quality = qualityBar(bar, consumer).split('## quality\n\n')[1]!;
+    assert.equal(text.split(quality).length, 2, consumer);
+    for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+      assert.equal(text.split(marker).length - 1, (qualitySections[consumer] as readonly string[]).includes(section) ? 1 : 0, `${consumer}: ${section}`);
+    }
+    assert.ok(text.includes('Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed.'));
+    if (consumer === 'code' || consumer === 'writer') assert.doesNotMatch(text, /- Adjacent findings:|Adjacent findings in plan and design reviews|nearest plan or design heading/);
+    else assert.match(text, new RegExp(`nearest ${consumer} heading as locus`));
+  };
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const event = only(await review(kind));
+    assert.equal(event.type, 'REVIEW_PREPARED');
+    if (event.type === 'REVIEW_PREPARED') assertQuality(ports.fs.readText(event.promptPaths['codex[0]']!), kind);
+  }
+  for (const stage of ['task', 'hotfix'] as const) {
+    const event = only(await writer(stage));
+    assert.equal(event.type, 'BRIEF_READY');
+    if (event.type === 'BRIEF_READY') assertQuality(ports.fs.readText(event.path), 'writer');
+  }
+  const valid = ['shared', 'code', 'plan', 'design'].map((section) => `## ${section}\n${section} rule`).join('\n');
+  const consumers = [
+    ...(['code', 'plan', 'design'] as const).map((kind) => ({ consumer: kind, invoke: () => review(kind) })),
+    ...(['task', 'hotfix'] as const).map((stage) => ({ consumer: 'writer' as const, invoke: () => writer(stage) })),
+  ];
+  for (const { consumer, invoke } of consumers) {
+    for (const section of qualitySections[consumer]) {
+      for (const empty of [false, true]) {
+        selectedBar = valid.replace(`## ${section}\n${section} rule`, empty ? `## ${section}\n   ` : '');
+        const event = only(await invoke());
+        assert.equal(event.type, 'EFFECT_FAILED');
+        if (event.type === 'EFFECT_FAILED') assert.equal(event.detail, `${empty ? 'Empty' : 'Missing'} quality section: ${section}`);
+      }
+    }
+    selectedBar = valid + '\n## shared\nagain';
+    const event = only(await invoke());
+    assert.equal(event.type, 'EFFECT_FAILED');
+    if (event.type === 'EFFECT_FAILED') assert.match(event.detail, /declares section "shared" twice/);
+  }
+  selectedBar = valid;
+  const unknown = only(await review('unexpected'));
+  assert.equal(unknown.type, 'EFFECT_FAILED');
+  if (unknown.type === 'EFFECT_FAILED') assert.equal(unknown.detail, 'Unknown quality consumer: unexpected');
+  // Ask's inline prompt does not consume the bar, even when selection would fail.
+  selectedBar = '';
+  const ask = only(await review('ask'));
+  assert.equal(ask.type, 'REVIEW_PREPARED');
+  if (ask.type === 'REVIEW_PREPARED') assert.doesNotMatch(ports.fs.readText(ask.promptPaths['codex[0]']!), /Spec alignment:|Security and resources:/);
 });
 
 test('prepare-review-git-log: extracts commit messages and falls back on error or empty', async () => {

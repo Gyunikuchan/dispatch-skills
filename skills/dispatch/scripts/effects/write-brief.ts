@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler } from '../core/types.ts';
-import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
+import { assembleTemplate, fillTemplate, qualityBar } from '../domain/prompt.ts';
 import { writeRendered } from './artifacts.ts';
 import { runPaths } from '../lib/session.ts';
 
@@ -71,7 +71,7 @@ export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
     let text: string;
     try {
       const dir = path.join(deps.skillRoot, 'references', 'templates');
-      const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)), undefined, [ports.fs.readText(path.join(dir, 'quality-bar.md'))]);
+      const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)), undefined, [qualityBar(ports.fs.readText(path.join(dir, 'quality-bar.md')), 'writer')]);
       const rawSelfCheck = typeof effect.input['selfCheck'] === 'string' ? effect.input['selfCheck'] : 'dispatch --check-envelope <Expected Envelope Path>';
       const selfCheck = rawSelfCheck.split('<Expected Envelope Path>').join(envelopePath);
       const task = typeof effect.input['task'] === 'object' && effect.input['task'] !== null ? effect.input['task'] as Readonly<Record<string, unknown>> : null;

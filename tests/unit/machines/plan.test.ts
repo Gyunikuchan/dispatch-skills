@@ -1,3 +1,4 @@
+import { qualitySections } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
@@ -17,7 +18,7 @@ const started = (rounds = 1): RunStartedEvent => ({
 const authored: Event = { type: 'AUTHORED', path: 'docs/add-a-cache.plan.md' };
 const parsed = (n: number, defects: unknown[]): Event => ({ type: 'ARTIFACT_PARSED', effectId: `plan.parse-artifact.${n}`, kind: 'plan', hash: 'h', parsed: {}, defects: defects as never });
 
-test('plan: author → parse → defects re-enter author → review → done complete', () => {
+test('author quality reads: plan author → parse → defects re-enter author → review → done complete', () => {
   const defect = { code: 'placeholder', message: 'Plan contains a prose placeholder.' };
   const frames = play(planMachine, [
     started(), authored, parsed(1, [defect]), authored, parsed(2, []),
@@ -28,7 +29,7 @@ test('plan: author → parse → defects re-enter author → review → done com
     ['plan › author', 'author'], ['plan › parsing', 'done'], ['plan › author', 'author'], ['plan › parsing', 'done'],
     ['plan › review › prepare', 'done'], ['plan › review › wave', 'done'], ['plan › complete', 'done'],
   ]);
-  assert.deepEqual(frames[0]?.data, { artifact: 'plan', path: 'add-a-cache.plan.md', template: 'references/templates/plan.md' });
+  assert.deepEqual(frames[0]?.data, { artifact: 'plan', path: 'add-a-cache.plan.md', template: 'references/templates/plan.md', read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.plan }] });
   assert.deepEqual(frames[2]?.data['defects'], [defect]);
   assert.equal(frames[6]?.data['outcome'], 'complete');
 });

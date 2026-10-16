@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, Ports, ResultEvent } from '../core/types.ts';
-import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
+import { assembleTemplate, fillTemplate, qualityBar, type QualityConsumer } from '../domain/prompt.ts';
 import { structuralLines } from '../domain/plan.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
@@ -302,8 +302,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const dir = path.join(deps.skillRoot, 'references', 'templates');
         const frame = ports.fs.readText(path.join(dir, 'review-prompt.md'));
         const block = ports.fs.readText(path.join(dir, `review-prompt-${kind}.md`));
-        // Only code reviews judge code, so only they merge the shared quality bar.
-        const template = assembleTemplate(frame, block, undefined, kind === 'code' ? [ports.fs.readText(path.join(dir, 'quality-bar.md'))] : []);
+        const template = assembleTemplate(frame, block, undefined, [qualityBar(ports.fs.readText(path.join(dir, 'quality-bar.md')), kind as QualityConsumer)]);
         const values: Record<string, string> = {
           'User Focus Areas': text(spec['context'], 'General review') || 'General review', 'Tool Turn Budget': 'Unspecified',
           ...(await kindValues(kind, spec, scopeText, deps, ports)),

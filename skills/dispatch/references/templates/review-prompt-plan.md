@@ -21,18 +21,11 @@ executing the plan as written delivers the requirement.
 
 ## against
 
-- The requirement: every part traced to a proposed change, and nothing added beyond it.
-- The plan's summary box and detailed `## Success Criteria` entries: each criterion observable and paired with a named test or exact
-  verification step whose command runs only that criterion's tests and matches existing test names or
-  titles the plan names; each criterion verifies through a plan `Seams:` entry, and each
-  `Retain: transient` criterion names a valid durable `Covered by:` criterion or `FINAL`.
-- The task graph: each prerequisite, ownership boundary, and claimed independence checked against
-  producer/consumer interfaces; a task that consumes another's output without depending on it, or
-  contends for a shared port, cache, or output, is a defect. A write path shared by tasks is a defect
-  only when no `Requires` path orders them and no `Overlap:` line justifies it.
-- An attached "Approved technical-design context" section: the increment's inherited contract and
-  acceptance criteria. Treat the governed design as settled; raise a design-changing proposal as an
-  out-of-scope remark for the orchestrator's amendment path.
+- The requirement.
+- The plan summary, success criteria and task graph.
+- Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
+
+Apply the selected quality bar to these governing targets.
 
 ## inspection
 
@@ -44,20 +37,16 @@ when missing evidence, an adjudication dispute or recovery requires it; follow
 
 ## tags
 
-- intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
-- domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
-- decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; unjustified overlap or shared resources; fragmented or oversized tasks
-- architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
-- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization and object ownership, input validation, injection, traversal, sensitive data in logs
-- compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback
-- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs; N+1 access, unpaginated reads, and unindexed new queries
-- verification: `verification`, `testability`, `spec-gap`, `test-leak` — planned tests coupled to internals or duplicating seam coverage; a named test or concrete step per criterion; pass/fail definitions; edge expectations; broad or slow commands lacking `[FINAL]`, narrow feedback commands marked `[FINAL]`; a durable criterion whose `Test rationale` does not establish the durable bar in the plan template (lasting contract, discriminating regression, non-redundant): rewrite the rationale or test to meet the bar, demote to transient, or delete when redundant; or a transient criterion whose test belongs in a shared or durable file: move it to its own `[NEW]` transient-named file
-- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code; each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search
-- out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
-
-## quality
-
-Host rule files take precedence over dispatch defaults: content that follows a host rule is not a finding, even when it contradicts a dispatch default. Where host rules are silent, dispatch defaults apply.
+- intent: `intent`, `user-gap`, `scope-creep`
+- domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine`
+- decomposition: `dependency-graph`, `parallel-safety`
+- architecture: `architecture`, `coherence`, `approach`, `standards`
+- trust boundaries: `security`, `auth`, `validation`
+- compatibility: `compatibility`, `blast-radius`, `migration`, `rollback`
+- robustness: `edge-case`, `partial-failure`, `race`, `perf`
+- verification: `verification`, `testability`, `spec-gap`, `test-leak`
+- simpler path: `simplicity`, `yagni`
+- out of scope: `adjacent`
 
 ## severity
 

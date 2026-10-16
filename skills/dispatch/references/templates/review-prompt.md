@@ -1,8 +1,8 @@
 # Review delegate prompt (shared frame)
 
-Shared by every review kind; `domain/prompt.ts` `assembleTemplate(frame, kindBlock, section, shared)` fills each
-`<<slot:NAME>>` from `## NAME` section of `review-prompt-<kind>.md` or, for code reviews, the shared
-`quality-bar.md`; its variables are all files' declarations.
+Shared by every review kind; `domain/prompt.ts` `assembleTemplate` fills each `<<slot:NAME>>`
+from its kind block. `qualityBar(consumer)` fills the quality slot for code, plan and design
+reviews; variables are all inputs' declarations.
 
 ## Prompt template
 

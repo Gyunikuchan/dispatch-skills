@@ -1,6 +1,7 @@
 // Plan machine: author → AUTHORED → parse-artifact → (defects → author) → review (kind plan, fix mode) → complete.
 // Approval belongs to implement; a disabled plan review (rounds 0) completes with the skip recorded.
 
+import { qualitySections } from '../domain/prompt.ts';
 import type { Event, HostEvent, Machine, RunStartedEvent, SpecIdentity } from '../core/types.ts';
 import { beginReview, reviewArtifactId, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isString, never, nextId, staleGoverning, stay, type Counters, type ReviewSpec, type Step } from './types.ts';
@@ -112,7 +113,7 @@ export function planAwait(state: PlanState) {
 
 export function planData(state: PlanState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
-    case 'author': return { artifact: 'plan', path: state.c.input.path, template: PLAN_TEMPLATE, ...(state.c.input.governingSpec ? { governingSpec: state.c.input.governingSpec } : {}), ...(state.defects.length ? { defects: state.defects } : {}) };
+    case 'author': return { artifact: 'plan', path: state.c.input.path, template: PLAN_TEMPLATE, read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.plan }], ...(state.c.input.governingSpec ? { governingSpec: state.c.input.governingSpec } : {}), ...(state.defects.length ? { defects: state.defects } : {}) };
     case 'review': return reviewData(state.review);
     case 'complete': return state.review.tag === 'skipped'
       ? { outcome: 'complete', summary: 'plan review skipped (rounds 0)' }
