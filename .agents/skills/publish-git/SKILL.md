@@ -1,6 +1,9 @@
 ---
 name: publish-git
 description: Prepare and publish a GitHub release when the user requests release publication, including version selection, changelog, integration, and recovery.
+disable-model-invocation: true
+metadata:
+  internal: true
 ---
 
 # Publish Git
