@@ -66,6 +66,8 @@ export const claude: ProviderSpec = {
   native: 'claude',
   modeCascadeOn: [],
   resumeCommand: (id) => `claude --resume ${id}`,
+  // `--output-format json` prints one envelope at exit.
+  silentUntilExit: true,
   argv(req) {
     const argv = [req.binary, '-p', req.prompt, '--output-format', 'json', '--permission-mode', 'plan'];
     if (req.resume) argv.push('--resume', req.resume);

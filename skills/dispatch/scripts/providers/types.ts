@@ -107,6 +107,8 @@ export type ProviderSpec = {
   /** Classes that advance to the next mode (spec §6.4). */
   modeCascadeOn: readonly FailureClass[];
   resumeCommand(id: string): string;
+  /** The CLI writes nothing until exit (single JSON envelope), so silence is not idleness; only the deadline applies. */
+  silentUntilExit?: true;
   prepare?(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch>;
 };
 

@@ -39,6 +39,8 @@ export const agy: ProviderSpec = {
   // token/subscription → quota or auth; execution → not-found (mode unreachable or crashed).
   modeCascadeOn: ['quota', 'auth', 'not-found'],
   resumeCommand: (id) => `conversation://${id}`,
+  // `--output-format json` prints one envelope at exit.
+  silentUntilExit: true,
   usage: agyUsage,
   argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));

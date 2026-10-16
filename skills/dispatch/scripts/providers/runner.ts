@@ -231,7 +231,7 @@ export type RunnerPorts = {
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
 /** Launches one process; on deadline or idleness kills the tree (POSIX: SIGTERM, then SIGKILL after 1 s). */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts): Promise<ProcessResult> {
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
   const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); } });
   let timedOut = false;
@@ -254,7 +254,7 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     });
   };
   const stopTimeout = ports.clock.every(req.timeoutMs, kill);
-  const stopIdle = ports.clock.every(Math.min(IDLE_TIMEOUT_MS, 30_000), () => {
+  const stopIdle = !idle ? () => {} : ports.clock.every(Math.min(IDLE_TIMEOUT_MS, 30_000), () => {
     const silent = ports.clock.now() - lastActivity;
     if (silent < IDLE_TIMEOUT_MS || timedOut) return;
     idleMs = silent;
@@ -330,7 +330,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
-      result = await launchOnce({ ...launch, env }, current, ports);
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true);
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }

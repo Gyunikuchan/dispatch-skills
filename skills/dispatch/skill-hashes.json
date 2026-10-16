@@ -84,7 +84,7 @@
   "scripts/effects/snapshot.ts": "6c875d04f1b703931e1ec48308624d2eefaf5a537d02e1da1cafdd8096c6dc84",
   "scripts/effects/verify.ts": "f918b2ed39d1e925d9568fefe577ff8bcbad5198c772cd4460456c3e824b8030",
   "scripts/effects/wave-native.ts": "0895ebd7b151efc311422272e10afa0cf97cd65498c3acd66b9eb98881905ff0",
-  "scripts/effects/wave.ts": "e97743d73d950f746cea5d257e6e605e0d19d38828dc2d772b6d4db3726360f1",
+  "scripts/effects/wave.ts": "df9b541640d30334c3b9f21afa43011e67e4aadbe8579bf08d7a55f8f5e5a25c",
   "scripts/effects/write-brief.ts": "85b86d0e8fb6f50093e698bc43e21c8c6b1417386473173a7a127102ae2fd1d5",
   "scripts/lib/cli.ts": "49cf610019b1bfb800b04565417daff7cdadd7bd09d45ea26189a4c47ae38c04",
   "scripts/lib/config.ts": "f54ea9aab09f32c14ff9b476ba0267d158aed7ca7dabdb979f1a126e3f52832a",
@@ -120,8 +120,8 @@
   "scripts/policy/hotfix.ts": "e22c9eed000634813a7506a668690e1da32d9970f0453ed430afc2c682e996a5",
   "scripts/policy/roster.ts": "cba096fcec04f1466eae4484165768d8eec3d54cc9b28b0ee81ad411a01f097a",
   "scripts/policy/rounds.ts": "ce3a932501a28669686104d9c58d82b7e333c6755bd4f3cf24ee3ca583f56d91",
-  "scripts/providers/agy.ts": "b77b474d972ea1e3b4c70bcb1b5ebff93f7f5d7c67ce358c214bb1bdeb141949",
-  "scripts/providers/claude.ts": "4687d8be6735d072ac873ea2f2110a4e3aa90639def6e117dcd48d1b13ae6db1",
+  "scripts/providers/agy.ts": "28ce35db9f293513cc90798d804209ff2c03b7dee9c1a71a755a6cf2aea79624",
+  "scripts/providers/claude.ts": "e943fd9147dd647d2b58f30593c2d1dbdde963e99fe9baf24e18109fd8fcb4f8",
   "scripts/providers/codex.ts": "bf319a145bc0e4e14c849694078bca8d38495b3043a3a7cbb7eb459bc7ed544d",
   "scripts/providers/copilot.ts": "bcf9c7fcfd2be33600253ac93951da1c641421174997ad6ad5811355ac080e49",
   "scripts/providers/discovery.ts": "4e6d0131b5645670397cde06882287a47bdf0cbb8a206927ab7e1530ae052d5f",
@@ -130,6 +130,6 @@
   "scripts/providers/node-process.ts": "c7bd9be92b5834e243d547d60fa299ba5e22a1c6515018c5bf75794d7a3ae8e0",
   "scripts/providers/opencode-runtime.ts": "0d7d069d79cf9380ebced5ed02ebe929e36777c3d2d5669b799b1725a93c4e06",
   "scripts/providers/opencode.ts": "5d26513931491383bf8022b028ea4a503387a4e6557f66ea8d9810d7a04d8644",
-  "scripts/providers/runner.ts": "4239c341eb79a859e47d077217ca59b050a38de92361dc0704d51f312de1897c",
-  "scripts/providers/types.ts": "aa21cbceb45dd873724b3eb00a6178be82ed0c6eea9f9ea33b40326f331bb11a"
+  "scripts/providers/runner.ts": "5567aa0499e3b93ef3adb7db1a50e689942529069cf8d2cc851a69b2d71148a8",
+  "scripts/providers/types.ts": "68c08d9b072f9f1844eb1a511dfdde77c9df91bab8624c585c44769acd52a469"
 }

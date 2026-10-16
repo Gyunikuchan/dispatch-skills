@@ -25,6 +25,8 @@ import { attemptOf, runPaths } from '../lib/session.ts';
 
 export const HEARTBEAT_MS = 30_000;
 export const STALE_GRACE_MS = 30_000;
+/** Slot budgets a worker may spend: the primary voice, then one full reserve run. */
+export const WORKER_BUDGETS = 2;
 
 type WaveEffect = { kind: 'wave' | 'wave-start' | 'wave-finish'; id: string; round: number; roster: readonly Readonly<Record<string, unknown>>[]; timeoutMs: number };
 
@@ -130,9 +132,10 @@ export function readClaim(deps: ClaimDeps, runDir: string, id: string, n: number
   if (!deps.proc.isAlive(claim.pid)) return { kind: 'dead' };
   const now = deps.clock.now();
   const beat = readJson<{ heartbeatAt: number }>(deps.fs, runPaths(runDir).heartbeat(id, n));
-  const quiet = beat === null || now - beat.heartbeatAt > HEARTBEAT_MS;
-  // A live pid past its deadline plus grace with no recent heartbeat is a reused pid or a wedged worker.
-  return now > claim.startedAt + timeoutMs + STALE_GRACE_MS && quiet ? { kind: 'stale' } : { kind: 'live' };
+  // One missed beat of slack: a timer never fires early, so a gap of exactly one period is normal.
+  const quiet = beat === null || now - beat.heartbeatAt > 2 * HEARTBEAT_MS;
+  // A live pid past its worker ceiling (primary plus one full reserve budget) plus grace with no recent heartbeat is a reused pid or a wedged worker.
+  return now > claim.startedAt + WORKER_BUDGETS * timeoutMs + STALE_GRACE_MS && quiet ? { kind: 'stale' } : { kind: 'live' };
 }
 
 /** Highest attempt with a claim file; 0 when none. */
@@ -262,13 +265,13 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
   }
 }
 
-async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, deadline: number, pool: { current: ReservePool }, reserves: ReadonlyMap<string, RosterSlot>): Promise<SlotFinal> {
+async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, deadline: number, ceiling: number, pool: { current: ReservePool }, reserves: ReadonlyMap<string, RosterSlot>): Promise<SlotFinal> {
   const own = await runVoice(slot, input, deps, deadline);
   if (own.ok) return { state: 'success', slot: slot.slot, ...own.value, invocations: own.invocations };
   // The voice is exhausted: reserve (once per wave), then native fallback on the orchestrator platform.
   // An empty voice asks the cascade only for its post-exhaustion step.
   const decision = next(own.cls, { model: 0, mode: 0 }, { slot: slot.slot, platform: slot.provider, models: [], modes: [], modeCascadeOn: [] },
-    { orchestratorPlatform: input.orchestratorPlatform, reserveAvailable: hasReserve(pool.current) && deps.clock.now() < deadline });
+    { orchestratorPlatform: input.orchestratorPlatform, reserveAvailable: hasReserve(pool.current) && deps.clock.now() < ceiling });
   switch (decision.kind) {
     case 'reserve': {
       const taken = takeReserve(pool.current, slot.slot, own.reason);
@@ -279,8 +282,10 @@ async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, dea
       // The reserve answers the failed slot's prompt; its log sits beside the slot's.
       const own_ = input.paths[slot.slot];
       const paths = own_ ? { ...input.paths, [reserve.slot]: { ...own_, logPath: own_.logPath.replace(/\.log$/, `.${safeSlot(reserve.slot)}.log`) } } : input.paths;
+      // A reserve gets its own full slot budget, not the failed voice's leftover, bounded by the wave ceiling.
+      const reserveDeadline = Math.min(deps.clock.now() + input.timeoutMs, ceiling);
       let substitute: Attempted;
-      try { substitute = await runVoice(reserve, { ...input, paths }, deps, deadline); } catch (error) { throw prependInvocations(error, own.invocations); }
+      try { substitute = await runVoice(reserve, { ...input, paths }, deps, reserveDeadline); } catch (error) { throw prependInvocations(error, own.invocations); }
       const invocations = [...own.invocations, ...substitute.invocations];
       if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, reason: own.reason, ...substitute.value, records: [...own.records, ...substitute.value.records], invocations };
       return { state: 'failed', slot: slot.slot, cls: substitute.cls, reason: `${own.reason}; reserve ${reserve.slot}: ${substitute.reason}`, records: [...own.records, record, ...substitute.records], invocations };
@@ -309,6 +314,8 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
   beat();
   const stopBeat = deps.clock.every(HEARTBEAT_MS, beat);
   const deadline = startedAt + input.timeoutMs;
+  // Room for one full reserve run after a primary exhausts its budget.
+  const ceiling = startedAt + WORKER_BUDGETS * input.timeoutMs;
   const reserves = new Map(input.roster.filter((slot) => slot.reserve).map((slot) => [slot.slot, slot] as const));
   const pool = { current: reservePool([...reserves.keys()]) };
   const finals: SlotFinal[] = [];
@@ -319,7 +326,7 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
       const file = runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n);
       let final: SlotFinal;
       try {
-        final = await runSlot(slot, input, deps, deadline, pool, reserves);
+        final = await runSlot(slot, input, deps, deadline, ceiling, pool, reserves);
       } catch (error) {
         // The failed final `readFinals` would substitute, plus the attempts the error carries; the worker still fails.
         try { deps.fs.writeAtomic(file, JSON.stringify({ ...missingOutcome(slot.slot, n), invocations: invocationsOf(error) })); } catch { /* Keep the original worker error. */ }

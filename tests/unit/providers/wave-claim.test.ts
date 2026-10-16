@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  arbitrate, listWorkerClaims, runWaveWorker, safeSlot, STALE_GRACE_MS, startWave, type ClaimDeps, type WaveDeps, type WaveInput, type WorkerDeps,
+  arbitrate, HEARTBEAT_MS, listWorkerClaims, runWaveWorker, safeSlot, STALE_GRACE_MS, WORKER_BUDGETS, startWave, type ClaimDeps, type WaveDeps, type WaveInput, type WorkerDeps,
 } from '../../../skills/dispatch/scripts/effects/wave.ts';
 import { runPaths } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { publishExclusive, type LinkFs } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
@@ -86,11 +86,11 @@ test('EEXIST: tombstone or dead pid → attempt n+1; live pid → reattach; fore
   assert.throws(() => arbitrate(claims(fs, new Set([77])), RUN, 'e1', 3, TIMEOUT), (error: Error) => error.message.includes(claimPath(RUN, 'e1', 3)) && error.message.includes('other'));
 });
 
-test('a live pid with a heartbeat stale past startedAt + timeoutMs + 30 s → attempt n+1 without a kill', () => {
+test('a live pid with a heartbeat stale past the worker ceiling + 30 s → attempt n+1 without a kill', () => {
   const fs = seeded();
   claim(fs, 1, { pid: 77, host: 'h', startedAt: 0 });
-  const past = TIMEOUT + STALE_GRACE_MS + 1;
-  fs.writeAtomic(heartbeatPath(RUN, 'e1', 1), JSON.stringify({ heartbeatAt: past - 40000 }));
+  const past = WORKER_BUDGETS * TIMEOUT + STALE_GRACE_MS + 1;
+  fs.writeAtomic(heartbeatPath(RUN, 'e1', 1), JSON.stringify({ heartbeatAt: past - 2 * HEARTBEAT_MS - 1 }));
   const deps = claims(fs, new Set([77]), past);
   assert.deepEqual(arbitrate(deps, RUN, 'e1', 1, TIMEOUT), { action: 'launch', attempt: 2 });
   // A fresh heartbeat keeps it live even past the deadline.
@@ -99,6 +99,22 @@ test('a live pid with a heartbeat stale past startedAt + timeoutMs + 30 s → at
   // Before the deadline plus grace a live pid is live even without a heartbeat.
   fs.remove(heartbeatPath(RUN, 'e1', 1));
   assert.deepEqual(arbitrate(claims(fs, new Set([77]), TIMEOUT), RUN, 'e1', 1, TIMEOUT), { action: 'reattach', attempt: 1 });
+});
+
+test('past the worker ceiling, one late heartbeat stays live and a missed second beat is stale', () => {
+  const fs = seeded();
+  claim(fs, 1, { pid: 77, host: 'h', startedAt: 0 });
+  const now = WORKER_BUDGETS * TIMEOUT + STALE_GRACE_MS + 1;
+  fs.writeAtomic(heartbeatPath(RUN, 'e1', 1), JSON.stringify({ heartbeatAt: now - HEARTBEAT_MS - 15 }));
+  assert.deepEqual(arbitrate(claims(fs, new Set([77]), now), RUN, 'e1', 1, TIMEOUT), { action: 'reattach', attempt: 1 });
+  fs.writeAtomic(heartbeatPath(RUN, 'e1', 1), JSON.stringify({ heartbeatAt: now - 2 * HEARTBEAT_MS - 1 }));
+  assert.deepEqual(arbitrate(claims(fs, new Set([77]), now), RUN, 'e1', 1, TIMEOUT), { action: 'launch', attempt: 2 });
+});
+
+test('a worker running a reserve between the slot deadline and the worker ceiling stays live without a heartbeat', () => {
+  const fs = seeded();
+  claim(fs, 1, { pid: 77, host: 'h', startedAt: 0 });
+  assert.deepEqual(arbitrate(claims(fs, new Set([77]), TIMEOUT + STALE_GRACE_MS + 60_000), RUN, 'e1', 1, TIMEOUT), { action: 'reattach', attempt: 1 });
 });
 
 test('a new worker attempt ignores earlier outcome files', async () => {

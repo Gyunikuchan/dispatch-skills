@@ -209,3 +209,44 @@ test('rewrite SC4 worker requests preserve injected native config launch selecto
   await completed;
   assert.equal(request?.model, 'local/qwen'); assert.deepEqual(request?.configSelectors, { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }); assert.equal(request?.timeoutMs, 60000);
 });
+
+test('a reserve gets a full slot budget, not the failed voice leftover', async () => {
+  const roster = [slot('codex[0]', 'codex'), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })];
+  const w = setup({}, roster);
+  let now = 1000;
+  const timeouts: number[] = [];
+  const worker: WorkerDeps = {
+    fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => now, every: () => () => {} }, specs: SPECS, modes: () => ['cli'],
+    run: async (provider, req) => {
+      timeouts.push(req.timeoutMs);
+      if (provider === 'codex') { now += 50000; return { outcome: fail('timeout'), invocations: [] }; }
+      return { outcome: ok(CLEAN), invocations: [] };
+    },
+  };
+  let completed: ReturnType<typeof runWaveWorker> | undefined;
+  w.deps.launchWorker = (dir, id, attempt) => { completed = runWaveWorker(dir, id, attempt, worker); };
+  await startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps).attempt;
+  const result = await completed;
+  assert.deepEqual(timeouts, [60000, 60000]);
+  assert.deepEqual(result?.launched && result.finals.map((final) => final.state), ['reserve']);
+});
+
+test('a reserve deadline stays within the wave ceiling of twice the slot budget', async () => {
+  const roster = [slot('codex[0]', 'codex'), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })];
+  const w = setup({}, roster);
+  let now = 1000;
+  const timeouts: number[] = [];
+  const worker: WorkerDeps = {
+    fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => now, every: () => () => {} }, specs: SPECS, modes: () => ['cli'],
+    run: async (provider, req) => {
+      timeouts.push(req.timeoutMs);
+      if (provider === 'codex') { now += 90000; return { outcome: fail('quota'), invocations: [] }; }
+      return { outcome: ok(CLEAN), invocations: [] };
+    },
+  };
+  let completed: ReturnType<typeof runWaveWorker> | undefined;
+  w.deps.launchWorker = (dir, id, attempt) => { completed = runWaveWorker(dir, id, attempt, worker); };
+  await startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps).attempt;
+  await completed;
+  assert.deepEqual(timeouts, [60000, 30000]);
+});

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
+import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import {
   IDLE_TIMEOUT_MS,
   batchInvocation, buildAttachmentBlock, findSensitiveMatch, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
@@ -227,7 +228,7 @@ test('runDelegate attaches attempt records to a launch that throws', async () =>
 
 test('silent delegate times out idle after the idle window, before the overall deadline', async () => {
   const h = harness(posix);
-  const run = runDelegate(claude, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
+  const run = runDelegate(codex, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
   await flush();
   h.clock.advance(10_000);
   h.activity();
@@ -242,14 +243,25 @@ test('silent delegate times out idle after the idle window, before the overall d
   assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /^idle 300s; partial output at \/r\/log$/);
 });
 
-test('active delegate is not idle while output keeps arriving', async () => {
+test('silent-until-exit delegate is not idle-killed before its deadline', async () => {
   const h = harness(posix);
   const run = runDelegate(claude, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(3 * IDLE_TIMEOUT_MS);
+  assert.deepEqual(h.signals, []);
+  h.finish(ok());
+  const done = await run;
+  assert.equal(done.result?.timedOut, false);
+  assert.equal(done.outcome.status, 'ok');
+});
+
+test('active delegate is not idle while output keeps arriving', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
   await flush();
   for (let elapsed = 0; elapsed < 3 * IDLE_TIMEOUT_MS; elapsed += 60_000) { h.clock.advance(60_000); h.activity(); }
   assert.deepEqual(h.signals, []);
   h.finish(ok());
   const done = await run;
   assert.equal(done.result?.timedOut, false);
-  assert.equal(done.outcome.status, 'ok');
 });
