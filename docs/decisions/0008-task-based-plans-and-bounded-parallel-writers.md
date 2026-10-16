@@ -1,6 +1,6 @@
 # ADR 0008: Task-based plans and bounded parallel writers
 
-- **Status**: Accepted; implementation pending
+- **Status**: Accepted; document layering superseded by [ADR 0011](0011-layered-governing-documents.md)
 - **Date**: 2026-10-02
 - **Audience**: Maintainers
 
@@ -26,17 +26,7 @@ Task IDs belong to an implementation plan. Design increments remain a separate d
 
 ### 2. Human-readable plans with precise ownership
 
-Under `Proposed Changes`, each task has:
-
-- A stable ID and descriptive title.
-- A plain-language summary of its outcome and rationale.
-- Prerequisite task IDs, with reasons for non-obvious dependencies.
-- Acceptance criterion references and scoped verification.
-- Detailed file-by-file changes, including concrete symbols, interfaces, behavior, invariants, and rationale as appropriate.
-
-Task headings group the file changes. File entries use `[NEW]`, `[MODIFY]`, `[DELETE]`, or `[GENERATED]` actions and portable workspace-relative paths. Those entries are the authoritative writable ownership; a separate manually maintained ownership list is unnecessary. Aggregate change scope and task briefs derive from them.
-
-The plan includes a compact execution summary derived from its graph. It explains which tasks depend on which outcomes and which branches can proceed independently. Parallel eligibility is derived rather than maintained as pairwise lists or fixed waves.
+[ADR 0011](0011-layered-governing-documents.md) supersedes this record's document-format ownership. This record retains execution ownership: the authored five-column Task Map is authoritative for task title, outcome, prerequisites and criterion assignment. Rows join detailed task sections by ID; file entries under those sections define writable paths through `[NEW]`, `[MODIFY]`, `[DELETE]` and `[GENERATED]` actions. Briefs and execution views derive from those owners rather than a second maintained list.
 
 Plan validation requires unique task IDs, known prerequisites, an acyclic graph, unambiguous ownership, meaningful task descriptions, and complete acceptance mapping. Deterministic validation establishes structural correctness; plan review verifies semantic dependencies and claims of independence.
 
@@ -56,7 +46,7 @@ Use one cap configuration in the dispatch configuration system and the configure
 
 Use task-local ports, caches, and generated outputs. Express unavoidable resource contention through serialization dependencies with a rationale. There is no resource metadata or resource-lock registry. This deliberately accepts conservative ordering: failure of an earlier serialization prerequisite blocks the later task, even when the dependency exists for resource safety rather than data flow.
 
-### 4. Focused briefs with full-plan access
+### 4. Focused briefs with full-spec and bounded plan reading
 
 Each writer receives a focused brief containing:
 
@@ -65,10 +55,10 @@ Each writer receives a focused brief containing:
 - Relevant shared contracts and accepted prerequisite revisions.
 - What downstream tasks expect it to deliver.
 - Repository rules, production approval, and applicable concerns or recorded decisions.
-- The full governing plan's accessible path and hash.
+- The whole governing spec and governing plan paths and hashes.
 - The expected receipt location and schema.
 
-The writer reads the overview and its task first, consulting other task details when an interaction requires them. Access to the full plan provides context without expanding write authority. Shared scratch artifacts are made accessible as read-only context; they need not be committed into task history.
+The writer reads the whole governing spec, then the plan shared range through Task Map, its own task, assigned criteria and Verification Plan rows. It reads other task details only for a named gap. Access to the full plan provides context without expanding write authority. Shared scratch artifacts are made accessible as read-only context; they need not be committed into task history.
 
 Concise briefs and receipts keep unrelated implementation detail and execution traces out of initial context. Logs and detailed evidence remain in session artifacts and are reached by pointer. Worktrees provide isolation; focused agent contexts provide context hygiene.
 
@@ -136,7 +126,7 @@ Persist the task and attempt identity, plan hash, baseline revision, worktree lo
 
 Retain each launch handle and use event-driven waits for completion, material blockers, or user input, with bounded fallback handling. Routine progress does not trigger repeated status requests.
 
-Plan revisions occur at a quiescent coordination boundary: collect completed results or explicitly stop live writers before replacing their governing inputs. Changed prerequisites, ownership, criteria, or contracts invalidate affected results and descendants. Preserve unaffected evidence only when its inputs remain valid. Scope expansion follows production-approval rules.
+Plan revisions occur at a quiescent coordination boundary: collect completed results or explicitly stop live writers before replacing their governing inputs. Reconcile changed prerequisites, ownership, criteria and contracts against accepted results and descendants. Preserve accepted work and valid evidence; distinguish current verification obligations from prior acceptance under the [change-handling contract](../../skills/dispatch/references/change-handling.md). Ordinary repository drift is advisory; concrete integrity, scope, write and collision guards remain. Scope expansion follows production-approval rules.
 
 User cancellation stops launches, resolves live handles, and preserves recovery artifacts. Never remove a worktree with a live writer. Keep unresolved task worktrees and evidence; clean up disposable run-owned worktrees only after verified delivery or explicit failure disposition. Physical worktree and checkpoint locations follow session governance and native visibility requirements; all locations are recorded rather than reconstructed by guessing.
 
@@ -155,7 +145,7 @@ Exact metadata syntax, cap defaults, baseline capture mechanics, checkpoint repr
 | Concern | Benefit | Cost or limitation |
 | --- | --- | --- |
 | Human comprehension | Each task explains its outcome before file details; the graph exposes interactions. | Authors must identify meaningful boundaries and dependencies. |
-| Context hygiene | Writers start with focused briefs and consult the full plan on demand. | Repository orientation and shared-contract reading repeat across writers. |
+| Context hygiene | Writers read the whole spec and a bounded plan range, consulting other tasks for named gaps. | Repository orientation and shared-contract reading repeat across writers. |
 | Speed | Independent ready tasks launch without waiting for unrelated branches. | Prerequisites, serialized integration, and final gates limit achievable concurrency. |
 | Attribution and recovery | Stable worktrees make task changes and evidence independently inspectable. | Worktree preparation, input reproduction, and final transfer require explicit handling. |
 | Tests-first safety | Reproducible RED and GREEN checkpoints gate acceptance. | RED is independently checked after production, allowing wasted implementation work if evidence is invalid. |

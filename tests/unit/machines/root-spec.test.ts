@@ -11,6 +11,7 @@ import { beginDesignRevision, stepDesignRevision } from '../../../skills/dispatc
 import { started as deliveryStarted } from './fixtures/design-delivery.ts';
 import { approvalState } from './fixtures/implement-recovery.ts';
 import { beginReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { DESIGN_REVISION_CONTEXT_PREFIX } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -88,6 +89,26 @@ test('spec stage composition: the done projection names the governing spec', () 
 });
 
 // SECTION: Approval gate
+
+test('author projections expose the current governing identity for every downstream author family', () => {
+  const defaults = designRun('implement');
+  const delivery = deliveryStarted();
+  assert.ok(delivery.tag === 'increment' && delivery.child.tag === 'starting');
+  const nested = drive([{ type: 'SNAPSHOT', effectId: delivery.child.effectId, fingerprint: FP, diff: { paths: [] } }], { tag: 'design', run: runInfo('implement', 'low', defaults), child: delivery }).state;
+  const revision = drive([{ type: 'REVISE', artifact: 'design', reason: 'Clarify', evidence: 'review' }], { tag: 'design', run: runInfo('implement', 'low', defaults), child: designApproval('implement') }).state;
+  const boot = settledAt('implement');
+  const snapshot = boot.effects.find(e => e.kind === 'snapshot')!;
+  const implementation = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }, { type: 'EFFECT_FAILED', effectId: 'implement.parse-artifact.1', cls: 'io', detail: 'plan not found' }], boot.state).state;
+  for (const state of [settledAt('design').state, revision, nested, implementation, settledAt('plan').state]) {
+    assert.equal(frame(state).await, 'author');
+    const prior = frame(state).data;
+    for (const hash of [identity.hash, specHash(SPEC_SOURCE + '\nRevised.')]) {
+      assert.ok('run' in state && state.run.spec);
+      const current = { ...state, run: { ...state.run, spec: { ...state.run.spec, identity: { ...identity, hash } } } } as RootState;
+      assert.deepEqual(frame(current).data, { ...prior, governingSpec: { ...identity, hash } });
+    }
+  }
+});
 
 function assertGate(state: RootState, hash = specHash()): void {
   const view = frame(state);
@@ -206,6 +227,14 @@ test('spec stage composition: the design revision review carries the governing s
   const prepare = preparedEffects.find((effect) => effect.kind === 'prepare-review');
   assert.ok(prepare && prepare.kind === 'prepare-review');
   assert.deepEqual((prepare.review as Record<string, unknown>)['governingSpec'], identity);
+  const context = String((prepare.review as Record<string, unknown>)['context']);
+  assert.ok(context.startsWith(DESIGN_REVISION_CONTEXT_PREFIX));
+  const provenance = JSON.parse(context.slice(DESIGN_REVISION_CONTEXT_PREFIX.length));
+  assert.equal(provenance.reason, 'Clarify');
+  assert.equal(provenance.evidence, 'review');
+  assert.equal(provenance.before, c.design!.governedText);
+  assert.equal(provenance.after, revised.governedText);
+  assert.ok(provenance.delta);
 });
 
 // SECTION: Host-event guards

@@ -3,7 +3,8 @@
 Kind block for `review-prompt.md`.
 
 - `<Design Path>` — path to the attached technical design.
-- `<Requirement>` — original user ask, verbatim.
+- `<Spec Path>` — path to the settled governing spec, or `None`.
+- `<Spec Hash>` — settled spec hash, or `None`.
 - `<Review Scope>` — full review or changed design sections, optionally followed by `Design lint warnings:` context.
 
 ## opener
@@ -17,17 +18,21 @@ code has been written yet.
 ## context
 
 - Design: <Design Path>
-- Requirement: <Requirement>
+- Spec Path: <Spec Path>
+- Spec Hash: <Spec Hash>
 
 ## against
 
-- The requirement.
+- First check that every governing spec REQ is met, no DEC is contradicted, and no premise is flawed.
+  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
 - The design and its per-increment acceptance criteria.
 
 Apply the selected quality bar to these governing targets.
 
 ## inspection
 
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
+For a spec finding, use § Spec: <heading>.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -36,6 +41,7 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 
 ## tags
 
+- intent gap: `intent-gap`
 - intent: `intent`, `scope`
 - architecture: `architecture`, `boundaries`, `interfaces`, `data-flow`
 - decisions: `alternatives`, `simplicity`

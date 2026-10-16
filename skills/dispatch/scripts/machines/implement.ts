@@ -511,7 +511,7 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
   const brief = selectTaskBrief(plan, record.id)!;
   const testPaths = taskTestPaths(plan, brief.task);
   return {
-    planPath: c.planPath, planHash: c.planHash,
+    planPath: c.planPath, planHash: c.planHash, governingSpec: c.governingSpec,
     designBinding: briefDesignBinding(c), reopenedDefects: c.designBinding?.repair,
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c.planPath },
     sharedContext: plan.sharedContext,
@@ -1261,8 +1261,7 @@ function startCodeReview(c0: Context): S {
   if (!built.ok) return beginFailure(c0, built.error);
   const plan = c0.plan!;
   const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: plan.criteria.map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
-  const baseContext = built.spec.context ?? c0.run.argument;
-  const result = beginReview({ ...built.spec, governing, context: `${baseContext}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
+  const result = beginReview({ ...built.spec, governing: { ...governing, finalFocusPaths: [...new Set([...c0.changedPaths, ...c0.finalFocus])] }, context: null }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
   return fromCodeReview(c0, result);
 }
 
@@ -1709,7 +1708,7 @@ function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { ac
   const { c, id } = effectId(c0, 'write-brief');
   const plan = c0.plan!;
   return { state: { tag: 'hotfix-brief', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'write-brief', id, stage: 'hotfix', input: {
-    planPath: c0.planPath, planHash: c0.planHash, designBinding: briefDesignBinding(c0),
+    planPath: c0.planPath, planHash: c0.planHash, governingSpec: c0.governingSpec, designBinding: briefDesignBinding(c0),
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c0.planPath },
     sharedContext: plan.sharedContext,
     settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes },

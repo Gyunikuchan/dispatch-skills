@@ -13,6 +13,7 @@ import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write
 import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
+import { DESIGN_REVISION_CONTEXT_PREFIX } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
@@ -107,7 +108,7 @@ test('seam advisory reaches the host and enters review', async () => {
   }
 });
 
-test('effect folder: prepare-review writes one prompt per slot, carried rejections ride their affinity slot; an empty code diff is an empty scope', async () => {
+test('governing spec default replaces context while effect folders retain slot affinity and empty scope', async () => {
   const runDir = tempDir();
   const roster = [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }, { slot: 'agy[0]', provider: 'agy', index: 0, native: false, reserve: false }];
   const review = { kind: 'code', target: 'main..HEAD', cap: 2, breadth: 2, context: 'check the lock', roster, timeoutMs: 1000 };
@@ -123,7 +124,8 @@ test('effect folder: prepare-review writes one prompt per slot, carried rejectio
   const codex = fs.readFileSync(result.promptPaths['codex[0]'] ?? '', 'utf8');
   assert.match(agy, /R1-F001 src\/a\.ts:L3: null deref — orchestrator rejection: guarded upstream/);
   assert.doesNotMatch(codex, /R1-F001/);
-  assert.match(codex, /check the lock/);
+  assert.doesNotMatch(codex, /check the lock/);
+  assert.match(codex, /- Task: Review the selected changes\./);
   assert.deepEqual(result.scope['paths'], ['src/a.ts']);
   const empty = only(await createPrepareReview({ skillRoot: SKILL_ROOT, cwd: '/repo', git: gitWith('') })(
     { kind: 'prepare-review', id: 'review.prepare-review.1', review, round: 1, scope: { scope: 'full', carried: [] } }, fakePorts(), { runDir, attempt: 1 }));
@@ -289,6 +291,41 @@ One module.
 ## Final Integration
 Run all checks.
 `;
+
+for (const kind of ['code', 'plan', 'design'] as const) test(`prepare-review rejects mutated settled spec for ${kind}`, async () => {
+  const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
+  const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
+  ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
+  const governingSpec = { path: specPath, hash: specHash() };
+  ports.fs.writeAtomic(specPath, SPEC_SOURCE + '\nChanged after settlement.');
+  const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('src/a.ts\n') });
+  const result = only(await handler({ kind: 'prepare-review', id: 'stale.1', review: { kind, target, governingSpec, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
+  assert.ok(result.type === 'EFFECT_FAILED');
+  assert.match(result.detail, /stale-spec/);
+});
+
+for (const kind of ['design', 'plan'] as const) test(`prepare-review preserves internal ${kind} provenance under governing spec`, async () => {
+  const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
+  const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
+  ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
+  ports.fs.writeAtomic(specPath, SPEC_SOURCE);
+  const provenance = kind === 'design'
+    ? { before: 'OLD_FULL_ARTIFACT', after: 'NEW_FULL_ARTIFACT', delta: { changed: ['I02'], invalidated: ['I02'], removed: [] }, reason: 'Correct dependency ordering', evidence: 'dependency.log:L7' }
+    : { invocationContext: null, invocationLevel: 'high', invocationLevelSource: 'explicit' };
+  const context = `${kind === 'design' ? DESIGN_REVISION_CONTEXT_PREFIX : ''}${JSON.stringify(provenance)}`;
+  const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('') });
+  const result = only(await handler({ kind: 'prepare-review', id: 'provenance.1', review: { kind, target, context, governingSpec: { path: specPath, hash: specHash() }, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
+  assert.ok(result.type === 'REVIEW_PREPARED');
+  const prompt = ports.fs.readText(result.promptPaths['codex[0]']!)!;
+  assert.match(prompt, /### Internal review provenance\nStructural driver context; subject to the governing spec\./);
+  const section = prompt.split('### Internal review provenance\n')[1]!;
+  const rendered = JSON.parse(section.split('\n')[1]!) as Record<string, unknown>;
+  if (kind === 'design') {
+    assert.deepEqual(rendered, { delta: provenance.delta, reason: provenance.reason, evidence: provenance.evidence });
+    assert.doesNotMatch(prompt, /OLD_FULL_ARTIFACT|NEW_FULL_ARTIFACT/);
+  } else assert.deepEqual(rendered, provenance);
+});
+
 function governingFixture() {
   const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
   const file = path.join(dir, 'a.plan.md'), spec = path.join(dir, 'governing.spec.md');

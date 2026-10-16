@@ -1,5 +1,9 @@
 # Implement
 
+For an objective, [spec operation](../spec-stage.md) precedes plan authoring. A supplied plan or design resolves its governing spec through Parent pins; an increment plan resolves transitively through its design. Apply spec approval at the authoring gate, then retain the existing design and production approvals. Every writer reads the full spec at its bound path/hash plus the plan's shared range through Task Map, its task, assigned criteria and Verification Plan rows.
+
+When intent changes, revise the spec before amending the plan. Follow the [revision protocol and recovery owners](../spec-stage.md#revision-protocol): reconcile immutable pending results and already-authorized writer receipts at quiescence before admitted `SPEC_REVISED`. Root re-settles new bytes, obtains applicable new-hash approval and internally synthesizes `SPEC_SETTLED`; the host never sends it. Preserve work and follow the owner-specific halt or pre-task authoring transition. Neither blind effect replay nor unauthorized writer stopping is a recovery step.
+
 Use `start implement --session-dir <dir> --orchestrator <platform> -- <objective-or-plan-or-design-path>`. The driver reuses settled plan evidence when available, verifies baseline, records production approval, then emits bounded writer briefs and verification summaries. For design delivery it reuses matching unfinished same-chat journals and binds derived approvals to the governed revision.
 
 At `write`, launch the configured native writer for each task slot marked `launch`, using its worktree and verified brief hash. Retain each handle and report launch/completion through [the contract](../..). Apply the configured cap and available native capacity; capability failures require a named failure rather than shared-checkout execution.

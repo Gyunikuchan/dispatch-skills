@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, HostEvent, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { resolutionRounds, reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { parseReport } from '../../../skills/dispatch/scripts/domain/report.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -46,6 +47,33 @@ test('ruling-reason: reject and downgrade require a nonblank string before consu
 function drive(events: readonly Event[], from: ReviewState = reviewMachine.initial()): ReviewState {
   return events.reduce((state, event) => reviewMachine.step(state, event).state, from);
 }
+
+for (const kind of ['plan', 'design'] as const) test(`intent-gap ${kind} requires authority and spec revision retains history`, () => {
+  const parsed = parseReport({ kind, source: 'codex[0]', text: JSON.stringify({ status: 'FINDINGS', findings: [{ severity: 'MUST', locus: '§ Spec: Requirements', tag: 'intent-gap', defect: 'Requirement missing', requiredChange: 'Settle the requirement' }] }) });
+  assert.ok(parsed.ok);
+  const state = drive([started({ argument: `target.${kind}.md`, overrides: { kind } }), prepared(1), waveDone(1, [{ ...parsed.findings[0], id: 'R1-F001' }])]);
+  assert.match(reviewMachine.validate?.(state, rulings({ 'R1-F001': { ruling: 'accept' } })) ?? '', /intent finding/);
+  for (const ruling of ['accept', 'reject']) {
+    const event = rulings({ 'R1-F001': { ruling, by: 'orchestrator', reason: 'DEC-1 settles this', fix: { affectedPaths: ['target.md'], dependsOn: [], verification: [] } } });
+    assert.equal(reviewMachine.validate?.(state, event), null);
+    const settled = reviewMachine.step(state, event).state;
+    assert.equal(settled.tag, ruling === 'accept' ? 'fix' : 'settled');
+    assert.ok('c' in settled); assert.equal(settled.c.findings[0]?.resolution, 'orchestrator: DEC-1 settles this');
+  }
+  const pending = drive([rulings({ 'R1-F001': { ruling: 'needs-user' } })], state);
+  assert.equal(pending.tag, 'decide-needs-user');
+  const identity = { path: 'revised.spec.md', hash: `sha256:${'b'.repeat(64)}` };
+  let revised = reviewMachine.step(pending, { type: 'SPEC_SETTLED', ...identity });
+  assert.equal(revised.state.tag, 'pin-check');
+  revised = reviewMachine.step(revised.state, { type: 'ARTIFACT_PARSED', effectId: revised.effects[0]!.id, kind, hash: 'artifact-hash', parsed: {}, defects: [], governing: { pinned: identity.hash, current: identity.hash, design: null, reqIds: ['REQ-1'] } });
+  assert.equal(revised.state.tag, 'prepare');
+  assert.ok('c' in revised.state);
+  assert.deepEqual(revised.state.c.spec.governingSpec, identity);
+  assert.equal(revised.state.c.findings.length, 1);
+  assert.equal(revised.state.c.findings[0]?.category, 'intent');
+  assert.equal(revised.state.c.findings[0]?.status, 'superseded');
+  assert.equal(revised.state.c.rounds.length, 1);
+});
 
 test('diagnostics amendment ruling parser: intent requires recorded authority', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);

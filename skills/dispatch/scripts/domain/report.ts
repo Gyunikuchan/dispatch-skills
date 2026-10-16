@@ -13,7 +13,7 @@ const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[
 export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
   plan: new Set([
     'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'dependency-graph',
-    'domain-logic', 'edge-case', 'intent', 'invariant', 'migration', 'parallel-safety', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
+    'domain-logic', 'edge-case', 'intent', 'intent-gap', 'invariant', 'migration', 'parallel-safety', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
     'simplicity', 'spec-gap', 'standards', 'state-machine', 'test-leak', 'testability', 'user-gap', 'validation', 'verification', 'yagni',
   ]),
   code: new Set([
@@ -24,7 +24,7 @@ export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
   // NOTE: Supported review tags plus those the design prompt block lists (scope, dependency-graph, invariant, testability, standards).
   design: new Set([
     'adjacent', 'alternatives', 'architecture', 'boundaries', 'compatibility', 'correctness', 'data-flow', 'dependency-graph',
-    'graph-correctness', 'integration', 'intent', 'interfaces', 'invariant', 'migration', 'operations', 'parallel-safety', 'risk',
+    'graph-correctness', 'integration', 'intent', 'intent-gap', 'interfaces', 'invariant', 'migration', 'operations', 'parallel-safety', 'risk',
     'rollback', 'scope', 'scope-creep', 'security', 'simplicity', 'standards', 'testability', 'verification',
   ]),
 };
@@ -148,7 +148,7 @@ export function parseReport(input: ReportInput): ReportResult {
     if (typeof severity !== 'string' || !SEVERITIES.has(severity)) return fail('uncovered-scope', `finding ${index} severity must be MUST, SHOULD, or CONSIDER`);
     if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
     const known = REVIEW_TAGS[kind].has(tag.trim());
-    const category = known ? tag.trim() : 'uncategorized';
+    const category = known ? tag.trim() === 'intent-gap' ? 'intent' : tag.trim() : 'uncategorized';
     // Markup-inert by construction; the raw spelling stays only in the provider log.
     const originalTag = known ? undefined : tag.trim().replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
     if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);

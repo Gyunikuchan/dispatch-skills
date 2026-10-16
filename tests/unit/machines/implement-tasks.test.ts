@@ -7,9 +7,13 @@ import { implementData, initialImplement, stepImplement, validateImplement, type
 import { reconcileTasks, taskScope, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
 
-test('prewrite-level: task slots schedule in plan order only after the shared gate', () => {
+test('governing spec reaches standalone task briefs through scheduling', () => {
   const sim: Sim = {};
   let { result, trace } = start(2, sim);
+  const governingSpec = { path: 'intent.spec.md', hash: HASH };
+  assert.ok('c' in result.state && result.state.c);
+  if (!('c' in result.state) || !result.state.c) return;
+  result = { ...result, state: { ...result.state, c: { ...result.state.c, governingSpec } } as ImplementState };
   assert.deepEqual(slots(result).map((slot) => [slot.task, slot.action, slot.model]), [['T1', 'launch', 'writer-a'], ['T2', 'launch', 'writer-a']]);
   assert.deepEqual(slots(result).map((slot) => slot.worktree), ['run/wt/task-t1', 'run/wt/task-t2']);
   result = launch(result, sim, trace);
@@ -20,6 +24,9 @@ test('prewrite-level: task slots schedule in plan order only after the shared ga
   assert.deepEqual(slots(result).map((slot) => slot.task), ['T1']);
 
   result = submit(result, 'T1', sim, trace);
+  const briefs = trace.effects.filter((effect) => effect.kind === 'write-brief' && effect.input['governingSpec']);
+  assert.ok(briefs.length > 0);
+  for (const brief of briefs) if (brief.kind === 'write-brief') assert.deepEqual(brief.input['governingSpec'], governingSpec);
   assert.equal(record(result, 'T1')?.integrated, 'i-T1');
   const t3 = trace.effects.findLast((effect) => effect.kind === 'checkout' && effect.op === 'task');
   assert.equal(t3?.kind === 'checkout' && t3.input['revision'], 'i-T1');
@@ -114,9 +121,13 @@ test('amendment from a BLOCKED writer reaches the failure decision with unresolv
   assert.equal(record(result, 'T1')?.amendment, null);
 });
 
-test('tasks: failure retry re-pends the failed task with its admission defect and stays bounded', () => {
+test('governing spec remains bound when failure retry regenerates a task brief', () => {
   const sim: Sim = { envelope: (id) => id === 'T1' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'cannot proceed', evidence: [], blockers: ['missing API'] } : defaultEnvelope(id) };
   let { result, trace } = start(1, sim);
+  const governingSpec = { path: 'intent.spec.md', hash: HASH };
+  assert.ok('c' in result.state && result.state.c);
+  if (!('c' in result.state) || !result.state.c) return;
+  result = { ...result, state: { ...result.state, c: { ...result.state.c, governingSpec } } as ImplementState };
   for (let attempt = 1; attempt <= 3; attempt++) {
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
     if (attempt === 1) result = submit(launch(result, sim, trace), 'T2', sim, trace);
@@ -126,6 +137,7 @@ test('tasks: failure retry re-pends the failed task with its admission defect an
     result = host(result, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'API stub added' } }, sim, trace);
     const brief = trace.effects.findLast((effect) => effect.kind === 'write-brief');
     assert.deepEqual(brief?.kind === 'write-brief' && brief.input['admissionDefects'], ['Writer returned BLOCKED: cannot proceed']);
+    assert.deepEqual(brief?.kind === 'write-brief' && brief.input['governingSpec'], governingSpec);
   }
   assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'again' } }) ?? '', /failure limit/);
 });

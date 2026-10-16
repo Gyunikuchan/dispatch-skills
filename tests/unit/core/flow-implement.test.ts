@@ -18,7 +18,7 @@ import { authoringFlow, completionFlow, PLAN, SKILL_ROOT } from './fixtures/flow
 
 for (const planMode of ['external'] as const) test(`implement-completion-rules: ${planMode} flow binds a real walkthrough and replays completion`, () => completionFlow(planMode));
 
-test('rewrite SC2 implementation review carries governing artifacts and criteria', async () => {
+test('governing spec default preserves implementation review artifacts criteria and structural focus', async () => {
   const state = approvalState();
   const c = { ...state.c, planPath: 'feature.plan.md', run: { ...state.c.run, config: { ...state.c.run.config, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } } };
   const result = stepImplement({ tag: 'delivered-snapshot', c: { ...c, phase: 'delivered' }, effectId: 'delivered' }, { type: 'SNAPSHOT', effectId: 'delivered', fingerprint: FP, diff: { paths: [] } });
@@ -36,7 +36,9 @@ test('rewrite SC2 implementation review carries governing artifacts and criteria
   if (prepared?.type !== 'REVIEW_PREPARED') return;
   const prompt = fs.readFileSync(Object.values(prepared.promptPaths)[0]!, 'utf8');
   assert.match(prompt, /feature\.plan\.md/); assert.match(prompt, /x\.walkthrough\.md/); assert.match(prompt, /SC1/); assert.match(prompt, /check/);
-  assert.doesNotMatch(prompt, /- Task: null/); assert.match(prompt, /- Task: x/);
+  assert.doesNotMatch(prompt, /- Task: null/); assert.match(prompt, /- Task: Review the selected changes\./);
+  assert.equal(effect.review['context'], null);
+  assert.ok(effect.review['governing'] && typeof effect.review['governing'] === 'object');
 });
 
 test('task-map-authored: direct implement authoring preserves the authored Task Map through review fixes', async () => {

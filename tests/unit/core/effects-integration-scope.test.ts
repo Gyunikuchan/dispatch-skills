@@ -42,7 +42,7 @@ test('review fix integration hash validation accepts only complete Git object id
 });
 
 
-test('review fix brace-prefixed focus remains ordinary review context', async () => {
+test('governing spec intent ignores brace-prefixed legacy context without changing integration scope', async () => {
   const ports = fakePorts(), runDir = tempDir();
   const git = { toplevel: async () => runDir, diffNames: async () => ['src/a.ts'] } as unknown as Git;
   const request = { ...effect(), review: { ...effect().review, context: '{general} review' }, scope: { scope: 'full' } };
@@ -50,5 +50,7 @@ test('review fix brace-prefixed focus remains ordinary review context', async ()
   assert.equal(result[0]?.type, 'REVIEW_PREPARED');
   if (result[0]?.type !== 'REVIEW_PREPARED') throw new Error('prepared');
   assert.deepEqual(result[0].scope['paths'], ['src/a.ts']);
-  assert.match(ports.fs.readText(result[0].promptPaths['reader']!)!, /\{general\} review/);
+  const prompt = ports.fs.readText(result[0].promptPaths['reader']!);
+  assert.doesNotMatch(prompt, /\{general\} review/);
+  assert.match(prompt, /- Focus: General review/);
 });

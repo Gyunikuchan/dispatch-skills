@@ -1,5 +1,7 @@
 # Plan
 
+Settle the governing spec through [spec operation](../spec-stage.md) before tactical authoring. Read the whole spec and every emitted `data.read` path/section, including shared + plan + code quality sections for standalone and nested increment plans. A standalone plan Parent pins the spec path and hash; an increment plan pins its design increment, whose design pins the spec. Give each criterion `Satisfies: REQ-<n>` traceability. Keep tactics here and intent in the spec; use the [revision protocol](../spec-stage.md#revision-protocol) for intent changes.
+
 Use the canonical template's hierarchy: current context, plain-language task outcomes, nested file details, then verification and reviews.
 
 Use `start plan --session-dir <dir> --orchestrator <platform> -- <objective>`. Follow the [plan template](../templates/plan.md): author task outcomes, their prerequisite graph, and criterion assignments once in its ID-keyed Task Map, then add matching task headings and execution detail. Resolve emitted lint defects before review; inspect semantic dependencies and claimed independence against producer/consumer interfaces. The settled plan is an implementation input; author/review replies follow [the contract](../..).

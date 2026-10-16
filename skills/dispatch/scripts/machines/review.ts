@@ -67,7 +67,7 @@ export const phaseOf = (kind: ReviewKind): 'plan-review' | 'code-review' => (kin
 export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, target: string, governingSpec: SpecIdentity | null = null): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
   const slots = resolveSlots(run, phaseOf(kind));
   if (!slots.ok) return slots;
-  const context = isString(run.overrides['context']) ? run.overrides['context'] : (run.verb === 'review' && kind === 'code' ? null : run.argument);
+  const context = null;
   const sessionDir = isString(run.overrides['sessionDir']) ? run.overrides['sessionDir'] : undefined;
   const governing = isRecord(run.overrides['governing']) ? run.overrides['governing'] as ReviewSpec['governing'] : undefined;
   const writer = writerConfig(run.config, run.orchestrator, run.level);

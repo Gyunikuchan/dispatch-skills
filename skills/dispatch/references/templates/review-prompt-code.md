@@ -2,7 +2,9 @@
 
 Kind block for `review-prompt.md`.
 
-- `<Task Summary>` — summary of the ask and the changes made.
+- `<Task Summary>` — intent from the governing spec.
+- `<Spec Path>` — path to the settled governing spec, or `None`.
+- `<Spec Hash>` — settled spec hash, or `None`.
 - `<Walkthrough Path>` — path to the attached walkthrough.
 - `<Plan Path>` — path to the attached plan, or `None`.
 - `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed paths: <changed paths>; <range>`, or `Re-review round <n> — walkthrough body changed; review full selected range (<range>)`.
@@ -16,18 +18,22 @@ success criteria well, not merely whether it matches the plan.
 ## context
 
 - Task: <Task Summary>
+- Spec Path: <Spec Path>
+- Spec Hash: <Spec Hash>
 - Walkthrough: <Walkthrough Path>
 - Plan: <Plan Path>
 
 ## against
 
-- The task, the plan's `## Success Criteria` (with no plan, the task alone), and the walkthrough's
+- The governing spec's REQs and DECs, the plan's `## Success Criteria`, and the walkthrough's
   `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
   missed or met only on paper, such as a test passing without exercising it, is `intent`.
 - With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
 ## inspection
+
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
 
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are

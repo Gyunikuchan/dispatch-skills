@@ -30,6 +30,15 @@ test('prompt: assembled frame + kind block filled with fixed inputs equals the g
   for (const kind of ['code', 'design', 'plan'] as const) {
     const { variables, template } = assembleTemplate(frame, read(templates, `review-prompt-${kind}.md`), undefined, shared(kind));
     assert.equal(`${fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind])}\n`, read(golden, `${kind}.md`), kind);
+    const prompt = fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind]);
+    assert.match(prompt, /Read the whole spec/);
+    assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
+    if (kind !== 'code') {
+      assert.ok(prompt.indexOf('`intent-gap`') < prompt.indexOf('- intent:'));
+      assert.match(prompt, /§ Spec: <heading>/);
+      if (kind === 'plan') assert.match(prompt, /`spec-gap` is a test-spec gap/);
+      else assert.doesNotMatch(prompt, /`spec-gap`/);
+    }
   }
 });
 

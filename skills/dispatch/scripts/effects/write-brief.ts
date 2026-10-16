@@ -37,6 +37,8 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
     if (value === undefined || value === null) return '(none)';
     return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
   };
+  const spec = input['governingSpec'];
+  if (typeof spec === 'object' && spec !== null && 'path' in spec && 'hash' in spec) rows.push(['Governing spec', `Path: ${String(spec.path)}\nHash: ${String(spec.hash)}`]);
   if (typeof input['planPath'] === 'string' || typeof input['planHash'] === 'string') {
     rows.push(['Governing plan', `Path: ${String(input['planPath'] ?? '(unknown)')}\nHash: ${String(input['planHash'] ?? '(unknown)')}`]);
   }

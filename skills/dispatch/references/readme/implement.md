@@ -2,9 +2,11 @@
 
 Use `implement` to deliver a requirement or continue from an approved plan or design.
 
+An objective first settles the spec, then authors a plan. At `medium` and above, approve the spec's exact contents before plan authoring; at `low`, it is shown at handoff. A supplied plan or design reuses its governing spec directly or through the design's Parent pin. Existing approvals are reused only for the versions they cover. Design approval and production-write approval remain separate. See [document layers](concepts.md#spec-design-and-plan).
+
 ## What happens
 
-A plain-language requirement starts with a plan and its review and fix rounds enabled by the selected level's policy. Dispatch asks you to approve the plan and its verification commands before production changes begin. The plan breaks the work into tasks with outcomes, criteria, owned paths, and prerequisites. Each task runs in an isolated worktree with a writer native to your host platform. Tasks with unmet prerequisites wait; independent tasks can overlap up to `write-concurrency` (default `1`).
+After spec settlement, a plain-language requirement starts with a plan and its review and fix rounds enabled by the selected level's policy. Dispatch asks you to approve the plan and its verification commands before production changes begin. The plan breaks the work into tasks with outcomes, criteria, owned paths, and prerequisites. Each task runs in an isolated worktree with a writer native to your host platform. Tasks with unmet prerequisites wait; independent tasks can overlap up to `write-concurrency` (default `1`).
 
 For each task, the writer inspects the relevant code, adds discriminating tests for the task criteria, and captures the expected failing result (RED) before production edits. It then implements the behavior and runs the task checks. Your host agent checks and integrates each result, then Dispatch runs final approved verification and the configured code-review policy, when enabled. Accepted safe findings can be fixed and rechecked within the configured review rounds before Dispatch reports the handoff.
 
@@ -12,9 +14,12 @@ For each task, the writer inspects the relevant code, adds discriminating tests 
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Plan["📝 Plan + plan review"]
-    Plan --> Gate{"🛑 One approval gate"}
-    Artifact(["📄 Approved plan<br/>or tech design"]) --> Gate
+    User(["👤 Requirement"]) --> Spec["📄 Settle spec"]
+    Spec --> SpecGate{"Approve spec at medium+<br/>before authoring"}
+    SpecGate --> Plan["📝 Plan + plan review"]
+    Plan --> Gate{"🛑 Approve production work"}
+    Artifact(["📄 Approved plan<br/>or tech design"]) --> Resolve["Resolve governing spec<br/>and artifact approvals"]
+    Resolve --> Gate
     Gate --> Baseline["✅ Baseline tests"]
     Baseline --> Tasks["🧩 Ready tasks, each<br/>in its own worktree"]
     Tasks --> Red["🔴 Failing tests first"]
@@ -46,6 +51,6 @@ Implementation follows the artifact's prerequisites and recorded decisions. Inde
 
 ## When requirements change
 
-Ask your host agent to update the plan when requirements change. Completed work is preserved, and the host decides which checks to repeat. A new prerequisite can require another check after that prerequisite finishes.
+Ask your host agent to revise the spec when intent changes, then update its design or plan through the appropriate recovery path. The host checks the new contents and obtains new approval where required. Completed work and review history are preserved, and the host decides which checks to repeat. Design-owned work first revises and approves the design. Standalone implementation can return to its own plan authoring before tasks start; after tasks start it preserves work and stops for re-planning. A new prerequisite can require another check after that prerequisite finishes.
 
 Removing a task from the plan does not remove its code. For example, dropping a completed reporting task keeps the report code until you approve its removal. See [Troubleshooting](troubleshooting.md) if work cannot continue.

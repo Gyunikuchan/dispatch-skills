@@ -8,6 +8,18 @@ const finding = (overrides: Record<string, string> = {}) => ({
   requiredChange: 'bound the retry loop with a counter', ...overrides,
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
+
+test('intent-gap normalizes plan and design intent while spec-gap stays separate', () => {
+  for (const kind of ['plan', 'design'] as const) {
+    const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag: 'intent-gap', locus: '§ Spec: Requirements' })]) });
+    assert.ok(result.ok); assert.equal(result.findings[0]?.category, 'intent');
+    assert.equal(result.findings[0]?.originalTag, undefined);
+  }
+  const result = parseReport({ kind: 'plan', source: 'codex[0]', text: report([finding({ tag: 'spec-gap', locus: '§ Verification' })]) });
+  assert.ok(result.ok); assert.equal(result.findings[0]?.category, 'spec-gap');
+  const code = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ tag: 'intent-gap' })]) });
+  assert.ok(code.ok); assert.equal(code.findings[0]?.category, 'uncategorized'); assert.equal(code.findings[0]?.originalTag, 'intent-gap');
+});
 const failure = (text: string, truncated = false) => {
   const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
   return result.ok ? null : result.failure.kind;

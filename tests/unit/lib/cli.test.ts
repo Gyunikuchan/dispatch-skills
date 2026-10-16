@@ -5,6 +5,12 @@ import { LEVELS, normalizeProvider, parsePins } from '../../../skills/dispatch/s
 const policy = { levels: LEVELS, pins: parsePins, provider: (text: string) => ['codex', 'claude', 'agy', 'opencode', 'copilot'].includes(normalizeProvider(text)) ? normalizeProvider(text) : null };
 const start = ['start', 'ask', '--session-dir', 'chat', '--orchestrator', 'codex'];
 
+test('rejects context for every start verb', () => {
+  for (const verb of ['ask', 'design', 'plan', 'review', 'implement']) {
+    assert.throws(() => parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'legacy', '--', 'objective'], policy), /Invalid or repeated flag --context/);
+  }
+});
+
 test('rebind grammar requires run reason and an optional input file while checkpoint retains RED semantics', () => {
   assert.equal(parseCommand(['rebind', '--run', 'run', '--reason', 'Parser repair', '--event', '@event.json'], policy).command, 'rebind');
   for (const args of [['rebind', '--run', 'run'], ['rebind', '--reason', 'repair'], ['rebind', '--run', 'run', '--reason', ' '], ['rebind', '--run', 'run', '--reason', 'repair', '--event', '{}'], ['rebind', '--run', 'run', '--reason', 'repair', '--root', 'repo']]) assert.throws(() => parseCommand(args, policy));
@@ -45,18 +51,10 @@ test('compatibility alias parity uses public start mappings', () => {
   assert.deepEqual(Object.values(ALIASES), ['start review --kind code', 'start plan', 'start implement']);
   for (const line of Object.values(ALIASES)) assert.equal(parseCommand([...line.split(' '), '--session-dir', 'chat', '--orchestrator', 'codex', '--', 'target'], policy).command, 'start');
 });
-test('cli-start-review-context: start review accepts --context and non-review verbs reject it', () => {
-  const parsed = parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'distilled chat intent', '--', 'main..HEAD'], policy);
-  assert.equal(parsed.flags['context'], 'distilled chat intent');
-  for (const verb of ['ask', 'design', 'plan', 'implement']) {
-    assert.throws(() => parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'intent', '--', 'target'], policy), /--context is for review/);
-  }
-});
 
 test('cli: spec flag is accepted for work verbs and rejected for ask', () => {
   for (const verb of ['design', 'plan', 'review', 'implement']) {
     assert.equal(parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--spec', 'x.spec.md', '--', 'target'], policy).flags['spec'], 'x.spec.md');
   }
   assert.throws(() => parseCommand([...start, '--spec', 'x.spec.md', '--', 'question'], policy), (error: unknown) => error instanceof UsageError && /--spec is for design, plan, review, or implement/.test(error.message));
-  assert.equal(parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'intent', '--', 'main..HEAD'], policy).flags['context'], 'intent');
 });

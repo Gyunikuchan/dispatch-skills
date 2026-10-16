@@ -102,23 +102,15 @@ parallel, so names must stay unique without relying on randomness.
   their emitted paths and production files retain their scoped repository paths. Write
   subagents return their outcome to the path the driver names.
 
+### Canonical intent
+
+One resolved canonical spec governs the work. New specs use the session root; an existing explicitly resolved or Parent-pinned owner retains its path. Other planning skills redirect their spec/design discussion into that owner. Merge material content and decisions before stray cleanup, preserve merge evidence, and obtain user approval before deleting a tracked stray. [ADR 0010](0010-canonical-session-intent.md) records this choice and [ADR 0011](0011-layered-governing-documents.md) separates the document layers.
+
 ### Movement and handoff
 
-- A session has one authoritative location. At a terminal handoff, after all writes and required
-  verification settle, a script moves the **entire** folder to
-  `<realpath(os.tmpdir())>/dispatch-skills/<same-folder-name>/`. This covers ordinary work, final
-  design integration, standalone reviews, and terminal failure or manual-completion handoffs.
-  Nonterminal pauses and intermediate design increments stay in `.scratch`.
-- Prefer an atomic rename. Across devices, copy to a staging destination, verify the copy, publish
-  the complete destination, then remove the source. Before publication, `.scratch` stays
-  authoritative and any staging copy is disposable; after publication, OS temp is authoritative
-  even if source cleanup fails partway, and the leftover source is reported and cleaned later. A
-  failed move never erases a completed workflow or suppresses its handoff.
-- The handoff reports the full path of the authoritative folder once, with the failure reason when
-  the move did not happen. The OS may later purge temp data.
-- New work in the same chat first reactivates the folder back into `.scratch` under the same move
-  rules. If it cannot be safely found or reactivated, stop with the relevant paths and recovery
-  reason; never create a second authoritative folder for the chat.
+The earlier unconditional move to OS temp at terminal handoff is superseded. Delivered sessions remain in their workspace location at handoff, retaining deliverables and machine evidence together. The handoff identifies the authoritative folder. Existing lifecycle movement and reactivation support does not require moving every completed session. Current [session governance](../../skills/dispatch/SKILL.md#write-boundaries-and-recovery) owns placement and recovery.
+
+The historical temp policy sought one authoritative copy and portable relative references. Workspace retention preserves those aims while keeping recovery evidence reachable with the checkout; it also requires deliberate cleanup rather than reliance on OS temp purging.
 
 ### References and recovery
 
@@ -128,7 +120,7 @@ parallel, so names must stay unique without relying on randomness.
   invocations when the platform exposes none.
 - References inside the session are relative to its root; absolute paths, resume commands, and
   links are resolved from the current root when emitted, so moving the folder never strands them.
-  Work resumes by replaying the run journal, including after reactivation.
+  Work resumes by replaying the run journal, including after any supported reactivation.
 
 ## Alternatives considered
 
@@ -149,8 +141,4 @@ parallel, so names must stay unique without relying on randomness.
 The active folder appears in the workspace; dispatch never commits it, and users decide whether to commit deliverables. Name construction,
 collision handling, and layout are tested in one place: grammar construction and rejection,
 sequence allocation under concurrent creators, attempt increments, and a layout guard asserting a
-simulated run produces exactly the expected tree. Lifecycle tests cover stable naming and id
-fallback, multiple workflows per chat, scratch-to-temp handoff and reactivation, same- and
-cross-device moves, denied temp access, interrupted copies, destination collisions, relative path
-rebinding, and terminal versus nonterminal handoffs; the reported path identifies the authoritative
-folder in every outcome.
+simulated run produces exactly the expected tree. Lifecycle tests cover naming, identity, retained handoff and supported movement/recovery. Historical scratch-to-temp movement remains recovery context rather than a mandatory terminal action. The reported path identifies the authoritative folder.

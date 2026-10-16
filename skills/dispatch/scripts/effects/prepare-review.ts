@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, Ports, ResultEvent } from '../core/types.ts';
-import { assembleTemplate, fillTemplate, qualityBar, type QualityConsumer } from '../domain/prompt.ts';
+import { assembleTemplate, DESIGN_REVISION_CONTEXT_PREFIX, fillTemplate, qualityBar, type QualityConsumer } from '../domain/prompt.ts';
 import { structuralLines } from '../domain/plan.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
@@ -128,28 +128,30 @@ function reviewScopeText(round: number, scope: string, changed: readonly string[
   return `Review round ${round} (${scope}): ${what}; comparison: ${target || 'working tree against HEAD'}`;
 }
 
+function internalProvenance(kind: string, context: string): string {
+  if (kind !== 'plan' && kind !== 'design') return '';
+  const prefix = DESIGN_REVISION_CONTEXT_PREFIX;
+  let value: unknown;
+  try { value = JSON.parse(context.startsWith(prefix) ? context.slice(prefix.length) : context); } catch { return ''; }
+  if (!isRecord(value)) return '';
+  const keys = kind === 'design' ? ['delta', 'reason', 'evidence'] : ['invocationContext', 'invocationLevel', 'invocationLevelSource'];
+  const provenance = Object.fromEntries(keys.filter((key) => key in value).map((key) => [key, value[key]]));
+  return Object.keys(provenance).length ? `\n\n### Internal review provenance\nStructural driver context; subject to the governing spec.\n${JSON.stringify(provenance)}\n` : '';
+}
+
 async function kindValues(kind: string, spec: Row, scopeText: string, deps: PrepareDeps, ports: Pick<Ports, 'fs'>): Promise<Record<string, string>> {
   const target = text(spec['target']);
-  const requirement = text(spec['context'], target);
+  const identity = isRecord(spec['governingSpec']) ? spec['governingSpec'] : null;
+  const specPath = identity ? text(identity['path']) : 'None';
+  const specHash = identity ? text(identity['hash']) : 'None';
+  const specText = identity ? ports.fs.readText(path.resolve(deps.cwd, specPath)) : null;
+  if (identity && specText !== null && `sha256:${sha256(specText)}` !== specHash) throw new Error(`stale-spec: governing spec bytes no longer match ${specHash}: ${specPath}`);
+  const specValues = { 'Spec Path': specPath, 'Spec Hash': specHash };
   switch (kind) {
-    case 'plan': return { 'Plan Path': target, Requirement: requirement, 'Review Scope': scopeText };
-    case 'design': return { 'Design Path': target, Requirement: requirement, 'Review Scope': scopeText };
+    case 'plan': return { ...specValues, 'Plan Path': target, 'Review Scope': scopeText };
+    case 'design': return { ...specValues, 'Design Path': target, 'Review Scope': scopeText };
     default: {
-      let taskSummary: string;
-      const explicitContext = typeof spec['context'] === 'string' && spec['context'].trim() ? spec['context'].trim() : null;
-      if (explicitContext) {
-        taskSummary = explicitContext;
-      } else if (target.includes('..')) {
-        let commitLog = '';
-        try {
-          commitLog = deps.git.log ? await deps.git.log(deps.cwd, target) : '';
-        } catch {
-          commitLog = '';
-        }
-        taskSummary = commitLog.trim() || 'Review the selected changes.';
-      } else {
-        taskSummary = 'Review the selected changes.';
-      }
+      const taskSummary = (specText ? parseArtifactSections(specText).get('Intent & Problem') : null) || 'Review the selected changes.';
 
       const governing = isRecord(spec['governing']) ? spec['governing'] : {};
       let planPath = typeof governing['planPath'] === 'string' && governing['planPath'] ? governing['planPath'] : null;
@@ -178,6 +180,7 @@ async function kindValues(kind: string, spec: Row, scopeText: string, deps: Prep
       }
 
       return {
+        ...specValues,
         'Task Summary': taskSummary,
         'Walkthrough Path': text(walkthroughPath, 'None'),
         'Plan Path': text(planPath, 'None'),
@@ -304,10 +307,10 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const block = ports.fs.readText(path.join(dir, `review-prompt-${kind}.md`));
         const template = assembleTemplate(frame, block, undefined, [qualityBar(ports.fs.readText(path.join(dir, 'quality-bar.md')), kind as QualityConsumer)]);
         const values: Record<string, string> = {
-          'User Focus Areas': text(spec['context'], 'General review') || 'General review', 'Tool Turn Budget': 'Unspecified',
+          'User Focus Areas': isRecord(spec['governing']) && Array.isArray(spec['governing']['finalFocusPaths']) && spec['governing']['finalFocusPaths'].length ? spec['governing']['finalFocusPaths'].join(', ') : 'General review', 'Tool Turn Budget': 'Unspecified',
           ...(await kindValues(kind, spec, scopeText, deps, ports)),
         };
-        const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
+        const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? '']))) + internalProvenance(kind, text(spec['context']));
         body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${settled}${carriedSection(carried, slot)}`;
       }
     } catch (error) {

@@ -33,6 +33,7 @@
               "domain-logic",
               "edge-case",
               "intent",
+              "intent-gap",
               "invariant",
               "migration",
               "parallel-safety",

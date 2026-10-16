@@ -2,6 +2,20 @@
 
 Dispatch keeps independent review and implementation inside your current agent workflow. Your host agent remains responsible for checking evidence, making rulings, and reporting the result.
 
+## Spec, design and plan
+
+Dispatch uses three document layers. The **spec** records why the work matters and what it must achieve: the problem, requirements with acceptance conditions, constraints, alternatives and user decisions. A **design** chooses the strategy: architecture, boundaries, risks and ordered increments. A **plan** gives the tactics: tasks, file ownership, prerequisites, requirement-linked criteria and verification commands. Later layers cite upstream requirements and decisions instead of repeating them.
+
+For example, a webhook spec can require safe retries without duplicate charges. The design chooses the idempotency boundary and rollout order. A plan names the storage and handler changes and checks that prove retries are safe. A standalone plan pins the spec's exact contents; an increment plan names its design increment, and that design pins the spec.
+
+Every work verb except `ask` uses one canonical governing spec. Dispatch reuses the supplied artifact's governing spec or the session spec; when none exists, your host writes one from the discussion in the session folder. A resolved supplied spec keeps its path and references, including when it belongs to another session; Dispatch does not move it to normalize placement. Standalone review also uses the diff and labels inferred requirements. If another planning skill runs during Dispatch, its spec/design output and discussion go into that resolved canonical spec. Content in a stray spec is merged before removal; deleting a tracked stray needs your approval.
+
+At `medium` and above, you approve the spec's exact contents before design or plan authoring. At `low`, Dispatch proceeds and links the spec at handoff. This is separate from design approval and permission for production writes. Standalone code review needs a spec but adds no spec approval just to review it. There is no separate delegated spec review: design and plan reviewers check governing intent as part of their review.
+
+Authors, writers and every reviewer read the whole spec. Authors also read the same quality criteria as their reviewers. A writer reads the plan's shared context and its assigned task details. This keeps the outcome available while task ownership remains bounded.
+
+If intent changes, the host records your decision in the spec and checks its new contents. At an applicable authoring gate, approval must cover those new contents; older approval does not carry over. Completed work, logs and review history remain available. Follow [recovery guidance](troubleshooting.md#resolve-spec-and-intent-changes) to identify which design or plan must change before work resumes.
+
 ## Who does what
 
 - **Read delegates** inspect the repository and return analysis or review findings. They use provider-specific read-only controls.
@@ -12,7 +26,7 @@ This keeps independent review useful while leaving decisions and production chan
 
 ## What happens during implementation
 
-1. The plan lists the outcomes, files, prerequisites, and verification steps for the change.
+1. Dispatch settles the spec, then the plan lists outcomes, files, prerequisites, requirement-linked criteria and verification steps.
 2. After approval, Dispatch works through tasks whose prerequisites are ready. Independent tasks can run at the same time when `write-concurrency` is configured above one.
 3. Your host agent checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
 4. Dispatch reports the outcome and links the artifacts and logs you may need for follow-up.

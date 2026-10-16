@@ -7,7 +7,7 @@ reviews; variables are all inputs' declarations.
 ## Prompt template
 
 Populate the template variables (kind blocks declare the rest):
-- `<User Focus Areas>` — trailing user arguments, or `General review`.
+- `<User Focus Areas>` — structural `governing.finalFocusPaths`, or `General review` when absent or empty.
 - `<Tool Turn Budget>` — orchestrator-supplied advisory target, or `Unspecified`.
 
 ````markdown

@@ -6,6 +6,24 @@ Dispatch notices changes to tracked files and non-ignored untracked files. These
 
 Preserve the whole session folder when moving or recovering a run. Missing or corrupt recovery files can prevent continuation. If delivery conflicts with newer changes in your checkout, ask your host agent to resolve the conflict before retrying.
 
+## Resolve spec and intent changes
+
+If no spec exists, your host authors one in the session folder from the discussion; standalone review also uses the diff and labels inferred requirements. If several session specs exist, identify the intended one and supply its path with `--spec`; the host must not guess. A supplied path must agree with the artifact's governing references. A resolved supplied spec keeps its path, including across sessions; merge redirected planning output into that canonical owner instead of making a new copy. Restore a missing governing file or correct those references through reauthoring.
+
+When intent changes, the host preserves pending action results, completed work and review history before continuing. An interrupted action with uncertain completion must be reconciled before retry. Live writers finish or use an already-authorized stop path; changing the spec does not authorize stopping them.
+
+The host reads and checks the changed spec and records its new content hash. At `medium` and above, any required authoring approval must cover the new contents; approval of an earlier version is insufficient. Standalone code review rechecks against the new spec without adding an authoring approval gate.
+
+| Work in progress | Next action after an intent change |
+| --- | --- |
+| Delivery governed by a design | Suspend increment work. Revise and approve the design before dependent increment plans are authored, reviewed or delivered. Before initial design approval, return to design authoring. |
+| Standalone planning | Return to plan authoring against the changed spec. |
+| Standalone review or implementation of an increment plan | Stop the current run. Have the governing design revised and approved through its separate revision flow, then reauthor the increment plan. This review or implementation owner does not edit the design in place. |
+| Standalone review of a plan or design | Stop and re-plan or revise the design before a new review. |
+| Standalone implementation of a plan | Stop for re-planning. If this run authored the plan and tasks have not started, it can return to plan authoring. After tasks start, retain the work and stop. |
+
+Keep the session folder throughout recovery. A new approval or revised plan does not erase accepted work or earlier review evidence. See [document layers](concepts.md#spec-design-and-plan) for each document's purpose.
+
 ## Continue after a local driver fix
 
 Ask your host agent to inspect the saved run before resuming it. A compatible driver fix can preserve completed work. For manual recovery, run from the skill folder:

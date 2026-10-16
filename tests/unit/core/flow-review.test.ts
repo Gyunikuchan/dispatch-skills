@@ -64,7 +64,7 @@ test('rewrite SC2 prompt preserves comparison independently of context', async (
   const prompt = options.ports.fs.readText(path.join(runDir, file));
   assert.match(prompt, /main\.\.HEAD/);
   assert.match(prompt, /src\/a\.ts/);
-  assert.match(prompt, /Check the boundary/);
+  assert.doesNotMatch(prompt, /Check the boundary/);
 });
 
 
@@ -180,14 +180,16 @@ test('delta review attributes changes inside fenced code blocks with heading syn
   assert.deepEqual(r2?.scope['paths'], ['Proposed Changes']);
 });
 
-test('flow-review-context: start review forwards --context into run spec context and review prompt', async () => {
+test('governing spec identity supplies intent through the real review handler flow', async () => {
   const { options, runStarted, runDir } = setup();
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Semantic intent from chat' } } });
   assert.equal(result.frame?.await, 'rule');
   const file = options.ports.fs.listFiles(runDir).find((name) => name.endsWith('.prompt.md'))!;
   const prompt = options.ports.fs.readText(path.join(runDir, file));
-  assert.match(prompt, /- Task: Semantic intent from chat/);
-  assert.match(prompt, /- Focus: Semantic intent from chat/);
+  assert.ok(prompt.includes(runStarted.specCandidate!));
+  assert.match(prompt, /- Spec Hash: sha256:[a-f0-9]{64}/);
+  assert.match(prompt, /- Focus: General review/);
+  assert.doesNotMatch(prompt, /Semantic intent from chat/);
 });
 
 test('flow-review-discovery: discovers unique session deliverables and respects explicit paths and ambiguity', async () => {

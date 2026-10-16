@@ -6,13 +6,15 @@ code has been written yet.
 
 ### Context
 - Design: .scratch/example/example.design.md
-- Requirement: Split the importer into staged increments
+- Spec Path: .scratch/example/example.spec.md
+- Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Focus: General review
 - Scope: Full review
 - Advisory Tool Turn Target: Unspecified
 
 ### Review against
-- The requirement.
+- First check that every governing spec REQ is met, no DEC is contradicted, and no premise is flawed.
+  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
 - The design and its per-increment acceptance criteria.
 
 Apply the selected quality bar to these governing targets.
@@ -23,6 +25,8 @@ Verification evidence comes from the orchestrator; run no test or build commands
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
 reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
+For a spec finding, use § Spec: <heading>.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -51,6 +55,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Verification: every increment acceptance criterion observable.
 
 ### Tags
+- intent gap: `intent-gap`
 - intent: `intent`, `scope`
 - architecture: `architecture`, `boundaries`, `interfaces`, `data-flow`
 - decisions: `alternatives`, `simplicity`

@@ -4,6 +4,8 @@ success criteria well, not merely whether it matches the plan.
 
 ### Context
 - Task: Add a retry budget to the fetch helper
+- Spec Path: .scratch/example/example.spec.md
+- Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Walkthrough: .scratch/example/example.walkthrough.md
 - Plan: .scratch/example/example.plan.md
 - Focus: General review
@@ -11,7 +13,7 @@ success criteria well, not merely whether it matches the plan.
 - Advisory Tool Turn Target: Unspecified
 
 ### Review against
-- The task, the plan's `## Success Criteria` (with no plan, the task alone), and the walkthrough's
+- The governing spec's REQs and DECs, the plan's `## Success Criteria`, and the walkthrough's
   `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
   missed or met only on paper, such as a test passing without exercising it, is `intent`.
 - With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
@@ -23,6 +25,8 @@ Verification evidence comes from the orchestrator; run no test or build commands
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
 reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
+
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.

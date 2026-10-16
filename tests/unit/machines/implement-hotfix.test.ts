@@ -3,8 +3,12 @@ import { test } from 'node:test';
 import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { HASH, failure, host } from './fixtures/implement-recovery.ts';
 
-test('writer hotfix envelope with paths outside the approved scope returns to its origin', () => {
-  let r = host(failure(), { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'writer', rationale: 'bad branch' } });
+test('governing spec reaches hotfix writer before out-of-scope envelope returns to origin', () => {
+  const state = failure(), governingSpec = { path: 'intent.spec.md', hash: HASH };
+  let r = host({ ...state, c: { ...state.c, governingSpec } }, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'writer', rationale: 'bad branch' } });
+  const brief = r.effects.find((effect) => effect.kind === 'write-brief');
+  assert.ok(brief?.kind === 'write-brief');
+  assert.deepEqual(brief.input['governingSpec'], governingSpec);
   r = stepImplement(r.state, { type: 'BRIEF_READY', effectId: r.effects[0]!.id, stage: 'hotfix', path: 'hotfix.brief', sha256: HASH, envelopePath: 'hotfix.outcome' });
   r = host(r.state, { type: 'WRITE_RECEIPT', status: 'submitted', model: 'writer-a', briefHash: HASH, envelopePath: 'hotfix.outcome' });
   assert.equal(r.state.tag, 'hotfix-envelope');

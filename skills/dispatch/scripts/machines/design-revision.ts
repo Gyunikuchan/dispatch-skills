@@ -1,4 +1,4 @@
-import { qualitySections } from '../domain/prompt.ts';
+import { DESIGN_REVISION_CONTEXT_PREFIX, qualitySections } from '../domain/prompt.ts';
 import type { Event, HostEvent, RevisionScopeProposal, ScopeAdjustment, ScopeDelta } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, sharedDesignSections } from '../domain/design.ts';
@@ -134,7 +134,7 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   const built = reviewSpecFromRun(state.c.run, 'design', state.workingPath, state.c.governingSpec ?? null);
   if (!built.ok) return stay({ ...state, tag: 'refused', error: built.error });
   const offset = state.c.revisionReviewRound;
-  const result = beginReview({ ...built.spec, context: `Review the governed design delta. ${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, (state.c.revisionReviewEpoch ?? 0) > 0 ? `design.revision.review.s${state.c.revisionReviewEpoch}` : 'design.revision.review', state.c.counters, offset, { scope: 'delta', sinceHash: state.c.hash!, priorTarget: state.c.path });
+  const result = beginReview({ ...built.spec, context: `${DESIGN_REVISION_CONTEXT_PREFIX}${JSON.stringify({ before: state.c.design!.governedText, after: design.governedText, delta, reason: state.reason, evidence: state.evidence })}` }, (state.c.revisionReviewEpoch ?? 0) > 0 ? `design.revision.review.s${state.c.revisionReviewEpoch}` : 'design.revision.review', state.c.counters, offset, { scope: 'delta', sinceHash: state.c.hash!, priorTarget: state.c.path });
   return reviewed(state, result);
 }
 export function designRevisionAwait(state: DesignRevisionState) {

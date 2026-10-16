@@ -54,7 +54,7 @@ export type ReviewSpec = {
   governingSpec?: SpecIdentity | null;
   kind: ReviewKind; target: string; cap: number; breadth: number | 'all'; context: string | null;
   roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string; writer?: WriterConfig | null;
-  governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
+  governing?: { planPath: string; walkthroughPath: string; designPath?: string; finalFocusPaths?: readonly string[]; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
 };
 
 /** `ask` is not a `ReviewKind`; `prepare-review` builds its bounded prompt inline. */

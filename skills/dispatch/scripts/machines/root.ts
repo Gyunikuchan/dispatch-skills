@@ -306,6 +306,14 @@ function awaitOf(state: RootState): Await | null {
 }
 
 function project(state: RootState): { at: string; data: Readonly<Record<string, unknown>> } {
+  const projected = projectData(state);
+  if (state.tag !== 'spec' && state.tag !== 'ask' && 'run' in state && awaitOf(state) === 'author' && state.run.spec?.identity) {
+    return { ...projected, data: { ...projected.data, governingSpec: state.run.spec.identity } };
+  }
+  return projected;
+}
+
+function projectData(state: RootState): { at: string; data: Readonly<Record<string, unknown>> } {
   switch (state.tag) {
     case 'design': return { at: `design › ${state.child.tag}`, data: designData(state.child) };
     case 'booting': case 'handoff': return { at: `root › ${state.tag}`, data: {} };

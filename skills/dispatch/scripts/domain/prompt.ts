@@ -5,6 +5,8 @@
 
 export type Template = { variables: readonly string[]; template: string };
 
+export const DESIGN_REVISION_CONTEXT_PREFIX = 'Review the governed design delta. ';
+
 const DEFAULT_SECTION = 'Prompt template';
 const SLOT_PATTERN = /<<slot:([A-Za-z0-9_-]+)>>/g;
 const VARIABLE_BULLET = /^-\s+`<([^>]+)>`/;

@@ -23,9 +23,12 @@ For a large change, dispatch breaks the design into smaller increments. Each inc
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Design["🗺️ Tech design + review"]
-    Design --> Plan["📝 Increment plan + plan review"]
-    Plan --> Gate{"🛑 One approval gate"}
+    User(["👤 Requirement"]) --> Spec["📄 Governing spec"]
+    Spec --> SpecGate{"Approve spec at medium+<br/>before authoring"}
+    SpecGate --> Design["🗺️ Tech design + review"]
+    Design --> DesignGate{"Approve design"}
+    DesignGate --> Plan["📝 Increment plan + plan review"]
+    Plan --> Gate{"🛑 Approve production work"}
     Gate --> Tasks["🧩 Tasks in isolated worktrees"]
     Tasks --> Red["🔴 Failing tests first"]
     Red --> Green["💻 Writer makes them pass"]
@@ -35,7 +38,7 @@ flowchart TD
     Final -->|Last increment| Handoff(["📦 Changes + evidence<br/>handed to you"])
 ```
 
-Smaller tasks can start later in the same workflow: `/dispatch implement:` begins with a plan, while a standalone review runs only the review step.
+All work verbs first settle one governing spec for the outcome, constraints and decisions. At `medium` and above, you approve its contents before design or plan authoring; `low` proceeds and shows the spec at handoff. Smaller tasks can use `/dispatch implement:` to author a plan from that spec. Standalone review reuses or authors a spec before reviewing the target; standalone code review adds no authoring approval gate. See [document layers and approvals](skills/dispatch/references/readme/concepts.md#spec-design-and-plan).
 
 ## Key differentiators
 
@@ -141,7 +144,7 @@ Review your working tree or a branch range:
 
 In each review, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
 
-Run the whole loop — plan, review, approval gate, implementation, code review to settlement:
+Run the whole loop — spec settlement, plan and review, applicable approvals, implementation and code review:
 
 ```text
 /dispatch implement: Add CSV export

@@ -4,7 +4,7 @@ For each owning plan, design and walkthrough, the driver records complete struct
 
 [Dispatch](..) owns `start review`, `send`, and eight awaits. Reviews apply accepted fixes. The driver records findings for the owning design, plan, or walkthrough in its review log and compact section, preserving prior runs in the log; reviews without an owning document use a standalone report.
 
-Review prompt context composes two channels: semantic intent prioritizes explicit `--context` (or distilled chat intent/deviations), falling back to Git commit log (`git log --format="%s%n%b" <range>`) for commit ranges and defaulting to `Review the selected changes.`; structural baseline prioritizes explicit governing paths, discovering unique `<slug>.plan.md` and `<slug>.walkthrough.md` in active `sessionDir` and leaving ambiguous or absent deliverables as `None`.
+Review prompts carry the settled governing spec path and hash. Reviewers read the whole spec; code Task Summary comes from its Intent & Problem section. Structural baseline prioritizes explicit governing paths, discovering unique `<slug>.plan.md` and `<slug>.walkthrough.md` in active `sessionDir` and leaving ambiguous or absent deliverables as `None`.
 
 Verify findings against source and governing outcomes. Accept demonstrated defects regardless of votes; reject unsupported claims with evidence. Recorded user decisions govern until new defects warrant reopening.
 
@@ -12,7 +12,11 @@ Verify findings against source and governing outcomes. Accept demonstrated defec
 
 Read `data.findingsPath` when present; use inline `data.findings` otherwise. The file contains the current round's full findings; inline summaries identify them.
 
-Rule intent with `needs-user`, `{ ruling: accept|reject, quote: <user words> }`, or `{ ruling: accept|reject, by:orchestrator, reason: <settled decision> }`. The orchestrator route requires a nonblank reason citing the settled decision. Use the user gate (`needs-user` or a user quote) for changed intent, a new external dependency or runtime prerequisite, or discarded work.
+Rule intent-category findings (`intent`, including normalized `intent-gap`) first against the whole governing spec and its DEC entries. Check unmet REQs, contradicted decisions and flawed premises before implementation detail. Keep `spec-gap` (test-spec coverage) distinct from `intent-gap` (governing intent).
+
+Rule intent with `needs-user`, `{ ruling: accept|reject, quote: <user words> }`, or `{ ruling: accept|reject, by:orchestrator, reason: <settled decision> }`. The orchestrator route requires a nonblank reason citing the settled decision. Use the user gate (`needs-user` or a user quote) for changed intent, a new external dependency or runtime prerequisite, or discarded work. Accept/reject as orchestrator only when settled spec evidence or a DEC resolves the finding; cite it in `reason`. Otherwise use `needs-user`.
+
+When a user answer changes intent, record a new DEC and follow the canonical [revision protocol and recovery owners](spec-stage.md#revision-protocol): quiesce and reconcile immutable pending results and authorized live-writer receipts before admitted `SPEC_REVISED`; root reads, lints and hashes the new bytes and obtains applicable new-hash approval. An old approval never authorizes a new hash. Root alone synthesizes internal `SPEC_SETTLED`; the host never sends it. Preserve history and follow the owner's reauthoring or halt transition. Ordinary design/plan authoring never rewrites the spec.
 
 ## Review provenance and applicability
 

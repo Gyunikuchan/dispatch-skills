@@ -50,7 +50,7 @@ test('level-journal: a writer refresh during the gate cannot override the settle
   assert.equal(choice.state.c.levelChoice?.quote, 'Adopt high for this run.');
 });
 
-test('level-journal: inherited gate data stays out of later plan review and brief projection is bounded', () => {
+test('governing spec keeps inherited gate data structural and brief projection bounded', () => {
   let result = host(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
   if (result.state.tag !== 'level-classification') throw new Error('classification gate');
   const rawScope = implementData(result.state)['gateScope'] as Record<string, unknown>;
@@ -68,12 +68,14 @@ test('level-journal: inherited gate data stays out of later plan review and brie
     levelChoice: { choice: 'retain' as const, quote: 'private level quote' }, scopeAdjustments: [adjustment],
     scopeNotice: { requestId: adjustment.proposal.requestId, approvedBy: 'user' as const, rationale: 'private notice rationale', quote: 'private notice quote' },
   };
-  const context = { ...result.state.c, tasks: initialTasks(result.state.c.plan!), designBinding: binding, scopeAdjustments: [adjustment] };
+  const governingSpec = { path: 'intent.spec.md', hash: HASH };
+  const context = { ...result.state.c, governingSpec, tasks: initialTasks(result.state.c.plan!), designBinding: binding, scopeAdjustments: [adjustment] };
   const briefState: ImplementState = { tag: 'task-prewrite-snapshot', c: context, effectId: 'brief-snapshot', task: 'T1' };
   const briefResult = stepImplement(briefState, { type: 'SNAPSHOT', effectId: 'brief-snapshot', fingerprint: FP, diff: { paths: [] } });
   const briefEffect = briefResult.effects.find((effect) => effect.kind === 'write-brief');
   assert.ok(briefEffect?.kind === 'write-brief');
   if (briefEffect?.kind !== 'write-brief') return;
+  assert.deepEqual(briefEffect.input['governingSpec'], governingSpec);
   const renderedInput = JSON.stringify(briefEffect.input);
   for (const privateText of ['private assessment rationale', 'private level quote', 'private scope quote', 'private notice quote', 'private writer rationale', 'private orchestrator rationale']) assert.equal(renderedInput.includes(privateText), false, privateText);
   assert.match(renderedInput, /Preserve stored values/);

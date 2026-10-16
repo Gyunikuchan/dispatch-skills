@@ -19,17 +19,18 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
 
-For implementation, Dispatch prepares a plan and applies the review and fix rounds enabled by the selected level's policy before asking you to approve it. After approval, a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
+Every work verb settles a governing spec for the outcome, constraints and user decisions. At `medium` and above, you approve its contents before design or plan authoring; at `low`, Dispatch proceeds and shows it at handoff. For implementation, Dispatch then prepares a plan and applies the review and fix rounds enabled by the selected level's policy before asking you to approve production work. After approval, a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
 
-The diagram below shows the implementation path; questions and standalone reviews can finish without an approval gate.
+The diagram shows implementation. Questions need no spec; standalone code review settles a spec without adding an authoring approval gate. See [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
 
 ```mermaid
 flowchart LR
     You([You]) --> Host[Your current host agent]
-    Host --> Delegates[Read-only delegates]
+    Host --> Spec[Governing spec]
+    Spec --> SpecGate{Approve spec at medium+<br/>before authoring}
+    SpecGate --> Delegates[Read-only delegates]
     Delegates --> Evidence[Findings with evidence]
-    Evidence --> Host
-    Host --> Gate{Approve the plan?}
+    Evidence --> Gate{Approve production plan?}
     Gate -->|Yes| Writer[Writer for your host platform]
     Writer --> Checks[Verification and review]
     Checks --> You
@@ -54,8 +55,8 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | Verb | Use it when… | Result |
 |---|---|---|
 | [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host agent to verify |
-| [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
-| [`plan`](references/readme/plan.md) | The change is one coherent unit | A plan after its configured review and fix rounds |
+| [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A spec, strategy and delivery outline with configured reviews |
+| [`plan`](references/readme/plan.md) | The change is one coherent unit | A spec and tactical plan after configured review and fixes |
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 

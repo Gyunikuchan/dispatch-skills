@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ALIASES } from '../../skills/dispatch/scripts/lib/cli.ts';
+import { ALIASES, parseCommand } from '../../skills/dispatch/scripts/lib/cli.ts';
 import { AWAIT_ACCEPTS } from '../../skills/dispatch/scripts/core/validate.ts';
 import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
 const documents = new Map<string, string>();
@@ -93,8 +93,7 @@ test('level-rubric: Await sections contain only their configured accepted events
   const contract = read(`skills/dispatch/${contractName}`);
   for (const [awaitKind, accepts] of Object.entries(AWAIT_ACCEPTS)) {
     const section = contract.split(`## Await ${awaitKind}\n`)[1]?.split('\n## ')[0] ?? '';
-    // TODO: I05 documents SPEC_REVISED in SKILL.md and removes its exemption here.
-    for (const event of accepts.filter((event) => event !== 'REVISE' && event !== 'SPEC_REVISED')) assert.ok(section.includes(`\`${event}\``), `${awaitKind} must document ${event}`);
+    for (const event of accepts.filter((event) => event !== 'REVISE')) assert.ok(section.includes(`\`${event}\``), `${awaitKind} must document ${event}`);
     for (const event of section.matchAll(/`([A-Z_]+)`/g)) assert.ok(accepts.includes(event[1] as typeof accepts[number]), `${awaitKind} documents unaccepted ${event[1]}`);
   }
 });
@@ -144,18 +143,20 @@ test('operational contracts reflect workspace session retention and contain no t
   assert.doesNotMatch(planTemplate, /OS temp/i);
 });
 
-test('review-context-contract: documents --context and alias forwarder parity', () => {
+test('governing spec identity is the documented review and alias intent channel', () => {
   const verbRef = read('skills/dispatch/references/verbs/review.md');
-  assert.match(verbRef, /\[--context <text>\]/);
-  assert.match(verbRef, /Pass `--context` to supply semantic intent/);
+  assert.match(verbRef, /\[--spec <path>\]/);
+  assert.doesNotMatch(verbRef, /--context/);
 
   const reviewRef = read('skills/dispatch/references/review-rules.md');
-  assert.match(reviewRef, /Review prompt context composes two channels/);
-  assert.match(reviewRef, /git log --format="%s%n%b" <range>/);
+  assert.match(reviewRef, /settled governing spec path and hash/);
   assert.match(reviewRef, /sessionDir/);
 
   const codeReviewSkill = read('skills/dispatch-code-review/SKILL.md');
-  assert.match(codeReviewSkill, /distill active chat intent and intentional deviations into `--context "<intent>"`/);
+  assert.match(codeReviewSkill, /reuse the governing spec with `--spec "<path>"` or author it under dispatch/);
+  const command = /map this invocation to `([^`]+)`/.exec(codeReviewSkill)![1]!;
+  const parsed = parseCommand([...command.split(' '), '--session-dir', 'session', '--orchestrator', 'codex', '--spec', 'intent.spec.md', '--', 'HEAD'], { levels: ['low'], pins: () => null, provider: (value) => value });
+  assert.equal(parsed.verb, 'review'); assert.equal(parsed.flags['spec'], 'intent.spec.md');
 
   const agentCodeReviewSkill = read('.agents/skills/dispatch-code-review/SKILL.md');
   assert.equal(codeReviewSkill, agentCodeReviewSkill);

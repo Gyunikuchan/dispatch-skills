@@ -3,7 +3,8 @@
 Kind block for `review-prompt.md`.
 
 - `<Plan Path>` — path to the attached plan.
-- `<Requirement>` — original user ask, verbatim.
+- `<Spec Path>` — path to the settled governing spec, or `None`.
+- `<Spec Hash>` — settled spec hash, or `None`.
 - `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> (full artifact) — review the whole artifact; changed sections for context: <changed sections>`, or `Re-review round <n> (delta) — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is read delegate context.
 
 ## opener
@@ -17,11 +18,16 @@ executing the plan as written delivers the requirement.
 ## context
 
 - Plan: <Plan Path>
-- Requirement: <Requirement>
+- Spec Path: <Spec Path>
+- Spec Hash: <Spec Hash>
 
 ## against
 
-- The requirement.
+- First check governing intent and premises. A standalone plan must cover every spec REQ.
+  An increment plan must meet its inherited acceptance criteria and applicable REQs; check remaining
+  requirement coverage through the approved design's increment mapping. Preserve all governing constraints and DECs.
+  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
+  `spec-gap` is a test-spec gap, distinct from `intent-gap`.
 - The plan summary, success criteria and task graph.
 - Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
 
@@ -29,6 +35,8 @@ Apply the selected quality bar to these governing targets.
 
 ## inspection
 
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
+For a spec finding, use § Spec: <heading>.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
 Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -37,6 +45,7 @@ when missing evidence, an adjudication dispute or recovery requires it; follow
 
 ## tags
 
+- intent gap: `intent-gap`
 - intent: `intent`, `user-gap`, `scope-creep`
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine`
 - decomposition: `dependency-graph`, `parallel-safety`

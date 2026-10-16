@@ -14,6 +14,42 @@ import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
 
+test('governing spec supplies every review kind and writer brief without legacy intent', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  const specPath = path.join(runDir, 'intent.spec.md');
+  fs.writeFileSync(specPath, '# Spec\n\n## Intent & Problem\n\nSettled objective.\n\n## Requirements\nREQ-1: SPEC-BYTES-REFERENCE-ONLY\n');
+  const governingSpec = { path: specPath, hash: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(specPath)).digest('hex')}` };
+  const target = path.join(runDir, 'artifact.md'); fs.writeFileSync(target, '# Artifact\n');
+  let calls = 0;
+  const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], log: async () => { calls++; return 'Commit intent'; } };
+  for (const kind of ['code', 'plan', 'design']) {
+    const event = only(await createPrepareReview({ cwd: runDir, skillRoot: SKILL_ROOT, git })({ kind: 'prepare-review', id: `spec.${kind}`, round: 1, review: { kind, target: kind === 'code' ? 'base..HEAD' : target, governingSpec, context: 'Legacy intent', roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'REVIEW_PREPARED'); if (event.type !== 'REVIEW_PREPARED') continue;
+    const prompt = ports.fs.readText(event.promptPaths['codex[0]']!);
+    assert.ok(prompt.includes(specPath)); assert.ok(prompt.includes(governingSpec.hash));
+    assert.doesNotMatch(prompt, /Legacy intent|Commit intent|SPEC-BYTES-REFERENCE-ONLY/);
+    assert.match(prompt, /- Focus: General review/);
+    assert.match(prompt, /Read the whole spec/);
+    if (kind === 'code') assert.match(prompt, /- Task: Settled objective\./);
+  }
+  assert.equal(calls, 0);
+  const focused = only(await createPrepareReview({ cwd: runDir, skillRoot: SKILL_ROOT, git })({ kind: 'prepare-review', id: 'spec.focus', round: 1, review: { kind: 'code', target: 'HEAD', governingSpec, context: JSON.stringify({ invocationContext: 'Legacy intent', invocationLevel: 'high' }), governing: { finalFocusPaths: ['src/focus.ts'] }, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }));
+  assert.equal(focused.type, 'REVIEW_PREPARED');
+  if (focused.type === 'REVIEW_PREPARED') {
+    const prompt = ports.fs.readText(focused.promptPaths['codex[0]']!);
+    assert.match(prompt, /- Focus: src\/focus.ts/); assert.doesNotMatch(prompt, /Legacy intent/);
+  }
+  for (const stage of ['task', 'hotfix'] as const) {
+    for (const present of [true, false]) {
+      const event = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: `spec.${stage}.${present}`, stage, input: present ? { governingSpec } : {} }, ports, { runDir, attempt: 1 }));
+      assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') continue;
+      const brief = ports.fs.readText(event.path);
+      assert.equal(brief.includes('## Governing spec'), present);
+      if (present) { assert.ok(brief.includes(specPath)); assert.ok(brief.includes(governingSpec.hash)); }
+    }
+  }
+});
+
 test('prewrite-level: task brief renders bound context, worktree, checkpoint, and exact self-check', async () => {
   const runDir = tempDir();
   const envelopePath = path.join(runDir, 'implement.write-brief.1', 'outcome.json');
@@ -168,65 +204,27 @@ test('quality selection assembles every review and writer kind and reports selec
   if (ask.type === 'REVIEW_PREPARED') assert.doesNotMatch(ports.fs.readText(ask.promptPaths['codex[0]']!), /Spec alignment:|Security and resources:/);
 });
 
-test('prepare-review-git-log: extracts commit messages and falls back on error or empty', async () => {
-  const tmp = tempDir();
-  const runDir = tempDir();
-  const ports = fakePorts();
-  let logResult = 'feat: commit title\n\ncommit description';
-  let logCalledWith: string | null = null;
-  const git = {
-    ...createGit({ run: async () => '' }),
-    diffNames: async () => ['src/a.ts'],
-    log: async (_cwd: string, range: string) => {
-      logCalledWith = range;
-      if (range === 'error..range') throw new Error('git log failed');
-      return logResult;
-    },
-  };
-  const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
-
-  // 1. Extracts commit messages for commit range without context
-  const [res1] = await handler({
-    kind: 'prepare-review', id: 'p1', round: 1,
-    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: null },
-    scope: { scope: 'full' },
-  }, ports, { runDir, attempt: 1 });
-  assert.equal(res1?.type, 'REVIEW_PREPARED');
-  const prompt1 = ports.fs.readText(res1?.promptPaths['codex[0]']!);
-  assert.match(prompt1, /- Task: feat: commit title\n\ncommit description/);
-  assert.equal(logCalledWith, 'main..HEAD');
-
-  // 2. Explicit context bypasses git log
-  logCalledWith = null;
-  const [res2] = await handler({
-    kind: 'prepare-review', id: 'p2', round: 1,
-    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: 'Explicit intent' },
-    scope: { scope: 'full' },
-  }, ports, { runDir, attempt: 1 });
-  assert.equal(res2?.type, 'REVIEW_PREPARED');
-  const prompt2 = ports.fs.readText(res2?.promptPaths['codex[0]']!);
-  assert.match(prompt2, /- Task: Explicit intent/);
-  assert.equal(logCalledWith, null);
-
-  // 3. Empty log falls back to default
-  logResult = '';
-  const [res3] = await handler({
-    kind: 'prepare-review', id: 'p3', round: 1,
-    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: null },
-    scope: { scope: 'full' },
-  }, ports, { runDir, attempt: 1 });
-  assert.equal(res3?.type, 'REVIEW_PREPARED');
-  const prompt3 = ports.fs.readText(res3?.promptPaths['codex[0]']!);
-  assert.match(prompt3, /- Task: Review the selected changes\./);
-
-  // 4. Git error falls back to default
-  const [res4] = await handler({
-    kind: 'prepare-review', id: 'p4', round: 1,
-    review: { kind: 'code', target: 'error..range', roster: [{ slot: 'codex[0]' }], context: null },
-    scope: { scope: 'full' },
-  }, ports, { runDir, attempt: 1 });
-  assert.equal(res4?.type, 'REVIEW_PREPARED');
-  const prompt4 = ports.fs.readText(res4?.promptPaths['codex[0]']!);
-  assert.match(prompt4, /- Task: Review the selected changes\./);
+test('governing spec defaults ignore context and Git log and unreadable supplied specs fail', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  let logCalls = 0;
+  const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], log: async () => { logCalls++; return 'Commit intent'; } };
+  const handler = createPrepareReview({ cwd: runDir, skillRoot: SKILL_ROOT, git });
+  for (const body of [null, '# Spec\n## Intent & Problem\n\n## Requirements\nREQ-1', '# Spec\n## Requirements\nREQ-1']) {
+    const specPath = path.join(runDir, 'empty.spec.md');
+    if (body !== null) fs.writeFileSync(specPath, body);
+    const review = { kind: 'code', target: 'base..HEAD', context: 'Legacy intent', roster: [{ slot: 'codex[0]' }], ...(body !== null ? { governingSpec: { path: specPath, hash: `sha256:${crypto.createHash('sha256').update(body).digest('hex')}` } } : {}) };
+    const event = only(await handler({ kind: 'prepare-review', id: 'defaults', round: 1, review, scope: {} }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'REVIEW_PREPARED'); if (event.type !== 'REVIEW_PREPARED') continue;
+    const prompt = ports.fs.readText(event.promptPaths['codex[0]']!);
+    assert.match(prompt, /- Task: Review the selected changes\./);
+    assert.doesNotMatch(prompt, /Legacy intent|Commit intent/);
+    if (body === null) assert.match(prompt, /Spec Path: None\n- Spec Hash: None/);
+  }
+  assert.equal(logCalls, 0);
+  for (const kind of ['code', 'plan', 'design']) {
+    const target = path.join(runDir, 'artifact.md'); fs.writeFileSync(target, '# Artifact');
+    const event = only(await handler({ kind: 'prepare-review', id: 'missing', round: 1, review: { kind, target: kind === 'code' ? 'HEAD' : target, governingSpec: { path: 'absent.spec.md', hash: 'sha256:abc' }, roster: [{ slot: 'codex[0]' }] }, scope: {} }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'EFFECT_FAILED');
+  }
 });
 

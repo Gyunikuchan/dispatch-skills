@@ -6,13 +6,18 @@ executing the plan as written delivers the requirement.
 
 ### Context
 - Plan: .scratch/example/example.plan.md
-- Requirement: Add a retry budget to the fetch helper
+- Spec Path: .scratch/example/example.spec.md
+- Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Focus: General review
 - Scope: Full review
 - Advisory Tool Turn Target: Unspecified
 
 ### Review against
-- The requirement.
+- First check governing intent and premises. A standalone plan must cover every spec REQ.
+  An increment plan must meet its inherited acceptance criteria and applicable REQs; check remaining
+  requirement coverage through the approved design's increment mapping. Preserve all governing constraints and DECs.
+  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
+  `spec-gap` is a test-spec gap, distinct from `intent-gap`.
 - The plan summary, success criteria and task graph.
 - Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
 
@@ -24,6 +29,8 @@ Verification evidence comes from the orchestrator; run no test or build commands
 Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
 reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
+Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
+For a spec finding, use § Spec: <heading>.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
 Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
@@ -67,6 +74,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Tooling: skip issues that configured linters, formatters, or type checkers enforce.
 
 ### Tags
+- intent gap: `intent-gap`
 - intent: `intent`, `user-gap`, `scope-creep`
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine`
 - decomposition: `dependency-graph`, `parallel-safety`
