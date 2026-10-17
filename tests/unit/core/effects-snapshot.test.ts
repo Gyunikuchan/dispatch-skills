@@ -10,17 +10,19 @@ import { createRestore } from '../../../skills/dispatch/scripts/effects/restore.
 import { createSnapshot, lineChanges, verifiedManifests } from '../../../skills/dispatch/scripts/effects/snapshot.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
-for (const removed of [false, true]) test(`observation boundary: newly ignored ${removed ? 'deleted bytes stay a deletion' : 'existing bytes leave as membership'}`, async () => {
-  const cwd = tempDir(), runDir = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir); fs.writeFileSync(path.join(cwd, 'a'), 'before');
-  let files = ['a'];
-  const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], isIgnored: async () => true, recoveryFiles: async () => ({ files, dirty: [], tracked: [], stash: '', gitDir, ignoreRules: '' }) };
-  const ports = fakePorts(), handler = createSnapshot({ cwd, git });
-  const first = (await handler({ kind: 'snapshot', id: 'first', since: null }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(first.type, 'SNAPSHOT'); if (first.type !== 'SNAPSHOT') return;
-  files = []; if (removed) fs.unlinkSync(path.join(cwd, 'a'));
-  const second = (await handler({ kind: 'snapshot', id: 'second', since: first.fingerprint }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(second.type, 'SNAPSHOT'); if (second.type !== 'SNAPSHOT') return;
-  const recovery = loadRecovery(ports, runDir, second.fingerprint['recovery']);
-  assert.deepEqual(recovery.membership, removed ? [] : ['a']);
-  assert.equal(recovery.changed.some((row) => row.path === 'a' && row.deleted), removed);
+test('observation boundary: newly ignored deleted bytes stay a deletion and existing bytes leave as membership', async () => {
+  for (const removed of [false, true]) {
+    const cwd = tempDir(), runDir = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir); fs.writeFileSync(path.join(cwd, 'a'), 'before');
+    let files = ['a'];
+    const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], isIgnored: async () => true, recoveryFiles: async () => ({ files, dirty: [], tracked: [], stash: '', gitDir, ignoreRules: '' }) };
+    const ports = fakePorts(), handler = createSnapshot({ cwd, git });
+    const first = (await handler({ kind: 'snapshot', id: 'first', since: null }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(first.type, 'SNAPSHOT'); if (first.type !== 'SNAPSHOT') return;
+    files = []; if (removed) fs.unlinkSync(path.join(cwd, 'a'));
+    const second = (await handler({ kind: 'snapshot', id: 'second', since: first.fingerprint }, ports, { runDir, attempt: 1 }))[0]!; assert.equal(second.type, 'SNAPSHOT'); if (second.type !== 'SNAPSHOT') return;
+    const recovery = loadRecovery(ports, runDir, second.fingerprint['recovery']);
+    assert.deepEqual(recovery.membership, removed ? [] : ['a']);
+    assert.equal(recovery.changed.some((row) => row.path === 'a' && row.deleted), removed);
+  }
 });
 
 // Split from effects-restore.test.ts to stay under the 1 s per-file budget: snapshot, fingerprint and fs-port cases.
@@ -37,14 +39,16 @@ test('untracked fingerprint streams bytes into a bounded digest and detects same
   assert.equal(content('large.bin', cwd), content('large.bin', cwd));
 });
 
-for (const encoding of ['text', 'binary'] as const) test(`atomic ${encoding} publication cleans temporary files when rename fails`, () => {
-  const cwd = tempDir(), target = path.join(cwd, 'directory'); fs.mkdirSync(target);
-  assert.throws(() => encoding === 'text' ? nodeFs.writeAtomic(target, 'patch') : nodeFs.writeBase64Atomic(target, Buffer.from([0, 255]).toString('base64')));
-  assert.deepEqual(fs.readdirSync(cwd), ['directory']);
-  const file = path.join(cwd, 'published');
-  if (encoding === 'text') { nodeFs.writeAtomic(file, 'patch'); assert.equal(fs.readFileSync(file, 'utf8'), 'patch'); }
-  else { nodeFs.writeBase64Atomic(file, Buffer.from([0, 255]).toString('base64')); assert.deepEqual(fs.readFileSync(file), Buffer.from([0, 255])); }
-  assert.deepEqual(fs.readdirSync(cwd).sort(), ['directory', 'published']);
+test('atomic publication cleans temporary files when rename fails for text and binary', () => {
+  for (const encoding of ['text', 'binary'] as const) {
+    const cwd = tempDir(), target = path.join(cwd, 'directory'); fs.mkdirSync(target);
+    assert.throws(() => encoding === 'text' ? nodeFs.writeAtomic(target, 'patch') : nodeFs.writeBase64Atomic(target, Buffer.from([0, 255]).toString('base64')));
+    assert.deepEqual(fs.readdirSync(cwd), ['directory']);
+    const file = path.join(cwd, 'published');
+    if (encoding === 'text') { nodeFs.writeAtomic(file, 'patch'); assert.equal(fs.readFileSync(file, 'utf8'), 'patch'); }
+    else { nodeFs.writeBase64Atomic(file, Buffer.from([0, 255]).toString('base64')); assert.deepEqual(fs.readFileSync(file), Buffer.from([0, 255])); }
+    assert.deepEqual(fs.readdirSync(cwd).sort(), ['directory', 'published']);
+  }
 });
 
 test('unsupported directory fsync is tolerated while genuine I/O errors propagate', (t) => {

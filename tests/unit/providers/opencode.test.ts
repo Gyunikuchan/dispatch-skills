@@ -53,14 +53,14 @@ test('`Variant unavailable` with effort classifies as config, not model-not-foun
 });
 
 test('a missing subscription classifies as auth, not empty-output', () => {
-  const outcome = opencode.parse(result('', 1, 'Error: No active subscription for this model'), launchReq());
-  assert.equal(outcome.status, 'fail');
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
-});
-
-test('a payment-required diagnostic with quota wording classifies as auth', () => {
-  const outcome = opencode.parse(result('', 1, 'HTTP 402 Payment Required: insufficient credit balance; no active subscription'), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
+  for (const stderr of [
+    'Error: No active subscription for this model',
+    'HTTP 402 Payment Required: insufficient credit balance; no active subscription',
+  ]) {
+    const outcome = opencode.parse(result('', 1, stderr), launchReq());
+    assert.equal(outcome.status, 'fail');
+    assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
+  }
 });
 
 test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt', async () => {
@@ -95,7 +95,7 @@ test('a remote endpoint skips model preflight, GPU locking, and the proxy trap',
 });
 
 
-test('rewrite SC4 effective config merges selected model endpoint and verifies agent denial', async () => {
+test('effective config merges selected model endpoint and verifies agent denial', async () => {
   const inspect = async (command: 'config' | 'agents') => command === 'config' ? [{ type: 'document', info: { model: 'remote/model', providers: { local: { settings: { baseURL: 'http://localhost:1234/v1' } } } } }, { type: 'document', info: { providers: { local: { settings: { baseURL: 'http://127.0.0.1:1234/v1' } } } } }] : [{ id: 'plan', permissions: [{ action: '*', resource: '*', effect: 'allow' }, { action: 'edit', resource: '*', effect: 'ask' }] }, { id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }];
   const resolved = await resolveEffectiveOpencodeLaunch({ ...base, agent: null, model: 'local/qwen' }, inspect);
   assert.equal(resolved.endpoint, 'http://127.0.0.1:1234/v1'); assert.equal(resolved.agent, 'explore'); assert.equal(resolved.readOnlyVerified, true);

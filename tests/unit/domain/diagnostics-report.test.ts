@@ -39,43 +39,43 @@ function assertShape(finding: Finding | undefined, category: keyof typeof CATEGO
   return finding;
 }
 
-// SECTION: SC1 — layout, durations, and token columns
+// SECTION: Layout, durations, and token columns
 
-test('SC1 renders sections in order', () => {
+test('diagnostics report: renders sections in order', () => {
   const text = render([facts()]);
   const at = ['## Summary', '## Overview', '## Findings', '## Appendix', '<details>'].map((marker) => text.indexOf(marker));
   assert.ok(at.every((index) => index >= 0), `all sections present: ${at.join(',')}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
 });
 
-test('SC1 summary shows version and build', () => {
+test('diagnostics report: summary shows version and build', () => {
   assert.match(render([facts()]), /^- Build: dispatch 0\.7\.1 · build abababababab$/m);
   const { version: _version, ...rest } = facts();
   assert.match(render([{ ...rest, build: 'not-a-hash' }]), /^- Build: dispatch — · build —$/m);
 });
 
-test('SC1 formats durations', () => {
+test('diagnostics report: formats durations', () => {
   assert.equal(formatDuration(3_723_000), '1h 2m 3s');
   assert.equal(formatDuration(45_000), '45s');
   assert.equal(formatDuration(400), '<1s');
   assert.equal(formatDuration(undefined), '—');
 });
 
-test('SC1 renders wall driver host and user wait columns', () => {
+test('diagnostics report: renders wall driver host and user wait columns', () => {
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
   assert.match(text, /^- Runs: 1 · wall time: 1h 2m 3s$/m);
 });
 
-test('SC1 renders input cache-read cache-write output tokens', () => {
+test('diagnostics report: renders input cache-read cache-write output tokens', () => {
   const text = render([facts()]);
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
   assert.match(text, /^- Measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · coverage 1\/1$/m);
 });
 
-test('SC1 renders unavailable as dash', () => {
+test('diagnostics report: renders unavailable as dash', () => {
   const text = render([facts({
     phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000 }],
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
@@ -85,7 +85,7 @@ test('SC1 renders unavailable as dash', () => {
   assert.match(text, /orchestrator —/);
 });
 
-test('SC1 excludes estimates from measured totals', () => {
+test('diagnostics report: excludes estimates from measured totals', () => {
   const text = render([facts({
     orchestratorBytes: 4000,
     invocations: [
@@ -100,9 +100,9 @@ test('SC1 excludes estimates from measured totals', () => {
   assert.ok(text.includes('| ~5,000 | ok |'), text);
 });
 
-// SECTION: SC2 — heuristics, severity, and model attribution
+// SECTION: Heuristics, severity, and model attribution
 
-test('SC2 heuristic H1 fires', () => {
+test('diagnostics report: heuristic H1 fires for CLI failures', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
   assert.equal(finding.component, 'references/providers.md');
   assert.match(finding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
@@ -123,29 +123,29 @@ test('diagnostics amendment convergence keeps H2 signals and suppresses plain kn
   assert.deepEqual(rounds, []);
 });
 
-test('SC2 heuristic H4 fires', () => {
+test('diagnostics report: heuristic H4 fires for cache read share', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 700, cacheRead: 300, output: 10 } })] })), 'H4')[0], 'token-economy');
   assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
 });
 
-test('SC2 heuristic H6 fires', () => {
+test('diagnostics report: heuristic H6 fires for host gap', () => {
   const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'native', ms: 60_000 }, { await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
   assert.equal(finding.component, 'references/review-rules.md');
   assert.match(finding.evidence, /`rule` await took 10m 0s \(2 non-user awaits\)/);
 });
 
-test('SC2 heuristic H8 fires', () => {
+test('diagnostics report: heuristic H8 fires for rejected host events', () => {
   const finding = assertShape(only(heuristics(facts({ rejectedEvents: [{ eventType: 'RULINGS', reason: 'rulings[0].verdict: expected accept or reject' }] })), 'H8')[0], 'correctness');
   assert.match(finding.evidence, /1 host event rejected \(RULINGS ×1\): "rulings\[0\]\.verdict: expected accept or reject"/);
 });
 
-test('SC2 heuristic H9 fires', () => {
+test('diagnostics report: heuristic H9 fires for repairs and admission defects', () => {
   const findings = only(heuristics(facts({ repairs: 2, admissionDefects: 1 })), 'H9');
   assert.match(assertShape(findings.find((f) => /repair/.test(f.evidence)), 'correctness').evidence, /2 implementation repair attempts/);
   assert.match(assertShape(findings.find((f) => /admission/.test(f.evidence)), 'correctness').evidence, /1 admission defect\./);
 });
 
-test('SC2 heuristic boundaries stay silent', () => {
+test('diagnostics report: heuristic boundaries stay silent', () => {
   const even = invocation({ usage: { input: 1000, cacheRead: 1000, output: 0 } });
   const run = facts({
     invocations: [even, { ...even, provider: 'claude' }],
@@ -156,7 +156,7 @@ test('SC2 heuristic boundaries stay silent', () => {
   assert.deepEqual(heuristics(facts()), []);
 });
 
-test('SC2 orders findings by severity', () => {
+test('diagnostics report: orders findings by severity', () => {
   const run = facts({
     invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
     reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
@@ -189,8 +189,8 @@ test('diagnostics amendment convergence preserves reraises beyond the known cap'
   assert.match(finding.evidence, /1 finding re-raised across rounds \(R1-F001\)/);
 });
 
-for (const kind of ['regression', 'deadlock'] as const) {
-  test(`diagnostics amendment convergence preserves ${kind} beyond the known cap`, () => {
+test('diagnostics amendment convergence: preserves regression and deadlock escalations beyond the known cap', () => {
+  for (const kind of ['regression', 'deadlock'] as const) {
     const escalationOnly = assertShape(only(heuristics(facts({ reviews: [
       { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, escalation: { kind, ids: ['R1-F001'] } },
     ] })), 'H2')[0], 'review-convergence');
@@ -199,8 +199,8 @@ for (const kind of ['regression', 'deadlock'] as const) {
       { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'], escalation: { kind, ids: ['R1-F001'] } },
     ] })), 'H2')[0], 'review-convergence');
     assert.match(finding.evidence, new RegExp(`${kind} escalation \\(R1-F001\\)`));
-  });
-}
+  }
+});
 
 test('diagnostics amendment convergence preserves unknown-cap fallback threshold', () => {
   const reviews = (round: number) => [{ phase: 'review', round, accepted: 1, rejected: 0 }];
@@ -256,7 +256,7 @@ test('heuristic precision H6 makes no driver-repeat claim', () => {
   assert.doesNotMatch(`${finding.impact} ${finding.proposedFix}`, /driver/);
 });
 
-test('SC2 equivalent codex and claude usage yield equal totals and heuristics', () => {
+test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
   const codex = normalizeUsage({ input: 1000, cacheRead: 300, cacheWrite: 0, output: 50 }, 'includes-cache');
   const claude = normalizeUsage({ input: 700, cacheRead: 300, cacheWrite: 0, output: 50 }, 'uncached');
   assert.deepEqual(codex, { input: 700, cacheRead: 300, cacheWrite: 0, output: 50 });
@@ -270,7 +270,7 @@ test('SC2 equivalent codex and claude usage yield equal totals and heuristics', 
   assert.equal(normalizeUsage({ input: 100, cacheRead: 300, output: 1 }, 'includes-cache')?.input, 0);
 });
 
-test('SC2 attributes tokens per reported model', () => {
+test('diagnostics report: attributes tokens per reported model', () => {
   const text = render([facts({ invocations: [invocation({
     provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'],
     usage: { input: 150, output: 15, models: { 'claude-opus-5-5': { input: 100, output: 10 }, 'claude-haiku-5': { input: 50, output: 5 } } },
@@ -281,29 +281,29 @@ test('SC2 attributes tokens per reported model', () => {
   assert.doesNotMatch(text, /\(configured\)/);
 });
 
-test('SC2 labels configured-model attribution', () => {
+test('diagnostics report: labels configured-model attribution', () => {
   const text = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
   assert.ok(text.includes('| codex | gpt-6-sol (configured) | 100 | — | — | 10 | — |'), text);
   assert.ok(text.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), text);
 });
 
-test('SC2 multi-model aggregate leaves model attribution unavailable', () => {
+test('diagnostics report: multi-model aggregate leaves model attribution unavailable', () => {
   const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
   assert.ok(text.includes('| claude | all models | 100 | — | — | 10 | 1/1 |'), text);
   assert.ok(text.includes('| claude | — | 100 | — | — | 10 | — |'), text);
   assert.doesNotMatch(text, /\(configured\)/);
 });
 
-// SECTION: SC3 — scope gate and redaction
+// SECTION: Scope gate and redaction
 
-test('SC3 rejects more than three observations', () => {
+test('retro observations: rejects more than three observations', () => {
   const result = retroObservations(['a', 'b', 'c', 'd'].map((id) => observation({ id })));
   assert.deepEqual(result.values.map((v) => v.id), ['a', 'b', 'c']);
   assert.equal(result.rejected, 1);
   assert.deepEqual(retroObservations([]), { values: [], rejected: 0 });
 });
 
-test('SC3 rejects foreign component', () => {
+test('retro observations: rejects foreign component', () => {
   for (const component of ['src/app.ts', 'core/frame.ts', '../dispatch/scripts/core/frame.ts', 'skills/dispatch-plan/SKILL.md', 'README.md']) {
     assert.deepEqual(retroObservations([observation({ component })]), { values: [], rejected: 1 }, component);
   }
@@ -315,12 +315,12 @@ test('SC3 rejects foreign component', () => {
   for (const component of shipped) assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
 });
 
-test('SC3 rejects unknown category', () => {
+test('retro observations: rejects unknown category', () => {
   for (const category of ['vibes', 'driver protocol', '', undefined]) assert.equal(retroObservations([observation({ category })]).rejected, 1, String(category));
   for (const category of [...Object.keys(CATEGORIES), 'Token economy']) assert.equal(retroObservations([observation({ category })]).values.length, 1, category);
 });
 
-test('SC3 rejects invalid id', () => {
+test('retro observations: rejects invalid id', () => {
   for (const id of ['', 'bad id', 'x'.repeat(49), 'a/b', 7]) assert.equal(retroObservations([observation({ id })]).rejected, 1, String(id));
   assert.deepEqual(retroObservations([observation({ id: 'dup' }), observation({ id: 'dup' })]).rejected, 1);
 });
@@ -331,19 +331,20 @@ const LEAKS = [
   'session 123e4567-e89b-12d3-a456-426614174000', `hash ${'a1'.repeat(20)}`,
 ];
 const CLEAN = 'The `/dispatch review` frame in scripts/core/frame.ts mixes input/output fields in config.local.jsonc.';
-for (const field of ['evidence', 'impact', 'proposedFix'] as const) {
-  test(`SC3 rejects prohibited content in ${field}`, () => {
+
+test('retro observations: rejects prohibited content across evidence, impact, and proposedFix', () => {
+  for (const field of ['evidence', 'impact', 'proposedFix'] as const) {
     for (const leak of LEAKS) assert.equal(retroObservations([observation({ [field]: leak })]).rejected, 1, `${field}: ${leak}`);
     assert.equal(retroObservations([observation({ [field]: CLEAN })]).values[0]?.[field], CLEAN);
-  });
-}
+  }
+});
 
-test('SC3 rejects oversized field', () => {
+test('retro observations: rejects oversized field', () => {
   assert.equal(retroObservations([observation({ evidence: 'z'.repeat(512) })]).values.length, 1);
   for (const evidence of ['z'.repeat(513), 'é'.repeat(257), '   ', 42]) assert.equal(retroObservations([observation({ evidence })]).rejected, 1, String(evidence).slice(0, 8));
 });
 
-test('SC3 sanitizes model and config facts', () => {
+test('retro observations: sanitizes model and config facts', () => {
   const raw = facts({
     config: {
       diagnostics: true, 'write-concurrency': 2, 'api-key': 'secret-canary',
@@ -367,7 +368,7 @@ test('SC3 sanitizes model and config facts', () => {
   assert.ok(!('resume' in bad!));
 });
 
-test('SC3 rejects locators in ids models and config', () => {
+test('retro observations: rejects locators in ids models and config', () => {
   for (const locator of ['123e4567-e89b-12d3-a456-426614174000', 'build.example.com']) {
     const text = render([facts({
       config: { 'read-delegates': { codex: { targets: [{ low: { model: locator } }] }, [locator]: { model: 'gpt-6-sol' } } },
@@ -394,7 +395,7 @@ test('SC3 rejects locators in ids models and config', () => {
   }
 });
 
-test('SC3 never renders resume objective or absolute paths', () => {
+test('diagnostics report: never renders resume objective or absolute paths', () => {
   const run = {
     ...facts(), objective: 'objective-canary', argument: 'argument-canary', sessionPath: 'C:/sessions/canary', version: '/opt/canary',
     config: { diagnostics: true, 'canary-key': 'value', phases: { 'plan-review': { only: ['C:\\canary'] } } },
@@ -412,7 +413,7 @@ test('SC3 never renders resume objective or absolute paths', () => {
   assert.match(text, /- Host retro: 1 accepted · 2 rejected/);
 });
 
-test('SC3 reduces rejection reasons to class and allowlisted path', () => {
+test('diagnostics report: reduces rejection reasons to class and allowlisted path', () => {
   const cases: [unknown, string][] = [
     ['event: expected JSON object, got malformed JSON', 'malformed-json'],
     ['event: effect root.handoff.1 is pending; send without --event to resume it', 'effect-pending'],

@@ -179,7 +179,7 @@ test('delegates-early-fallbacks: startWave returns progress, nativeSubagentsOnly
 });
 
 
-test('rewrite SC3 start exposes native and early fallback before CLI completes and reconciles once', async () => {
+test('start exposes native and early fallback before CLI completes and reconciles once', async () => {
   const w = setup({ 'codex:gpt:cli': [ok(CLEAN)] }, [slot('codex[0]', 'codex', { model: 'gpt' }), slot('claude[0]', 'claude', { native: true })], 'codex');
   let release!: () => void;
   const barrier = new Promise<void>((resolve) => { release = resolve; });
@@ -198,7 +198,7 @@ test('rewrite SC3 start exposes native and early fallback before CLI completes a
 });
 
 
-test('rewrite SC4 worker requests preserve injected native config launch selectors', async () => {
+test('worker requests preserve injected native config launch selectors', async () => {
   const w = setup({}, [slot('opencode[0]', 'opencode', { model: 'local/qwen' })]);
   let request: DelegateRequest | undefined;
   const worker: WorkerDeps = { configSelectors: { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }, fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS, modes: () => ['cli'], run: async (_provider, req) => { request = req; return { outcome: ok(CLEAN), invocations: [] }; } };

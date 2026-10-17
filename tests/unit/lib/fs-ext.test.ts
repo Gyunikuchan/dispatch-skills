@@ -36,7 +36,7 @@ test('real LinkFs: absent files and directories return null and an empty list', 
   assert.deepEqual(nodeLinkFs.list(path.join(root, 'missing')), []);
 });
 
-test('run paths: real LinkFs atomic and exclusive writes create an absent parent folder', () => {
+test('real LinkFs: atomic and exclusive writes create absent parent directories', () => {
   const root = dir();
   nodeLinkFs.writeAtomic(path.join(root, 'review.wave.1', 'input.json'), '{}');
   assert.equal(publishExclusive(nodeLinkFs, path.join(root, 'review.wave.2', 'launch.json'), '{}'), true);

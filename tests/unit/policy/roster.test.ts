@@ -15,6 +15,8 @@ const base: RosterInput = {
 };
 const slots = (roster: ReturnType<typeof resolveRoster>) => roster.targets.map((slot) => `${slot.slot}:${String(slot.model)}`);
 
+// SECTION: Grammar and level resolution
+
 test('grammar-sparse-level-maps: nearest lower level, else the lowest higher one', () => {
   assert.equal(resolveLevel({ low: 1, xhigh: 4 }, 'high'), 1);
   assert.equal(resolveLevel({ medium: 2, max: 5 }, 'low'), 2);
@@ -31,7 +33,10 @@ test('grammar-pins: (a,b), (3), and (all) parse; count and all stand alone', () 
   const pinned = resolveRoster({ ...base, pins: parsePins('(codex)') });
   assert.deepEqual(slots(pinned), ['codex[0]:gpt-5', 'codex[1]:gpt-5-mini']);
   assert.equal(resolveRoster({ ...base, pins: { kind: 'all' } }).targets.length, 5);
+  assert.throws(() => resolveRoster({ ...base, pins: { kind: 'providers', keys: ['codex', 'typo'] } }), /typo/);
 });
+
+// SECTION: Diversity and identity
 
 test('grammar-diversity-sort: every platform first once, orchestrator platform last, its own model last', () => {
   assert.deepEqual(diversitySort(['a1', 'a2', 'b1', 'c1', 'b2'], (item) => item[0]), ['a1', 'b1', 'c1', 'a2', 'b2']);
@@ -48,6 +53,8 @@ test('grammar-target-identity: positional provider[index] slots; reserves follow
   const single = resolveRoster(standalone);
   assert.deepEqual([single.rounds, single.targets.length], [1, 1]);
 });
+
+// SECTION: Filters and overrides
 
 test('grammar-only-filter: phase only keeps listed platforms', () => {
   const roster = resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 'all' }, only: ['Claude-Code'] } });
@@ -66,8 +73,4 @@ test('grammar-native-subagents-only: such platforms serve only as the orchestrat
   assert.ok(!elsewhere.targets.some((slot) => slot.provider === 'copilot'));
   const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot', model: null } });
   assert.deepEqual(native.targets.filter((slot) => slot.provider === 'copilot').map((slot) => [slot.slot, slot.native]), [['copilot[0]', true]]);
-});
-
-test('grammar-pins: any unknown pinned provider throws, naming it', () => {
-  assert.throws(() => resolveRoster({ ...base, pins: { kind: 'providers', keys: ['codex', 'typo'] } }), /typo/);
 });

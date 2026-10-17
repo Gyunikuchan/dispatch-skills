@@ -288,197 +288,241 @@ test('spec revision: a dot-segment and backslash variant of the governing spec p
   assert.match(rootMachine.validate!(state, { type: 'SPEC_REVISED', path: `sub/${SPEC_PATH}` }) ?? '', /governing spec/);
 });
 
-test('stale pin requires approval of revised spec', () => {
- const author = settledAt('plan', 'medium', {}, true).state;
- const parsing = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
- const parse = parsing.effects.find(e => e.kind === 'parse-artifact')!;
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parse.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: identity.hash, current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } }], parsing.state);
- assert.equal(stale.state.tag, 'spec'); assert.equal(frame(stale.state).at, 'spec › reading');
- assert.equal(stale.effects[0]?.kind, 'parse-artifact');
+// SECTION: Stale pin detection and recovery
+
+const staleCurrent = `sha256:${'b'.repeat(64)}`;
+
+test('ancestor failure code survives each parent handoff', () => {
+  const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: identity }, 'review', {});
+  assert.ok(begun.state.tag === 'pin-check');
+  const review = begun.state;
+  const defaults = started('plan');
+  const input = planInputFromRun(defaults, identity);
+  assert.ok(input.ok);
+  const planned = beginPlan(input.input, 'plan', {}).state;
+  assert.ok('c' in planned && planned.c);
+  const plan = { ...planned, c: { ...planned.c, designPin: 'x.design.md' } };
+  const c = designApproval().c;
+  const revision = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
+  const cases: RootState[] = [
+    { tag: 'review', run: runInfo('review', 'low', defaults), child: review },
+    { tag: 'plan', run: runInfo('plan', 'low', defaults), child: { tag: 'review', c: plan.c, review } },
+    { tag: 'design', run: runInfo('design', 'low', defaults), child: { tag: 'review', c, review } },
+    { tag: 'design', run: runInfo('design', 'low', defaults), child: { tag: 'revision', c, child: { ...revision, tag: 'review', review } } },
+  ];
+  for (const state of cases) {
+    const failed = drive([{ type: 'EFFECT_FAILED', effectId: review.effectId, cls: 'io', detail: 'design pin target unreadable: x.design.md not found' }], state).state;
+    assert.ok(failed.tag === 'handoff', state.tag);
+    assert.match(failed.done.summary, /stale-design-spec/, state.tag);
+  }
 });
 
-const staleCurrent = 'sha256:' + 'b'.repeat(64);
-test('ancestor failure code survives each parent handoff', () => {
- const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: identity }, 'review', {});
- assert.ok(begun.state.tag === 'pin-check'); const review = begun.state;
- const defaults = started('plan'); const input = planInputFromRun(defaults, identity); assert.ok(input.ok);
- const planned = beginPlan(input.input, 'plan', {}).state; assert.ok('c' in planned && planned.c);
- const plan = { ...planned, c: { ...planned.c, designPin: 'x.design.md' } };
- const c = designApproval().c;
- const revision = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
- const cases: RootState[] = [
- { tag: 'review', run: runInfo('review', 'low', defaults), child: review },
- { tag: 'plan', run: runInfo('plan', 'low', defaults), child: { tag: 'review', c: plan.c, review } },
- { tag: 'design', run: runInfo('design', 'low', defaults), child: { tag: 'review', c, review } },
- { tag: 'design', run: runInfo('design', 'low', defaults), child: { tag: 'revision', c, child: { ...revision, tag: 'review', review } } },
- ];
- for (const state of cases) {
- const failed = drive([{ type: 'EFFECT_FAILED', effectId: review.effectId, cls: 'io', detail: 'design pin target unreadable: x.design.md not found' }], state).state;
- assert.ok(failed.tag === 'handoff', state.tag); assert.match(failed.done.summary, /stale-design-spec/, state.tag);
- }
-});
 test('live matching parent still settles changed approved bytes', () => {
- const author = settledAt('plan', 'medium', {}, true).state;
- const parsing = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: staleCurrent, current: staleCurrent, design: null, reqIds: [] } }], parsing.state);
- assert.equal(stale.state.tag, 'spec');
+  const author = settledAt('plan', 'medium', {}, true).state;
+  const parsing = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
+  const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: staleCurrent, current: staleCurrent, design: null, reqIds: [] } }], parsing.state);
+  assert.equal(stale.state.tag, 'spec');
 });
 test('changed settled bytes intercept each parent parse and review boundary', () => {
- const defaults = started('plan'); const input = planInputFromRun(defaults, identity); assert.ok(input.ok);
- const planned = beginPlan(input.input, 'plan', {}).state; assert.ok('c' in planned && planned.c);
- const plan = { ...planned, c: { ...planned.c, designPin: 'x.design.md' } };
- const dc = { ...designApproval().c, governingSpec: identity };
- const revision = beginDesignRevision(dc, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
- const impl = approvalState(); assert.ok('c' in impl && impl.c);
- const ic = { ...impl.c, governingSpec: identity, designPin: 'x.design.md' };
- const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: identity }, 'review', {});
- assert.ok(begun.state.tag === 'pin-check');
- const reviews: Extract<ReviewState, { tag: 'pin-check' | 'fix-verify' }>[] = [begun.state, { tag: 'fix-verify', c: { ...begun.state.c, effectId: 'verify' }, clusters: [], pass: 'main' }];
- const cases: [RootState, string][] = [
- [{ tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'parsing', c: { ...plan.c, effectId: 'parse' } } }, 'parse'],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'parse', c: dc, effectId: 'parse', afterReview: false } }, 'parse'],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'parse', effectId: 'parse', afterReview: false } } }, 'parse'],
- [{ tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'parsing', c: ic, effectId: 'parse', phase: 'initial' } }, 'parse'],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'parsing', c: ic, effectId: 'parse', phase: 'initial' } } }, 'parse'],
- ];
- for (const review of reviews) {
- const effectId = review.tag === 'pin-check' ? review.effectId : review.c.effectId!;
- cases.push(
- [{ tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'review', c: plan.c, review } }, effectId],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'review', c: dc, review } }, effectId],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'review', review } } }, effectId],
- [{ tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'plan-review', c: ic, review } }, effectId],
- [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'plan-review', c: ic, review } } }, effectId]);
- }
- for (const [state, effectId] of cases) for (const defects of [[], [{ code: 'missing-satisfies' }]]) {
- const source = SPEC_SOURCE + '\nChanged.\n'; const hash = specHash(source);
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: state.tag === 'design' ? 'design' : 'plan', effectId, hash: designHash, parsed: {}, defects, governing: { pinned: hash, current: hash, design: null, reqIds: [] } }], state);
- const delayed = drive([{ type: 'ARTIFACT_PARSED', kind: state.tag === 'design' ? 'design' : 'plan', effectId: 'old.parse-artifact.999', hash: designHash, parsed: {}, defects, governing: { pinned: hash, current: hash, design: null, reqIds: [] } }], state);
- assert.notEqual(delayed.state.tag, 'spec', `delayed ${state.tag}/${effectId}`); assert.deepEqual(delayed.effects, []);
- if (delayed.state.tag === 'plan' && 'c' in delayed.state.child) assert.equal(delayed.state.child.c?.designPin, 'x.design.md');
- if (delayed.state.tag === 'implement' && 'c' in delayed.state.child) assert.equal(delayed.state.child.c?.designPin, 'x.design.md');
- if (delayed.state.tag === 'design' && delayed.state.child.tag === 'increment' && 'c' in delayed.state.child.child) assert.equal(delayed.state.child.child.c?.designPin, 'x.design.md');
- const recovered = drive([{ type: 'SPEC_SETTLED', path: identity.path, hash }], delayed.state).state;
- if (state.tag === 'plan' || state.tag === 'implement') {
- assert.ok(recovered.tag === 'handoff'); assert.match(recovered.done.summary, /stale-design-spec/);
- } else {
- const expected = drive([{ type: 'SPEC_SETTLED', path: identity.path, hash }], state).state;
- assert.equal(recovered.tag, expected.tag);
- if (recovered.tag === 'design' && expected.tag === 'design') assert.equal(recovered.child.tag, expected.child.tag);
- if (recovered.tag === 'handoff' && expected.tag === 'handoff') assert.equal(recovered.done.summary, expected.done.summary);
- }
- assert.equal(stale.state.tag, 'spec', `${state.tag}/${effectId}/${defects.length}`);
- assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(stale.state)), stale.state);
- const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
- assertGate(gate, hash);
- }
- for (const review of [{ tag: 'wave', c: begun.state.c, phase: 'cli' }, { tag: 'native', c: begun.state.c, slots: [] }] as ReviewState[]) {
- const inactive: RootState[] = [
- { tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'review', c: plan.c, review } },
- { tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'plan-review', c: ic, review } },
- { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'review', c: dc, review } },
- { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'review', review } } },
- { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'plan-review', c: ic, review } } },
- ];
- for (const state of inactive) {
- const duplicate = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: begun.state.effectId, hash: designHash, parsed: {}, defects: [], governing: { pinned: identity.hash, current: staleCurrent, design: null, reqIds: [] } }], state);
- assert.notEqual(duplicate.state.tag, 'spec'); assert.deepEqual(duplicate.effects, []);
- }
- }
+  const defaults = started('plan');
+  const input = planInputFromRun(defaults, identity);
+  assert.ok(input.ok);
+  const planned = beginPlan(input.input, 'plan', {}).state;
+  assert.ok('c' in planned && planned.c);
+  const plan = { ...planned, c: { ...planned.c, designPin: 'x.design.md' } };
+  const dc = { ...designApproval().c, governingSpec: identity };
+  const revision = beginDesignRevision(dc, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
+  const impl = approvalState();
+  assert.ok('c' in impl && impl.c);
+  const ic = { ...impl.c, governingSpec: identity, designPin: 'x.design.md' };
+  const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: identity }, 'review', {});
+  assert.ok(begun.state.tag === 'pin-check');
+  const reviews: Extract<ReviewState, { tag: 'pin-check' | 'fix-verify' }>[] = [begun.state, { tag: 'fix-verify', c: { ...begun.state.c, effectId: 'verify' }, clusters: [], pass: 'main' }];
+  const cases: [RootState, string][] = [
+    [{ tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'parsing', c: { ...plan.c, effectId: 'parse' } } }, 'parse'],
+    [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'parse', c: dc, effectId: 'parse', afterReview: false } }, 'parse'],
+    [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'parse', effectId: 'parse', afterReview: false } } }, 'parse'],
+    [{ tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'parsing', c: ic, effectId: 'parse', phase: 'initial' } }, 'parse'],
+    [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'parsing', c: ic, effectId: 'parse', phase: 'initial' } } }, 'parse'],
+  ];
+  for (const review of reviews) {
+    const effectId = review.tag === 'pin-check' ? review.effectId : review.c.effectId!;
+    cases.push(
+      [{ tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'review', c: plan.c, review } }, effectId],
+      [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'review', c: dc, review } }, effectId],
+      [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'review', review } } }, effectId],
+      [{ tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'plan-review', c: ic, review } }, effectId],
+      [{ tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'plan-review', c: ic, review } } }, effectId],
+    );
+  }
+  for (const [state, effectId] of cases) {
+    for (const defects of [[], [{ code: 'missing-satisfies' }]]) {
+      const source = `${SPEC_SOURCE}\nChanged.\n`;
+      const hash = specHash(source);
+      const stale = drive([{ type: 'ARTIFACT_PARSED', kind: state.tag === 'design' ? 'design' : 'plan', effectId, hash: designHash, parsed: {}, defects, governing: { pinned: hash, current: hash, design: null, reqIds: [] } }], state);
+      const delayed = drive([{ type: 'ARTIFACT_PARSED', kind: state.tag === 'design' ? 'design' : 'plan', effectId: 'old.parse-artifact.999', hash: designHash, parsed: {}, defects, governing: { pinned: hash, current: hash, design: null, reqIds: [] } }], state);
+      assert.notEqual(delayed.state.tag, 'spec', `delayed ${state.tag}/${effectId}`);
+      assert.deepEqual(delayed.effects, []);
+      if (delayed.state.tag === 'plan' && 'c' in delayed.state.child) assert.equal(delayed.state.child.c?.designPin, 'x.design.md');
+      if (delayed.state.tag === 'implement' && 'c' in delayed.state.child) assert.equal(delayed.state.child.c?.designPin, 'x.design.md');
+      if (delayed.state.tag === 'design' && delayed.state.child.tag === 'increment' && 'c' in delayed.state.child.child) assert.equal(delayed.state.child.child.c?.designPin, 'x.design.md');
+      const recovered = drive([{ type: 'SPEC_SETTLED', path: identity.path, hash }], delayed.state).state;
+      if (state.tag === 'plan' || state.tag === 'implement') {
+        assert.ok(recovered.tag === 'handoff');
+        assert.match(recovered.done.summary, /stale-design-spec/);
+      } else {
+        const expected = drive([{ type: 'SPEC_SETTLED', path: identity.path, hash }], state).state;
+        assert.equal(recovered.tag, expected.tag);
+        if (recovered.tag === 'design' && expected.tag === 'design') assert.equal(recovered.child.tag, expected.child.tag);
+        if (recovered.tag === 'handoff' && expected.tag === 'handoff') assert.equal(recovered.done.summary, expected.done.summary);
+      }
+      assert.equal(stale.state.tag, 'spec', `${state.tag}/${effectId}/${defects.length}`);
+      assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(stale.state)), stale.state);
+      const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
+      assertGate(gate, hash);
+    }
+  }
+  for (const review of [{ tag: 'wave', c: begun.state.c, phase: 'cli' }, { tag: 'native', c: begun.state.c, slots: [] }] as ReviewState[]) {
+    const inactive: RootState[] = [
+      { tag: 'plan', run: runInfo('plan', 'medium', defaults), child: { tag: 'review', c: plan.c, review } },
+      { tag: 'implement', run: runInfo('implement', 'medium', defaults), child: { tag: 'plan-review', c: ic, review } },
+      { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'review', c: dc, review } },
+      { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'revision', c: dc, child: { ...revision, tag: 'review', review } } },
+      { tag: 'design', run: runInfo('design', 'medium', defaults), child: { tag: 'increment', c: dc, increment: 'I01', child: { tag: 'plan-review', c: ic, review } } },
+    ];
+    for (const state of inactive) {
+      const duplicate = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: begun.state.effectId, hash: designHash, parsed: {}, defects: [], governing: { pinned: identity.hash, current: staleCurrent, design: null, reqIds: [] } }], state);
+      assert.notEqual(duplicate.state.tag, 'spec');
+      assert.deepEqual(duplicate.effects, []);
+    }
+  }
 });
 test('resolved stale design wins concurrent lint and retains ancestor', () => {
- const author = settledAt('plan', 'medium', {}, true).state;
- const parsing = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [{ code: 'missing-satisfies' }], governing: { pinned: staleCurrent, current: identity.hash, design: 'x.design.md', reqIds: [] } }], parsing.state);
- assert.equal(stale.state.tag, 'spec');
- const resumed = drive([specParsed(stale.effects[0]!.id)], stale.state).state;
- assert.ok(resumed.tag === 'handoff'); assert.match(resumed.done.summary, /stale-design-spec/);
-});
-test('existing standalone stale plan with lint stops after settlement', () => {
- const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
- const snapshot = boot.effects.find(e => e.kind === 'snapshot')!;
- const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
- const source = SPEC_SOURCE + '\nChanged.\n'; const hash = specHash(source);
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [{ code: 'missing-satisfies' }], governing: { pinned: identity.hash, current: hash, design: null, reqIds: [] } }], parsing.state);
- assert.equal(stale.state.tag, 'spec');
- const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state; assertGate(gate, hash);
- const resumed = drive([specApproval(hash)], gate).state;
- assert.ok(resumed.tag === 'handoff'); assert.match(resumed.done.summary, /stale-spec/);
- assert.notEqual(rootMachine.awaitOf(resumed), 'author');
-});
-function stalePlanAtRoot(design: string | null = null, unchanged = false) {
- const author = settledAt('plan', 'medium', {}, true).state;
- const parse = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
- const effect = parse.effects.find(e => e.kind === 'parse-artifact')!;
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: unchanged ? staleCurrent : identity.hash, current: unchanged ? identity.hash : staleCurrent, design, reqIds: [] } }], parse.state);
- assert.ok(stale.state.tag === 'spec');
- assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(stale.state)), stale.state);
- return stale;
-}
-test('stale pin recovery continues after approval', () => {
- const stale = stalePlanAtRoot(); const source = SPEC_SOURCE + '\nRevised.\n';
- const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
- assertGate(gate, specHash(source));
- const resumed = drive([specApproval(specHash(source))], gate).state;
- assert.ok(resumed.tag === 'plan' && resumed.child.tag === 'author');
- assert.equal(resumed.child.defects[0]?.['code'], 'stale-spec');
- const next = drive([{ type: 'AUTHORED', path: 'x.plan.md' }, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: 'plan.parse-artifact.2', hash: designHash, parsed: {}, defects: [] }], resumed);
- assert.ok(next.effects.some(e => e.id.startsWith('plan.review.s1.')));
-});
-test('stale pin with unchanged spec resumes recovery', () => {
- const stale = stalePlanAtRoot(null, true);
- const resumed = drive([specParsed(stale.effects[0]!.id)], stale.state).state;
- assert.ok(resumed.tag === 'plan' && resumed.child.tag === 'author');
- assert.equal(resumed.child.c.specEpoch, 1); assert.equal(resumed.child.defects[0]?.['code'], 'stale-spec');
-});
-test('stale pin first acceptance increment plan fails', () => {
- const stale = stalePlanAtRoot('x.design.md', true);
- const resumed = drive([specParsed(stale.effects[0]!.id)], stale.state).state;
- assert.ok(resumed.tag === 'handoff'); assert.match(resumed.done.summary, /stale-design-spec/);
-});
-test('stale pin check in nested review requires approval', () => {
- const author = settledAt('plan', 'medium', {}, true).state;
- const defaults = started('plan');
- const run = author.tag === 'plan' ? author.run : runInfo('plan', 'medium', defaults);
- const input = planInputFromRun(defaults, identity); assert.ok(input.ok);
- const begun = beginPlan(input.input, 'plan', {});
- const parsing = stepPlan(begun.state, { type: 'AUTHORED', path: 'x.plan.md' });
- const review = stepPlan(parsing.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [] });
- assert.equal(review.effects[0]?.kind, 'parse-artifact');
- const pendingRoot: RootState = { tag: 'plan', run, child: review.state };
- assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(pendingRoot)), pendingRoot);
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: review.effects[0]!.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: identity.hash, current: staleCurrent, design: null, reqIds: [] } }], { tag: 'plan', run, child: review.state });
- assert.equal(stale.state.tag, 'spec'); assert.equal(stale.effects[0]?.kind, 'parse-artifact');
- const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, SPEC_SOURCE + '\nRevised.\n')], stale.state).state;
- assertGate(gate, specHash(SPEC_SOURCE + '\nRevised.\n'));
-});
-test('stale pin initial implement parse keeps plan metadata', () => {
- for (const increment of [false, true]) {
- const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
- const snapshot = boot.effects.find(e => e.kind === 'snapshot')!;
- const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
- const effect = parsing.effects.find(e => e.kind === 'parse-artifact')!;
- const parsed = { ...IMPLEMENT_PLAN, box: { ...IMPLEMENT_PLAN.box, Parent: increment ? '`x.design.md` · I01' : '`x.spec.md` · ' + identity.hash } };
- const source = SPEC_SOURCE + '\nRevised.\n';
- const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: designHash, parsed, defects: [], governing: { pinned: identity.hash, current: specHash(source), design: increment ? 'x.design.md' : null, reqIds: [] } }], parsing.state);
- assert.ok(stale.state.tag === 'spec' && stale.state.parked?.verb === 'implement');
- assert.ok('c' in stale.state.parked.state && stale.state.parked.state.c?.plan);
- const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
- assertGate(gate, specHash(source));
- const resumed = drive([specApproval(specHash(source))], gate).state;
- assert.ok(resumed.tag === 'handoff'); assert.match(resumed.done.summary, increment ? /stale-design-spec/ : /stale-spec/);
- }
+  const author = settledAt('plan', 'medium', {}, true).state;
+  const parsing = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
+  const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [{ code: 'missing-satisfies' }], governing: { pinned: staleCurrent, current: identity.hash, design: 'x.design.md', reqIds: [] } }], parsing.state);
+  assert.equal(stale.state.tag, 'spec');
+  const resumed = drive([specParsed(stale.effects[0]!.id)], stale.state).state;
+  assert.ok(resumed.tag === 'handoff');
+  assert.match(resumed.done.summary, /stale-design-spec/);
 });
 
-for (const detail of ['design pin target unreadable: x.design.md', 'x.design.md has no spec pin']) test(`implement terminal handoff preserves ancestor diagnostic: ${detail}`, () => {
- const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
- const snapshot = boot.effects.find(e => e.kind === 'snapshot')!;
- const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
- const effect = parsing.effects.find(e => e.kind === 'parse-artifact')!;
- const result = drive([{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail }], parsing.state);
- assert.ok(result.state.tag === 'handoff');
- assert.match(result.state.done.summary, /stale-design-spec/);
- const terminal = drive([{ type: 'HANDOFF_DONE', effectId: result.state.effectId, destination: 'handoff.md', warning: null, diagnostics: false }], result.state).state;
- assert.equal(terminal.tag, 'done');
- assert.match(String(rootMachine.project(terminal).data['summary']), /stale-design-spec/);
+test('existing standalone stale plan with lint stops after settlement', () => {
+  const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
+  const snapshot = boot.effects.find((e) => e.kind === 'snapshot')!;
+  const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
+  const source = `${SPEC_SOURCE}\nChanged.\n`;
+  const hash = specHash(source);
+  const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [{ code: 'missing-satisfies' }], governing: { pinned: identity.hash, current: hash, design: null, reqIds: [] } }], parsing.state);
+  assert.equal(stale.state.tag, 'spec');
+  const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
+  assertGate(gate, hash);
+  const resumed = drive([specApproval(hash)], gate).state;
+  assert.ok(resumed.tag === 'handoff');
+  assert.match(resumed.done.summary, /stale-spec/);
+  assert.notEqual(rootMachine.awaitOf(resumed), 'author');
+});
+
+function stalePlanAtRoot(design: string | null = null, unchanged = false) {
+  const author = settledAt('plan', 'medium', {}, true).state;
+  const parse = drive([{ type: 'AUTHORED', path: 'x.plan.md' }], author);
+  const effect = parse.effects.find((e) => e.kind === 'parse-artifact')!;
+  const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: unchanged ? staleCurrent : identity.hash, current: unchanged ? identity.hash : staleCurrent, design, reqIds: [] } }], parse.state);
+  assert.ok(stale.state.tag === 'spec');
+  assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(stale.state)), stale.state);
+  return stale;
+}
+
+test('stale pin recovery continues after approval', () => {
+  const stale = stalePlanAtRoot();
+  assert.equal(frame(stale.state).at, 'spec › reading');
+  assert.equal(stale.effects[0]?.kind, 'parse-artifact');
+  const source = `${SPEC_SOURCE}\nRevised.\n`;
+  const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
+  assertGate(gate, specHash(source));
+  const resumed = drive([specApproval(specHash(source))], gate).state;
+  assert.ok(resumed.tag === 'plan' && resumed.child.tag === 'author');
+  assert.equal(resumed.child.defects[0]?.['code'], 'stale-spec');
+  const next = drive([{ type: 'AUTHORED', path: 'x.plan.md' }, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: 'plan.parse-artifact.2', hash: designHash, parsed: {}, defects: [] }], resumed);
+  assert.ok(next.effects.some((e) => e.id.startsWith('plan.review.s1.')));
+});
+
+test('stale pin with unchanged spec resumes standalone plan or fails increment plan', () => {
+  const cases = [
+    {
+      design: null,
+      verify: (state: RootState) => {
+        assert.ok(state.tag === 'plan' && state.child.tag === 'author');
+        assert.equal(state.child.c.specEpoch, 1);
+        assert.equal(state.child.defects[0]?.['code'], 'stale-spec');
+      },
+    },
+    {
+      design: 'x.design.md',
+      verify: (state: RootState) => {
+        assert.ok(state.tag === 'handoff');
+        assert.match(state.done.summary, /stale-design-spec/);
+      },
+    },
+  ] as const;
+  for (const { design, verify } of cases) {
+    const stale = stalePlanAtRoot(design, true);
+    const resumed = drive([specParsed(stale.effects[0]!.id)], stale.state).state;
+    verify(resumed);
+  }
+});
+
+test('stale pin check in nested review requires approval', () => {
+  const author = settledAt('plan', 'medium', {}, true).state;
+  const defaults = started('plan');
+  const run = author.tag === 'plan' ? author.run : runInfo('plan', 'medium', defaults);
+  const input = planInputFromRun(defaults, identity);
+  assert.ok(input.ok);
+  const begun = beginPlan(input.input, 'plan', {});
+  const parsing = stepPlan(begun.state, { type: 'AUTHORED', path: 'x.plan.md' });
+  const review = stepPlan(parsing.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: parsing.effects[0]!.id, hash: designHash, parsed: {}, defects: [] });
+  assert.equal(review.effects[0]?.kind, 'parse-artifact');
+  const pendingRoot: RootState = { tag: 'plan', run, child: review.state };
+  assert.deepEqual(rootMachine.codec!.decode(rootMachine.codec!.encode(pendingRoot)), pendingRoot);
+  const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: review.effects[0]!.id, hash: designHash, parsed: {}, defects: [], governing: { pinned: identity.hash, current: staleCurrent, design: null, reqIds: [] } }], { tag: 'plan', run, child: review.state });
+  assert.equal(stale.state.tag, 'spec');
+  assert.equal(stale.effects[0]?.kind, 'parse-artifact');
+  const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, `${SPEC_SOURCE}\nRevised.\n`)], stale.state).state;
+  assertGate(gate, specHash(`${SPEC_SOURCE}\nRevised.\n`));
+});
+
+test('stale pin initial implement parse keeps plan metadata', () => {
+  for (const increment of [false, true]) {
+    const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
+    const snapshot = boot.effects.find((e) => e.kind === 'snapshot')!;
+    const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
+    const effect = parsing.effects.find((e) => e.kind === 'parse-artifact')!;
+    const parsed = { ...IMPLEMENT_PLAN, box: { ...IMPLEMENT_PLAN.box, Parent: increment ? '`x.design.md` · I01' : '`x.spec.md` · ' + identity.hash } };
+    const source = `${SPEC_SOURCE}\nRevised.\n`;
+    const stale = drive([{ type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: designHash, parsed, defects: [], governing: { pinned: identity.hash, current: specHash(source), design: increment ? 'x.design.md' : null, reqIds: [] } }], parsing.state);
+    assert.ok(stale.state.tag === 'spec' && stale.state.parked?.verb === 'implement');
+    assert.ok('c' in stale.state.parked.state && stale.state.parked.state.c?.plan);
+    const gate = drive([specParsed(stale.effects[0]!.id, SPEC_PATH, source)], stale.state).state;
+    assertGate(gate, specHash(source));
+    const resumed = drive([specApproval(specHash(source))], gate).state;
+    assert.ok(resumed.tag === 'handoff');
+    assert.match(resumed.done.summary, increment ? /stale-design-spec/ : /stale-spec/);
+  }
+});
+
+// SECTION: Diagnostics and handoff
+
+test('implement terminal handoff preserves ancestor diagnostic across unreadable target and missing spec pin', () => {
+  for (const detail of ['design pin target unreadable: x.design.md', 'x.design.md has no spec pin']) {
+    const boot = settledAt('implement', 'medium', { argument: 'x.plan.md' }, true);
+    const snapshot = boot.effects.find((e) => e.kind === 'snapshot')!;
+    const parsing = drive([{ type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } }], boot.state);
+    const effect = parsing.effects.find((e) => e.kind === 'parse-artifact')!;
+    const result = drive([{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail }], parsing.state);
+    assert.ok(result.state.tag === 'handoff');
+    assert.match(result.state.done.summary, /stale-design-spec/);
+    const terminal = drive([{ type: 'HANDOFF_DONE', effectId: result.state.effectId, destination: 'handoff.md', warning: null, diagnostics: false }], result.state).state;
+    assert.equal(terminal.tag, 'done');
+    assert.match(String(rootMachine.project(terminal).data['summary']), /stale-design-spec/);
+  }
 });

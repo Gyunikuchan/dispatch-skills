@@ -30,12 +30,14 @@ test('review-target defers wave consumption and rejects host replies while check
 
 
 
-for (const tag of ['decide-needs-user', 'decide-opt-in'] as const) test(`review-target guards ${tag} settlement decisions`, () => {
-  const initial = wave(); if (!('c' in initial.state)) throw new Error('context');
-  const c = { ...initial.state.c, findings: [{ ...finding, round: 1, status: 'needs-user' as const }] };
-  const state: ReviewState = tag === 'decide-needs-user' ? { tag, c, ids: [finding.id] } : { tag, c, items: [finding.id] };
-  const event: Event = tag === 'decide-needs-user' ? { type: 'DECISION', kind: 'needs-user', answer: { [finding.id]: { ruling: 'accept', quote: 'Accept this condition' } } } : { type: 'DECISION', kind: 'opt-in', answer: [] };
-  assert.equal(reviewMachine.step(state, event).state.tag, 'target-check');
+test('review-target guards settlement decisions for needs-user and opt-in', () => {
+  for (const tag of ['decide-needs-user', 'decide-opt-in'] as const) {
+    const initial = wave(); if (!('c' in initial.state)) throw new Error('context');
+    const c = { ...initial.state.c, findings: [{ ...finding, round: 1, status: 'needs-user' as const }] };
+    const state: ReviewState = tag === 'decide-needs-user' ? { tag, c, ids: [finding.id] } : { tag, c, items: [finding.id] };
+    const event: Event = tag === 'decide-needs-user' ? { type: 'DECISION', kind: 'needs-user', answer: { [finding.id]: { ruling: 'accept', quote: 'Accept this condition' } } } : { type: 'DECISION', kind: 'opt-in', answer: [] };
+    assert.equal(reviewMachine.step(state, event).state.tag, 'target-check', tag);
+  }
 });
 
 test('review-target fix candidates are adopted only after unchanged successful verification', () => {

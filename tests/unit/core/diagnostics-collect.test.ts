@@ -266,7 +266,7 @@ test('SC10 native receipt records launched model and effort', async () => {
   assert.ok(renderDiagnostics([facts]).text.includes('| 1 | implementation | claude (native) | claude-sonnet-5 | medium | 1m 30s | — | — | — | — | ~4,200 | ok |'));
 });
 
-test('SC10 H2 fires when round 2 re-raises a carried rejection', async () => {
+test('re-raising a carried rejection across rounds triggers repeated finding warning', async () => {
   const review = codeReview((round) => round <= 2 ? reviewFinding(round) : null, 2);
   assert.equal(await review.begin(), 'rule');
   assert.equal(await review.reply({ type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'intended behavior' } } }), 'rule', 'the rejection is carried and re-raised in round 2');
@@ -276,7 +276,7 @@ test('SC10 H2 fires when round 2 re-raises a carried rejection', async () => {
   assert.match(review.report(), /code review: 3 rounds; cap reached \(2\); 1 finding re-raised across rounds \(R1-F001\)\./);
 });
 
-test('SC10 later run-end render replaces older snapshot', async () => {
+test('later run-end render replaces older session snapshot', async () => {
   const toggle = { on: true }, session = tempDir(), report = path.join(session, 'diagnostics.md');
   const first = reviewRun(toggle, session, '001-review');
   await first.begin();
@@ -367,9 +367,9 @@ test('heuristic precision omits a run whose journal fails to fold', async () => 
   assert.match(read(path.join(session, 'diagnostics.md')), /^- Runs: 1 · /m, 'only the foldable run is counted');
 });
 
-// SECTION: SC3 — rejection redaction
+// SECTION: Rejection redaction
 
-test('SC3 rejected event canaries never reach the report', async () => {
+test('rejected event canaries never reach the diagnostic report', async () => {
   const session = tempDir(), ports = fakePorts(), runDir = path.join(session, '.state/runs/001-host');
   memoryRunFs(ports, path.join(session, '.state'));
   const base = { ports, runDir, machine: hostMachine, handlers: {}, diagnosticToggle: () => true };

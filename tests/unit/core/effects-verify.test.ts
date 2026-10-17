@@ -17,6 +17,8 @@ const git: Git = {
 };
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
 
+// SECTION: Verification execution and logs
+
 test('shellArgv forks on the platform', () => {
   assert.deepEqual(shellArgv('win32', 'npm test'), ['cmd.exe', '/d', '/s', '/c', 'npm test']);
   assert.deepEqual(shellArgv('linux', 'npm test'), ['sh', '-c', 'npm test']);
@@ -49,14 +51,6 @@ test('effect folder: two verification effects in one run keep distinct logs with
   assert.deepEqual(logs, [path.join(runDir, 'implement.verify.1', '1.log'), path.join(runDir, 'implement.verify.2', '1.log')]);
   assert.match(fs.readFileSync(logs[0]!, 'utf8'), /out one/);
   assert.match(fs.readFileSync(logs[1]!, 'utf8'), /out two/);
-});
-
-test('snapshot: fingerprint and changed paths since a prior fingerprint', async () => {
-  const handler = createSnapshot({ cwd: '/repo', git });
-  const first = only(await handler({ kind: 'snapshot', id: 's.1', since: null }, fakePorts(), { runDir: '/run', attempt: 1 }));
-  assert.deepEqual(first.type === 'SNAPSHOT' && [first.fingerprint, first.diff], [FP, { paths: [] }]);
-  const later = only(await handler({ kind: 'snapshot', id: 's.2', since: FP }, fakePorts(), { runDir: '/run', attempt: 1 }));
-  assert.deepEqual(later.type === 'SNAPSHOT' && later.diff, { paths: ['src/a.ts'] });
 });
 
 test('verify: a log write failure is one EFFECT_FAILED io', async () => {
@@ -103,10 +97,14 @@ test('verify: expected names in log are found in Jest-style output and named in 
 
 test('verify: expected names in log match only when bounded by line edges or non-alphanumeric characters', async () => {
   const row = await redRun(
-    { command: 'check', expectedTests: ['parses', 'rejects input', 'trims', 'reports'] },
-    { exit: 1, stdout: 'parsesAll failed\nprerejects input\nFAIL: trims\n', stderr: 'reports2 failed\n' },
+    { command: 'check', expectedTests: ['parses', 'rejects input', 'trims', 'reports', 'test_auth', 'TestParse', 'testMethod'] },
+    {
+      exit: 1,
+      stdout: 'parsesAll failed\nprerejects input\nFAIL: trims\nFAILED tests/test_a.py::test_auth_expired\n--- FAIL: TestParse_Invalid (0.00s)\ncom.example.MyTest > testMethod FAILED\n',
+      stderr: 'reports2 failed\n',
+    },
   );
-  assert.deepEqual(row['failedTests'], ['test:trims']);
+  assert.deepEqual(row['failedTests'], ['test:testMethod', 'test:trims']);
 });
 
 test('verify: expected names in log ignore the command echo line', async () => {
@@ -174,11 +172,34 @@ test('verify: without expected names in log the failure ID names the exit class'
   assert.match(String(spawn['failureId']), /^check::exit:spawn:[0-9a-f]{16}$/);
 });
 
+// SECTION: Fallback failure identity
+
+const fallbackId = async (cwd: string, stdout: string) => {
+  const ports = fakePorts();
+  ports.spawn = { run: async () => ({ exit: 1, stdout, stderr: '' }) };
+  const result = only(await createVerify({ os: 'linux', cwd, git })({ kind: 'verify', id: 'verify.1', purpose: 'baseline', commands: [{ command: 'check' }] }, ports, { runDir: tempDir(), attempt: 1 }));
+  return result.type === 'VERIFY_DONE' ? result.results[0]?.['failureId'] : undefined;
+};
+
+test('known-red fallback identity ignores incidental counts, PID, port, order, and path variations', async () => {
+  assert.equal(await fallbackId('/repo', 'FAIL a.test.ts\nFAIL b.test.ts\n'), await fallbackId('/repo', 'FAIL b.test.ts\nFAIL a.test.ts\n'));
+  const at = (root: string, hash: string) => `rootdir: ${root}\nError: boom\n    at ${root}/tests/a.test.js:4:1\n    at /usr/lib/node/runner.js:9:2\nsnapshot ${hash}\n`;
+  assert.equal(await fallbackId('/repo', at('/repo', 'deadbeef12')), await fallbackId('/tmp/run/wt/task-t1', at('/tmp/run/wt/task-t1', 'cafe0123ab')));
+  assert.equal(await fallbackId('C:\repo', at('C:\repo', 'deadbeef12')), await fallbackId('/repo', at('/repo', 'deadbeef12')));
+  assert.equal(
+    await fallbackId('/repo', 'pass 1\nPID: 101\nError: connection refused on port 3001'),
+    await fallbackId('/repo', 'pass 2\nPID: 102\nError: connection refused on port 3002'),
+  );
+});
+
 test('known-red fallback identity differs for a different failing output of the same command', async () => {
   const accepted = await redRun({ command: 'node --test' }, { exit: 1, stdout: 'not ok 1 - parses dates\n', stderr: '' });
   const later = await redRun({ command: 'node --test' }, { exit: 1, stdout: 'not ok 1 - parses dates\nnot ok 2 - rejects nulls\n', stderr: '' });
   assert.notEqual(later['failureId'], accepted['failureId']);
+  assert.notEqual(await fallbackId('/repo', 'Error: boom\n'), await fallbackId('/repo', 'Error: bang\n'));
 });
+
+// SECTION: Input fingerprinting, reuse and snapshot integration
 
 test('implement-within-run-reuse: mapped input changes invalidate prior results', async () => {
   const cwd = tempDir();
@@ -201,19 +222,6 @@ test('implement-within-run-reuse: mapped input changes invalidate prior results'
   if (second.type === 'VERIFY_DONE') assert.notEqual(second.results[0]?.['inputFingerprint'], firstFingerprint);
 });
 
-
-test('known-red fallback identity ignores incidental counts, PID and port output', async () => {
-  const ports = fakePorts();
-  let iteration = 0;
-  ports.spawn = { run: async () => ({ exit: 1, stdout: `pass ${++iteration}\nPID: ${100 + iteration}\n`, stderr: `Error: connection refused on port ${3000 + iteration}` }) };
-  const handler = createVerify({ os: 'linux', cwd: '/repo', git });
-  const effect = { kind: 'verify' as const, id: 'verify.1', purpose: 'baseline', commands: [{ command: 'check' }] };
-  const first = only(await handler(effect, ports, { runDir: tempDir(), attempt: 1 }));
-  const second = only(await handler(effect, ports, { runDir: tempDir(), attempt: 1 }));
-  assert.ok(first.type === 'VERIFY_DONE' && second.type === 'VERIFY_DONE');
-  if (first.type === 'VERIFY_DONE' && second.type === 'VERIFY_DONE') assert.equal(first.results[0]?.['failureId'], second.results[0]?.['failureId']);
-});
-
 test('reused result reports no expected names in log and reads no scan logs', async () => {
   const ports = fakePorts();
   ports.spawn = { run: async () => ({ exit: 0, stdout: 'rejects expired tokens passed\n', stderr: '' }) };
@@ -230,6 +238,14 @@ test('reused result reports no expected names in log and reads no scan logs', as
     assert.deepEqual([row['reused'], row['failedTests'], row['baselineHits'], row['scanUnreadable']], [true, [], [], []]);
     assert.ok(!('testCounts' in row) && !('loadError' in row), JSON.stringify(row));
   }
+});
+
+test('snapshot: fingerprint and changed paths since a prior fingerprint', async () => {
+  const handler = createSnapshot({ cwd: '/repo', git });
+  const first = only(await handler({ kind: 'snapshot', id: 's.1', since: null }, fakePorts(), { runDir: '/run', attempt: 1 }));
+  assert.deepEqual(first.type === 'SNAPSHOT' && [first.fingerprint, first.diff], [FP, { paths: [] }]);
+  const later = only(await handler({ kind: 'snapshot', id: 's.2', since: FP }, fakePorts(), { runDir: '/run', attempt: 1 }));
+  assert.deepEqual(later.type === 'SNAPSHOT' && later.diff, { paths: ['src/a.ts'] });
 });
 
 test('verify and snapshot run in the effect cwd when one is given', async () => {
@@ -250,41 +266,4 @@ test('checkpoint captures only listed files and records absent files as deletion
   assert.deepEqual(writeCheckpoint(fakePorts(), root, out, ['tests/a.test.ts', 'tests/gone.test.ts']).files, ['tests/a.test.ts', 'tests/gone.test.ts']);
   assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), { schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'tests/gone.test.ts': null } });
   assert.throws(() => writeCheckpoint(fakePorts(), root, out, ['../escape.ts']), /repository-relative/);
-});
-
-test('verify: expected names in log reject underscore-suffixed identifiers', async () => {
-  const row = await redRun(
-    { command: 'check', expectedTests: ['test_auth', 'TestParse'] },
-    { exit: 1, stdout: 'FAILED tests/test_a.py::test_auth_expired\n--- FAIL: TestParse_Invalid (0.00s)\n', stderr: '' },
-  );
-  assert.deepEqual(row['failedTests'], []);
-});
-
-test('verify: expected name followed by a space and a status token is observed', async () => {
-  const row = await redRun(
-    { command: 'check', expectedTests: ['testMethod'] },
-    { exit: 1, stdout: 'com.example.MyTest > testMethod FAILED\n', stderr: '' },
-  );
-  assert.deepEqual(row['failedTests'], ['test:testMethod']);
-});
-
-const fallbackId = async (cwd: string, stdout: string) => {
-  const ports = fakePorts();
-  ports.spawn = { run: async () => ({ exit: 1, stdout, stderr: '' }) };
-  const result = only(await createVerify({ os: 'linux', cwd, git })({ kind: 'verify', id: 'verify.1', purpose: 'baseline', commands: [{ command: 'check' }] }, ports, { runDir: tempDir(), attempt: 1 }));
-  return result.type === 'VERIFY_DONE' ? result.results[0]?.['failureId'] : undefined;
-};
-
-test('known-red fallback identity ignores output line order', async () => {
-  assert.equal(await fallbackId('/repo', 'FAIL a.test.ts\nFAIL b.test.ts\n'), await fallbackId('/repo', 'FAIL b.test.ts\nFAIL a.test.ts\n'));
-});
-
-test('known-red fallback identity ignores the absolute run root, absolute path prefixes, and hex runs', async () => {
-  const at = (root: string, hash: string) => `rootdir: ${root}\nError: boom\n    at ${root}/tests/a.test.js:4:1\n    at /usr/lib/node/runner.js:9:2\nsnapshot ${hash}\n`;
-  assert.equal(await fallbackId('/repo', at('/repo', 'deadbeef12')), await fallbackId('/tmp/run/wt/task-t1', at('/tmp/run/wt/task-t1', 'cafe0123ab')));
-  assert.equal(await fallbackId('C:\repo', at('C:\repo', 'deadbeef12')), await fallbackId('/repo', at('/repo', 'deadbeef12')));
-});
-
-test('known-red fallback identity differs for a different failing line', async () => {
-  assert.notEqual(await fallbackId('/repo', 'Error: boom\n'), await fallbackId('/repo', 'Error: bang\n'));
 });

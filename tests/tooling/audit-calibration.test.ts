@@ -15,31 +15,23 @@ test('audit calibration fixture curates four categorized defects and two control
   assert.ok(high(f).length >= 1);
 });
 
-test('audit calibration prepare rejects a defect without source provenance', async () => {
+test('audit calibration prepare rejects malformed fixtures and invalid settings', async () => {
   const { prepare } = await load();
-  const f = fixture();
-  delete defects(f)[0]['source']['parent'];
-  assert.throws(() => prepare({ fixture: f as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /parent/);
-});
+  const f1 = fixture();
+  delete defects(f1)[0]['source']['parent'];
+  assert.throws(() => prepare({ fixture: f1 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /parent/);
 
-test('audit calibration prepare rejects an excerpt whose text no longer matches its hash', async () => {
-  const { prepare } = await load();
-  const f = fixture();
-  defects(f)[1]['excerpts'][0]['text'] += 'tampered\n';
-  assert.throws(() => prepare({ fixture: f as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /sha256/);
-});
+  const f2 = fixture();
+  defects(f2)[1]['excerpts'][0]['text'] += 'tampered\n';
+  assert.throws(() => prepare({ fixture: f2 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /sha256/);
 
-test('audit calibration prepare rejects a corpus missing a required defect category', async () => {
-  const { prepare } = await load();
-  const f = fixture();
-  defects(f)[2]['category'] = 'ambiguity';
-  assert.throws(() => prepare({ fixture: f as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /categor/);
-});
+  const f3 = fixture();
+  defects(f3)[2]['category'] = 'ambiguity';
+  assert.throws(() => prepare({ fixture: f3 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /categor/);
 
-test('audit calibration prepare rejects missing host or model settings', async () => {
-  const { prepare } = await load();
   assert.throws(() => prepare({ fixture: fixture() as never, workDir: tempDir(), settings: { ...SETTINGS, model: '' }, now: NOW, readBrief }), /model/);
 });
+
 
 describe('prepared audit calibration artifacts', () => {
   let preparedFixture: Awaited<ReturnType<typeof prepared>>;

@@ -30,6 +30,8 @@ function drive(events: readonly Event[]): { state: RootState; effects: Effect[] 
 const GOVERNED = { path: 'fixture.spec.md', hash: specHash(), approved: false };
 const handoffDone = (warning: string | null = null): Event => ({ type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning });
 
+// SECTION: Verb routing
+
 test('root selects each verb', () => {
   assert.equal(rootMachine.project(drive([started('ask')]).state).at, 'ask › preparing');
   assert.deepEqual(play(rootMachine, [started('plan')]).map((frame) => [frame.at, frame.await]), [['plan › author', 'author']]);
@@ -63,7 +65,9 @@ test('design routes to authoring without production effects', () => {
   assert.equal(rootMachine.project(design.state).data['artifact'], 'design');
 });
 
-test('grammar-review-infers: --kind wins, then .plan.md / .design.md, else code', () => {
+// SECTION: Review inference and fix
+
+test('review kind infers from explicit flag, design or plan extension, or defaults to code', () => {
   assert.equal(inferKind('docs/x.plan.md', { kind: 'code' }), 'code');
   assert.equal(inferKind('docs/x.plan.md', {}), 'plan');
   assert.equal(inferKind('docs/X.DESIGN.md', {}), 'design');
@@ -90,6 +94,8 @@ test('standalone review applies accepted fixes without a flag', () => {
   assert.equal(rootMachine.project(state).at, 'review › fix');
 });
 
+// SECTION: Handoff and retro
+
 test('a terminal child schedules handoff and preserves its outcome and destination', () => {
   const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   const { state, effects } = drive([started('review'), empty]);
@@ -106,7 +112,7 @@ test('handoff failure preserves the child outcome with a warning', () => {
   assert.deepEqual(warned?.data, { outcome: 'no-reviewable-changes', governingSpec: GOVERNED, summary: 'no reviewable changes', handoff: null, warning: 'handoff failed: io: EBUSY' });
 });
 
-test('HANDOFF_DONE with diagnostics true enters retro, and RETRO completes the run with the handoff outcome', () => {
+test('handoff with diagnostics enabled enters retro and completes run with handoff outcome', () => {
   const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   const retro = drive([started('review'), empty, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning: null, diagnostics: true }]);
   assert.equal(retro.state.tag, 'retro');
@@ -119,7 +125,7 @@ test('HANDOFF_DONE with diagnostics true enters retro, and RETRO completes the r
   assert.deepEqual(rootMachine.project(done.state).data, { outcome: 'no-reviewable-changes', governingSpec: GOVERNED, summary: 'no reviewable changes', handoff: '/tmp/dispatch-skills/s' });
 });
 
-test('HANDOFF_DONE with diagnostics false or absent goes straight to done', () => {
+test('handoff without diagnostics completes run directly', () => {
   const empty: Event = { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: { empty: true }, promptPaths: {} };
   for (const extra of [{ diagnostics: false }, {}]) {
     const { state } = drive([started('review'), empty, { ...handoffDone(), ...extra } as Event]);

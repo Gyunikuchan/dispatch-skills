@@ -57,14 +57,12 @@ async function previewReceipt(task: Record<string, unknown> | undefined) {
   return { brief: brief as Extract<ResultEvent, { type: 'BRIEF_READY' }>, receipt: JSON.parse(fs.readFileSync(eventPath, 'utf8')) as Record<string, unknown> };
 }
 
-test('self-check preview writes a submitted receipt echoing the brief hash', async () => {
-  const { brief, receipt } = await previewReceipt({ id: 'T1', attempt: 2, signature: 'sig' });
-  assert.deepEqual(receipt, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: 2, signature: 'sig', handle: '<host-assigned handle>', envelopePath: brief.envelopePath, briefHash: brief.sha256, model: '<host-attested model>' });
-});
+test('self-check preview writes a submitted receipt with or without task identity', async () => {
+  const withTask = await previewReceipt({ id: 'T1', attempt: 2, signature: 'sig' });
+  assert.deepEqual(withTask.receipt, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: 2, signature: 'sig', handle: '<host-assigned handle>', envelopePath: withTask.brief.envelopePath, briefHash: withTask.brief.sha256, model: '<host-attested model>' });
 
-test('self-check preview writes a taskless submitted receipt without identity', async () => {
-  const { brief, receipt } = await previewReceipt(undefined);
-  assert.deepEqual(receipt, { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: brief.envelopePath });
+  const taskless = await previewReceipt(undefined);
+  assert.deepEqual(taskless.receipt, { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: taskless.brief.envelopePath });
 });
 
 test('check-envelope rejects duplicate/unknown fields and out-of-scope or production paths in RED_READY', async () => {

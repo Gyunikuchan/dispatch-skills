@@ -66,7 +66,7 @@ test('event path: a rejected event keeps its path, and the rewritten file is acc
   assert.notEqual(accepted.frame?.reply, started.frame!.reply);
 });
 
-test('rewrite SC5 every live await emits parser-compatible envelopes with scoped ruling and mapping metadata', () => {
+test('every live await emits parser-compatible envelopes with scoped ruling and mapping metadata', () => {
   const data = { path: 'plan.md', slots: [{ sourceKey: 'native[0]', outputPath: 'raw.md', model: 'configured' }], findings: [{ id: 'F1', locus: 'src/a.ts:L1' }], clusters: [{ clusterId: 'C1', affectedPaths: ['src/a.ts'] }], envelopePath: 'receipt.json', model: 'writer', criteria: [{ id: 'SC1' }], kind: 'approval', items: [] };
   for (const current of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide'] as const) {
     const events = awaitEnvelopes(current, data); assert.ok(events.length);
@@ -76,7 +76,7 @@ test('rewrite SC5 every live await emits parser-compatible envelopes with scoped
   assert.deepEqual(approval?.type === 'DECISION' && approval.answer, { by: 'user', quote: '<actual user quote>', hash: 'sha256:revision' });
   const ruling = awaitEnvelopes('rule', data)[0]; assert.equal(ruling?.type === 'RULINGS' && typeof ruling.rulings['F1'], 'object');
 });
-test('rewrite SC5 terminal summary stays within 4 KiB while raw paths remain accessible', () => {
+test('terminal summary stays within 4 KiB while raw paths remain accessible', () => {
   const machine = { ...awaitingMachine, awaitOf: () => 'done' as const, project: () => ({ at: 'done', data: { outcome: 'complete', summary: 'x'.repeat(10000), captures: ['raw.log'] } }) };
   const frame = projectFrame(machine, awaitingMachine.initial(), 'run'); assert.ok(Buffer.byteLength(String(frame.data['summary'])) <= 4096); assert.deepEqual(frame.data['captures'], ['raw.log']);
 });
@@ -205,14 +205,16 @@ test('renders generic decision reply template', () => {
   }
 });
 
-for (const fixTarget of [undefined, 'docs/x.plan.md']) test(`diagnostics amendment rule scope ${fixTarget ? 'artifact' : 'code'} guidance preserves examples`, () => {
-  const machine = { ...awaitingMachine, awaitOf: () => 'rule' as const, project: () => ({ at: 'review', data: { fixTarget, findings: [{ id: 'F1', locus: 'src/a.ts:L1', category: 'correctness' }] } }) };
-  const frame = projectFrame(machine, awaitingMachine.initial(), 'run', undefined, 4);
-  assert.match(String(frame.data['fixScope']), /suggestions/);
-  assert.match(String(frame.data['fixScope']), /production.*test.*fixture.*helper.*verification-generated.*before.*RULINGS/);
-  const example = frame.events?.[0];
-  assert.equal(validateHostEvent('rule', example).ok, true);
-  assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['F1'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, [fixTarget ?? 'src/a.ts']);
-  assert.equal(frame.await, 'rule');
-  assert.match(frame.reply, /events\/4-rule.json$/);
+test('diagnostics amendment rule scope guidance preserves examples for code and artifact targets', () => {
+  for (const fixTarget of [undefined, 'docs/x.plan.md']) {
+    const machine = { ...awaitingMachine, awaitOf: () => 'rule' as const, project: () => ({ at: 'review', data: { fixTarget, findings: [{ id: 'F1', locus: 'src/a.ts:L1', category: 'correctness' }] } }) };
+    const frame = projectFrame(machine, awaitingMachine.initial(), 'run', undefined, 4);
+    assert.match(String(frame.data['fixScope']), /suggestions/);
+    assert.match(String(frame.data['fixScope']), /production.*test.*fixture.*helper.*verification-generated.*before.*RULINGS/);
+    const example = frame.events?.[0];
+    assert.equal(validateHostEvent('rule', example).ok, true);
+    assert.deepEqual(example?.type === 'RULINGS' && (example.rulings['F1'] as { fix: { affectedPaths: string[] } }).fix.affectedPaths, [fixTarget ?? 'src/a.ts']);
+    assert.equal(frame.await, 'rule');
+    assert.match(frame.reply, /events\/4-rule.json$/);
+  }
 });

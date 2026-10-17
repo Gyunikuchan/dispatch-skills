@@ -1,14 +1,20 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start, loadExecution } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { encodePrivate, decodePrivate, sha256 } from '../../../skills/dispatch/scripts/core/checkpoint.ts';
 import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 import { rootStateCodec } from '../../../skills/dispatch/scripts/machines/checkpoint.ts';
 import { start as startTasks } from '../machines/fixtures/implement-tasks.ts';
+import type { RosterSlot } from '../../../skills/dispatch/scripts/domain/types.ts';
+import { beginReview } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
+
+// SECTION: Continuation and prefix
 
 test('checkpoint-state: pin continuation rejects empty and mismatched effect identities', () => {
  const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) } }, 'review', {});
@@ -22,6 +28,7 @@ test('checkpoint-state: pin continuation rejects empty and mismatched effect ide
 
 test('checkpoint-state: accepted prefix does not call the changed reducer', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   assert.equal((await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED })).exitCode, 0);
   const changed = { ...awaitingMachine, step: () => { throw new Error('accepted prefix was replayed'); } };
   const restored = await send({ runDir, ports, machine: changed, handlers: fakeHandlers, dryRun: true });
@@ -48,18 +55,22 @@ test('checkpoint-state: failed replay retains source binding and rejects incompl
   }
 });
 
+// SECTION: Corruption and round-trip
+
 test('checkpoint-state: referenced checkpoint corruption fails closed', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   const last = [...readJournal(ports, runDir).records].at(-1)!;
   const ref = (last as unknown as { checkpoint?: { path: string } }).checkpoint;
   assert.ok(ref, 'accepted result must reference its private checkpoint');
-  fs.writeFileSync(path.join(runDir, ref.path), '{}');
+  ports.fs.writeAtomic(path.join(runDir, ref.path), '{}');
   assert.equal((await send({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, dryRun: true })).exitCode, 2);
 });
 
 test('checkpoint-state: private nested containers and ordered open effect attempts round-trip', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   const privateData = { handles: new Map([['T1', { handle: 'host-17', integrated: 'commit-1' }]]), retired: new Set(['T0']), optional: undefined, binding: { planHash: 'revision-1', config: { writer: 'configured-model' }, revision: 3 } };
   const machine = { ...awaitingMachine, initial: () => ({ ...awaitingMachine.initial(), privateData }), step: (state: ReturnType<typeof awaitingMachine.initial>, event: Parameters<typeof awaitingMachine.step>[1]) => {
     const result = awaitingMachine.step(state, event);
@@ -77,17 +88,21 @@ test('checkpoint-state: private nested containers and ordered open effect attemp
 
 test('checkpoint-state: runtime mismatch blocks mutation and permits a read-only retained-state view', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   const changed = { ...awaitingMachine, codec: { ...awaitingMachine.codec!, runtime: () => 'new-runtime' }, step: () => { throw new Error('accepted reducer replay'); } };
-  const before = fs.readFileSync(path.join(runDir, 'events.jsonl'));
+  const before = ports.fs.readBase64(path.join(runDir, 'events.jsonl'));
   assert.match((await send({ runDir, ports, machine: changed, handlers: fakeHandlers })).frame?.error ?? '', /runtime-mismatch/);
-  assert.deepEqual(fs.readFileSync(path.join(runDir, 'events.jsonl')), before);
+  assert.deepEqual(ports.fs.readBase64(path.join(runDir, 'events.jsonl')), before);
   assert.equal((await send({ runDir, ports, machine: changed, handlers: fakeHandlers, dryRun: true })).frame?.await, 'author');
 });
+
+// SECTION: Defect rejection and wave finish
 
 for (const defect of ['schema', 'prefix', 'queue', 'open', 'attempt', 'run', 'repository'] as const) {
   test(`checkpoint-state: ${defect} corruption is rejected even with a matching blob digest`, async () => {
     const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    memoryRunFs(ports, runDir);
     await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
     const file = path.join(runDir, 'events.jsonl'), lines = [...readJournal(ports, runDir).records], last = lines.at(-1)!;
     const saved = JSON.parse(ports.fs.readText(path.join(runDir, last.checkpoint!.path)));
@@ -101,17 +116,14 @@ for (const defect of ['schema', 'prefix', 'queue', 'open', 'attempt', 'run', 're
     const text = `${JSON.stringify(saved)}\n`, digest = sha256(text), relative = `checkpoints/${digest}.json`;
     ports.fs.publishExclusive(path.join(runDir, relative), text);
     last.checkpoint = { ...last.checkpoint!, path: relative, sha256: digest, bytes: Buffer.byteLength(text) };
-    fs.writeFileSync(file, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
+    ports.fs.writeAtomic(file, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
     assert.equal((await send({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, dryRun: true })).exitCode, 2);
   });
 }
-import type { RosterSlot } from '../../../skills/dispatch/scripts/domain/types.ts';
-import { beginReview } from '../../../skills/dispatch/scripts/machines/review.ts';
-import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
 for (const variant of ['native-zero', 'negative', 'cli-zero'] as const) test(`checkpoint-state: ${variant} wave finish retains valid native binding and rejects malformed attempts`, async () => {
   const runDir = path.join(tempDir(), 'run'), ports = fakePorts();
+  memoryRunFs(ports, runDir);
   const roster = [{ provider: 'codex', native: variant !== 'cli-zero', model: 'configured', sandbox: true, slot: 'codex[0]', index: 0, reserve: false }] as RosterSlot[];
   const begun = beginReview({ kind: 'code', target: '', cap: 1, breadth: 1, context: null, roster, timeoutMs: 1000 }, 'review', {});
   const initial: RootState = { tag: 'review', run: { verb: 'review', argument: '', slug: 'review' }, child: begun.state };

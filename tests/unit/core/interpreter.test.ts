@@ -168,20 +168,22 @@ test('diagnostics amendment findings transport writes current full findings, ove
   assert.deepEqual(refresh.frame?.data['findings'], summaries(2));
 });
 
-for (const freshness of ['current', 'missing', 'stale', 'invalid']) test(`diagnostics amendment findings transport dry-run ${freshness} writes nothing`, async () => {
-  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
-  const options = { ports, runDir, runRel: 'runs/001-review', machine: transportMachine, handlers: fakeHandlers };
-  await start({ ...options, runStarted: RUN_STARTED });
-  const file = path.join(runDir, 'rule.findings.json');
-  if (freshness === 'missing') fs.rmSync(file, { force: true });
-  else fs.writeFileSync(file, freshness === 'invalid' ? '{bad' : JSON.stringify(transportFindings(freshness === 'stale' ? 0 : 1)));
-  const before = ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]);
-  for (const refreshConfig of [false, true]) {
-    const result = await send({ ...options, dryRun: true, refreshConfig });
-    assert.deepEqual(result.frame?.data['findings'], freshness === 'current' ? summaries(1) : transportFindings(1));
-    assert.equal(result.frame?.data['findingsPath'], freshness === 'current' ? 'runs/001-review/rule.findings.json' : undefined);
+test('diagnostics amendment findings transport dry-run freshness states write nothing', async () => {
+  for (const freshness of ['current', 'missing', 'stale', 'invalid']) {
+    const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+    const options = { ports, runDir, runRel: 'runs/001-review', machine: transportMachine, handlers: fakeHandlers };
+    await start({ ...options, runStarted: RUN_STARTED });
+    const file = path.join(runDir, 'rule.findings.json');
+    if (freshness === 'missing') fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, freshness === 'invalid' ? '{bad' : JSON.stringify(transportFindings(freshness === 'stale' ? 0 : 1)));
+    const before = ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]);
+    for (const refreshConfig of [false, true]) {
+      const result = await send({ ...options, dryRun: true, refreshConfig });
+      assert.deepEqual(result.frame?.data['findings'], freshness === 'current' ? summaries(1) : transportFindings(1));
+      assert.equal(result.frame?.data['findingsPath'], freshness === 'current' ? 'runs/001-review/rule.findings.json' : undefined);
+    }
+    assert.deepEqual(ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]), before);
   }
-  assert.deepEqual(ports.fs.listFiles(runDir).map((name) => [name, fs.readFileSync(path.join(runDir, name), 'utf8')]), before);
 });
 
 test('diagnostics amendment findings transport leaves non-rule frames unchanged', async () => {

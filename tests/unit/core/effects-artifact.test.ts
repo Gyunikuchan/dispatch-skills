@@ -292,38 +292,42 @@ One module.
 Run all checks.
 `;
 
-for (const kind of ['code', 'plan', 'design'] as const) test(`prepare-review rejects mutated settled spec for ${kind}`, async () => {
-  const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
-  const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
-  ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
-  const governingSpec = { path: specPath, hash: specHash() };
-  ports.fs.writeAtomic(specPath, SPEC_SOURCE + '\nChanged after settlement.');
-  const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('src/a.ts\n') });
-  const result = only(await handler({ kind: 'prepare-review', id: 'stale.1', review: { kind, target, governingSpec, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
-  assert.ok(result.type === 'EFFECT_FAILED');
-  assert.match(result.detail, /stale-spec/);
+test('prepare-review rejects mutated settled spec for code, plan, and design', async () => {
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
+    const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
+    ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
+    const governingSpec = { path: specPath, hash: specHash() };
+    ports.fs.writeAtomic(specPath, SPEC_SOURCE + '\nChanged after settlement.');
+    const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('src/a.ts\n') });
+    const result = only(await handler({ kind: 'prepare-review', id: 'stale.1', review: { kind, target, governingSpec, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
+    assert.ok(result.type === 'EFFECT_FAILED');
+    assert.match(result.detail, /stale-spec/);
+  }
 });
 
-for (const kind of ['design', 'plan'] as const) test(`prepare-review preserves internal ${kind} provenance under governing spec`, async () => {
-  const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
-  const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
-  ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
-  ports.fs.writeAtomic(specPath, SPEC_SOURCE);
-  const provenance = kind === 'design'
-    ? { before: 'OLD_FULL_ARTIFACT', after: 'NEW_FULL_ARTIFACT', delta: { changed: ['I02'], invalidated: ['I02'], removed: [] }, reason: 'Correct dependency ordering', evidence: 'dependency.log:L7' }
-    : { invocationContext: null, invocationLevel: 'high', invocationLevelSource: 'explicit' };
-  const context = `${kind === 'design' ? DESIGN_REVISION_CONTEXT_PREFIX : ''}${JSON.stringify(provenance)}`;
-  const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('') });
-  const result = only(await handler({ kind: 'prepare-review', id: 'provenance.1', review: { kind, target, context, governingSpec: { path: specPath, hash: specHash() }, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
-  assert.ok(result.type === 'REVIEW_PREPARED');
-  const prompt = ports.fs.readText(result.promptPaths['codex[0]']!)!;
-  assert.match(prompt, /### Internal review provenance\nStructural driver context; subject to the governing spec\./);
-  const section = prompt.split('### Internal review provenance\n')[1]!;
-  const rendered = JSON.parse(section.split('\n')[1]!) as Record<string, unknown>;
-  if (kind === 'design') {
-    assert.deepEqual(rendered, { delta: provenance.delta, reason: provenance.reason, evidence: provenance.evidence });
-    assert.doesNotMatch(prompt, /OLD_FULL_ARTIFACT|NEW_FULL_ARTIFACT/);
-  } else assert.deepEqual(rendered, provenance);
+test('prepare-review preserves internal design and plan provenance under governing spec', async () => {
+  for (const kind of ['design', 'plan'] as const) {
+    const ports = fakePorts(), dir = tempDir(); memoryRunFs(ports, dir);
+    const target = path.join(dir, `${kind}.md`), specPath = path.join(dir, 'governing.spec.md');
+    ports.fs.writeAtomic(target, kind === 'design' ? GOVERNED_DESIGN : GOVERNED_PLAN);
+    ports.fs.writeAtomic(specPath, SPEC_SOURCE);
+    const provenance = kind === 'design'
+      ? { before: 'OLD_FULL_ARTIFACT', after: 'NEW_FULL_ARTIFACT', delta: { changed: ['I02'], invalidated: ['I02'], removed: [] }, reason: 'Correct dependency ordering', evidence: 'dependency.log:L7' }
+      : { invocationContext: null, invocationLevel: 'high', invocationLevelSource: 'explicit' };
+    const context = `${kind === 'design' ? DESIGN_REVISION_CONTEXT_PREFIX : ''}${JSON.stringify(provenance)}`;
+    const handler = createPrepareReview({ skillRoot: SKILL_ROOT, cwd: dir, git: gitWith('') });
+    const result = only(await handler({ kind: 'prepare-review', id: 'provenance.1', review: { kind, target, context, governingSpec: { path: specPath, hash: specHash() }, roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir: dir, attempt: 1 }));
+    assert.ok(result.type === 'REVIEW_PREPARED');
+    const prompt = ports.fs.readText(result.promptPaths['codex[0]']!)!;
+    assert.match(prompt, /### Internal review provenance\nStructural driver context; subject to the governing spec\./);
+    const section = prompt.split('### Internal review provenance\n')[1]!;
+    const rendered = JSON.parse(section.split('\n')[1]!) as Record<string, unknown>;
+    if (kind === 'design') {
+      assert.deepEqual(rendered, { delta: provenance.delta, reason: provenance.reason, evidence: provenance.evidence });
+      assert.doesNotMatch(prompt, /OLD_FULL_ARTIFACT|NEW_FULL_ARTIFACT/);
+    } else assert.deepEqual(rendered, provenance);
+  }
 });
 
 function governingFixture() {
@@ -356,13 +360,15 @@ test('governing pin accepts normalized spec path identity', async () => {
  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.deepEqual(result.defects, []);
  }
 });
-for (const kind of ['standalone plan', 'increment plan', 'design'] as const) test(`governing pin resolves ${kind}`, async () => {
-  const f = governingFixture();
-  f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), GOVERNED_DESIGN);
-  const result = await f.parse(kind === 'design' ? GOVERNED_DESIGN : kind === 'increment plan' ? f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01') : f.source, kind === 'design' ? 'design' : 'plan');
-  assert.ok(result.type === 'ARTIFACT_PARSED', JSON.stringify(result));
-  assert.deepEqual(result.defects, []);
-  assert.deepEqual(result.governing, { pinned: specHash(), current: specHash(), design: kind === 'increment plan' ? 'child.design.md' : null, reqIds: ['REQ-1'] });
+test('governing pin resolves standalone plan, increment plan, and design', async () => {
+  for (const kind of ['standalone plan', 'increment plan', 'design'] as const) {
+    const f = governingFixture();
+    f.ports.fs.writeAtomic(path.join(f.dir, 'child.design.md'), GOVERNED_DESIGN);
+    const result = await f.parse(kind === 'design' ? GOVERNED_DESIGN : kind === 'increment plan' ? f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`child.design.md` · I01') : f.source, kind === 'design' ? 'design' : 'plan');
+    assert.ok(result.type === 'ARTIFACT_PARSED', JSON.stringify(result));
+    assert.deepEqual(result.defects, []);
+    assert.deepEqual(result.governing, { pinned: specHash(), current: specHash(), design: kind === 'increment plan' ? 'child.design.md' : null, reqIds: ['REQ-1'] });
+  }
 });
 test('governing spec rejects unknown requirement', async () => {
   const f = governingFixture(), result = await f.parse(f.source.replace('Satisfies: REQ-1', 'Satisfies: REQ-9'));

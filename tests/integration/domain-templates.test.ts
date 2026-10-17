@@ -170,7 +170,7 @@ test('templates: task brief applies the durable bar and isolates transient tests
   assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the durable bar in the plan template'));
 });
 
-test('template parses under layered lint', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });
+test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });
 
 test('quality selection keeps judging rules single-sourced', () => {
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');

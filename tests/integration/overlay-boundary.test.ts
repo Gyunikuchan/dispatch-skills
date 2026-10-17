@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { before, test } from 'node:test';
 import { extractImports, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
 
 /** Shipped relative imports stay inside the repository tree. */
@@ -17,12 +17,17 @@ export function checkOverlayBoundary(files: FileTable): string[] {
   return errors;
 }
 
+let overlay: FileTable;
+before(() => {
+  overlay = scanOverlay();
+});
+
 test('no shipped import leaves the repository', () => {
-  assert.deepEqual(checkOverlayBoundary(scanOverlay()), []);
+  assert.deepEqual(checkOverlayBoundary(overlay), []);
 });
 
 test('implementation scope comes from the parsed plan while design history and scope-rebase remain live', () => {
-  const files = new Map(scanOverlay().map((file) => [file.path, file.text]));
+  const files = new Map(overlay.map((file) => [file.path, file.text]));
   const implement = files.get('skills/dispatch/scripts/machines/implement.ts')!;
   assert.ok(implement);
   assert.doesNotMatch(implement, /effectivePlan|planCriterion|criterionDefinitions|applicableScopeAdjustments|acceptedAdjustments/);

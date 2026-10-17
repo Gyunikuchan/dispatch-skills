@@ -59,13 +59,10 @@ test('Windows bare binary candidates use PATHEXT', () => {
   const win: PlatformEnv = { ...env, os: 'win32', path: ['C:\\bin'], pathExt: ['.exe', '.cmd'] };
   const probes = table({ 'C:\\bin\\codex.cmd': 'exec' });
   assert.deepEqual(createDiscovery(SPECS, win, probes).resolve('codex', 'cli'), { status: 'path', path: 'C:\\bin\\codex.cmd' });
-});
 
-
-test('rewrite SC4 Windows cmd-only Claude installation resolves', () => {
-  const windows: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };
-  const discovery = createDiscovery(SPECS, windows, { list: () => [], exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd', executable: () => true });
-  assert.equal(discovery.resolve('claude', 'cli').status, 'path');
+  const upperWin: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };
+  const upperDiscovery = createDiscovery(SPECS, upperWin, { list: () => [], exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd', executable: () => true });
+  assert.equal(upperDiscovery.resolve('claude', 'cli').status, 'path');
 });
 
 test('resolves codex desktop candidate paths on Windows', () => {

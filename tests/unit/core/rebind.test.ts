@@ -75,47 +75,51 @@ test('rebind-runtime: open queue identities survive repeated epochs and rebind l
   assert.deepEqual([...readJournal(ports, runDir).records].filter((line) => line.type === 'RUNTIME_REBOUND').map((line) => line.data['epoch']), [1, 2]);
 });
 
-for (const point of ['torn-append', 'after-append'] as const) test(`rebind-runtime: ${point} retains only the durably published epoch`, async () => {
-  const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
-  await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
-  const before = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), append = ports.fs.appendDurable;
-  ports.fs.appendDurable = (file, text) => { if (text.includes('RUNTIME_REBOUND')) { append(file, point === 'torn-append' ? text.slice(0, 40) : text); throw new Error(point); } append(file, text); };
-  const changed = { ...awaitingMachine, codec: { ...awaitingMachine.codec!, runtime: () => 'runtime-fixed' } };
-  assert.equal((await checkpoint.rebind({ ports, runDir, machine: changed, handlers: {}, reason: 'Local repair' })).exitCode, 2);
-  ports.fs.appendDurable = append;
-  const after = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); assert.ok(after.startsWith(before));
-  assert.equal([...readJournal(ports, runDir).records].filter((line) => line.type === 'RUNTIME_REBOUND').length, point === 'after-append' ? 1 : 0);
-  assert.equal(loadExecution(changed, ports, runDir).folder.state.tag, 'authoring');
+test('rebind-runtime: append interruption retains only the durably published epoch', async () => {
+  for (const point of ['torn-append', 'after-append'] as const) {
+    const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
+    const before = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), append = ports.fs.appendDurable;
+    ports.fs.appendDurable = (file, text) => { if (text.includes('RUNTIME_REBOUND')) { append(file, point === 'torn-append' ? text.slice(0, 40) : text); throw new Error(point); } append(file, text); };
+    const changed = { ...awaitingMachine, codec: { ...awaitingMachine.codec!, runtime: () => 'runtime-fixed' } };
+    assert.equal((await checkpoint.rebind({ ports, runDir, machine: changed, handlers: {}, reason: 'Local repair' })).exitCode, 2);
+    ports.fs.appendDurable = append;
+    const after = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); assert.ok(after.startsWith(before));
+    assert.equal([...readJournal(ports, runDir).records].filter((line) => line.type === 'RUNTIME_REBOUND').length, point === 'after-append' ? 1 : 0);
+    assert.equal(loadExecution(changed, ports, runDir).folder.state.tag, 'authoring');
+  }
 });
 
-for (const corruption of ['none', 'missing', 'rewrite', 'projection'] as const) test(`rebind-review-manifest: legacy canonical identity migration ${corruption}`, async () => {
-  const f = await pausedReview(true), before = readJournal(f.ports, f.runDir);
-  const blob = JSON.parse(f.ports.fs.readText(path.join(f.runDir, before.checkpoint!.line.checkpoint!.path)));
-  const baseline = corruption === 'projection' ? blob.state.c.priorManifest : blob.state.c.targetManifest;
-  if (corruption === 'missing') f.ports.fs.remove(baseline);
-  if (corruption === 'rewrite' || corruption === 'projection') {
-    const value = JSON.parse(f.ports.fs.readText(baseline));
-    if (corruption === 'projection') value.governedPaths = ['invented.ts'];
-    else value.working['src/outside.ts'] = 'forged';
-    f.ports.fs.writeAtomic(baseline, JSON.stringify(value));
+test('rebind-review-manifest: legacy canonical identity migration validates authentic manifests and rejects corruptions', async () => {
+  for (const corruption of ['none', 'missing', 'rewrite', 'projection'] as const) {
+    const f = await pausedReview(true), before = readJournal(f.ports, f.runDir);
+    const blob = JSON.parse(f.ports.fs.readText(path.join(f.runDir, before.checkpoint!.line.checkpoint!.path)));
+    const baseline = corruption === 'projection' ? blob.state.c.priorManifest : blob.state.c.targetManifest;
+    if (corruption === 'missing') f.ports.fs.remove(baseline);
+    if (corruption === 'rewrite' || corruption === 'projection') {
+      const value = JSON.parse(f.ports.fs.readText(baseline));
+      if (corruption === 'projection') value.governedPaths = ['invented.ts'];
+      else value.working['src/outside.ts'] = 'forged';
+      f.ports.fs.writeAtomic(baseline, JSON.stringify(value));
+    }
+    const machine = { ...f.machine, codec: { ...f.machine.codec!, runtime: () => 'fixture-review-v3', encode: (value: Parameters<typeof f.machine.step>[0]) => structuredClone(value) } };
+    const journal = f.ports.fs.readText(path.join(f.runDir, 'events.jsonl'));
+    const dry = await send({ ...f.options, rawEvent: { type: 'RULINGS', rulings: {} }, dryRun: true });
+    assert.equal(dry.exitCode, 2, 'ordinary hydration cannot silently add identity');
+    let launches = 0;
+    const handlers = Object.fromEntries(Object.keys(f.handlers).map(key => [key, async () => { launches++; throw Error('rebind launched a handler'); }])) as typeof f.handlers;
+    const result = await checkpoint.rebind({ ...f.options, machine, handlers, reason: 'Bind authenticated legacy review manifests' });
+    assert.equal(launches, 0);
+    if (corruption !== 'none') {
+      assert.equal(result.exitCode, 2, result.frame?.error);
+      assert.equal(f.ports.fs.readText(path.join(f.runDir, 'events.jsonl')), journal);
+      continue;
+    }
+    assert.equal(result.exitCode, 0, result.frame?.error);
+    const state = loadExecution(machine, f.ports, f.runDir).folder.state;
+    assert.ok('c' in state && state.c.priorManifestRef && state.c.targetManifestRef);
+    assert.equal(state.tag, 'fix');
+    assert.equal(readJournal(f.ports, f.runDir).checkpoint!.line.data['migration'], 'review-manifest-v1');
+    assert.ok(f.ports.fs.readText(path.join(f.runDir, 'events.jsonl')).startsWith(journal));
   }
-  const machine = { ...f.machine, codec: { ...f.machine.codec!, runtime: () => 'fixture-review-v3', encode: (value: Parameters<typeof f.machine.step>[0]) => structuredClone(value) } };
-  const journal = f.ports.fs.readText(path.join(f.runDir, 'events.jsonl'));
-  const dry = await send({ ...f.options, rawEvent: { type: 'RULINGS', rulings: {} }, dryRun: true });
-  assert.equal(dry.exitCode, 2, 'ordinary hydration cannot silently add identity');
-  let launches = 0;
-  const handlers = Object.fromEntries(Object.keys(f.handlers).map(key => [key, async () => { launches++; throw Error('rebind launched a handler'); }])) as typeof f.handlers;
-  const result = await checkpoint.rebind({ ...f.options, machine, handlers, reason: 'Bind authenticated legacy review manifests' });
-  assert.equal(launches, 0);
-  if (corruption !== 'none') {
-    assert.equal(result.exitCode, 2, result.frame?.error);
-    assert.equal(f.ports.fs.readText(path.join(f.runDir, 'events.jsonl')), journal);
-    return;
-  }
-  assert.equal(result.exitCode, 0, result.frame?.error);
-  const state = loadExecution(machine, f.ports, f.runDir).folder.state;
-  assert.ok('c' in state && state.c.priorManifestRef && state.c.targetManifestRef);
-  assert.equal(state.tag, 'fix');
-  assert.equal(readJournal(f.ports, f.runDir).checkpoint!.line.data['migration'], 'review-manifest-v1');
-  assert.ok(f.ports.fs.readText(path.join(f.runDir, 'events.jsonl')).startsWith(journal));
 });

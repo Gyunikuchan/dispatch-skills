@@ -68,6 +68,8 @@ function toDecision(state: ReturnType<typeof initialImplement>, effectId: string
   return result.state;
 }
 
+// SECTION: Baseline and settled plan
+
 test('implement-settled-plan-skip: settled metadata binds path and governed hash before skipping plan review', () => {
   const metadata = settledPlanInput({ path: 'plans/example.plan.md', hash: HASH, outcome: 'settled' });
   assert.deepEqual(metadata, { path: 'plans/example.plan.md', hash: HASH, outcome: 'settled' });
@@ -112,6 +114,8 @@ test('implement-baseline: verification side effects require recovery assessment'
   const sideEffect = toDecision(state, effect.id, 0, null, { ...FP, worktree: 'changed' });
   assert.equal(sideEffect.tag, 'assessing-host-event');
 });
+
+// SECTION: Prewrite level classification
 
 test('prewrite-level: approval-by-quote resolves classification before checkout', () => {
   const { state, effect } = atBaseline();
@@ -277,6 +281,8 @@ function parsedForSpec(parent?: string, own = false) {
  }
  return step(r.state, { type: 'ARTIFACT_PARSED', effectId: effectOf(r.effects, 'parse-artifact').id, kind: 'plan', hash: HASH, parsed: { ...PLAN, box: { ...PLAN.box, ...(parent ? { Parent: parent } : {}) } }, defects: [], governing: { pinned: HASH, current: 'sha256:' + 'b'.repeat(64), design: parent ? 'x.design.md' : null, reqIds: [] } });
 }
+// SECTION: Spec revisions and re-authoring
+
 test('spec revision stops an authored plan after task ledger initialization', () => {
  const parsed = parsedForSpec(undefined, true); assert.ok('c' in parsed.state && parsed.state.c);
  for (const phase of ['tasks', 'delivered'] as const) {
@@ -306,19 +312,23 @@ test('invalid increment parse retains resolved ancestor through settlement', () 
  const stopped = step(r.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: HASH });
  assert.ok(stopped.state.tag === 'stopped'); assert.equal(stopped.state.code, 'stale-design-spec');
 });
-for (const [name, parent, own, expected] of [
- ['stops increment plan', '`x.design.md` · I01', false, 'stopped'], ['stops existing plan', undefined, false, 'stopped'], ['re-authors own plan', undefined, true, 'author'],
-] as const) test('implement respec ' + name, () => {
- const parsed = parsedForSpec(parent, own); assert.equal(parsed.state.tag, 'parsing'); assert.deepEqual(parsed.effects, []);
- const result = step(parsed.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) });
- assert.equal(result.state.tag, expected);
- if (result.state.tag === 'stopped') assert.equal(result.state.code, parent ? 'stale-design-spec' : 'stale-spec');
- if (result.state.tag === 'author') assert.equal(result.state.c.specEpoch, 1);
+test('implement respec: stops increment or existing plan, and re-authors own plan', () => {
+ for (const [name, parent, own, expected] of [
+  ['stops increment plan', '`x.design.md` · I01', false, 'stopped'], ['stops existing plan', undefined, false, 'stopped'], ['re-authors own plan', undefined, true, 'author'],
+ ] as const) {
+  const parsed = parsedForSpec(parent, own); assert.equal(parsed.state.tag, 'parsing'); assert.deepEqual(parsed.effects, []);
+  const result = step(parsed.state, { type: 'SPEC_SETTLED', path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) });
+  assert.equal(result.state.tag, expected, name);
+  if (result.state.tag === 'stopped') assert.equal(result.state.code, parent ? 'stale-design-spec' : 'stale-spec', name);
+  if (result.state.tag === 'author') assert.equal(result.state.c.specEpoch, 1, name);
+ }
 });
-for (const [name, detail] of [['unreadable design pin', 'design pin target unreadable: x.design.md not found'], ['design without spec pin', 'x.design.md has no spec pin']] as const) test('implement start halts on ' + name, () => {
- let r = step(initialImplement(), run({ path: 'x.plan.md' })); r = step(r.state, { type: 'SNAPSHOT', effectId: effectOf(r.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
- r = step(r.state, { type: 'EFFECT_FAILED', effectId: effectOf(r.effects, 'parse-artifact').id, cls: 'io', detail });
- assert.equal(r.state.tag, 'stopped'); assert.equal(r.state.tag === 'stopped' && r.state.code, 'stale-design-spec'); assert.deepEqual(r.effects, []);
+test('implement start halts on unreadable design pin or design without spec pin', () => {
+ for (const [name, detail] of [['unreadable design pin', 'design pin target unreadable: x.design.md not found'], ['design without spec pin', 'x.design.md has no spec pin']] as const) {
+  let r = step(initialImplement(), run({ path: 'x.plan.md' })); r = step(r.state, { type: 'SNAPSHOT', effectId: effectOf(r.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+  r = step(r.state, { type: 'EFFECT_FAILED', effectId: effectOf(r.effects, 'parse-artifact').id, cls: 'io', detail });
+  assert.equal(r.state.tag, 'stopped', name); assert.equal(r.state.tag === 'stopped' && r.state.code, 'stale-design-spec', name); assert.deepEqual(r.effects, []);
+ }
 });
 test('implement start proceeds with current spec pin', () => {
  const identity = { path: 'x.spec.md', hash: HASH };

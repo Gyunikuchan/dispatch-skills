@@ -20,7 +20,9 @@ function repo(): { root: string; temp: string } {
   return { root, temp };
 }
 
-test('session-naming: timestamp-slug format without session ID', () => {
+// SECTION: Session directory and lifecycle
+
+test('timestamp-slug format without session ID', () => {
   assert.equal(folderName(now, 'Rewrite Dispatch As!'), '20260929T1754Z-rewrite-dispatch-as');
   assert.match(folderName(now, 'x'), FOLDER_NAME);
   assert.equal(truncateSlug('a'.repeat(30) + '-' + 'b'.repeat(30)), 'a'.repeat(30));
@@ -32,7 +34,7 @@ test('repository root: ancestor Git metadata identifies the root; absence return
   assert.equal(findRepoRoot('/nowhere', () => false), null);
 });
 
-test('session-collision: numeric suffix -1 on name collision', () => {
+test('numeric suffix -1 on name collision', () => {
   const { root, temp } = repo();
   const dir = initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
   assert.equal(path.basename(dir), '20260929T1754Z-demo');
@@ -52,7 +54,7 @@ test('session-collision: numeric suffix -1 on name collision', () => {
   assert.throws(() => restoreSessionPaths('@session/../escape', dir), /escapes/);
 });
 
-test('session-matching: skips corrupt unrelated directories and matches by manifest', () => {
+test('session matching skips corrupt unrelated directories and matches by manifest', () => {
   const { root, temp } = repo();
   const dir = initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
 
@@ -75,7 +77,7 @@ test('session-matching: skips corrupt unrelated directories and matches by manif
   assert.equal(readManifest(salvaged).sessionId, 's4');
 });
 
-test('session-lifecycle: a held claim waits for the winner and reuses its folder', (t) => {
+test('held claim waits for the winner and reuses its folder', (t) => {
   const { root, temp } = repo();
   const first = initializeSession({ repositoryRoot: root, sessionId: 'c1', sessionTitle: 'demo', now, tempRoot: temp });
   const claim = path.join(path.dirname(first), '.claim-c2');
@@ -91,7 +93,7 @@ test('session-lifecycle: a held claim waits for the winner and reuses its folder
   assert.throws(() => initializeSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, tempRoot: temp, waitMs: 30 }), /still claimed/);
 });
 
-test('session-reactivate: validates repository and rejects external locations', () => {
+test('session reactivate validates repository and rejects external locations', () => {
   const { root, temp } = repo();
   const dir = initializeSession({ repositoryRoot: root, sessionId: 'r1', sessionTitle: 'demo', now, tempRoot: temp });
   assert.equal(reactivateSession(dir, root), dir);

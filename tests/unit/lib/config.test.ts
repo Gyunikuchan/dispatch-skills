@@ -7,6 +7,8 @@ import { loadConfig, parseJsonc, stripJsonc, validateConfig } from '../../../ski
 import { writeConcurrency } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 
 
+// SECTION: Configuration loading and validation
+
 test('config resolution is first-existing-wins with no merge', () => {
   const files: Record<string, string> = {
     [path.join('/s', 'config.local.jsonc')]: '{ "read-delegates": { "claude": [] } }',
@@ -34,17 +36,15 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'))), []);
 });
 
+// SECTION: Write concurrency
+
 const minimal = { 'read-delegates': { codex: { targets: [{ low: { model: 'm' } }] } } };
 
-test('write-concurrency accepts positive integers', () => {
+test('write-concurrency validates positive integers and defaults to 1', () => {
   assert.deepEqual(validateConfig({ ...minimal, 'write-concurrency': 3 }), []);
   assert.equal(writeConcurrency({ 'write-concurrency': 3 }), 3);
-});
-
-test('write-concurrency rejects values that are not positive integers', () => {
-  for (const value of [0, -1, 1.5, '2', true]) assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
-});
-
-test('write-concurrency uses one writer when no concurrency is configured', () => {
   assert.equal(writeConcurrency({}), 1);
+  for (const value of [0, -1, 1.5, '2', true]) {
+    assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
+  }
 });

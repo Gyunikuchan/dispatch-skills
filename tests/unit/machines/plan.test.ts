@@ -100,7 +100,7 @@ test('bare path slugs use the basename across separators, spaces, and artifact e
   ]) assert.equal(slugOf(input!), expected, input);
 });
 
-test('plan stays on stale pin', () => {
+test('plan stays in parsing state on stale pin before spec settles', () => {
  const boot = planMachine.step(planMachine.initial(), started());
  const parsing = planMachine.step(boot.state, authored);
  const event = { ...parsed(1, []), governing: { pinned: specHash(), current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } } as Event;

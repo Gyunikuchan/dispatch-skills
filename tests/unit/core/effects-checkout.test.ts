@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, Ports, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { createCheckout, worktreePath } from '../../../skills/dispatch/scripts/effects/checkout.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 
 test('delivery replay: interrupted completed pick retries provenance without reset or duplicate pick', async () => {
   const cwd = tempDir(), runDir = tempDir(), root = worktreePath(runDir, 'integration'), ports = fakePorts();
-  fs.mkdirSync(root, { recursive: true }); fs.mkdirSync(worktreePath(runDir, 'integration-archive'), { recursive: true });
+  memoryRunFs(ports, runDir);
+  ports.fs.mkdir(root, { recursive: true }); ports.fs.mkdir(worktreePath(runDir, 'integration-archive'), { recursive: true });
   const completed: string[] = [], picks: string[] = []; let interrupted = false, resets = 0;
   ports.git.run = async (argv) => {
     if (argv[0] === 'reset' || argv[0] === 'clean') { resets++; return ''; }
@@ -46,8 +48,9 @@ test('delivery uses Git filemode default when the config key is absent', async (
 
 test('change receipt: delivery refuses a newer ignored destination before any caller mutation', async () => {
   const cwd = tempDir(), runDir = tempDir(), root = worktreePath(runDir, 'integration'), ports = fakePorts();
-  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(cwd, '.gitignore'), 'ignored.txt\n');
-  fs.writeFileSync(path.join(cwd, 'ignored.txt'), 'newer caller bytes');
+  memoryRunFs(ports, cwd);
+  ports.fs.mkdir(root, { recursive: true }); ports.fs.writeAtomic(path.join(cwd, '.gitignore'), 'ignored.txt\n');
+  ports.fs.writeAtomic(path.join(cwd, 'ignored.txt'), 'newer caller bytes');
   let writes = 0; ports.fs.writeBase64Atomic = () => { writes++; };
   ports.git.run = async (argv) => {
     if (argv[0] === 'rev-parse') return 'candidate';
@@ -59,31 +62,32 @@ test('change receipt: delivery refuses a newer ignored destination before any ca
   const result = (await createCheckout({ cwd, links: { create: () => {}, remove: () => {} } })({ kind: 'checkout', id: 'checkout.deliver.1', op: 'deliver', input: { base: 'base', revision: 'candidate' } }, ports, { runDir, attempt: 1 }))[0]!;
   assert.equal(result.type, 'CHECKOUT_DONE');
   if (result.type === 'CHECKOUT_DONE') assert.deepEqual(result.result['conflicts'], ['ignored.txt']);
-  assert.equal(writes, 0); assert.equal(fs.readFileSync(path.join(cwd, 'ignored.txt'), 'utf8'), 'newer caller bytes');
+  assert.equal(writes, 0); assert.equal(ports.fs.readText(path.join(cwd, 'ignored.txt')), 'newer caller bytes');
 });
 
 test('level-journal: scope replacement checkout resets an incomplete transfer and replays it', async () => {
   const cwd = tempDir(), runDir = path.join(cwd, 'run');
   const originalName = 'task-t1', name = 'task-t1-scope-2';
   const original = worktreePath(runDir, originalName), target = worktreePath(runDir, name);
-  fs.mkdirSync(path.join(original, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(original, 'src', 'a.ts'), 'writer draft');
   const ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  ports.fs.mkdir(path.join(original, 'src'), { recursive: true });
+  ports.fs.writeAtomic(path.join(original, 'src', 'a.ts'), 'writer draft');
   let additions = 0, resets = 0, applies = 0;
   ports.git.run = async (argv, at) => {
     if (argv[0] === 'worktree' && argv[1] === 'add') {
       additions++;
-      fs.mkdirSync(path.join(target, 'src'), { recursive: true });
-      fs.writeFileSync(path.join(target, 'src', 'a.ts'), 'new prerequisite');
+      ports.fs.mkdir(path.join(target, 'src'), { recursive: true });
+      ports.fs.writeAtomic(path.join(target, 'src', 'a.ts'), 'new prerequisite');
       return '';
     }
-    if (argv[0] === 'reset') { resets++; fs.writeFileSync(path.join(target, 'src', 'a.ts'), 'new prerequisite'); return ''; }
+    if (argv[0] === 'reset') { resets++; ports.fs.writeAtomic(path.join(target, 'src', 'a.ts'), 'new prerequisite'); return ''; }
     if (argv[0] === 'clean') return '';
     if (argv[0] === 'diff' && argv[1] === '--name-only') return at === original ? 'src/a.ts\0' : 'src/a.ts\0';
     if (argv[0] === 'diff' && argv[1] === '--binary') return 'tracked draft patch';
     if (argv[0] === 'apply') {
       applies++;
-      fs.writeFileSync(path.join(target, 'src', 'a.ts'), 'writer draft rebased on prerequisite');
+      ports.fs.writeAtomic(path.join(target, 'src', 'a.ts'), 'writer draft rebased on prerequisite');
       return '';
     }
     if (argv[0] === 'ls-files') return '';
@@ -100,7 +104,7 @@ test('level-journal: scope replacement checkout resets an incomplete transfer an
   };
   const first = (await handler(effect('checkout.scope-rebase.1'), ports, { runDir, attempt: 1 }))[0] as ResultEvent;
   assert.ok(first.type === 'EFFECT_FAILED' && /simulated interruption/.test(first.detail));
-  assert.equal(fs.readFileSync(path.join(target, 'src', 'a.ts'), 'utf8'), 'writer draft rebased on prerequisite');
+  assert.equal(ports.fs.readText(path.join(target, 'src', 'a.ts')), 'writer draft rebased on prerequisite');
   ports.fs.writeBase64Atomic = writeAtomic;
 
   const replay = (await handler(effect('checkout.scope-rebase.2'), ports, { runDir, attempt: 1 }))[0] as ResultEvent;
@@ -120,9 +124,10 @@ test('level-journal: scope replacement refuses destination symlink ancestors bef
   const cwd = tempDir(), runDir = path.join(cwd, 'run');
   const originalName = 'task-t1', name = 'task-t1-scope-2';
   const original = worktreePath(runDir, originalName), target = worktreePath(runDir, name);
-  fs.mkdirSync(path.join(original, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(original, 'src', 'new.ts'), 'writer draft');
   const ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  ports.fs.mkdir(path.join(original, 'src'), { recursive: true });
+  ports.fs.writeAtomic(path.join(original, 'src', 'new.ts'), 'writer draft');
   const inspect = ports.fs.inspectPath;
   ports.fs.inspectPath = (file) => path.resolve(file) === path.resolve(target, 'src')
     ? { kind: 'symlink', mode: 0o777, linkTarget: '../outside', realPath: path.join(cwd, 'outside') }
@@ -131,7 +136,7 @@ test('level-journal: scope replacement refuses destination symlink ancestors bef
   const writeAtomic = ports.fs.writeBase64Atomic;
   ports.fs.writeBase64Atomic = (file, contents) => { writes++; writeAtomic(file, contents); };
   ports.git.run = async (argv, at) => {
-    if (argv[0] === 'worktree' && argv[1] === 'add') { fs.mkdirSync(target, { recursive: true }); return ''; }
+    if (argv[0] === 'worktree' && argv[1] === 'add') { ports.fs.mkdir(target, { recursive: true }); return ''; }
     if (argv[0] === 'diff' && argv[1] === '--name-only') return '';
     if (argv[0] === 'ls-files' && at === original) return 'src/new.ts\0';
     throw new Error(`unexpected fake git call: ${argv.join(' ')}`);
@@ -145,13 +150,14 @@ test('level-journal: scope replacement refuses destination symlink ancestors bef
     assert.match(String(event.result['detail']), /symlink ancestor/);
   }
   assert.equal(writes, 0);
-  assert.equal(fs.existsSync(path.join(cwd, 'outside', 'new.ts')), false);
+  assert.equal(ports.fs.exists(path.join(cwd, 'outside', 'new.ts')), false);
 });
 
 test('task checkout with keep rewinds HEAD to the input without discarding the draft', async () => {
   const cwd = tempDir(), runDir = path.join(cwd, 'run');
-  fs.mkdirSync(worktreePath(runDir, 'task-t1'), { recursive: true });
   const ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  ports.fs.mkdir(worktreePath(runDir, 'task-t1'), { recursive: true });
   const calls: string[] = [];
   ports.git.run = async (argv) => { calls.push(argv.join(' ')); return argv[0] === 'rev-parse' ? 'input-rev\n' : ''; };
   const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
@@ -165,28 +171,26 @@ test('task checkout with keep rewinds HEAD to the input without discarding the d
 
 type FakeCommit = { parent: string | null; message: string; tree: ReadonlyMap<string, string> };
 
-/** Minimal Git model for one worktree: commits, index, unmerged paths, CHERRY_PICK_HEAD; files live on disk under `root`. */
-function fakeGit(root: string) {
+/** Minimal Git model for one worktree: commits, index, unmerged paths, CHERRY_PICK_HEAD; files live under `root`. */
+function fakeGit(root: string, ports: Ports) {
   const commits = new Map<string, FakeCommit>();
   let index = new Map<string, string>(), headRev = '', pick: string | null = null;
   const unmergedPaths = new Set<string>();
   const disk = (): Map<string, string> => {
     const out = new Map<string, string>();
-    if (!fs.existsSync(root)) return out;
-    for (const entry of fs.readdirSync(root, { recursive: true, encoding: 'utf8' })) {
-      const file = entry.split(path.sep).join('/'), absolute = path.join(root, file);
-      if (fs.statSync(absolute).isFile()) out.set(file, fs.readFileSync(absolute, 'utf8'));
+    for (const file of ports.fs.listFiles(root)) {
+      out.set(file, ports.fs.readText(path.join(root, file)));
     }
     return out;
   };
-  const write = (file: string, content: string) => { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), content); };
+  const write = (file: string, content: string) => { ports.fs.writeAtomic(path.join(root, file), content); };
   const tree = (rev: string) => { const found = commits.get(rev.replace(/\^$/, '')); if (!found) throw new Error(`unknown revision ${rev}`); return found.tree; };
   const add = (parent: string | null, message: string, files: ReadonlyMap<string, string>) => {
     const id = `c${commits.size + 1}`.padEnd(8, '0'); commits.set(id, { parent, message, tree: new Map(files) }); return id;
   };
   const resetHard = (rev: string) => {
     const target = tree(rev), files = disk(), prior = headRev ? tree(headRev) : new Map<string, string>();
-    for (const file of new Set([...index.keys(), ...prior.keys()])) if (!target.has(file) && files.has(file)) fs.rmSync(path.join(root, file));
+    for (const file of new Set([...index.keys(), ...prior.keys()])) if (!target.has(file) && files.has(file)) ports.fs.remove(path.join(root, file));
     for (const [file, content] of target) write(file, content);
     headRev = rev; index = new Map(target); unmergedPaths.clear(); pick = null;
   };
@@ -217,7 +221,7 @@ function fakeGit(root: string) {
         return messages.join('\n');
       }
       case 'reset': resetHard(rest[2]!); return '';
-      case 'clean': for (const file of disk().keys()) if (!index.has(file)) fs.rmSync(path.join(root, file)); return '';
+      case 'clean': for (const file of disk().keys()) if (!index.has(file)) ports.fs.remove(path.join(root, file)); return '';
       case 'status': return dirty() ? ' M changed\n' : '';
       case 'cherry-pick': {
         const candidate = commits.get(rest[1]!)!, base = tree(candidate.parent!), head = tree(headRev);
@@ -225,7 +229,7 @@ function fakeGit(root: string) {
           const theirs = candidate.tree.get(file), before = base.get(file), ours = head.get(file);
           if (theirs === before || theirs === ours) continue;
           if (ours === before) {
-            if (theirs === undefined) { fs.rmSync(path.join(root, file)); index.delete(file); } else { write(file, theirs); index.set(file, theirs); }
+            if (theirs === undefined) { ports.fs.remove(path.join(root, file)); index.delete(file); } else { write(file, theirs); index.set(file, theirs); }
             continue;
           }
           write(file, `<<<<<<< HEAD\n${ours ?? ''}=======\n${theirs ?? ''}>>>>>>> candidate\n`);
@@ -268,7 +272,7 @@ function fakeGit(root: string) {
       for (const [file, content] of Object.entries(files)) { if (content === null) next.delete(file); else next.set(file, content); }
       return add(parent, message, next);
     },
-    checkout(rev: string) { fs.mkdirSync(root, { recursive: true }); resetHard(rev); },
+    checkout(rev: string) { resetHard(rev); },
     get pick() { return pick; },
     get head() { return headRev; },
     unmerged: () => [...unmergedPaths].sort(),
@@ -278,7 +282,9 @@ function fakeGit(root: string) {
 /** Two tasks edit `src/shared.ts` from one base; T1 is integrated, so T2's candidate conflicts. */
 function conflictFixture() {
   const cwd = tempDir(), runDir = path.join(cwd, 'run'), root = worktreePath(runDir, 'integration');
-  const git = fakeGit(root), ports = fakePorts();
+  const ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  const git = fakeGit(root, ports);
   ports.git.run = (argv) => git.run(argv);
   const base = git.commit(null, { 'src/shared.ts': 'base\n', 'src/other.ts': 'other\n' });
   const integrated = git.commit(base, { 'src/shared.ts': 'from T1\n' }, 'dispatch integrate T1');
@@ -293,9 +299,9 @@ function conflictFixture() {
   const result = (event: ResultEvent) => { assert.equal(event.type, 'CHECKOUT_DONE', JSON.stringify(event)); return event.type === 'CHECKOUT_DONE' ? event.result : {}; };
   const integrate = () => op('integrate', { task: 'T2', candidate, expected: integrated });
   const resolveInput = (attempt: number, expected: string, permitted = ['src/shared.ts', 'src/t2.ts'], base = integrated) => ({ tasks: ['T1', 'T2'], candidate, attempt, expected, base, permitted });
-  const writeFile = (file: string, content: string) => fs.writeFileSync(path.join(root, file), content);
-  const readFile = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
-  return { git, root, integrated, candidate, op, result, integrate, resolveInput, writeFile, readFile };
+  const writeFile = (file: string, content: string) => ports.fs.writeAtomic(path.join(root, file), content);
+  const readFile = (file: string) => ports.fs.readText(path.join(root, file));
+  return { ports, git, root, integrated, candidate, op, result, integrate, resolveInput, writeFile, readFile };
 }
 
 test('preserves conflicted integration tree', async () => {
@@ -329,7 +335,7 @@ test('reset aborts in-progress cherry-pick', async () => {
   assert.equal(f.git.pick, null);
   assert.deepEqual(f.git.unmerged(), []);
   assert.equal(f.readFile('src/shared.ts'), 'from T1\n');
-  assert.equal(fs.existsSync(path.join(f.root, 'src', 't2.ts')), false);
+  assert.equal(f.ports.fs.exists(path.join(f.root, 'src', 't2.ts')), false);
 });
 
 test('refuses resolution with conflict markers', async () => {
@@ -347,7 +353,7 @@ test('refuses resolution outside permitted paths', async () => {
   f.result(await f.integrate());
   f.writeFile('src/shared.ts', 'from T1 and T2\n');
   f.writeFile('src/other.ts', 'unrelated edit\n');
-  fs.writeFileSync(path.join(f.root, 'notes.txt'), 'untracked\n');
+  f.writeFile('notes.txt', 'untracked\n');
   const refused = f.result(await f.op('resolve', f.resolveInput(1, f.integrated)));
   assert.deepEqual([refused['refused'], refused['paths'], refused['retained']], ['out-of-scope', ['notes.txt', 'src/other.ts'], []]);
   assert.equal(f.git.head, f.integrated);
@@ -431,12 +437,13 @@ test('resolution commit restages staged content to the scanned working tree', as
 /** Caller checkout with transient test files; `hash` is the fake blob id of the content. */
 function trimFixture() {
   const cwd = tempDir(), runDir = path.join(cwd, 'run'), ports = fakePorts();
+  memoryRunFs(ports, cwd);
   const blob = (content: string) => `blob-${Buffer.from(content).toString('hex')}`;
   ports.git.run = async (argv, at) => {
-    if (argv[0] === 'hash-object' && at === cwd) return `${blob(fs.readFileSync(path.join(cwd, argv[2]!), 'utf8'))}\n`;
+    if (argv[0] === 'hash-object' && at === cwd) return `${blob(ports.fs.readText(path.join(cwd, argv[2]!)))}\n`;
     throw new Error(`unexpected fake git call: ${argv.join(' ')}`);
   };
-  const put = (file: string, content: string) => { fs.mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true }); fs.writeFileSync(path.join(cwd, file), content); };
+  const put = (file: string, content: string) => { ports.fs.writeAtomic(path.join(cwd, file), content); };
   put('tests/a.test.ts', 'transient a\n');
   put('tests/b.test.ts', 'transient b\n');
   const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
@@ -445,40 +452,39 @@ function trimFixture() {
     assert.equal(event?.type, 'CHECKOUT_DONE', JSON.stringify(event));
     return event?.type === 'CHECKOUT_DONE' ? event.result : {};
   };
-  const exists = (file: string) => fs.existsSync(path.join(cwd, file));
+  const exists = (file: string) => ports.fs.exists(path.join(cwd, file));
   const files = [{ path: 'tests/a.test.ts', hash: blob('transient a\n') }, { path: 'tests/b.test.ts', hash: blob('transient b\n') }];
   return { cwd, ports, put, trim, exists, files, allowed: files.map((file) => file.path) };
 }
 
-test('trim refuses unlisted path', async () => {
-  const f = trimFixture();
-  const result = await f.trim(f.files, ['tests/a.test.ts']);
-  assert.deepEqual(result['refused'], [{ path: 'tests/b.test.ts', reason: 'not-allowed' }]);
-  assert.deepEqual([f.exists('tests/a.test.ts'), f.exists('tests/b.test.ts')], [true, true]);
-});
+test('trim refuses invalid or modified paths', async () => {
+  // unlisted path
+  const f1 = trimFixture();
+  const unlisted = await f1.trim(f1.files, ['tests/a.test.ts']);
+  assert.deepEqual(unlisted['refused'], [{ path: 'tests/b.test.ts', reason: 'not-allowed' }]);
+  assert.deepEqual([f1.exists('tests/a.test.ts'), f1.exists('tests/b.test.ts')], [true, true]);
 
-test('trim refuses changed file', async () => {
-  const f = trimFixture();
-  f.put('tests/b.test.ts', 'edited by the caller\n');
-  const result = await f.trim(f.files, f.allowed);
-  assert.deepEqual(result['refused'], [{ path: 'tests/b.test.ts', reason: 'changed' }]);
-  assert.deepEqual([f.exists('tests/a.test.ts'), f.exists('tests/b.test.ts')], [true, true]);
-});
+  // changed file
+  const f2 = trimFixture();
+  f2.put('tests/b.test.ts', 'edited by the caller\n');
+  const changed = await f2.trim(f2.files, f2.allowed);
+  assert.deepEqual(changed['refused'], [{ path: 'tests/b.test.ts', reason: 'changed' }]);
+  assert.deepEqual([f2.exists('tests/a.test.ts'), f2.exists('tests/b.test.ts')], [true, true]);
 
-test('trim refuses redirected ancestor', async () => {
-  const f = trimFixture();
-  const inspect = f.ports.fs.inspectPath;
-  f.ports.fs.inspectPath = (file) => path.resolve(file) === path.resolve(f.cwd, 'tests')
-    ? { kind: 'symlink', mode: 0o777, linkTarget: '../outside', realPath: path.join(path.dirname(f.cwd), 'outside') }
+  // redirected ancestor
+  const f3 = trimFixture();
+  const inspect = f3.ports.fs.inspectPath;
+  f3.ports.fs.inspectPath = (file) => path.resolve(file) === path.resolve(f3.cwd, 'tests')
+    ? { kind: 'symlink', mode: 0o777, linkTarget: '../outside', realPath: path.join(path.dirname(f3.cwd), 'outside') }
     : inspect(file);
-  const result = await f.trim(f.files, f.allowed);
-  assert.deepEqual(result['refused'], [{ path: 'tests/a.test.ts', reason: 'redirected' }, { path: 'tests/b.test.ts', reason: 'redirected' }]);
-  assert.deepEqual([f.exists('tests/a.test.ts'), f.exists('tests/b.test.ts')], [true, true]);
+  const redirected = await f3.trim(f3.files, f3.allowed);
+  assert.deepEqual(redirected['refused'], [{ path: 'tests/a.test.ts', reason: 'redirected' }, { path: 'tests/b.test.ts', reason: 'redirected' }]);
+  assert.deepEqual([f3.exists('tests/a.test.ts'), f3.exists('tests/b.test.ts')], [true, true]);
 });
 
 test('trim treats absent file as done', async () => {
   const f = trimFixture();
-  fs.rmSync(path.join(f.cwd, 'tests/a.test.ts'));
+  f.ports.fs.remove(path.join(f.cwd, 'tests/a.test.ts'));
   const first = await f.trim(f.files, f.allowed);
   assert.deepEqual([first['trimmed'], first['already'], first['refused']], [['tests/b.test.ts'], ['tests/a.test.ts'], []]);
   const retry = await f.trim(f.files, f.allowed);
@@ -507,10 +513,11 @@ test('refuses markers in staged resolution file', async () => {
 
 test('trim observe reports caller blobs', async () => {
   const f = trimFixture();
-  fs.rmSync(path.join(f.cwd, 'tests/b.test.ts'));
+  f.ports.fs.remove(path.join(f.cwd, 'tests/b.test.ts'));
   const handler = createCheckout({ cwd: f.cwd, links: { create: () => {}, remove: () => {} } });
   const [event] = await handler({ kind: 'checkout', id: 'checkout.trim.2', op: 'trim', input: { observe: ['tests/a.test.ts', 'tests/b.test.ts'] } }, f.ports, { runDir: path.join(f.cwd, 'run'), attempt: 1 });
   assert.equal(event?.type, 'CHECKOUT_DONE');
   if (event?.type === 'CHECKOUT_DONE') assert.deepEqual(event.result['observed'], { 'tests/a.test.ts': f.files[0]!.hash, 'tests/b.test.ts': null });
   assert.ok(f.exists('tests/a.test.ts'));
 });
+

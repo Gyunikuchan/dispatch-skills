@@ -9,6 +9,7 @@ import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/de
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { approvalState, FP } from './fixtures/implement-recovery.ts';
 import { hash, design, run, approval, approveDesignScope } from './fixtures/design.ts';
+// SECTION: Authoring and level gates
 
 test('design-stops-at-approval: hash-bound authoring completes without production effects', () => {
   const state = approval();
@@ -115,8 +116,6 @@ test('post-review hash changes require approval of the reparsed hash', () => {
   assert.equal(state.c.hash, newer);
   assert.ok(validateDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'old', hash } }));
 });
-
-
 
 test('re-requests approval when increment scope expands', () => {
   const state = approval('implement');
@@ -254,8 +253,6 @@ test('preserves completed increments when only increment details or non-contract
   assert.deepEqual(resumed.state.c.completed, ['I01']);
   assert.deepEqual(resumed.state.c.ownership, { I01: ['src/a.ts'] });
 });
-
-
 
 test('approval of invalidating expansion restarts delivery rather than resuming obsolete child', () => {
   const state = approval('implement');
@@ -474,35 +471,16 @@ test('revert after invalidating revision resets binding index so later non-inval
 
 // SECTION: Artifact paths
 
-test('design: default design path is scoped to sessionDir', () => {
-  const s = beginDesign({
-    ...run(),
-    argument: 'Deliver feature',
-    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design' },
-  });
-  assert.equal(s.state.tag, 'author');
-  if (s.state.tag === 'author') {
-    assert.equal(s.state.c.path, '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design/deliver-feature.design.md');
+test('design: resolves default and explicit paths with session directory', () => {
+  for (const { argument, expected } of [
+    { argument: 'Deliver feature', expected: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design/deliver-feature.design.md' },
+    { argument: 'custom/external.design.md', expected: 'custom/external.design.md' },
+  ]) {
+    const s = beginDesign({ ...run(), argument, overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design' } });
+    assert.equal(s.state.tag, 'author');
+    if (s.state.tag === 'author') assert.equal(s.state.c.path, expected);
   }
 });
-
-test('design: explicit design path is preserved when a session directory is configured', () => {
-  const explicit = beginDesign({
-    ...run(),
-    argument: 'custom/external.design.md',
-    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design' },
-  });
-  assert.equal(explicit.state.tag, 'author');
-  if (explicit.state.tag === 'author') {
-    assert.equal(explicit.state.c.path, 'custom/external.design.md');
-  }
-});
-
-
-
-
-
-
 test('author quality reads match the shared consumer map for initial design', () => {
   const state = beginDesign(run('design')).state;
   assert.equal(state.tag, 'author');

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import { checkIntegrity, generateSkillHashes, integrityDiagnostic, MANIFEST_NAME, readVersion } from '../../../skills/dispatch/scripts/lib/integrity.ts';
 
-test('delegates-integrity-check: hash drift is reported before dispatch', () => {
+test('hash drift is reported before dispatch', () => {
   const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
   fs.mkdirSync(path.join(skill, 'scripts'));
   fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');

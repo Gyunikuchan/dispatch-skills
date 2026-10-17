@@ -188,7 +188,7 @@ test('bounded-recovery: exhaustion names pending work as well as exhausted findi
 
 // SECTION: Verification and optional fixes
 
-test('review-adjacent-follow-ups: only accepted adjacent findings become follow-ups', () => {
+test('only accepted adjacent findings become follow-ups on completion', () => {
   const findings = [finding('R1-F001', { scope: 'adjacent' }), finding('R1-F002', { scope: 'adjacent' })];
   let { state } = drive([started(), prepared(1), waveDone(1, findings),
     { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'reject', reason: 'by design' } } } as Event]);
@@ -222,7 +222,7 @@ test('code fix-verify runs the finding verification commands; a red command retu
   assert.match(String((reviewMachine.project(red).data['defects'] as string[])[0]), /npm test exited 1 \(l\.log\)/);
 });
 
-test('grammar-fix-opt-in / review-consider-opt-in / review-adjacent-follow-ups: one opt-in after settle, applied without another wave', () => {
+test('opt-in after settle is applied without another wave and reports follow-ups', () => {
   const findings = [finding('R1-F001'), finding('R1-F002', { severity: 'SHOULD', scope: 'adjacent' }), finding('R1-F003', { severity: 'CONSIDER' })];
   const fix = drive([started(), prepared(1), waveDone(1, findings), accept('R1-F001', 'R1-F002', 'R1-F003')]).state;
   assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
@@ -250,7 +250,7 @@ test('settled carries fixedUnreviewed for a fix applied in the last round', () =
   assert.deepEqual(state.tag === 'settled' && state.exit.fixedUnreviewed, [{ id: 'R1-F001', round: 1 }]);
 });
 
-test('review-consider-opt-in: an answered needs-user CONSIDER finding is offered in the opt-in', () => {
+test('an answered needs-user CONSIDER finding is offered in the opt-in', () => {
   const findings = [finding('R1-F001'), finding('R1-F002', { severity: 'CONSIDER', locus: 'src/b.ts:L1' })];
   const fix = drive([started(), prepared(1), waveDone(1, findings),
     { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'needs-user' } } } as Event,

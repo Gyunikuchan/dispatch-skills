@@ -11,6 +11,8 @@ import { createAssessRecovery } from '../../skills/dispatch/scripts/effects/asse
 import { tempDir } from '../helpers/fake-ports.ts';
 import { fixture, CLEAN } from '../helpers/e2e.ts';
 
+// SECTION: Git snapshot observation boundary
+
 test('observation boundary: real Git excludes ignored descendants but tracks forced matches and membership changes', async () => {
   const cwd = tempDir(), runDir = tempDir(), ports = nodePorts();
   const command = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
@@ -46,6 +48,8 @@ test('observation boundary: real Git excludes ignored descendants but tracks for
   assert.equal(assessed.type, 'RECOVERY_ASSESSED');
   if (assessed.type === 'RECOVERY_ASSESSED') assert.equal(assessed.notice.relevance, 'relevant');
 });
+// SECTION: Review session scratch observation boundary
+
 test('observation boundary: non-ignored session outputs remain quiet while unrelated scratch edits produce notices', async () => {
   const finding = { severity: 'SHOULD', locus: 'src/a.ts:L1', tag: 'correctness', defect: 'Missing condition', requiredChange: 'Add condition' };
   for (const material of [false, true]) {

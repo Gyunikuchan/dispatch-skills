@@ -21,7 +21,7 @@ test('user-only manual completion requires explicit quote and per-criterion evid
   assert.equal(r.state.tag, 'complete');
 });
 
-test('rewrite SC1 manual waiver retains user attribution and RED provenance', () => {
+test('manual waiver retains user attribution and RED provenance', () => {
   const base = failure(); const f = { ...base, c: { ...base.c, plan: { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const, red: 'check', changes: [...criterion.changes, 'tests/a.test.ts'], tests: ['tests/a.test.ts'] })) } } };
   const r = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'Waive SC1 and its RED requirement', criteria: { SC1: { outcome: 'waived', evidence: 'Accepted limitation' } } } });
   assert.equal(r.state.tag, 'complete');
@@ -71,12 +71,14 @@ test('failure inline hotfix nested spec answer preserves pre-await delta and che
   assert.equal(r.state.tag, 'failure'); assert.deepEqual(r.effects, []);
   assert.equal(host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I verified', criteria: { SC1: { outcome: 'pass', evidence: 'checked' } } } }).state.tag, 'complete');
 });
-for (const violation of ['budget', 'hard-limit'] as const) test(`hotfix ${violation} violation re-asks without stalled check`, () => {
-  const c = approvalState().c;
-  let r = classify(host({ tag: 'baseline-decision', c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
-  const changed = { ...FP, recovery: FP['recovery'] };
-  r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } }), ['src/a.ts'], [violation]);
-  assert.equal(r.state.tag, 'baseline-decision'); assert.deepEqual(r.effects, []);
+test('hotfix budget or hard-limit violation re-asks without stalled check', () => {
+  for (const violation of ['budget', 'hard-limit'] as const) {
+    const c = approvalState().c;
+    let r = classify(host({ tag: 'baseline-decision', c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
+    const changed = { ...FP, recovery: FP['recovery'] };
+    r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } }), ['src/a.ts'], [violation]);
+    assert.equal(r.state.tag, 'baseline-decision', violation); assert.deepEqual(r.effects, [], violation);
+  }
 });
 test('unchanged failure withdraws hotfix for stage', () => {
   let r = classify(host({ tag: 'baseline-decision', c: approvalState().c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
@@ -86,7 +88,7 @@ test('unchanged failure withdraws hotfix for stage', () => {
   assert.ok('c' in r.state && r.state.c?.withdrawnHotfix.includes('baseline'));
   assert.equal(host(r.state, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'again' } }).state.tag, 'baseline-decision');
 });
-test('rewrite SC1 observed RED stays distinct from a manual waived RED requirement', () => {
+test('observed RED stays distinct from a manual waived RED requirement', () => {
   const base = failure(); const plan = { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const, red: 'check', changes: [...criterion.changes, 'tests/a.test.ts'], tests: ['tests/a.test.ts'] })) };
   const f = { ...base, c: { ...base.c, plan, redMatrix: [{ id: 'SC1', path: 'tests/a.test.ts', leaf: 'check', exit: 1, tests: ['expected failure'] }] } };
   const result = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I observed the behavior pass', criteria: { SC1: { outcome: 'pass', evidence: 'Behavior passed' } } } });

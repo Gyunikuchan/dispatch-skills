@@ -8,6 +8,7 @@ import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { approvalState, FP, assessed } from './fixtures/implement-recovery.ts';
 const notice: ChangeNotice = { id: 'n', phase: 'host', pendingId: 'approval', beforeHash: 'b', afterHash: 'a', paths: ['src/a.ts'], pathCount: 1, relevance: 'relevant', reason: 'input changed', affectedEvidence: ['SC1'], rawDeltaRef: { version: 1, sha256: 'a'.repeat(64), bytes: 10, path: 'recovery-deltas/a.json' } };
 const answer = { by: 'orchestrator', noticeId: 'n', afterHash: 'a', action: 'refresh', rationale: 'Same approved intent; redo affected checks.', evidenceIds: ['SC1'] };
+// SECTION: Evidence refresh and change contract
 
 test('phase adapter: refresh retains independent criteria, task acceptance, live writers and integration', () => {
   const c = approvalState().c, plan = c.plan!;
@@ -42,6 +43,8 @@ test('change contract: dispositions bind open observations once and only to curr
   assert.deepEqual(disposed.evidence, c.evidence);
   assert.match(validateDispositions(disposed, [bind]) ?? '', /already disposed/);
 });
+// SECTION: Phase adapters and recovery assessment
+
 test('phase adapter: an ordinary parked approval resumes once and does not grant observed paths', () => {
   const original = approvalState();
   const check = stepImplement(original, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
@@ -60,30 +63,32 @@ test('recovery assessment: duplicate or stale receipts do not advance a pending 
   assert.deepEqual(stepImplement(valid.state, bad).state, valid.state);
   assert.ok(JSON.stringify(valid.state).length < 20000);
 });
-for (const phase of ['baseline', 'generated', 'final', 'hotfix'] as const) test(`phase adapter: ${phase} change applies the parked result once with an advisory observation`, () => {
-  const c = approvalState().c, changed = { ...FP, worktree: 'new' };
-  const row = { command: 'check', exit: 0, logPath: 'check.log' };
-  let parent: ImplementState, event: Event;
-  if (phase === 'baseline') {
-    parent = { tag: 'baseline-snapshot', c, effectId: 'old', results: [] };
-    event = { type: 'SNAPSHOT', effectId: 'old', fingerprint: changed, diff: { paths: ['caller.ts'] } };
-  } else if (phase === 'generated') {
-    parent = { tag: 'generated-snapshot', c, effectId: 'old', before: FP, paths: ['generated.ts'] };
-    event = { type: 'SNAPSHOT', effectId: 'old', fingerprint: changed, diff: { paths: ['caller.ts'] } };
-  } else if (phase === 'hotfix') {
-    parent = { tag: 'hotfix-verify', c: { ...c, stalled: { purpose: 'final', rows: [] } }, before: FP, effectId: 'old', origin: { tag: 'failure', c, reason: 'failed', changedPaths: [] }, changedPaths: [] };
-    event = { type: 'VERIFY_DONE', effectId: 'old', purpose: 'hotfix', fingerprint: changed, results: [row] };
-  } else {
-    parent = { tag: 'final-verify', c, before: FP, effectId: 'old' };
-    event = { type: 'VERIFY_DONE', effectId: 'old', purpose: 'final', fingerprint: changed, results: [row] };
+test('phase adapter: changes in parked phases apply the parked result once with an advisory observation', () => {
+  for (const phase of ['baseline', 'generated', 'final', 'hotfix'] as const) {
+    const c = approvalState().c, changed = { ...FP, worktree: 'new' };
+    const row = { command: 'check', exit: 0, logPath: 'check.log' };
+    let parent: ImplementState, event: Event;
+    if (phase === 'baseline') {
+      parent = { tag: 'baseline-snapshot', c, effectId: 'old', results: [] };
+      event = { type: 'SNAPSHOT', effectId: 'old', fingerprint: changed, diff: { paths: ['caller.ts'] } };
+    } else if (phase === 'generated') {
+      parent = { tag: 'generated-snapshot', c, effectId: 'old', before: FP, paths: ['generated.ts'] };
+      event = { type: 'SNAPSHOT', effectId: 'old', fingerprint: changed, diff: { paths: ['caller.ts'] } };
+    } else if (phase === 'hotfix') {
+      parent = { tag: 'hotfix-verify', c: { ...c, stalled: { purpose: 'final', rows: [] } }, before: FP, effectId: 'old', origin: { tag: 'failure', c, reason: 'failed', changedPaths: [] }, changedPaths: [] };
+      event = { type: 'VERIFY_DONE', effectId: 'old', purpose: 'hotfix', fingerprint: changed, results: [row] };
+    } else {
+      parent = { tag: 'final-verify', c, before: FP, effectId: 'old' };
+      event = { type: 'VERIFY_DONE', effectId: 'old', purpose: 'final', fingerprint: changed, results: [row] };
+    }
+    let result = stepImplement(parent, event);
+    if (result.state.tag === 'checking-host-event') result = stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.effects[0]!.id, fingerprint: changed, diff: { paths: ['caller.ts'] } });
+    result = assessed(result, ['caller.ts']);
+    assert.notEqual(result.state.tag, 'drift');
+    assert.notEqual(result.state.tag, 'assessing-host-event');
+    assert.ok('c' in result.state && result.state.c);
+    if ('c' in result.state && result.state.c) { assert.equal(result.state.c.observations?.length, 1); assert.deepEqual(result.state.c.tasks, c.tasks); }
   }
-  let result = stepImplement(parent, event);
-  if (result.state.tag === 'checking-host-event') result = stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.effects[0]!.id, fingerprint: changed, diff: { paths: ['caller.ts'] } });
-  result = assessed(result, ['caller.ts']);
-  assert.notEqual(result.state.tag, 'drift');
-  assert.notEqual(result.state.tag, 'assessing-host-event');
-  assert.ok('c' in result.state && result.state.c);
-  if ('c' in result.state && result.state.c) { assert.equal(result.state.c.observations?.length, 1); assert.deepEqual(result.state.c.tasks, c.tasks); }
 });
 test('phase adapter: a live delivery collision still requires a bound decision before rebuilding', () => {
   const c = approvalState().c, changed = { ...FP, worktree: 'new' };

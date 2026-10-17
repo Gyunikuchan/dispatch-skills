@@ -53,7 +53,7 @@ test('ask: a started wave schedules completion and returns raw captures with unk
   const data = askMachine.project(r.state).data; assert.equal(data['coverage'], 'unknown'); assert.equal(data['transport'], 'success'); assert.deepEqual(data['captures'], ['raw.log']);
 });
 
-test('emits failed outcome when all slots fail', () => {
+test('ask: all failed slots produce a failed outcome', () => {
   const frames = play(askMachine, [
     started, prepared,
     { type: 'WAVE_DONE', effectId: 'ask.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'failed', cls: 'quota' }], findings: [] },

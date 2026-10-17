@@ -56,9 +56,8 @@ const findingsOf = (state: RootState): Row[] => (rootMachine.project(state).data
 
 // SECTION: Matrix
 
-for (const family of FAMILIES) for (const standalone of family === 'standalone' ? ['plan', 'design', 'code'] as const : ['plan'] as const) {
-  const label = family === 'standalone' ? `standalone ${standalone}` : family;
-  test(`review-reuse: target change retains in-flight revision-bound findings (${label})`, () => {
+test('review-reuse: target change retains in-flight revision-bound findings across review families', () => {
+  for (const family of FAMILIES) for (const standalone of family === 'standalone' ? ['plan', 'design', 'code'] as const : ['plan'] as const) {
     const next = stepRoot(seed(family, inFlight(kindOf(family, standalone))), { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'live.json', result: 'changed', notice });
     const frame = projectFrame(rootMachine, next.state, 'runs/001');
     assert.equal(frame.await, 'rule', 'a change observation adds no await');
@@ -73,8 +72,8 @@ for (const family of FAMILIES) for (const standalone of family === 'standalone' 
     assert.equal(validateHostEvent('rule', { ...reuse, afterHash: 'stale' }, check).ok, false);
     const rulings = { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', fix: { affectedPaths: ['src/a.ts'], dependsOn: [], verification: [] } } } };
     assert.equal(validateHostEvent('rule', rulings, check).ok, true, 'rulings proceed without an acknowledgement');
-  });
-}
+  }
+});
 
 test('review-reuse: non-review frames reject an applicability selection', () => {
   const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature', slug: 'feature' }, child: approvalState() };

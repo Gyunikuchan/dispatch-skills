@@ -66,12 +66,12 @@ test('prompt: a section declared in both a kind and a shared kind block throws',
 const CALIBRATION = "In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Verify gates would surface deterministically during implementation, such as a fixture update or a test assertion, is SHOULD.";
 const assembled = (kind: QualityConsumer) => assembleTemplate(read(templates, 'review-prompt.md'), read(templates, `review-prompt-${kind}.md`), undefined, shared(kind)).template;
 
-test('SC4 plan prompt calibrates MUST', () => {
+test('plan prompt calibrates MUST', () => {
   const flat = assembled('plan').replace(/\s+/g, ' ');
   assert.ok(flat.includes(`\`CONSIDER\`: optional improvement; no defect. ${CALIBRATION} In \`defect\`, state`), flat);
 });
 
-test('SC4 code and design prompts omit severity calibration', () => {
+test('code and design prompts omit severity calibration', () => {
   assert.match(extractTemplate(read(templates, 'review-prompt.md')).template, /improvement; no defect\.\n<<slot:severity>>\nIn `defect`/);
   for (const kind of ['code', 'design'] as const) {
     const template = assembled(kind);
@@ -158,7 +158,7 @@ test('quality selection: reviews hold retained tests to the durable bar', () => 
     const text = ruleText(kind);
     for (const term of ['the durable bar in the plan template', 'demote', 'delete', ...(kind === 'plan' ? ['rewrite', 'transient-named file'] : [])]) assert.ok(text.includes(term), `${kind}: ${term}`);
   }
-  assert.ok(flat('code').includes('rewritten to meet it, demoted to transient, or deleted when redundant'));
+  assert.ok(flat('code').includes('rewritten to meet the bar, demoted to transient, or deleted when redundant'));
 });
 
 test('review prompts: prompts keep plan IDs out of tests', () => {

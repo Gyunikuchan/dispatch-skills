@@ -16,7 +16,9 @@ function counted() {
 }
 const relocatedFrom = (body: string) => /Run artifacts[^:]*: `([^`]+)`/.exec(body)?.[1];
 
-test('rewrite SC7 baseline imports and writes current TypeScript test and metrics artifacts', async () => {
+// SECTION: Tooling imports and artifacts
+
+test('audit baseline imports and writes current TypeScript test and metrics artifacts', async () => {
   const audit = await baselineModule();
   const f = fixture();
   try {
@@ -29,7 +31,7 @@ test('rewrite SC7 baseline imports and writes current TypeScript test and metric
   } finally { f.cleanup(); }
 });
 
-test('rewrite SC7 probe imports current provider and config APIs and publishes discovery artifacts', async () => {
+test('audit probe imports current provider and config APIs and publishes discovery artifacts', async () => {
   const audit = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
   const f = fixture();
   try {
@@ -42,7 +44,7 @@ test('rewrite SC7 probe imports current provider and config APIs and publishes d
   } finally { f.cleanup(); }
 });
 
-test('rewrite SC7 finalization imports and preserves baseline tree comparison and relocation', async () => {
+test('audit finalization imports and preserves baseline tree comparison and relocation', async () => {
   const baseline = await baselineModule(); const audit = await finalizeModule();
   const f = fixture(); let relocated: string | undefined;
   try {
@@ -53,6 +55,8 @@ test('rewrite SC7 finalization imports and preserves baseline tree comparison an
     relocated = relocatedFrom(body); assert.ok(relocated); assert.ok(fs.existsSync(path.join(relocated!, 'git-status.txt'))); assert.equal(fs.existsSync(work), false);
   } finally { if (relocated) fs.rmSync(relocated, { recursive: true, force: true }); f.cleanup(); }
 });
+
+// SECTION: Lifecycle runs and reservations
 
 test('audit lifecycle baseline runs the aggregate suite once and resume reuses its evidence', async () => {
   const audit = await baselineModule();
@@ -169,6 +173,8 @@ test('audit lifecycle finalize refuses a terminal probe whose exit is unconfirme
   } finally { f.cleanup(); }
 });
 
+// SECTION: Content snapshot and integrity gaps
+
 const sharedModule = () => import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/shared.mjs', import.meta.url).href);
 
 test('audit lifecycle content snapshot fingerprints an external symlink by its target without following it', async (t) => {
@@ -211,6 +217,8 @@ test('audit lifecycle content snapshot reports repeated read failures as integri
     assert.deepEqual(deleted.gaps, []);
   } finally { f.cleanup(); }
 });
+
+// SECTION: Interruption recovery and report footers
 
 const footers = (body: string) => body.match(/Run artifacts \(/g)?.length ?? 0;
 

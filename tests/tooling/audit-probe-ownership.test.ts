@@ -156,8 +156,8 @@ function unreadableRun(kind: 'malformed' | 'unsupported' | 'legacy') {
   return { run, capture };
 }
 
-for (const kind of ['malformed', 'unsupported', 'legacy'] as const) {
-  test(`audit probe refuses a live probe over a ${kind} manifest without launching or touching captures`, async () => {
+test('audit probe refuses a live probe over invalid manifests without launching or touching captures', async () => {
+  for (const kind of ['malformed', 'unsupported', 'legacy'] as const) {
     const { run, capture } = unreadableRun(kind);
     await quietly(async () => {
       const { done, launches } = startMain(run);
@@ -166,8 +166,8 @@ for (const kind of ['malformed', 'unsupported', 'legacy'] as const) {
     });
     assert.equal(fs.readFileSync(capture, 'utf8'), 'prior evidence');
     assert.ok(!fs.existsSync(path.join(run.workDir, 'dispatch', 'started.txt')));
-  });
-}
+  }
+});
 
 test('audit probe competing invocations launch once: the second refuses while the first owns the run', async () => {
   const run = reserveMainRun();

@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyChange } from '../../../skills/dispatch/scripts/policy/drift.ts';
-const base = { paths: ['src/a.ts'], expectedPaths: [], ownedPaths: [], inputs: [], dependenciesComplete: false };
-test('relevance suggestion: valid expected output stays quiet without granting authority', () => { assert.equal(classifyChange({ ...base, expectedPaths: ['src/a.ts'] }).relevance, 'expected'); });
-test('relevance suggestion: incomplete dependency coverage and caller-dirty inputs remain unknown', () => { assert.equal(classifyChange(base).relevance, 'unknown'); assert.equal(classifyChange({ ...base, paths: ['README.md'] }).relevance, 'unknown'); });
-test('relevance suggestion: complete disjoint inputs suggest no affected evidence', () => { const result = classifyChange({ ...base, dependenciesComplete: true }); assert.equal(result.relevance, 'irrelevant'); assert.match(result.reason, /suggests/); });
-test('relevance suggestion: governed inputs and comparison changes are suggested as relevant', () => { assert.equal(classifyChange({ ...base, inputs: ['src/a.ts'] }).relevance, 'relevant'); const identity = classifyChange({ ...base, identityChanged: true }); assert.equal(identity.relevance, 'relevant'); assert.match(identity.reason, /suggestion/); });
-test('relevance suggestion: complete path observation keeps every changed path', () => { assert.deepEqual(classifyChange({ ...base, paths: ['./b.ts', 'a\\c.ts', 'b.ts'] }).paths, ['a/c.ts', 'b.ts']); });
-test('relevance suggestion: exact driver ownership does not exempt sibling scratch files', () => { assert.equal(classifyChange({ ...base, paths: ['.scratch/run/notes'], ownedPaths: ['.scratch/run/walkthrough'] }).relevance, 'unknown'); });
+
+import { classifyChange, type ChangeInput, type Relevance } from '../../../skills/dispatch/scripts/policy/drift.ts';
+
+const base: ChangeInput = { paths: ['src/a.ts'], expectedPaths: [], ownedPaths: [], inputs: [], dependenciesComplete: false };
+
+// SECTION: Relevance classification
+
+test('relevance suggestion: classifies change relevance from expected, governed, or dependency boundaries', () => {
+  const cases: [string, ChangeInput, Relevance, RegExp?][] = [
+    ['expected when matching expectedPaths', { ...base, expectedPaths: ['src/a.ts'] }, 'expected'],
+    ['unknown when dependency coverage is incomplete', base, 'unknown'],
+    ['unknown when caller-dirty input path changed', { ...base, paths: ['README.md'] }, 'unknown'],
+    ['unknown when driver ownedPaths do not cover sibling scratch files', { ...base, paths: ['.scratch/run/notes'], ownedPaths: ['.scratch/run/walkthrough'] }, 'unknown'],
+    ['irrelevant when disjoint inputs and dependencies complete', { ...base, dependenciesComplete: true }, 'irrelevant', /suggests/],
+    ['relevant when governed input changed', { ...base, inputs: ['src/a.ts'] }, 'relevant'],
+    ['relevant when identity changed', { ...base, identityChanged: true }, 'relevant', /suggestion/],
+  ];
+  for (const [desc, input, expectedRelevance, reasonPattern] of cases) {
+    const result = classifyChange(input);
+    assert.equal(result.relevance, expectedRelevance, desc);
+    if (reasonPattern) assert.match(result.reason, reasonPattern, desc);
+  }
+});
+
+// SECTION: Path normalization
+
+test('relevance suggestion: complete path observation keeps every changed path', () => {
+  assert.deepEqual(classifyChange({ ...base, paths: ['./b.ts', 'a\\c.ts', 'b.ts'] }).paths, ['a/c.ts', 'b.ts']);
+});

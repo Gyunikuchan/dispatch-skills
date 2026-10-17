@@ -143,19 +143,18 @@ async function runMain(options: MainOptions = {}) {
   });
 }
 
-test('audit probe surfaces an unusable dispatch config as the skip cause without launching', async () => {
-  const { launches, result, summary } = await runMain({ config: '[1, 2]' });
-  assert.equal(launches.length, 0);
-  assert.equal(result.live[0].lifecycle, 'skipped');
-  assert.match(result.live[0].cause, /no usable dispatch config: .*must be a JSON object/);
-  assert.match(summary, /Dispatch config unusable: .*must be a JSON object/);
-});
-
-test('audit probe without any dispatch config records a skipped target and starts no process', async () => {
-  const { launches, result } = await runMain({ config: undefined });
-  assert.equal(launches.length, 0);
-  assert.equal(result.live[0].lifecycle, 'skipped');
-  assert.match(result.live[0].cause, /no usable dispatch config: Config file not found/);
+test('audit probe skips launch and records cause when dispatch config is missing or invalid', async () => {
+  const cases = [
+    { config: '[1, 2]', pattern: /no usable dispatch config: .*must be a JSON object/, summaryPattern: /Dispatch config unusable: .*must be a JSON object/ },
+    { config: undefined, pattern: /no usable dispatch config: Config file not found/, summaryPattern: null },
+  ];
+  for (const c of cases) {
+    const { launches, result, summary } = await runMain({ config: c.config });
+    assert.equal(launches.length, 0);
+    assert.equal(result.live[0].lifecycle, 'skipped');
+    assert.match(result.live[0].cause, c.pattern);
+    if (c.summaryPattern) assert.match(summary, c.summaryPattern);
+  }
 });
 
 test('audit probe records capture and fixture paths that exist after preservation', async () => {
@@ -178,5 +177,3 @@ test('audit probe enforces the reserved run limits after the audit config change
   assert.equal(launches.length, 1);
   assert.ok(clock.timers.some((t) => t.at - 1_000_000 === 35_000), 'recorded 30 s deadline plus 5 s grace bounds the launch');
 });
-
-/** Leaves the run's work directory unreadable as `kind`, with a prior capture that must survive the refusal. */

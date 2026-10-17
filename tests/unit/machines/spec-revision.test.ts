@@ -182,7 +182,9 @@ test('spec revision: implement before a plan returns to author with stale-spec',
   assert.deepEqual((data(revised)['defects'] as { code: string }[]).map((row) => row.code), ['stale-spec']);
 });
 
-test('spec revision restarts an increment from ruling and retains prior plan review', () => {
+// SECTION: Increment recovery
+
+test('spec revision: increment restart from ruling retains prior plan review history', () => {
   const delivery = deliveryStarted();
   assert.ok(delivery.tag === 'increment' && 'c' in delivery.child && delivery.child.c);
   const context = delivery.child.c;
@@ -213,6 +215,8 @@ test('spec revision restarts an increment from ruling and retains prior plan rev
   assert.deepEqual(approved.state.c.histories['I01']?.map(row => row.tag), ['plan-review']);
 });
 
+// SECTION: Review scope
+
 /** A standalone review awaiting rulings in a round of the given scope. */
 function rulingAtScope(scope: 'delta' | 'disputes-only'): RootState {
   const ruling = drive([
@@ -226,18 +230,18 @@ function rulingAtScope(scope: 'delta' | 'disputes-only'): RootState {
   return { ...ruling, child: { ...ruling.child, c: { ...ruling.child.c, scope } } } as RootState;
 }
 
-for (const scope of ['delta', 'disputes-only'] as const) {
-  test(`spec revision: a ${scope} review round re-prepares at full scope under the revised spec`, () => {
+test('spec revision: review round re-prepares at full scope under revised spec across delta and disputes-only scopes', () => {
+  for (const scope of ['delta', 'disputes-only'] as const) {
     const revised = revise(rulingAtScope(scope));
     const prepare = revised.effects.find((effect) => effect.kind === 'prepare-review');
     assert.ok(prepare && prepare.kind === 'prepare-review');
     assert.equal((prepare.scope as Record<string, unknown>)['scope'], 'full');
     assert.ok(revised.state.tag === 'review' && 'c' in revised.state.child);
     assert.deepEqual(revised.state.child.c.findings.map((row) => [row.id, row.status]), [['R1-F001', 'superseded']]);
-  });
-}
+  }
+});
 
-test('spec revision restarts an increment from pending pin check at a fresh epoch', () => {
+test('spec revision: increment restart from pending pin check updates governing spec', () => {
   const delivery = deliveryStarted();
   assert.ok(delivery.tag === 'increment' && 'c' in delivery.child && delivery.child.c);
   const context = delivery.child.c;

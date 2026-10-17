@@ -185,15 +185,17 @@ const rejections: [string, Sim, RegExp][] = [
   ['fabricated RED', { verify: () => ({ exit: 0 }) }, /expected failures were not observed/],
   ['failing GREEN', { verify: (purpose, _command, _task) => purpose === 'red' ? defaultVerify('red') : purpose === 'scoped' ? { exit: 1, failedTests: ['test:x'] } : { exit: 0 } }, /Task verification failed/],
 ];
-for (const [name, sim, reason] of rejections) test(`tasks: admission rejects ${name} and keeps dependents blocked`, () => {
-  let { result, trace } = start(1, sim);
-  result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.equal(record(result, 'T1')?.status, 'failed');
-  assert.match(record(result, 'T1')?.reason ?? '', reason);
-  assert.equal(record(result, 'T1')?.integrated ?? null, null);
-  result = submit(launch(result, sim, trace), 'T2', sim, trace);
-  assert.equal(result.state.tag, 'failure');
-  assert.equal(launchedTasks(trace).includes('task-t3'), false);
+test('tasks: admission rejects defective candidate submissions and keeps dependents blocked', () => {
+  for (const [name, sim, reason] of rejections) {
+    let { result, trace } = start(1, sim);
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.equal(record(result, 'T1')?.status, 'failed', name);
+    assert.match(record(result, 'T1')?.reason ?? '', reason, name);
+    assert.equal(record(result, 'T1')?.integrated ?? null, null, name);
+    result = submit(launch(result, sim, trace), 'T2', sim, trace);
+    assert.equal(result.state.tag, 'failure', name);
+    assert.equal(launchedTasks(trace).includes('task-t3'), false, name);
+  }
 });
 
 // SECTION: Orchestrator scope admission
@@ -352,16 +354,10 @@ test('tasks: RED matrix names control-character corruption from JSON-escaped bac
 
 const planIdDefects = (row: string, planIds: readonly string[] = PLAN.planIds) => parseRedMatrix([row], [PLAN.criteria[0]!], planIds).defects.filter((defect) => /names plan ID/.test(defect));
 
-test('RED-MATRIX names stay plan-free: rejects a defined criterion ID in the leaf or a test name', () => {
+test('RED-MATRIX names stay plan-free: rejects plan and finding IDs while exempting leading column and undefined look-alikes', () => {
   assert.deepEqual(planIdDefects(RED_ROW.replace(':rejects bad input', ':sc1 rejects bad input')), ['RED-MATRIX SC1 test name sc1 rejects bad input names plan ID SC1; name the behavior instead.']);
   assert.equal(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:rejects bad input; test:SC3 guards input')).length, 1, 'another task criterion ID');
-});
-
-test('RED-MATRIX names stay plan-free: exempts the leading criterion column', () => {
   assert.deepEqual(planIdDefects(RED_ROW), []);
-});
-
-test('RED-MATRIX names stay plan-free: rejects a recorded finding ID and accepts undefined look-alikes', () => {
   const ids = [...PLAN.planIds, 'R1-F001'];
   assert.equal(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:R1-F001 rejects bad input'), ids).length, 1);
   assert.deepEqual(planIdDefects(RED_ROW.replace('test:rejects bad input', 'test:SC10 and ESC1 reject bad input'), ids), []);
@@ -386,18 +382,16 @@ test('tasks: declared RED command without {files} runs unchanged', () => {
   assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
-test('tasks: declared RED command rejects a failing run whose log lacks an expected name', () => {
-  const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify: (purpose) => purpose === 'red' ? { exit: 1 } : { exit: 0 } };
-  let { result, trace } = start(1, sim);
-  result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.match(record(result, 'T1')?.reason ?? '', /expected failures were not observed: test:rejects bad input/);
-});
-
-test('tasks: declared RED command rejects a run that exits 0', () => {
-  const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify: (purpose) => purpose === 'red' ? { exit: 0, failedTests: ['test:rejects bad input'] } : { exit: 0 } };
-  let { result, trace } = start(1, sim);
-  result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.match(record(result, 'T1')?.reason ?? '', /RED command exited 0/);
+test('tasks: declared RED command rejects runs without expected failures or that exit 0', () => {
+  for (const [verify, pattern] of [
+    [(purpose: string) => purpose === 'red' ? { exit: 1 } : { exit: 0 }, /expected failures were not observed: test:rejects bad input/],
+    [(purpose: string) => purpose === 'red' ? { exit: 0, failedTests: ['test:rejects bad input'] } : { exit: 0 }, /RED command exited 0/],
+  ] as const) {
+    const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify };
+    let { result, trace } = start(1, sim);
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.match(record(result, 'T1')?.reason ?? '', pattern);
+  }
 });
 
 test('tasks: declared RED command refuses a test path that could break its quoting', () => {

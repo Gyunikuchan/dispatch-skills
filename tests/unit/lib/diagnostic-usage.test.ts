@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { claudeUsage } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
 
 
-test('SC4 claude usage keeps per-model counters', () => {
+test('claude usage keeps per-model counters and aggregate totals', () => {
   const usage = claudeUsage(JSON.stringify({ type: 'result', modelUsage: {
     'claude-sonnet-4-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 40 },
     'claude-haiku-4-5': { inputTokens: 5, outputTokens: 1 },

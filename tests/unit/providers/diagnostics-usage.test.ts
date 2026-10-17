@@ -6,7 +6,7 @@ import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 const fixture = (provider: string) => JSON.parse(fs.readFileSync(new URL(`./fixtures/diagnostics-${provider}.json`, import.meta.url), 'utf8')) as { cliVersion: string; stdout: string };
-test('SC4: recorded Codex 0.156.1 completed turn retains cache overlap semantics', () => {
+test('recorded Codex 0.156.1 completed turn retains cache overlap semantics', () => {
   const f = fixture('codex'), result = codex.usage!(f.stdout), event = JSON.parse(f.stdout);
   assert.equal(f.cliVersion, '0.156.1');
   assert.equal(result?.input, event.usage.input_tokens);
@@ -14,23 +14,23 @@ test('SC4: recorded Codex 0.156.1 completed turn retains cache overlap semantics
   assert.equal(result?.cacheRead, event.usage.cached_input_tokens);
   assert.equal(result?.inputSemantics, 'includes-cache');
 });
-test('SC4: recorded Claude 2.1.268 failed invocation accounts whole-tree model usage', () => {
+test('recorded Claude 2.1.268 failed invocation accounts whole-tree model usage', () => {
   const f = fixture('claude'), result = claude.usage!(f.stdout);
   assert.equal(f.cliVersion, '2.1.268');
   assert.equal(result?.input, 2759);
   assert.equal(result?.actualModels?.[0], 'claude-haiku-4-5-20251001');
   assert.equal(result?.inputSemantics, 'uncached');
 });
-test('SC4: repeated completed summaries never add counters', () => {
+test('repeated completed summaries never add counters', () => {
   const f = fixture('codex');
   assert.deepEqual(codex.usage!(`${f.stdout}\n${f.stdout}`), codex.usage!(f.stdout));
 });
-test('SC4: malformed or truncated structured output is unavailable', () => {
+test('malformed or truncated structured output is unavailable', () => {
   for (const p of [codex, claude]) for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}']) assert.equal(p.usage!(raw), undefined);
 });
-test('SC4: text-only OpenCode has no usage adapter', () => { assert.equal(opencode.usage, undefined); });
+test('text-only OpenCode has no usage adapter', () => { assert.equal(opencode.usage, undefined); });
 
-test('SC4: Claude whole-tree thinking counters remain separate and reject unsafe sums', () => {
+test('Claude whole-tree thinking counters remain separate and reject unsafe sums', () => {
   const event = JSON.parse(fixture('claude').stdout);
   const model = Object.keys(event.modelUsage)[0]!;
   event.modelUsage[model].thinkingTokens = 4;
@@ -40,7 +40,7 @@ test('SC4: Claude whole-tree thinking counters remain separate and reject unsafe
   assert.equal(claude.usage!(JSON.stringify(event)), undefined);
 });
 
-test('SC4: Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
+test('Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
   const event = JSON.parse(fixture('claude').stdout);
   event.modelUsage['claude-opus-4-1'] = { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 30, cacheCreationInputTokens: 40 };
   const result = claude.usage!(JSON.stringify(event));
@@ -52,7 +52,7 @@ test('SC4: Claude modelUsage keeps per-model counters beside the aggregate; Code
   assert.equal(codex.usage!(fixture('codex').stdout)?.models, undefined);
 });
 
-test('SC8: agy usage maps the print JSON usage block to uncached counters', () => {
+test('agy usage maps the print JSON usage block to uncached counters', () => {
   // Shape of a recorded agy `--output-format json` envelope; counts are synthetic.
   const stdout = JSON.stringify({ conversation_id: 'c1', status: 'success', response: 'ok', duration_seconds: 12, num_turns: 3, usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824, total_tokens: 409 } });
   assert.deepEqual(agy.usage?.(stdout), { input: 364, output: 45, cacheRead: 7824, reasoning: 39, scope: 'invocation', provenance: 'agy.usage', inputSemantics: 'uncached' });

@@ -8,6 +8,8 @@ import { SPEC_SOURCE, specHash } from '../helpers/spec-fixture.ts';
 const startArgs = (verb: string, session: string, argument: string, flags: string[] = []) =>
   ['start', verb, '--session-dir', session, '--orchestrator', 'codex', '--level', 'medium', '--level-source', 'explicit', ...flags, '--', argument];
 
+// SECTION: Spec authoring flow
+
 test('spec stage e2e: a session without a spec authors one, gates it at medium, and then authors the plan', async () => {
   const f = fixture();
   try {
@@ -27,6 +29,8 @@ test('spec stage e2e: a session without a spec authors one, gates it at medium, 
     assert.equal(plan.at, 'plan › author', JSON.stringify(plan));
   } finally { f.cleanup(); }
 });
+
+// SECTION: Spec resolution error handling
 
 test('spec stage e2e: two session-root specs exit 1 with ambiguous-spec and no stdout', async () => {
   const f = fixture();

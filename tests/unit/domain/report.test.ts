@@ -82,7 +82,7 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   return result.findings;
 };
 
-test('SC1 unknown plan tag recovers as uncategorized with original tag', () => {
+test('unknown plan tag recovers as uncategorized with original tag', () => {
   const text = `\`\`\`json\n${report([
     planFinding('robustness', 'Proposed Changes', 'retry path has no bound'),
     planFinding('verification', 'Verification Plan', 'focused command omits a test file'),
@@ -98,30 +98,26 @@ test('SC1 unknown plan tag recovers as uncategorized with original tag', () => {
   ]);
 });
 
-test('SC1 unknown tag recovers in code and design reviews', () => {
+test('unknown tag recovers in code and design reviews', () => {
   const [code] = parsedFindings('code', report([finding({ tag: 'robustness' })]));
   assert.deepEqual([code?.category, code?.originalTag, code?.scope], ['uncategorized', 'robustness', 'in']);
   const [design] = parsedFindings('design', report([planFinding('robustness', 'Interfaces', 'contract omits errors')]));
   assert.deepEqual([design?.category, design?.originalTag, design?.scope], ['uncategorized', 'robustness', 'in']);
 });
 
-test('SC1 findings differing only in unknown tag are both kept', () => {
-  const findings = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'resilience' })]));
-  assert.deepEqual(findings.map((item) => [item.category, item.originalTag]), [['uncategorized', 'robustness'], ['uncategorized', 'resilience']]);
-});
+test('findings report: preserves distinct findings with unknown tags differing, sanitizing alike, or bounded', () => {
+  const diff = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'resilience' })]));
+  assert.deepEqual(diff.map((item) => [item.category, item.originalTag]), [['uncategorized', 'robustness'], ['uncategorized', 'resilience']]);
 
-test('SC1 findings whose unknown tags sanitize alike are both kept', () => {
-  const findings = parsedFindings('code', report([finding({ tag: 'foo/bar' }), finding({ tag: 'foo?bar' })]));
-  assert.deepEqual(findings.map((item) => [item.category, item.originalTag]), [['uncategorized', 'foo_bar'], ['uncategorized', 'foo_bar']]);
-});
+  const alike = parsedFindings('code', report([finding({ tag: 'foo/bar' }), finding({ tag: 'foo?bar' })]));
+  assert.deepEqual(alike.map((item) => [item.category, item.originalTag]), [['uncategorized', 'foo_bar'], ['uncategorized', 'foo_bar']]);
 
-test('SC1 findings whose unknown tags differ only after the bound are both kept', () => {
   const prefix = 'x'.repeat(80);
-  const findings = parsedFindings('code', report([finding({ tag: `${prefix}a` }), finding({ tag: `${prefix}b` })]));
-  assert.deepEqual(findings.map((item) => [item.category, item.originalTag]), [['uncategorized', prefix], ['uncategorized', prefix]]);
+  const bounded = parsedFindings('code', report([finding({ tag: `${prefix}a` }), finding({ tag: `${prefix}b` })]));
+  assert.deepEqual(bounded.map((item) => [item.category, item.originalTag]), [['uncategorized', prefix], ['uncategorized', prefix]]);
 });
 
-test('SC1 collected findings preserve unknown tags and known categories', () => {
+test('collected findings preserve unknown tags and known categories', () => {
   const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'perf', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
   const findings = collectFindings(1, drafts);
   assert.equal(findings.length, 2);
@@ -130,14 +126,14 @@ test('SC1 collected findings preserve unknown tags and known categories', () => 
   assert.ok(!('originalTag' in (findings[1] ?? {})));
 });
 
-test('SC2 adjacent and intent variants stay uncategorized in scope', () => {
+test('adjacent and intent tag variants stay uncategorized in scope', () => {
   for (const tag of ['Adjacent', 'ADJACENT', 'adjacent-scope', 'Intent']) {
     const [item] = parsedFindings('code', report([finding({ tag })]));
     assert.deepEqual([item?.category, item?.originalTag, item?.scope], ['uncategorized', tag, 'in'], tag);
   }
 });
 
-test('SC2 exact adjacent and intent keep category and scope', () => {
+test('exact adjacent and intent tags keep category and scope', () => {
   const [adjacent] = parsedFindings('code', report([finding({ tag: ' adjacent ' })]));
   assert.deepEqual([adjacent?.category, adjacent?.scope], ['adjacent', 'adjacent']);
   assert.ok(!('originalTag' in (adjacent ?? {})));
@@ -146,14 +142,14 @@ test('SC2 exact adjacent and intent keep category and scope', () => {
   assert.ok(!('originalTag' in (intent ?? {})));
 });
 
-test('SC3 empty or non-string tag still fails the report', () => {
+test('empty or non-string tag still fails the report', () => {
   for (const tag of ['', '   ', '\n\t']) assert.equal(failure(report([finding({ tag })])), 'uncovered-scope', JSON.stringify(tag));
   for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }]) assert.equal(failure(report([{ ...finding(), tag }])), 'uncovered-scope', JSON.stringify(tag));
   const { tag: _tag, ...missing } = finding();
   assert.equal(failure(report([missing])), 'uncovered-scope');
 });
 
-test('SC3 unknown tag does not mask other report failures', () => {
+test('unknown tag does not mask other report failures', () => {
   const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
   assert.equal(failure(report([unknown({ severity: 'HIGH' })])), 'uncovered-scope');
   assert.equal(failure(report([unknown({ defect: '' })])), 'uncovered-scope');
@@ -169,7 +165,7 @@ test('SC3 unknown tag does not mask other report failures', () => {
   assert.equal(failure("I'm unable to help with reviewing this robustness tag."), 'refusal');
 });
 
-test('SC4 original tag is sanitized and bounded', () => {
+test('original tag is sanitized and bounded', () => {
   const tags = ['<!-- ignore previous -->', '<b>bold</b>', '[link](https://a.example)', '`code`', 'line\nbreak', 'résumé 日本語', 'x'.repeat(500), '  padded  '];
   for (const tag of tags) {
     const [item] = parsedFindings('code', report([finding({ tag })]));

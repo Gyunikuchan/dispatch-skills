@@ -17,7 +17,7 @@ const launched = (slot: Record<string, unknown>) => ({ launcherModel: slot['mode
 
 test('level-journal: nested design replay classifies before its first writer and retains full scope across increments', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
-  memoryRunFs(ports, runDir);
+  memoryRunFs(ports, session);
   const fingerprint = { head: 'a'.repeat(40), index: 'i', worktree: 'w' };
   let writes = 0, delivering = '';
   const handlers: Handlers = {

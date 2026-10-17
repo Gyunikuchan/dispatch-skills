@@ -36,6 +36,8 @@ const ctxFor = (w: ReturnType<typeof workspace>, processPort: unknown = nodeProc
 const target = { id: 'claude', provider: 'claude', mode: 'cli', binary: process.execPath, model: null, effort: null, sandbox: false, aliases: ['cli'], skip: null };
 const killQuietly = (handle: string | null) => { try { if (handle) process.kill(Number(handle), 'SIGKILL'); } catch { /* already gone */ } };
 
+// SECTION: Probe lifecycle
+
 test('audit probe terminates a hung provider at the deadline and keeps its capture', async () => {
   const w = workspace(HUNG);
   const record = await probe.runTarget(target, ctxFor(w));
@@ -103,25 +105,28 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
   assert.ok(fs.readdirSync(path.join(w.root, 'home')).some((name) => name.startsWith('.dispatch-audit-probe-')));
 });
 
+// SECTION: CLI event loop termination
+
 // A preloaded never-ending timer stands in for a stalled introspection child that keeps the event loop alive.
-function cliWithOpenHandle(args: readonly string[]) {
+test('audit probe CLI exits cleanly even while a handle keeps the event loop alive', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-probe-cli-'));
-  spawnSync('git', ['init', '-q'], { cwd: repo });
-  const preload = path.join(repo, 'hold-open.mjs');
-  fs.writeFileSync(preload, 'setInterval(() => {}, 1 << 30);\n');
-  const script = fileURLToPath(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url));
-  return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], { cwd: repo, encoding: 'utf8', timeout: 30_000 });
-}
+  try {
+    spawnSync('git', ['init', '-q'], { cwd: repo });
+    const preload = path.join(repo, 'hold-open.mjs');
+    fs.writeFileSync(preload, 'setInterval(() => {}, 1 << 30);\n');
+    const script = fileURLToPath(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url));
+    const runCli = (args: readonly string[]) =>
+      spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], { cwd: repo, encoding: 'utf8', timeout: 30_000 });
 
-test('audit probe CLI exits after main resolves even while a handle keeps the event loop alive', () => {
-  const res = cliWithOpenHandle(['--run', '2026-01-01-0000', '--discover-only', '--only', 'claude']);
-  assert.equal(res.signal, null, 'CLI was killed by the test timeout instead of exiting');
-  assert.equal(res.status, 0, res.stderr);
-});
+    const ok = runCli(['--run', '2026-01-01-0000', '--discover-only', '--only', 'claude']);
+    assert.equal(ok.signal, null, 'CLI was killed by the test timeout instead of exiting');
+    assert.equal(ok.status, 0, ok.stderr);
 
-test('audit probe CLI exits non-zero after main rejects even while a handle keeps the event loop alive', () => {
-  const res = cliWithOpenHandle(['--run', 'not-a-run-id', '--discover-only']);
-  assert.equal(res.signal, null, 'CLI was killed by the test timeout instead of exiting');
-  assert.equal(res.status, 1);
-  assert.match(res.stderr, /--run must be a run id/);
+    const fail = runCli(['--run', 'not-a-run-id', '--discover-only']);
+    assert.equal(fail.signal, null, 'CLI was killed by the test timeout instead of exiting');
+    assert.equal(fail.status, 1);
+    assert.match(fail.stderr, /--run must be a run id/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

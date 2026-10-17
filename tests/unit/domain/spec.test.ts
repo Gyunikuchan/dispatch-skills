@@ -21,21 +21,16 @@ const codes = (source: string, level: 'low' | 'medium' = 'medium') => {
   return result.ok ? [] : result.defects.map((d) => d.code);
 };
 
-test('spec lint: required sections pass a complete spec at medium', () => {
-  const result = parseSpec(spec(), { level: 'medium' });
-  assert.ok(result.ok, JSON.stringify(result));
-});
+test('spec lint: required sections are enforced by level', () => {
+  assert.ok(parseSpec(spec(), { level: 'medium' }).ok);
 
-test('spec lint: required sections at low omit background and decisions', () => {
-  const source = spec({ Background: null, Decisions: null, 'Discussion Record': null, 'Open Questions': null });
-  assert.ok(parseSpec(source, { level: 'low' }).ok);
-  assert.deepEqual(codes(source, 'medium'), ['missing-section', 'missing-section', 'missing-section', 'missing-section']);
-});
+  const lowSource = spec({ Background: null, Decisions: null, 'Discussion Record': null, 'Open Questions': null });
+  assert.ok(parseSpec(lowSource, { level: 'low' }).ok);
+  assert.deepEqual(codes(lowSource, 'medium'), ['missing-section', 'missing-section', 'missing-section', 'missing-section']);
 
-test('spec lint: required sections report each absent section', () => {
-  const result = parseSpec(spec({ Constraints: null }), { level: 'low' });
-  assert.ok(!result.ok);
-  assert.deepEqual(result.defects.map((d) => [d.code, d.message.includes('## Constraints')]), [['missing-section', true]]);
+  const missingConstraint = parseSpec(spec({ Constraints: null }), { level: 'low' });
+  assert.ok(!missingConstraint.ok);
+  assert.deepEqual(missingConstraint.defects.map((d) => [d.code, d.message.includes('## Constraints')]), [['missing-section', true]]);
 });
 
 test('spec lint: section order reports an out-of-order section', () => {

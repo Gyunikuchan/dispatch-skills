@@ -116,7 +116,7 @@ const effortSpec: ProviderSpec = {
 
 // SECTION: Attempts on slot rows
 
-test('SC4 records effort retry attempts', async () => {
+test('effort retry records initial and fallback attempts', async () => {
   const run = await runDelegate(effortSpec, request, 'cli', runnerPorts([processResult({ durationMs: 7 }), processResult({ durationMs: 9 })]));
   assert.deepEqual(run.invocations, [
     attempt('claude', 'sonnet', 'config', { effort: 'high', durationMs: 7 }),
@@ -128,7 +128,7 @@ test('SC4 records effort retry attempts', async () => {
   assert.deepEqual(row?.['invocations'], run.invocations);
 });
 
-test('SC4 records model cascade attempts', async () => {
+test('model cascade records failed and succeeding attempts', async () => {
   const w = setupWave({
     'claude:opus:cli': [result(fail('model-not-found'), attempt('claude', 'opus', 'model-not-found'))],
     'claude:sonnet:cli': [result(ok(), attempt('claude', 'sonnet', 'ok'))],
@@ -138,7 +138,7 @@ test('SC4 records model cascade attempts', async () => {
   assert.deepEqual(row?.['invocations'], [attempt('claude', 'opus', 'model-not-found'), attempt('claude', 'sonnet', 'ok')]);
 });
 
-test('SC4 records reserve substitute attempts', async () => {
+test('reserve substitute records primary failure and reserve success', async () => {
   const w = setupWave({
     'codex:-:cli': [result(fail('quota'), attempt('codex', null, 'quota'))],
     'claude:opus:cli': [result(ok(), attempt('claude', 'opus', 'ok'))],
@@ -148,7 +148,7 @@ test('SC4 records reserve substitute attempts', async () => {
   assert.deepEqual(row?.['invocations'], [attempt('codex', null, 'quota'), attempt('claude', 'opus', 'ok')]);
 });
 
-test('SC4 keeps failed attempts on native fallback', async () => {
+test('native fallback retains failed attempt records', async () => {
   const w = setupWave({ 'claude:primary:cli': [result(fail('quota'), attempt('claude', 'primary', 'quota'))] }, [slot('claude[0]', 'claude', { model: 'primary' })], 'claude');
   const ctx = { runDir: '/run', attempt: 1 };
   const begun = startWave(w.effect, ctx, w.deps);
@@ -159,7 +159,7 @@ test('SC4 keeps failed attempts on native fallback', async () => {
   assert.deepEqual(row?.['invocations'], [attempt('claude', 'primary', 'quota')]);
 });
 
-test('SC4 records prelaunch failure', async () => {
+test('prelaunch failure records unlaunched attempt', async () => {
   const spec: ProviderSpec = { ...SPECS.claude, prepare: async () => ({ kind: 'fail', outcome: { status: 'fail', cls: 'model-not-loaded', detail: 'offline' } }) };
   const ports = { ...runnerPorts([]), prepare: { fetchModels: async () => null, acquireGpuLock: async () => () => {} } };
   const run = await runDelegate(spec, request, 'cli', ports);
@@ -169,7 +169,7 @@ test('SC4 records prelaunch failure', async () => {
 
 const noCodex = (provider: ProviderId): ModeId[] => provider === 'codex' ? [] : ['cli'];
 
-test('SC4 records prelaunch failure without launchable mode or prompt paths', async () => {
+test('unpathed or modeless slot records unlaunched failure attempt', async () => {
   const modeless = setupWave({}, [slot('codex[0]', 'codex', { model: ['gpt-6-sol', 'gpt-6-mini'], effort: 'high' })], null, { modes: noCodex });
   const [missing] = await modeless.rows();
   assert.deepEqual([missing?.['state'], missing?.['invocations']], ['failed', [unlaunched('codex', 'gpt-6-sol', 'not-found', 'high')]]);
@@ -178,7 +178,7 @@ test('SC4 records prelaunch failure without launchable mode or prompt paths', as
   assert.deepEqual([config?.['state'], config?.['invocations']], ['failed', [unlaunched('claude', 'sonnet', 'config')]]);
 });
 
-test('SC4 reserve after prelaunch failure journals both records once and emits no H1', async () => {
+test('reserve after prelaunch failure journals both records once without warning', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
   const w = setupWave({ 'claude:opus:cli': [result(ok(), attempt('claude', 'opus', 'ok'))] },
     [slot('codex[0]', 'codex', { model: 'gpt-6-sol' }), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })], null, { modes: noCodex });
@@ -193,7 +193,7 @@ test('SC4 reserve after prelaunch failure journals both records once and emits n
   assert.ok(!report.includes('`not-found`: 1 of 2 CLI attempts failed'), report);
 });
 
-test('SC4 ok launch with refused output journals the refusal and emits no H1', async () => {
+test('successful launch with refused output journals refusal without failure warning', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
   const usage = { input: 10, output: 2, scope: 'invocation' as const, provenance: 'claude.result.usage', inputSemantics: 'uncached' as const };
   const w = setupWave({
@@ -211,7 +211,7 @@ test('SC4 ok launch with refused output journals the refusal and emits no H1', a
   assert.ok(!report.includes('`refusal`: 1 of 2 CLI attempts failed'), report);
 });
 
-test('SC4 measured attempt then throwing launch keeps both records', async () => {
+test('measured attempt followed by throwing launch keeps both invocation records', async () => {
   const error = await runDelegate(effortSpec, request, 'cli', runnerPorts([processResult({ durationMs: 7 }), new Error('spawn EACCES')])).then(() => null, (value: unknown) => value as { invocations?: Invocation[] });
   assert.deepEqual(error?.invocations, [
     attempt('claude', 'sonnet', 'config', { effort: 'high', durationMs: 7 }),
@@ -226,7 +226,7 @@ test('SC4 measured attempt then throwing launch keeps both records', async () =>
   assert.deepEqual(row?.['invocations'], [attempt('claude', 'opus', 'model-not-found'), unlaunched('claude', 'sonnet', 'launch-failed')]);
 });
 
-test('SC4 measured primary then throwing reserve keeps all records once', async () => {
+test('measured primary followed by throwing reserve keeps all invocation records', async () => {
   const w = setupWave({
     'codex:-:cli': [result(fail('quota'), attempt('codex', null, 'quota'))],
     'claude:opus:cli': [thrown(unlaunched('claude', 'opus', 'launch-failed'))],
@@ -236,7 +236,7 @@ test('SC4 measured primary then throwing reserve keeps all records once', async 
   assert.deepEqual(row?.['invocations'], [attempt('codex', null, 'quota'), unlaunched('claude', 'opus', 'launch-failed')]);
 });
 
-test('SC4 worker result carries invocations into runVoice', async () => {
+test('worker result carries invocation records into run output', async () => {
   const usage = { input: 10, output: 2, cacheRead: 30, scope: 'invocation' as const, provenance: 'claude.result.usage', inputSemantics: 'uncached' as const };
   const w = setupWave({ 'codex:gpt-5:cli': [result(ok(), attempt('codex', 'gpt-5', 'ok', { usage }))] }, [slot('codex[0]', 'codex', { model: 'gpt-5' })]);
   const [row] = await w.rows();
@@ -245,7 +245,7 @@ test('SC4 worker result carries invocations into runVoice', async () => {
 
 // SECTION: Journal and host protocol
 
-test('SC4 journals invocations when disabled', async () => {
+test('diagnostics disabled still journals invocation records', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
   const w = setupWave({ 'codex:-:cli': [result(ok(), attempt('codex', null, 'ok'))] }, [slot('codex[0]', 'codex')]);
   const handlers: Handlers = { wave: async (effect, effectPorts, ctx) => createWaveHandler(w.deps)({ ...effect, roster: w.effect.roster }, effectPorts, ctx) };
@@ -272,7 +272,7 @@ const hostMachine: Machine<HostState> = {
   transitions: [{ from: 'native', on: 'NATIVE_RESULTS', to: 'write' }, { from: 'write', on: 'WRITE_RECEIPT', to: 'done' }],
 };
 
-test('SC4 accepts native and receipt attestation', async () => {
+test('native and receipt attestation persists tokens and durations', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   const base = { ports, runDir, machine: hostMachine, handlers: {} };
   assert.equal((await start({ ...base, runStarted: RUN_STARTED })).frame?.await, 'native');
@@ -287,7 +287,7 @@ test('SC4 accepts native and receipt attestation', async () => {
 
 const notes = (lines: Iterable<JournalLine>) => [...lines].filter((line) => line.type === 'DIAGNOSTIC_NOTE');
 
-test('SC4 journals rejected event note without moving reply seq', async () => {
+test('rejected event note journals diagnostic note without moving reply sequence', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   const base = { ports, runDir, machine: awaitingMachine, handlers: fakeHandlers };
   const begun = await start({ ...base, runStarted: RUN_STARTED });
@@ -306,7 +306,7 @@ test('SC4 journals rejected event note without moving reply seq', async () => {
   assert.deepEqual(seqs, seqs.map((_seq, index) => index + 1));
 });
 
-test('SC4 note keeps dry-run and status reply boundary', async () => {
+test('diagnostic note preserves dry-run and status reply boundary', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   const base = { ports, runDir, machine: awaitingMachine, handlers: fakeHandlers };
   const begun = await start({ ...base, runStarted: RUN_STARTED });
@@ -319,7 +319,7 @@ test('SC4 note keeps dry-run and status reply boundary', async () => {
   assert.deepEqual(fs.readFileSync(journalPath(runDir)), bytes);
 });
 
-test('SC4 note bypasses machine apply', async () => {
+test('diagnostic note bypasses machine state transition', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
   const seen: string[] = [];
   let renders = 0;

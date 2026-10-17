@@ -56,7 +56,9 @@ test('standalone review applies accepted fixes and verifies them', async () => {
 });
 
 
-test('rewrite SC2 prompt preserves comparison independently of context', async () => {
+// SECTION: Prompts and Protocol Boundaries
+
+test('review prompt preserves comparison independently of context', async () => {
   const { options, runStarted, runDir } = setup();
   const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Check the boundary' } } });
   assert.equal(result.frame?.await, 'rule', JSON.stringify(result));
@@ -67,13 +69,14 @@ test('rewrite SC2 prompt preserves comparison independently of context', async (
   assert.doesNotMatch(prompt, /Check the boundary/);
 });
 
-
-test('rewrite SC3 incompatible journals fail explicitly', () => {
+test('incompatible journal protocol revision fails explicitly', () => {
   const { runStarted } = setup(); const { type, ...data } = runStarted;
   assert.throws(() => fold(rootMachine, [{ seq: 1, v: 1, at: 'now', type, data }]), /unsupported-journal-protocol/);
 });
 
-test('rewrite SC2 later delta remains within manifest and accepted fix paths', async () => {
+// SECTION: Delta Scopes and Manifests
+
+test('delta review remains within manifest and accepted fix paths', async () => {
   const ports = fakePorts(); const runDir = tempDir(); const priorPath = path.join(runDir, 'prior.json'); const snapshot = { head: 'a', target: 'main..HEAD', comparison: 'a', index: {}, working: {}, untracked: {}, governedPaths: ['src/a.ts'] };
   memoryRunFs(ports, runDir);
   ports.fs.writeAtomic(priorPath, JSON.stringify(snapshot));

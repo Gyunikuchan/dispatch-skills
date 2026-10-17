@@ -76,19 +76,21 @@ test('probe cleanup reason: unsafe liveness blocks removal', () => {
   assert.equal(calls, 0);
 });
 
-test('probe cleanup reason: filesystem failures retain their error code', () => {
+test('probe cleanup reason: filesystem failures map error codes to known code or unknown', () => {
   const fixture = { dir: path.join(tempDir(), 'fixture') };
-  const io = { rmSync: () => { throw Object.assign(new Error('private path details'), { code: 'EBUSY' }); } };
-  assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: 'EBUSY' } });
-});
-
-test('probe cleanup reason: absent or arbitrary error codes become unknown', () => {
-  const fixture = { dir: path.join(tempDir(), 'fixture') };
-  for (const code of [undefined, 'x'.repeat(500), 'private\npath', null]) {
+  const cases: { code: unknown; expectedCode: string }[] = [
+    { code: 'EBUSY', expectedCode: 'EBUSY' },
+    { code: undefined, expectedCode: 'unknown' },
+    { code: 'x'.repeat(500), expectedCode: 'unknown' },
+    { code: 'private\npath', expectedCode: 'unknown' },
+    { code: null, expectedCode: 'unknown' },
+  ];
+  for (const { code, expectedCode } of cases) {
     const io = { rmSync: () => { throw Object.assign(new Error('private path details'), { code }); } };
-    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: 'unknown' } });
+    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: expectedCode } });
   }
 });
+
 
 test('probe cleanup reason: success retains bounded removal options and no reason', () => {
   const fixture = { dir: path.join(tempDir(), 'fixture') };

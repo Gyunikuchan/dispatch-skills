@@ -11,14 +11,14 @@ function fixBatch(state: DesignState) {
   return state.review;
 }
 
-test('design-integration-fix: accepted owned finding enters the fix batch', () => {
-  const state = stepDesign(integration(), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state;
-  assert.deepEqual(fixBatch(state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
-});
-test('design-integration-fix: accepted finding enters the fix batch before owner reconciliation', () => {
-  const state = integration();
-  state.c = { ...state.c, ownership: { I01: ['src/a.ts'], I02: ['src/a.ts'] } };
-  assert.deepEqual(fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
+// SECTION: Integration fix batch and ownership
+
+test('design-integration-fix: accepted finding enters fix batch under unique or ambiguous ownership', () => {
+  for (const ownership of [{ I01: ['src/a.ts'] }, { I01: ['src/a.ts'], I02: ['src/a.ts'] }]) {
+    const state = integration();
+    state.c = { ...state.c, ownership };
+    assert.deepEqual(fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state).clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
+  }
 });
 test('design-integration-ownership: settled non-fixable acceptance still fails closed on ambiguous ownership', () => {
   const state = integration();
@@ -31,13 +31,15 @@ test('design-integration-ownership: settled non-fixable acceptance still fails c
   assert.equal(settled.tag, 'failed');
   if (settled.tag === 'failed') assert.match(settled.summary, /ownership is ambiguous or lost/);
 });
-test('accepted shared-contract integration finding enters the fix batch', () => {
+test('design-integration-fix: accepted shared-contract finding enters fix batch', () => {
   const state = integration();
   if (state.tag !== 'integration' || !('c' in state.review)) throw new Error('review');
   state.review = { ...state.review, c: { ...state.review.c, findings: state.review.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } };
   const fix = fixBatch(stepDesign(state, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }).state);
   assert.deepEqual(fix.clusters.flatMap((cluster) => cluster.paths), ['src/a.ts', 'src/b.ts']);
 });
+
+// SECTION: Integration shared contracts and repair
 
 test('integration discloses the one-owner shared contract ruling signal', () => {
   const state = integration();

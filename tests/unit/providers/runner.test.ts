@@ -71,6 +71,7 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test('delegates-credential-stripping: the delegate env keeps the whitelist and drops every credential', async () => {
   assert.deepEqual(sanitizeEnv({ PATH: '/bin', OPENAI_API_KEY: 'k', GH_TOKEN: 't', MY_PASSWORD: 'p', NO_PROXY: 'x' }), { PATH: '/bin', NO_PROXY: 'x' });
+  assert.deepEqual(sanitizeEnv({ OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli', OPENCODE_API_KEY: 'secret' }), { OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli' });
   const h = harness(posix);
   const run = runDelegate(claude, req, 'cli', h.ports);
   await flush();
@@ -172,12 +173,8 @@ test('batch launchers go through cmd.exe with escaped verbatim args, never a raw
   const line = inv.args[3] ?? '';
   assert.ok(!/[^^]&/.test(line) && !/[^^]\|/.test(line), line);
   assert.throws(() => batchInvocation('x.cmd', ['a\nb']), /newline/);
-});
-
-test('batch launchers reject % arguments because cmd.exe expands them despite escapes', () => {
   assert.throws(() => batchInvocation('x.cmd', ['--model', '%PATH%']), /contains %/);
 });
-
 
 test('parsed success retains process timeout and truncation failures', async () => {
   for (const [limit, expected] of [['timedOut', 'timeout'], ['truncated', 'buffer']] as const) {
@@ -190,11 +187,8 @@ test('parsed success retains process timeout and truncation failures', async () 
     assert.equal(result.outcome.status === 'fail' && result.outcome.cls, expected, limit);
   }
 });
-test('rewrite SC4 native config selectors survive while secrets remain stripped', () => {
-  assert.deepEqual(sanitizeEnv({ OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli', OPENCODE_API_KEY: 'secret' }), { OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli' });
-});
 
-test('review fix runner waits for asynchronous lease release before returning', async () => {
+test('runner waits for asynchronous lease release before returning', async () => {
   const h = harness(posix); let release!: () => void; let releasing = false; let settled = false;
   const released = new Promise<void>((resolve) => { release = resolve; });
   const spec = { ...claude, prepare: async () => ({ kind: 'launch' as const, env: {}, release: () => { releasing = true; return released; } }) };

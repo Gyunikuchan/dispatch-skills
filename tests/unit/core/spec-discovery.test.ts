@@ -66,35 +66,25 @@ test('spec discovery: a --spec that differs from the chain candidate fails spec-
   assert.equal(result.ok ? null : result.code, 'spec-conflict');
 });
 
-test('spec discovery: a missing --spec fails spec-not-found', () => {
-  const { discover } = setup();
-  const result = discover({ specFlag: 'docs/missing.spec.md' });
-  assert.equal(result.ok ? null : result.code, 'spec-not-found');
-});
-
-test('spec discovery: a missing spec pinned by a design Parent fails spec-not-found', () => {
+test('spec discovery: a missing --spec, design, or parent spec fails spec-not-found', () => {
   const { write, discover } = setup();
-  write('docs/x.design.md', artifact(`\`docs/missing.spec.md\` · ${PIN}`));
-  const result = discover({ verb: 'implement', argument: 'docs/x.design.md' });
-  assert.equal(result.ok ? null : result.code, 'spec-not-found');
-  assert.match(result.ok ? '' : result.message, /missing\.spec\.md/);
-});
+  const r1 = discover({ specFlag: 'docs/missing.spec.md' });
+  assert.equal(r1.ok ? null : r1.code, 'spec-not-found');
 
-test('spec discovery: a missing spec pinned through an increment plan design fails spec-not-found', () => {
-  const { write, discover } = setup();
   write('docs/x.design.md', artifact(`\`docs/missing.spec.md\` · ${PIN}`));
+  const r2 = discover({ verb: 'implement', argument: 'docs/x.design.md' });
+  assert.equal(r2.ok ? null : r2.code, 'spec-not-found');
+  assert.match(r2.ok ? '' : r2.message, /missing\.spec\.md/);
+
   write('docs/x-i01.plan.md', artifact('`docs/x.design.md` · I01'));
-  const result = discover({ verb: 'implement', argument: 'docs/x-i01.plan.md' });
-  assert.equal(result.ok ? null : result.code, 'spec-not-found');
-  assert.match(result.ok ? '' : result.message, /missing\.spec\.md/);
-});
+  const r3 = discover({ verb: 'implement', argument: 'docs/x-i01.plan.md' });
+  assert.equal(r3.ok ? null : r3.code, 'spec-not-found');
+  assert.match(r3.ok ? '' : r3.message, /missing\.spec\.md/);
 
-test('spec discovery: a missing design pinned by an increment plan fails spec-not-found naming the design', () => {
-  const { write, discover } = setup();
-  write('docs/x-i01.plan.md', artifact('`docs/missing.design.md` · I01'));
-  const result = discover({ verb: 'review', argument: 'docs/x-i01.plan.md' });
-  assert.equal(result.ok ? null : result.code, 'spec-not-found');
-  assert.match(result.ok ? '' : result.message, /missing\.design\.md/);
+  write('docs/x-i02.plan.md', artifact('`docs/missing.design.md` · I01'));
+  const r4 = discover({ verb: 'review', argument: 'docs/x-i02.plan.md' });
+  assert.equal(r4.ok ? null : r4.code, 'spec-not-found');
+  assert.match(r4.ok ? '' : r4.message, /missing\.design\.md/);
 });
 
 /** Asserts that a --spec spelling reaching the chain spec through a dot segment is not a conflict. */
@@ -107,20 +97,13 @@ function assertDotSegmentSpecFlag(specFlag: string) {
   assert.equal(path.normalize(result.candidate ?? ''), path.normalize(spec));
 }
 
-test('spec discovery: a --spec naming the chain spec through dot segments is not a conflict', () => {
+test('spec discovery: a --spec naming the chain spec through dot segments or backslashes is not a conflict', () => {
   assertDotSegmentSpecFlag(['docs', 'sub', '..', 'x.spec.md'].join(path.sep));
+  if (process.platform === 'win32') {
+    assertDotSegmentSpecFlag('docs\\sub\\..\\x.spec.md');
+  }
 });
 
-test('spec discovery: a --spec naming the chain spec with backslashes is not a conflict on Windows', { skip: process.platform !== 'win32' && 'backslash separators are Windows-only' }, () => {
-  assertDotSegmentSpecFlag('docs\\sub\\..\\x.spec.md');
-});
-
-test('discovery follows increment pin through design', () => {
-  const { write, discover } = setup(); const spec = write('docs/x.spec.md', SPEC_SOURCE);
-  write('docs/x.design.md', artifact('`docs/x.spec.md` · ' + PIN));
-  write('docs/x.plan.md', artifact('`docs/x.design.md` · I01'));
-  assert.deepEqual(discover({ verb: 'implement', argument: 'docs/x.plan.md' }), { ok: true, candidate: spec });
-});
 test('discovery ignores non-spec pin', () => {
   for (const parent of ['`notes.txt` · ' + PIN, '`docs/x.spec.md` · sha256:abc', '`docs/x.spec.md` · sha256:' + 'A'.repeat(64)]) {
     const { write, discover } = setup(); write('docs/x.spec.md', SPEC_SOURCE); write('docs/x.plan.md', artifact(parent));

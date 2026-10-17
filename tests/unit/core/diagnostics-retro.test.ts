@@ -126,15 +126,15 @@ test('SC5 other frames carry no diagnostics', async () => {
   assert.deepEqual([author.frame?.data['diagnostics'], rejected.frame?.data['diagnostics']], [undefined, undefined]);
 });
 
-// SECTION: SC6 — disabled means off
+// SECTION: Disabled means off
 
-test('SC6 disabled frames carry no diagnostics', async () => {
+test('disabled diagnostics omits hint from frame data', async () => {
   for (const frame of await hostFrames(false)) assert.equal(frame.data['diagnostics'], undefined, frame.await);
   const done = await reviewRun({ on: false }).begin();
   assert.equal(done.frame?.data['diagnostics'], undefined);
 });
 
-test('SC6 disabled run skips retro', async () => {
+test('disabled diagnostics skips retro phase and completes', async () => {
   const run = reviewRun({ on: false });
   const done = await run.begin();
   assert.equal(done.frame?.await, 'done');
@@ -143,7 +143,7 @@ test('SC6 disabled run skips retro', async () => {
   assert.equal(lines.some((line) => line.type === 'RETRO'), false);
 });
 
-test('SC6 disabled run writes no report or state files', async () => {
+test('disabled diagnostics writes no report or state files', async () => {
   const run = reviewRun({ on: false });
   await run.begin();
   await run.status();
@@ -152,9 +152,9 @@ test('SC6 disabled run writes no report or state files', async () => {
   assert.deepEqual(stateFiles(run.ports, path.join(run.session, '.state')).filter((file) => /diagnostics/.test(file)), []);
 });
 
-// SECTION: SC7 — the session report
+// SECTION: Session report
 
-test('SC7 writes session report at done', async () => {
+test('session diagnostics report is written under run lock at completion', async () => {
   const run = reviewRun({ on: true });
   const write = run.ports.fs.writeAtomic;
   let lockedAtWrite: boolean | undefined;
@@ -172,7 +172,7 @@ test('SC7 writes session report at done', async () => {
   assert.match(report, /\| 1 · review · low \| code review \| no-reviewable-changes \|/);
 });
 
-test('SC7 writes report at fault', async () => {
+test('fault outcome writes diagnostics report without leaking sensitive details', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state/runs/001-ask');
   memoryRunFs(ports, session);
   const handlers: Handlers = { snapshot: async () => { throw new Error('disk detail /secret/path'); } };
@@ -185,7 +185,7 @@ test('SC7 writes report at fault', async () => {
   assert.equal(ports.fs.exists(path.join(runDir, 'lock')), false);
 });
 
-test('SC7 leaves no capture or lock files', async () => {
+test('completed run cleans up diagnostics lock and pending capture files', async () => {
   const run = reviewRun({ on: true });
   await run.begin();
   await run.status();
@@ -195,7 +195,7 @@ test('SC7 leaves no capture or lock files', async () => {
   assert.deepEqual([...new Set(run.ports.fs.listFiles(run.session).map((file) => file.split('/')[0]))].sort(), ['.state', 'diagnostics.md']);
 });
 
-test('SC7 done mentions report only with findings', async () => {
+test('completion frame references diagnostics report only when findings exist', async () => {
   const clean = reviewRun({ on: true });
   await clean.begin();
   assert.equal((await clean.reply({ type: 'RETRO', observations: [] })).frame?.data['diagnostics'], undefined);

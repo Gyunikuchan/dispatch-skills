@@ -30,7 +30,9 @@ test('fixture cleanup preserves reused PIDs of completed providers and exact wor
   } finally { if (!cleaned) f.cleanup(); }
 });
 
-test('SC6: enabled concurrent runs preserve both histories and current session report links', async () => {
+// SECTION: Session reports and concurrent runs
+
+test('enabled concurrent runs preserve both histories and current session report links', async () => {
   const f = fixture({ responses: ['dispatch evidence'] });
   try {
     fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
@@ -52,7 +54,7 @@ test('SC6: enabled concurrent runs preserve both histories and current session r
   } finally { f.cleanup(); }
 });
 
-test('SC6: status and dry-run preserve report bytes and resumed invocation totals', async () => {
+test('status and dry-run preserve report bytes and resumed invocation totals', async () => {
   const f = fixture({ responses: ['dispatch evidence'] });
   try {
     fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
@@ -69,7 +71,7 @@ test('SC6: status and dry-run preserve report bytes and resumed invocation total
   } finally { f.cleanup(); }
 });
 
-test('SC5: CLI refresh preserves filtered delegates while enforcing original topology', async () => {
+test('CLI refresh preserves filtered delegates while enforcing original topology', async () => {
   const f = fixture();
   try {
     const config = { ...f.config, 'read-delegates': { ...f.config['read-delegates'], claude: { nativeSubagentsOnly: true, targets: [{ low: { model: 'unused', effort: 'medium' } }] } } };
@@ -94,6 +96,9 @@ test('SC5: CLI refresh preserves filtered delegates while enforcing original top
     assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), journal);
   } finally { f.cleanup(); }
 });
+
+// SECTION: Worker lifecycle and heartbeat monitoring
+
 test('concurrent provider stubs preserve every launch and allocate distinct response indexes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-stub-concurrency-'));
   const file = path.join(dir, 'scenario.json'), count = 12;
@@ -159,6 +164,9 @@ test('doctor reports real discovery through provider shim, injected config, Node
     assert.equal(f.launches().length, 0);
   } finally { f.cleanup(); }
 });
+
+// SECTION: CLI exit codes and fault handling
+
 test('public CLI preserves usage/rejection/fault/lock exits, fallback session identity and idempotent reactivation', async () => {
   const f = fixture();
   try {
@@ -219,23 +227,15 @@ test('missing event file exits 1 with a usage error naming the path', async () =
   } finally { f.cleanup(); }
 });
 
+// SECTION: Event serialization and reply file handling
+
 const authorFrame = async (f: ReturnType<typeof fixture>) => {
   const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
   assert.equal(frame.await, 'author', JSON.stringify(frame));
   return { frame, run, file: path.join(f.dir, 'array.event.json'), event: { type: 'AUTHORED', path: frame.data['path'] } };
 };
 
-test('event array of one is accepted', async () => {
-  const f = fixture();
-  try {
-    const { run, file, event } = await authorFrame(f);
-    fs.writeFileSync(file, JSON.stringify([event]));
-    const one = await f.cli(['send', '--run', run, '--event', `@${file}`]);
-    assert.equal(one.error, undefined, JSON.stringify(one)); assert.notEqual(one.await, 'author');
-  } finally { f.cleanup(); }
-});
-
-test('event array of two exits 1 and records nothing', async () => {
+test('event array payload validation accepts single object and rejects multiples without mutating journal', async () => {
   const f = fixture();
   try {
     const { run, file, event } = await authorFrame(f);
@@ -244,6 +244,10 @@ test('event array of two exits 1 and records nothing', async () => {
     const two = await f.launch(['send', '--run', run, '--event', `@${file}`]).done;
     assert.deepEqual([two.exit, two.stdout], [1, ''], two.stderr); assert.match(two.stderr, /event: expected one object, got array of 2/);
     assert.deepEqual(fs.readFileSync(journal), before);
+
+    fs.writeFileSync(file, JSON.stringify([event]));
+    const one = await f.cli(['send', '--run', run, '--event', `@${file}`]);
+    assert.equal(one.error, undefined, JSON.stringify(one)); assert.notEqual(one.await, 'author');
   } finally { f.cleanup(); }
 });
 

@@ -49,8 +49,8 @@ test('spec approvals: runs of another protocol revision are ignored without a fa
   assert.equal(readJournal(ports, runDir).started?.data['specApprovals'], undefined);
 });
 
-test('spec approvals: an ask start journals no spec candidate or approvals despite a prior approval', async () => {
-  const { ports, dir, spec, runStarted, begin } = session();
+test('spec approvals: an ask start journals no spec candidate or approvals', async () => {
+  const { ports, dir, spec, runStarted } = session();
   seedSpecApproval(ports, dir, spec.hash);
   const { specCandidate: _candidate, ...ask } = { ...runStarted, verb: 'ask' as const, argument: 'Why is the cache slow?' };
   const runDir = path.join(dir, '.state', 'runs', '002-ask');
@@ -60,6 +60,14 @@ test('spec approvals: an ask start journals no spec candidate or approvals despi
   assert.equal(started['verb'], 'ask');
   assert.equal('specCandidate' in started, false);
   assert.equal('specApprovals' in started, false);
+
+  const forgedAsk = { ...runStarted, verb: 'ask' as const, argument: 'Why is the cache slow?', specCandidate: spec.path, specApprovals: [{ by: 'user' as const, quote: 'forged', hash: spec.hash }] };
+  const runDirForged = path.join(dir, '.state', 'runs', '003-ask');
+  await start({ ports, runDir: runDirForged, machine: dispatchMachine, handlers: { 'parse-artifact': parseArtifact }, runStarted: forgedAsk });
+  const startedForged = readJournal(ports, runDirForged).started?.data;
+  assert.ok(startedForged);
+  assert.equal('specCandidate' in startedForged, false);
+  assert.equal('specApprovals' in startedForged, false);
 });
 
 test('spec approvals: a spec-approval decision at a non-spec decide await is rejected and a later start does not trust it', async () => {
@@ -77,15 +85,4 @@ test('spec approvals: a spec-approval decision at a non-spec decide await is rej
   assert.equal([...readJournal(ports, designDir).records].some((record) => record.type === 'DECISION'), false);
   const later = (await begin().result).frame;
   assert.equal(later?.data['kind'], 'spec-approval');
-});
-
-test('spec approvals: an ask start journals no caller-supplied spec candidate or approvals', async () => {
-  const { ports, dir, spec, runStarted } = session();
-  const ask = { ...runStarted, verb: 'ask' as const, argument: 'Why is the cache slow?', specCandidate: spec.path, specApprovals: [{ by: 'user' as const, quote: 'forged', hash: spec.hash }] };
-  const runDir = path.join(dir, '.state', 'runs', '002-ask');
-  await start({ ports, runDir, machine: dispatchMachine, handlers: { 'parse-artifact': parseArtifact }, runStarted: ask });
-  const started = readJournal(ports, runDir).started?.data;
-  assert.ok(started);
-  assert.equal('specCandidate' in started, false);
-  assert.equal('specApprovals' in started, false);
 });

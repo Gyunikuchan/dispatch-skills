@@ -19,11 +19,10 @@ const input = (overrides: Partial<HotfixInput> = {}): HotfixInput => ({
 });
 const change = (path: string, lines = 1) => ({ path, added: lines, removed: 0, deleted: false, outsideRepo: false });
 
-test('hotfix: a small in-budget fix passes', () => {
-  assert.deepEqual(judgeHotfix(input()), { violations: [], withdrawn: false, files: 1, lines: 7 });
-});
+// SECTION: Budget
 
 test('hotfix: budget is 10 files and 150 lines, excluding reasoned external paths', () => {
+  assert.deepEqual(judgeHotfix(input()), { violations: [], withdrawn: false, files: 1, lines: 7 });
   const eleven = Array.from({ length: 11 }, (_item, index) => change(`src/f${index}.ts`));
   assert.ok(judgeHotfix(input({ changed: eleven })).violations.some((item) => item.startsWith('budget: 11 files')));
   assert.ok(judgeHotfix(input({ changed: [change('src/a.ts', 151)] })).violations.some((item) => item.startsWith('budget: 151 lines')));
@@ -31,6 +30,8 @@ test('hotfix: budget is 10 files and 150 lines, excluding reasoned external path
   assert.deepEqual([external.violations, external.files], [[], 10]);
   assert.ok(judgeHotfix(input({ external: [{ path: 'vendor/x.js', reason: ' ' }] })).violations.some((item) => item.includes('needs a reason')));
 });
+
+// SECTION: Boundaries and secrets
 
 test('observation boundary: hard limits — outside repo, .git/, secrets, task-start deletion, git fingerprints', () => {
   const violations = judgeHotfix(input({
@@ -55,12 +56,14 @@ test('hotfix: production changes before RED violate the boundary', () => {
   assert.ok(judgeHotfix(input({ preRed: true })).violations.some((item) => item.includes('production path before RED')));
 });
 
-test('hotfix: only the original surviving failure withdraws the fix', () => {
-  assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#cap' })).withdrawn, true);
-  assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#other' })).withdrawn, false);
-});
-
 test('hotfix: caller-supplied dir patterns match any directory segment', () => {
   assert.ok(isSecretPath('src/secrets/config.txt', { file: [], basename: [], dir: ['^secrets$'] }));
   assert.ok(!isSecretPath('src/secrets.txt', { file: [], basename: [], dir: ['^secrets$'] }));
+});
+
+// SECTION: Failure withdrawal
+
+test('hotfix: only the original surviving failure withdraws the fix', () => {
+  assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#cap' })).withdrawn, true);
+  assert.equal(judgeHotfix(input({ failureIdentityAfter: 'tests/a.test.ts#other' })).withdrawn, false);
 });

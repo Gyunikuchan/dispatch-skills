@@ -20,50 +20,52 @@ const prepared = (n: number): Event => ({ type: 'REVIEW_PREPARED', effectId: `re
 const rows = [{ slot: 'codex[0]', state: 'success' }, { slot: 'agy[0]', state: 'success' }];
 const waveDone = (n: number, findings: unknown[]): Event => ({ type: 'WAVE_DONE', effectId: `review.wave.${n}`, round: n, slots: rows, findings: findings as never });
 
-for (const [level, expected] of Object.entries({ low: 600_000, medium: 600_000, high: 1_200_000, xhigh: 1_800_000, max: 1_800_000 })) {
-  test(`diagnostics amendment timeout: ${level} default and positive override`, () => {
+test('review timeout: default and positive override across risk levels', () => {
+  for (const [level, expected] of Object.entries({ low: 600_000, medium: 600_000, high: 1_200_000, xhigh: 1_800_000, max: 1_800_000 })) {
     const config = { 'read-delegates': { codex: { targets: [{ [level]: { model: 'gpt-5' } }] } }, phases: { 'code-review': { rounds: { [level]: 2 }, targets: { [level]: 1 } } } };
     for (const timeout of [undefined, 0, -1, 7]) {
       const { state, effects } = drive([started({ level: level as Level, config, overrides: timeout === undefined ? {} : { timeout } }), prepared(1)]);
-      assert.equal(state.tag, 'wave');
-      assert.equal(effects[0]?.kind === 'wave-start' && effects[0].timeoutMs, timeout === 7 ? 7_000 : expected);
+      assert.equal(state.tag, 'wave', `${level} timeout ${timeout}`);
+      assert.equal(effects[0]?.kind === 'wave-start' && effects[0].timeoutMs, timeout === 7 ? 7_000 : expected, `${level} timeout ${timeout}`);
     }
-  });
-}
+  }
+});
 
-test('diagnostics amendment timeout: failed review spec retains fallback', () => {
+test('review timeout: failed review spec retains fallback', () => {
   const { state } = drive([started({ level: 'max', config: { 'read-delegates': {} } })]);
   assert.equal(state.tag, 'failed');
   assert.equal('c' in state && state.c.spec.timeoutMs, 600_000);
 });
 
-test('diagnostics amendment continuation frame: within cap omits reason and exposes full scope', () => {
+test('continuation frame: within cap omits reason and exposes full scope', () => {
   const { state } = drive([started(), prepared(1), waveDone(1, [finding('R1-F001')])]);
   const data = reviewMachine.project(state).data;
   assert.equal(data['scope'], 'full');
   assert.ok(!('continuationReason' in data));
 });
 
-for (const scope of ['delta', 'disputes-only'] as const) test(`diagnostics amendment continuation frame: ${scope} beyond cap describes MUST continuation`, () => {
-  const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } } };
-  const events: Event[] = [started({ config }), prepared(1), waveDone(1, [finding('R1-F001')]),
-    { type: 'RULINGS', rulings: { 'R1-F001': scope === 'delta' ? { ruling: 'accept' } : { ruling: 'reject', reason: 'by design' } } }];
-  if (scope === 'delta') {
+test('continuation frame: beyond cap describes MUST continuation for delta and disputes-only scopes', () => {
+  for (const scope of ['delta', 'disputes-only'] as const) {
+    const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } } };
+    const events: Event[] = [started({ config }), prepared(1), waveDone(1, [finding('R1-F001')]),
+      { type: 'RULINGS', rulings: { 'R1-F001': scope === 'delta' ? { ruling: 'accept' } : { ruling: 'reject', reason: 'by design' } } }];
+    if (scope === 'delta') {
+      const { state } = drive(events);
+      assert.equal(state.tag, 'fix');
+      if (state.tag !== 'fix') throw new Error('fix state missing');
+      events.push({ type: 'FIXES_APPLIED', clusters: state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) },
+        { type: 'VERIFY_DONE', effectId: 'review.verify.1', purpose: 'fix-verify', results: [], fingerprint: {} });
+    }
+    events.push(prepared(2), waveDone(2, [finding('R2-F001', { locus: 'src/b.ts:L1', defect: 'new defect' })]));
     const { state } = drive(events);
-    assert.equal(state.tag, 'fix');
-    if (state.tag !== 'fix') throw new Error('fix state missing');
-    events.push({ type: 'FIXES_APPLIED', clusters: state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) },
-      { type: 'VERIFY_DONE', effectId: 'review.verify.1', purpose: 'fix-verify', results: [], fingerprint: {} });
+    assert.equal(state.tag, 'rule', scope);
+    const data = reviewMachine.project(state).data;
+    assert.equal(data['round'], 2, scope);
+    assert.equal(data['cap'], 1, scope);
+    assert.equal(data['scope'], scope, scope);
+    assert.match(String(data['continuationReason']), /MUST/, scope);
+    assert.match(String(data['continuationReason']), scope === 'delta' ? /delta.*fixed|fixed.*delta/ : /disputes-only.*pending.rejection|pending.rejection.*disputes-only/, scope);
   }
-  events.push(prepared(2), waveDone(2, [finding('R2-F001', { locus: 'src/b.ts:L1', defect: 'new defect' })]));
-  const { state } = drive(events);
-  assert.equal(state.tag, 'rule');
-  const data = reviewMachine.project(state).data;
-  assert.equal(data['round'], 2);
-  assert.equal(data['cap'], 1);
-  assert.equal(data['scope'], scope);
-  assert.match(String(data['continuationReason']), /MUST/);
-  assert.match(String(data['continuationReason']), scope === 'delta' ? /delta.*fixed|fixed.*delta/ : /disputes-only.*pending.rejection|pending.rejection.*disputes-only/);
 });
 
 function drive(events: readonly Event[]): { state: ReviewState; effects: readonly Effect[] } {
@@ -121,17 +123,19 @@ test('an active review phase with zero resolved reviewers fails; rounds zero sti
   assert.equal(play(reviewMachine, [started({ config: skip })]).at(-1)?.at, 'review › skipped');
 });
 
-for (const coverage of ['failed', 'missing', 'clean'] as const) test(`rewrite SC1 responsible reviewer ${coverage} controls omission`, () => {
-  const events = [started(), prepared(1), waveDone(1, [finding('R1-F001')]),
-    { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event, prepared(2),
-    { ...waveDone(2, []), slots: coverage === 'clean' ? rows : [rows[0]!, ...(coverage === 'failed' ? [{ slot: 'agy[0]', state: 'failed', reason: 'timeout' }] : [])] } as Event];
-  const { state } = drive(events);
-  assert.equal(state.tag, coverage === 'clean' ? 'settled' : 'failed');
-  assert.equal('c' in state && state.c.findings[0]?.status, coverage === 'clean' ? 'closed-by-reviewer' : 'pending-rejection');
-  if (coverage === 'clean') assert.deepEqual(state.tag === 'settled' && state.exit.rejections, ['R1-F001']);
+test('responsible reviewer coverage controls finding omission', () => {
+  for (const coverage of ['failed', 'missing', 'clean'] as const) {
+    const events = [started(), prepared(1), waveDone(1, [finding('R1-F001')]),
+      { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event, prepared(2),
+      { ...waveDone(2, []), slots: coverage === 'clean' ? rows : [rows[0]!, ...(coverage === 'failed' ? [{ slot: 'agy[0]', state: 'failed', reason: 'timeout' }] : [])] } as Event];
+    const { state } = drive(events);
+    assert.equal(state.tag, coverage === 'clean' ? 'settled' : 'failed', coverage);
+    assert.equal('c' in state && state.c.findings[0]?.status, coverage === 'clean' ? 'closed-by-reviewer' : 'pending-rejection', coverage);
+    if (coverage === 'clean') assert.deepEqual(state.tag === 'settled' && state.exit.rejections, ['R1-F001']);
+  }
 });
 
-test('rewrite SC1 all-failed review reports coverage failure', () => {
+test('all-failed review reports reviewer coverage failure', () => {
   const { state } = drive([started(), prepared(1), { ...waveDone(1, []), slots: rows.map((row) => ({ ...row, state: 'failed' })) } as Event]);
   assert.equal(state.tag, 'failed');
   assert.match(state.tag === 'failed' ? state.detail : '', /reviewer-coverage/);
@@ -235,60 +239,56 @@ test('review-cap: observations spend no round and cap preserves findings', () =>
   assert.deepEqual((coverage['unassessed'] as { id: string }[]).map((row) => row.id), ['second']);
 });
 
-for (const action of ['targeted', 'full'] as const) test(`review-cap: selected ${action} review spends a round only when launched`, () => {
-  const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
-  if (ruled.state.tag !== 'rule') throw new Error('rule');
-  const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Edited lines need review', paths: ['src/a.ts'] });
-  assert.equal(selected.state.tag, 'rule'); assert.deepEqual(selected.effects, []);
-  if (selected.state.tag !== 'rule') return;
-  assert.equal(selected.state.c.round, 1);
-  assert.match(reviewMachine.validate!(selected.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action: 'full', rationale: 'Again' }) ?? '', /already/);
-  const launched = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-  assert.equal(launched.state.tag, 'prepare'); if (launched.state.tag !== 'prepare') return;
-  assert.equal(launched.state.c.round, 1);
-  const effect = launched.effects.find((row) => row.kind === 'prepare-review');
-  assert.ok(effect?.kind === 'prepare-review');
-  assert.equal(effect.scope['scope'], action === 'full' ? 'full' : 'delta');
-  assert.ok((effect.scope['affectedPaths'] as string[]).includes('src/a.ts'));
-  assert.equal(launched.state.c.findings.find((row) => row.id === 'R1-F001')?.status, 'accepted', 'prior rulings stay');
-  assert.equal(launched.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, undefined);
-  const wave = stepTarget(launched, { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false }, promptPaths: { 'codex[0]': 'selected.prompt.md' } });
-  assert.equal(wave.state.tag, 'wave'); if (wave.state.tag !== 'wave') return;
-  assert.equal(wave.state.c.round, 2);
-  assert.equal(wave.state.c.requested, undefined);
-  assert.equal(wave.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, 2);
+test('review-cap: selected review spends a round only when launched across targeted and full actions', () => {
+  for (const action of ['targeted', 'full'] as const) {
+    const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
+    if (ruled.state.tag !== 'rule') throw new Error('rule');
+    const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Edited lines need review', paths: ['src/a.ts'] });
+    assert.equal(selected.state.tag, 'rule', action); assert.deepEqual(selected.effects, [], action);
+    if (selected.state.tag !== 'rule') return;
+    assert.equal(selected.state.c.round, 1, action);
+    assert.match(reviewMachine.validate!(selected.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action: 'full', rationale: 'Again' }) ?? '', /already/, action);
+    const launched = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+    assert.equal(launched.state.tag, 'prepare', action); if (launched.state.tag !== 'prepare') return;
+    assert.equal(launched.state.c.round, 1, action);
+    const effect = launched.effects.find((row) => row.kind === 'prepare-review');
+    assert.ok(effect?.kind === 'prepare-review', action);
+    assert.equal(effect.scope['scope'], action === 'full' ? 'full' : 'delta', action);
+    assert.ok((effect.scope['affectedPaths'] as string[]).includes('src/a.ts'), action);
+    assert.equal(launched.state.c.findings.find((row) => row.id === 'R1-F001')?.status, 'accepted', 'prior rulings stay');
+    assert.equal(launched.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, undefined, action);
+    const wave = stepTarget(launched, { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false }, promptPaths: { 'codex[0]': 'selected.prompt.md' } });
+    assert.equal(wave.state.tag, 'wave', action); if (wave.state.tag !== 'wave') return;
+    assert.equal(wave.state.c.round, 2, action);
+    assert.equal(wave.state.c.requested, undefined, action);
+    assert.equal(wave.state.c.observations?.find((row) => row.id === 'second')?.use?.launchedRound, 2, action);
+  }
 });
 
-for (const action of ['targeted', 'full'] as const) for (const outcome of ['failed', 'empty'] as const) test(`review-cap: ${action} preparation ${outcome} retains an unlaunched selection`, () => {
-  const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
-  const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Review selected code', paths: ['src/a.ts'] });
-  const preparing = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
-  const effect = preparing.effects.find((item) => item.kind === 'prepare-review')!;
-  const result = stepTarget(preparing, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
-  assert.equal(result.state.tag, outcome);
-  assert.ok('c' in result.state); if (!('c' in result.state)) return;
-  assert.equal(result.state.c.round, 1);
-  assert.equal(result.state.c.requested, 'second');
-  assert.equal(result.state.c.observations![0]!.use?.launchedRound, undefined);
-  assert.equal(result.state.c.rounds.length, 1);
+test('review-cap: preparation failure or empty scope retains unlaunched selection across targeted and full actions', () => {
+  for (const action of ['targeted', 'full'] as const) for (const outcome of ['failed', 'empty'] as const) {
+    const ruled = observedRule(3, [finding('R1-F001', { severity: 'CONSIDER' })]);
+    const selected = reviewMachine.step(ruled.state, { type: 'REVIEW_USE', observationId: 'second', afterHash: 'after-second', action, rationale: 'Review selected code', paths: ['src/a.ts'] });
+    const preparing = stepTarget(selected, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+    const effect = preparing.effects.find((item) => item.kind === 'prepare-review')!;
+    const result = stepTarget(preparing, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
+    assert.equal(result.state.tag, outcome, `${action} ${outcome}`);
+    assert.ok('c' in result.state); if (!('c' in result.state)) return;
+    assert.equal(result.state.c.round, 1, `${action} ${outcome}`);
+    assert.equal(result.state.c.requested, 'second', `${action} ${outcome}`);
+    assert.equal(result.state.c.observations![0]!.use?.launchedRound, undefined, `${action} ${outcome}`);
+    assert.equal(result.state.c.rounds.length, 1, `${action} ${outcome}`);
+  }
 });
 
-for (const outcome of ['failed', 'empty'] as const) test(`review-cap: first preparation ${outcome} spends no round`, () => {
-  const preparing = reviewMachine.step(reviewMachine.initial(), started());
-  const effect = preparing.effects[0]!;
-  const result = reviewMachine.step(preparing.state, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
-  assert.equal(result.state.tag, outcome);
-  assert.ok('c' in result.state && result.state.c.round === 0);
-});
-
-test('pin check before first round', () => {
- const invocation = started({ argument: 'x.plan.md', config: { ...CONFIG, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } } });
- const built = reviewSpecFromRun(invocation, 'plan', invocation.argument, { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) });
- assert.ok(built.ok); if (!built.ok) return;
- const first = beginReview(built.spec, 'review', {});
- assert.equal(first.state.tag, 'pin-check'); assert.equal(first.effects[0]?.kind, 'parse-artifact');
- const failed = stepReview(first.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: first.effects[0]!.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: 'sha256:' + 'a'.repeat(64), current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } });
- assert.equal(failed.state.tag, 'failed'); assert.equal('code' in failed.state && failed.state.code, 'stale-spec'); assert.deepEqual(failed.effects, []);
+test('review-cap: first preparation failure or empty scope spends no round', () => {
+  for (const outcome of ['failed', 'empty'] as const) {
+    const preparing = reviewMachine.step(reviewMachine.initial(), started());
+    const effect = preparing.effects[0]!;
+    const result = reviewMachine.step(preparing.state, outcome === 'failed' ? { type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: 'Preparation failed' } : { type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true }, promptPaths: {} });
+    assert.equal(result.state.tag, outcome, outcome);
+    assert.ok('c' in result.state && result.state.c.round === 0, outcome);
+  }
 });
 
 const governingIdentity = { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) };
@@ -299,6 +299,21 @@ function governedReview(kind: 'plan' | 'design' = 'plan') {
 function pinAnswer(effect: Effect, design: string | null = null, stale = false): Event {
  return { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: effect.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: governingIdentity.hash, current: stale ? 'sha256:' + 'b'.repeat(64) : governingIdentity.hash, design, reqIds: [] } };
 }
+
+test('pin check before first round rejects stale spec or design pin', () => {
+ const invocation = started({ argument: 'x.plan.md', config: { ...CONFIG, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } } });
+ const built = reviewSpecFromRun(invocation, 'plan', invocation.argument, { path: 'x.spec.md', hash: 'sha256:' + 'a'.repeat(64) });
+ assert.ok(built.ok); if (!built.ok) return;
+ const first = beginReview(built.spec, 'review', {});
+ assert.equal(first.state.tag, 'pin-check'); assert.equal(first.effects[0]?.kind, 'parse-artifact');
+ const failed = stepReview(first.state, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: first.effects[0]!.id, hash: 'h', parsed: {}, defects: [], governing: { pinned: 'sha256:' + 'a'.repeat(64), current: 'sha256:' + 'b'.repeat(64), design: null, reqIds: [] } });
+ assert.equal(failed.state.tag, 'failed'); assert.equal('code' in failed.state && failed.state.code, 'stale-spec'); assert.deepEqual(failed.effects, []);
+
+ const designFirst = governedReview();
+ const designResult = stepReview(designFirst.state, pinAnswer(designFirst.effects[0]!, 'x.design.md', true));
+ assert.ok(designResult.state.tag === 'failed'); assert.equal(designResult.state.code, 'stale-design-spec'); assert.deepEqual(designResult.effects, []);
+});
+
 test('pin check current pin proceeds', () => {
  for (const kind of ['plan', 'design'] as const) {
  const first = governedReview(kind); const next = stepReview(first.state, pinAnswer(first.effects[0]!));
@@ -336,10 +351,4 @@ test('pin check missing design fails with stale-design-spec', () => {
  assert.equal(failed.state.tag, 'failed'); if (failed.state.tag !== 'failed') return;
  assert.equal(failed.state.code, detail === 'permission denied' ? undefined : 'stale-design-spec'); assert.deepEqual(failed.effects, []);
  }
-});
-
-test('pin check before first round rejects increment design pin', () => {
- const first = governedReview();
- const result = stepReview(first.state, pinAnswer(first.effects[0]!, 'x.design.md', true));
- assert.ok(result.state.tag === 'failed'); assert.equal(result.state.code, 'stale-design-spec'); assert.deepEqual(result.effects, []);
 });

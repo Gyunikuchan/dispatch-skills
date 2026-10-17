@@ -3,24 +3,27 @@ import { test } from 'node:test';
 
 import { ARMS, type Json, defects, prepared, writeClaims, defectClaim, scenario, ids } from '../helpers/audit-calibration.ts';
 
-test('audit calibration summarize refuses to score claims that were not fixed first', async () => {
-  const { mod, workDir, f } = await prepared();
-  const s = scenario(f, ids(defects(f)));
-  writeClaims(workDir, 'old', s.cases);
-  writeClaims(workDir, 'new', s.cases);
-  assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: s.matches } }, usage: {} }), /not fixed/);
+test('audit calibration summarize enforces fixed claims integrity before scoring', async () => {
+  {
+    const { mod, workDir, f } = await prepared();
+    const s = scenario(f, ids(defects(f)));
+    writeClaims(workDir, 'old', s.cases);
+    writeClaims(workDir, 'new', s.cases);
+    assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: s.matches } }, usage: {} }), /not fixed/);
+  }
+
+  {
+    const { mod, workDir, f } = await prepared();
+    const s = scenario(f, ids(defects(f)));
+    for (const arm of ARMS) {
+      writeClaims(workDir, arm, s.cases);
+      mod.fixClaims(workDir, arm);
+    }
+    writeClaims(workDir, 'new', { ...s.cases, extra: [] });
+    assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: s.matches } }, usage: {} }), /changed after/);
+  }
 });
 
-test('audit calibration summarize refuses claims edited after they were fixed', async () => {
-  const { mod, workDir, f } = await prepared();
-  const s = scenario(f, ids(defects(f)));
-  for (const arm of ARMS) {
-    writeClaims(workDir, arm, s.cases);
-    mod.fixClaims(workDir, arm);
-  }
-  writeClaims(workDir, 'new', { ...s.cases, extra: [] });
-  assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: s.matches } }, usage: {} }), /changed after/);
-});
 
 test('audit calibration rejects a root-cause match that names no fixed defect claim of that case', async () => {
   const { mod, workDir, f } = await prepared();

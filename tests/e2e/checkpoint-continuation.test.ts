@@ -10,6 +10,8 @@ import { createRestore, restoreRecovery } from '../../skills/dispatch/scripts/ef
 import type { Effect } from '../../skills/dispatch/scripts/core/types.ts';
 import { fixture } from '../helpers/e2e.ts';
 
+// SECTION: Candidate delivery and restore recovery
+
 test('recovery-git: committed candidate and delivery proof retain all-path caller collision guards', async () => {
   const f = fixture(), originalWrite = nodePorts().fs.writeBase64Atomic;
   try {
@@ -96,6 +98,8 @@ test('recovery-git: immutable restore survives partial mutation and refuses newe
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/b.ts'), 'utf8'), 'original b\n'); ports.fs.writeBase64Atomic = write;
   } finally { f.cleanup(); }
 });
+
+// SECTION: Ordered delivery replay continuation
 
 test('recovery-git: ordered delivery replay retains conflicts, recovers resolution and refuses repeated collisions', async () => {
   const f = fixture();

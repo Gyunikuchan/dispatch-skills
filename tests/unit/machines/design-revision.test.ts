@@ -137,7 +137,7 @@ test('design-revision: completed changed acceptance and dependent increments inv
   assert.deepEqual(designDelta(design, changed), { changed: ['I01'], invalidated: ['I01', 'I02'], removed: [] });
   assert.deepEqual(designDelta(design, design).invalidated, []);
 });
-test('design revision refuses a changed objective before review', () => {
+test('design revision: changed objective is refused before review', () => {
   const base = approval('implement');
   const authored = beginDesignRevision(base.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' });
   const parsing = stepDesignRevision(authored.state, { type: 'AUTHORED', path: authored.state.workingPath });
@@ -157,7 +157,7 @@ test('prewrite-level: design growth before the first child gate remains in the r
   assert.equal(reviewed.state.tag, 'resume');
   assert.deepEqual(reviewed.effects, []);
 });
-test('design revision request approved by orchestrator', () => {
+test('design revision: orchestrator approval adopts revised scope obligations', () => {
   const base = approval('implement').c;
   const before = { ...design, governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership\n\n## Final Integration\nRun the governed suite' };
   const c = { ...base, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
@@ -189,7 +189,7 @@ test('design revision request approved by orchestrator', () => {
   }
 });
 
-test('design revision request escalates to user', () => {
+test('design revision: orchestrator escalation resolves through user decision', () => {
   const before = { ...design, governedText: '# Delivery\n\n## Approach\nREQ-1 strategy\nKeep the accepted behavior\n\n## Architecture & Boundaries\nPreserve module ownership' };
   const c = { ...approval('implement').c, design: before, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] }, baseline: 'a'.repeat(40), approval: { by: 'user' as const, quote: 'Deliver', hash } };
   const working = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'add required module', evidence: 'The accepted behavior needs a companion path.' });
@@ -334,7 +334,7 @@ test('an unaffected active increment retains its evidence await and progress acr
   assert.deepEqual(resumed.effects, []);
 });
 
-test('approach change is a scope obligation', () => {
+test('design revision: approach change is a scope obligation', () => {
  const { parse, event } = revisionParsing();
  const revised = { ...design, governedText: design.governedText + '\n## Approach\nREQ-1 strategy\nREQ-1 new strategy\n' };
  if (parse.state.tag !== 'parse') throw new Error('Expected parse');

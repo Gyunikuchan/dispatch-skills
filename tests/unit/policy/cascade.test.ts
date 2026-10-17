@@ -9,6 +9,8 @@ const agy: Voice = {
 };
 const lastModel = { model: 1, mode: 0 };
 
+// SECTION: Failure dispositions
+
 test('delegates-failure-classes: every class has a disposition; integrity and config end the run', () => {
   const classes: FailureClass[] = [
     'quota', 'context-overflow', 'auth', 'model-not-found', 'cli-outdated', 'model-not-loaded', 'sandbox-unsupported', 'not-found',
@@ -21,6 +23,8 @@ test('delegates-failure-classes: every class has a disposition; integrity and co
   assert.equal(classes.filter((cls) => dispositions[cls] === 'cascade').length, 12);
   assert.deepEqual(next('config', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'run', reason: 'config is terminal for the run' });
 });
+
+// SECTION: Model and mode cascade
 
 test('delegates-model-array-cascade: every cascade class, auth included, tries the next model first', () => {
   for (const cls of ['auth', 'timeout', 'quota'] as const) {
@@ -35,11 +39,12 @@ test('delegates-mode-cascade: only provider-declared classes advance the mode, r
   assert.equal(next('quota', { model: 1, mode: 1 }, agy).kind, 'terminal');
 });
 
+// SECTION: Reserves and substitution pool
+
 test('delegates-reserves: exhausted voices prefer reserves and use native fallback only on the orchestrator platform', () => {
   assert.deepEqual(next('timeout', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: true }), { kind: 'reserve' });
   assert.deepEqual(next('timeout', lastModel, agy, { orchestratorPlatform: 'agy', reserveAvailable: false }), { kind: 'native-fallback' });
   assert.equal(next('timeout', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: false }).kind, 'terminal');
-
 });
 
 test('delegates-reserves-once: each reserve is consumed once per wave with recorded substitutions', () => {

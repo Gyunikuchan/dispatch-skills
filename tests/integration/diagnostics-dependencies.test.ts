@@ -5,7 +5,7 @@ import path from 'node:path';
 const read = (file: string): string => fs.readFileSync(file, 'utf8');
 
 
-test('SC10 collector imports no machines', () => {
+test('collector imports no machines or interpreter', () => {
   const source = read(path.join(import.meta.dirname, '../../skills/dispatch/scripts/core/diagnostics.ts'));
   const imports = [...source.matchAll(/^import [^;]* from '([^']+)';$/gm)].map((match) => match[1] ?? '');
   assert.ok(imports.length > 0);

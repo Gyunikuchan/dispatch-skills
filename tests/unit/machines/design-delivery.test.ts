@@ -9,6 +9,7 @@ import { beginDesignRevision, stepDesignRevision } from '../../../skills/dispatc
 import { PLAN, FP } from './fixtures/implement-recovery.ts';
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { started } from './fixtures/design-delivery.ts';
+// SECTION: Increment delivery and selection
 
 test('prewrite-level: gate sees all increments before checkout', () => {
   const state = started();
@@ -82,6 +83,8 @@ test('bound child baseline derives approval without an approval await', () => {
   assert.ok(result.state.child.c.designBinding && result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
 });
 
+// SECTION: Spec settlement and restart
+
 const revisedSpec = { path: 'x.spec.md', hash: 'sha256:' + 'b'.repeat(64) };
 test('stale design spec pin returns design to author', () => {
  const base = approval();
@@ -103,20 +106,16 @@ function restartedIncrement() {
  assert.ok(accepted.state.tag === 'increment' && accepted.state.child.tag === 'starting');
  return accepted;
 }
-test('stale design spec revision approval restarts increment', () => {
+test('stale design spec revision approval restarts increment and archives earlier history', () => {
  const restarted = restartedIncrement(); assert.ok(restarted.state.tag === 'increment' && restarted.state.child.tag === 'starting');
+ assert.equal(restarted.state.c.histories['I01']?.length, 1);
+ assert.equal(restarted.state.c.histories['I01']?.[0]?.tag, 'starting');
  assert.equal(restarted.state.child.c.specEpoch, 1); assert.deepEqual(restarted.state.c.restartIncrements, []);
  assert.deepEqual(restarted.state.child.c.governingSpec, revisedSpec);
  assert.equal(restarted.effects.at(-1)?.kind, 'snapshot');
  const complete = { ...restarted.state, child: { tag: 'complete' as const, c: { ...restarted.state.child.c, changedPaths: ['src/a.ts'] }, summary: 'Complete' } };
  const next = stepDesign(complete, { type: 'LOCK_BROKEN', stalePid: 1 });
  assert.ok(next.state.tag === 'increment' && next.state.increment === 'I02'); assert.deepEqual(next.state.c.completed, ['I01']);
-});
-test('restarted increment keeps earlier plan review history', () => {
- const restarted = restartedIncrement(); assert.ok(restarted.state.tag === 'increment');
- assert.equal(restarted.state.c.histories['I01']?.length, 1);
- assert.equal(restarted.state.c.histories['I01']?.[0]?.tag, 'starting');
- assert.equal('c' in restarted.state.child && restarted.state.child.c?.specEpoch, 1);
 });
 
 function historyReview(machinePath: string, target: string, marker: string) {

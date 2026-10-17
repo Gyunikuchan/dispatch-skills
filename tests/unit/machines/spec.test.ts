@@ -15,6 +15,8 @@ const settledFrom = (state: SpecState): SpecState => {
   return state;
 };
 
+// SECTION: Reading and authoring
+
 test('spec stage: a candidate is read and settles its path and hash on a clean parse', () => {
   const start = read('/repo/a.spec.md');
   assert.deepEqual(start.effects, [{ kind: 'parse-artifact', id: 'spec.parse-artifact.1', path: '/repo/a.spec.md', artifact: 'spec', level: 'low' }]);
@@ -49,6 +51,8 @@ test('spec stage: no candidate authors at the default path and reads the authore
   assert.equal(reading.state.tag, 'reading');
   assert.equal(reading.effects[0]?.kind === 'parse-artifact' && reading.effects[0].path, '/session/x.spec.md');
 });
+
+// SECTION: Approval and revision
 
 test('spec stage: approval settles on the current hash, rejects another hash, and stops on stop', () => {
   const settled = settledFrom(specMachine.step(read('/repo/a.spec.md', 'medium').state, parsed('spec.parse-artifact.1')).state);

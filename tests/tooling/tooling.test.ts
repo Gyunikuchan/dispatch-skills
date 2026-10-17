@@ -7,6 +7,8 @@ import { hashes } from '../../scripts/generate-hashes.ts';
 import { checkTerms, toolingRoot } from '../../scripts/check-terms.ts';
 import { validateConfigs } from '../../scripts/validate-configs.ts';
 import { checkDiagram, diagram, writeDiagram } from '../../scripts/diagram.ts';
+// SECTION: Hashes
+
 test('root-aware hash fixture recognizes contract and catches drift', () => {
   const root = tempDir(), skill = path.join(root, 'skills/dispatch'); fs.mkdirSync(skill, { recursive: true });
   fs.writeFileSync(path.join(skill, 'SKILL.md'), 'contract'); hashes(root);
@@ -17,10 +19,15 @@ test('root-aware hash fixture recognizes contract and catches drift', () => {
   assert.deepEqual(hashes(root, true), []);
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(skill, 'skill-hashes.json'), 'utf8'))), ['SKILL.md']);
 });
+
+// SECTION: Root resolution
+
 test('toolingRoot defaults and requires a directory value', () => {
   assert.equal(toolingRoot([]), '.'); assert.equal(toolingRoot(['--check']), '.'); assert.equal(toolingRoot(['--check', '--root', '.']), '.');
   for (const args of [['--root'], ['--root', '--check'], ['--check', '--root']]) assert.throws(() => toolingRoot(args), /--root requires a directory value/);
 });
+
+// SECTION: Terminology
 
 test('root-aware terminology fixture reports actionable paths while skipping code and glossary', () => {
   const root = tempDir(), skill = path.join(root, 'skills/dispatch'); fs.mkdirSync(path.join(skill, 'references'), { recursive: true });
@@ -28,12 +35,18 @@ test('root-aware terminology fixture reports actionable paths while skipping cod
   fs.writeFileSync(path.join(skill, 'SKILL.md'), 'Use a sub-agent.\n`sub-agent`\n```\nsub-agent\n```\n');
   const errors = checkTerms(root); assert.equal(errors.length, 1); assert.match(errors[0]!, /SKILL\.md:1.*subagent/);
 });
+
+// SECTION: Config validation
+
 test('root-aware strict config fixture validates sample without reading ignored local config', () => {
   const root = tempDir(), skill = path.join(root, 'skills/dispatch'); fs.mkdirSync(skill, { recursive: true });
   fs.writeFileSync(path.join(skill, 'config.sample.jsonc'), '{"read-delegates":{"codex":{"targets":[{"low":{"model":"test"}}]}}}');
   fs.writeFileSync(path.join(skill, 'config.local.jsonc'), 'invalid'); assert.deepEqual(validateConfigs(root), []);
   fs.writeFileSync(path.join(skill, 'config.sample.jsonc'), '{"unknown":true}'); assert.match(validateConfigs(root).join(), /config.sample.jsonc.*Unrecognized/);
 });
+
+// SECTION: State diagrams
+
 test('machine diagrams are deterministic declared transitions written under the supplied root', () => {
   const root = tempDir(), rendered = diagram(); writeDiagram(root);
   assert.equal(fs.readFileSync(path.join(root, 'docs/state-diagrams.md'), 'utf8'), rendered);

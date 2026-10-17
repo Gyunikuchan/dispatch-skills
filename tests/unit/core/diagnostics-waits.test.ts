@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { collectRunFacts, type FoldRun, type TimelineStep } from '../../../skills/dispatch/scripts/core/diagnostics.ts';
@@ -10,6 +9,7 @@ import type { Effect, Handlers, Machine, RunStartedEvent } from '../../../skills
 import { heuristics, renderDiagnostics, type Phase } from '../../../skills/dispatch/scripts/domain/diagnostics.ts';
 import { createHandoff } from '../../../skills/dispatch/scripts/effects/handoff.ts';
 import { FIXED_NOW, fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, RUN_STARTED, snapshotResult, type AwaitingState } from './fixtures/machines.ts';
 
 const INSTRUCTION = 'Reply RETRO with at most 3 observations about dispatch-owned components; [] is valid.';
@@ -17,7 +17,6 @@ const OBSERVATION = { id: 'slow-author', component: 'references/templates/plan.m
 const PLAN: Phase = { key: 'plan', name: 'plan' };
 const IMPL: Phase = { key: 'impl', name: 'implementation' };
 const closed = (phase: Phase): Phase => ({ ...phase, outcome: 'complete' });
-const read = (file: string): string => fs.readFileSync(file, 'utf8');
 
 /** A collector fold over any fixture machine: the real `fold`, with test-owned phases standing in for the root machine's. */
 function testFold<S>(machine: Machine<S>, phasesOf: (state: S) => Phase[], userOf: (state: S) => boolean = () => false): FoldRun {
@@ -46,6 +45,7 @@ function steppedPorts(): { ports: FakePorts; advance: (ms: number) => void; now:
 
 function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-review') {
   const ports = fakePorts(), runDir = path.join(session, '.state/runs', id);
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: [], empty: true }, promptPaths: {} }],
     handoff: createHandoff({ tempRoot: session, workspaceRoot: path.dirname(session) }),
@@ -67,6 +67,7 @@ type HandoffHandler = NonNullable<Handlers['handoff']>;
 /** A real code review through dispatchMachine with one codex finding per round; diagnostics on, so it ends at retro. */
 function codeReview(finding: (round: number) => Record<string, unknown>, rounds: number, ports: FakePorts = fakePorts(), wrapHandoff = (handoff: HandoffHandler): HandoffHandler => handoff) {
   const session = tempDir(), runDir = path.join(session, '.state/runs/001-review');
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts'] }, promptPaths: { 'codex[0]': 'p0.md' } }],
     'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 1, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: 'input.json' }],
@@ -79,7 +80,7 @@ function codeReview(finding: (round: number) => Record<string, unknown>, rounds:
     config: { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'code-review': { rounds: { low: rounds }, targets: { low: 1 } } } },
   };
   return {
-    report: () => read(path.join(session, 'diagnostics.md')),
+    report: () => ports.fs.readText(path.join(session, 'diagnostics.md')),
     begin: async () => (await start({ ...base, runStarted })).frame?.await,
     retryRecovery: async () => {
       const status = await send({ ...base, dryRun: true });
@@ -130,9 +131,9 @@ const gateMachine: Machine<GateState> = {
   transitions: [{ from: 'new', on: 'RUN_STARTED', to: 'approve' }, { from: 'approve', on: 'DECISION', to: 'verifying' }, { from: 'verifying', on: 'VERIFY_DONE', to: 'done' }],
 };
 
-// SECTION: SC10 waits, faults, and toggles
+// SECTION: Waits, faults, and toggles
 
-test('SC10 needs-user wait counts as user time', async () => {
+test('needs-user wait counts as user time', async () => {
   const { ports, advance } = steppedPorts();
   const review = codeReview((round) => reviewFinding(round, 'intent'), 1, ports);
   assert.equal(await review.begin(), 'rule');
@@ -147,7 +148,7 @@ test('SC10 needs-user wait counts as user time', async () => {
   assert.doesNotMatch(report, /H6/, 'a user wait never raises the long host turn finding');
 });
 
-test('SC10 needs-user wait then failing send counts the wait as user time', async () => {
+test('needs-user wait then failing send counts the wait as user time', async () => {
   const { ports, advance } = steppedPorts();
   let failing = true;
   const review = codeReview((round) => reviewFinding(round, 'intent'), 1, ports, (handoff) => async (effect, effectPorts, context) => {
@@ -171,9 +172,10 @@ test('SC10 needs-user wait then failing send counts the wait as user time', asyn
   assert.doesNotMatch(report, /H6/, 'no host gap holds the user wait');
 });
 
-test('SC10 fault report names fault class and timing without detail', async () => {
+test('fault report names fault class and timing without detail', async () => {
   const { ports, advance } = steppedPorts();
   const session = tempDir(), runDir = path.join(session, '.state/runs/001-ask');
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     snapshot: async (effect) => { advance(1_000); return [snapshotResult(effect.id)]; },
     verify: async () => { advance(3_000); throw portTimeout(); },
@@ -186,14 +188,15 @@ test('SC10 fault report names fault class and timing without detail', async () =
   const lines = [...readJournal(ports, runDir).records];
   assert.deepEqual(lines.map((line) => line.type), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT', 'AUTHORED', 'EFFECT_STARTED', 'DIAGNOSTIC_NOTE'], 'the failed send retains accepted transitions and one note');
   assert.deepEqual(lines[5]?.data, { kind: 'fault', effectId: 'fixture.verify.1', cls: 'port-timeout', sendStartedAt: FIXED_NOW + 121_000, failedAt: FIXED_NOW + 124_000, boundarySeq: 3 });
-  const report = read(path.join(session, 'diagnostics.md'));
+  const report = ports.fs.readText(path.join(session, 'diagnostics.md'));
   assert.ok(report.includes('- Run 1 fault: `port-timeout` in `fixture.verify.1`; host wait 2m 0s; driver 3s.'));
   assert.doesNotMatch(report, /alice|secret|timed out/);
 });
 
-test('SC10 long host wait then short failing effect splits host and driver time', async () => {
+test('long host wait then short failing effect splits host and driver time', async () => {
   const { ports, advance } = steppedPorts();
-  const runDir = path.join(tempDir(), '.state/runs/001-ask');
+  const session = tempDir(), runDir = path.join(session, '.state/runs/001-ask');
+  memoryRunFs(ports, session);
   let failing = true;
   const handlers: Handlers = {
     snapshot: async (effect) => { advance(1_000); return [snapshotResult(effect.id)]; },
@@ -214,9 +217,10 @@ test('SC10 long host wait then short failing effect splits host and driver time'
   assert.equal(facts.outcome, 'complete');
 });
 
-test('SC10 long approval wait then failing send counts the wait as user time', async () => {
+test('long approval wait then failing send counts the wait as user time', async () => {
   const { ports, advance } = steppedPorts();
-  const runDir = path.join(tempDir(), '.state/runs/001-gate');
+  const session = tempDir(), runDir = path.join(session, '.state/runs/001-gate');
+  memoryRunFs(ports, session);
   let failing = true;
   const handlers: Handlers = { verify: async (effect) => { if (failing) { advance(500); throw portTimeout(); } return verifyDone(effect); } };
   handlers.verify!.recovery = { repeat: 'deterministic-read' };
@@ -237,7 +241,8 @@ test('SC10 long approval wait then failing send counts the wait as user time', a
 
 test('fault after a user wait renders user wait', async () => {
   const { ports, advance } = steppedPorts();
-  const runDir = path.join(tempDir(), '.state/runs/001-gate');
+  const session = tempDir(), runDir = path.join(session, '.state/runs/001-gate');
+  memoryRunFs(ports, session);
   const handlers: Handlers = { verify: async () => { advance(500); throw portTimeout(); } };
   const base = { ports, runDir, machine: gateMachine, handlers };
   await start({ ...base, runStarted: RUN_STARTED });
@@ -250,9 +255,10 @@ test('fault after a user wait renders user wait', async () => {
   assert.doesNotMatch(report, /host wait/, 'the approval wait belongs to the user, not the host');
 });
 
-test('SC10 toggle change applies at next send', async () => {
+test('diagnostic toggle change applies at next send', async () => {
   const toggle = { on: false };
   const session = tempDir(), ports = fakePorts(), runDir = path.join(session, '.state/runs/001-host');
+  memoryRunFs(ports, session);
   const base = { ports, runDir, machine: hostMachine, handlers: {}, diagnosticToggle: () => toggle.on };
   const hint = async (result: Promise<{ frame: { data: Record<string, unknown> } | null }>) => (await result).frame?.data['diagnostics'];
   await start({ ...base, runStarted: { ...RUN_STARTED, config: { diagnostics: true } } });
@@ -265,18 +271,19 @@ test('SC10 toggle change applies at next send', async () => {
   toggle.on = false;
   assert.equal(await hint(send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [] } })), undefined);
   await send({ ...base, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' } });
-  assert.equal(fs.existsSync(path.join(session, 'diagnostics.md')), false, 'off at the done send: no report');
+  assert.equal(ports.fs.exists(path.join(session, 'diagnostics.md')), false, 'off at the done send: no report');
 
-  const later = tempDir(), laterDir = path.join(later, '.state/runs/001-host'), laterBase = { ...base, ports: fakePorts(), runDir: laterDir };
+  const later = tempDir(), laterDir = path.join(later, '.state/runs/001-host'), laterPorts = fakePorts(), laterBase = { ...base, ports: laterPorts, runDir: laterDir };
+  memoryRunFs(laterPorts, later);
   await start({ ...laterBase, runStarted: RUN_STARTED });
   await send({ ...laterBase, rawEvent: { type: 'AUTHORED', path: 'plan.md' } });
   await send({ ...laterBase, rawEvent: { type: 'NATIVE_RESULTS', slots: [] } });
   toggle.on = true;
   await send({ ...laterBase, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'e.json' } });
-  assert.match(read(path.join(later, 'diagnostics.md')), /^# Dispatch diagnostics/, 'on at the done send: the report covers the whole journal');
+  assert.match(laterPorts.fs.readText(path.join(later, 'diagnostics.md')), /^# Dispatch diagnostics/, 'on at the done send: the report covers the whole journal');
 });
 
-test('SC10 disabling during pending retro keeps instruction and completes on RETRO', async () => {
+test('disabling diagnostics during pending retro keeps instruction and completes on RETRO', async () => {
   const toggle = { on: true };
   const run = reviewRun(toggle);
   assert.equal((await run.begin()).frame?.await, 'retro');
@@ -286,5 +293,5 @@ test('SC10 disabling during pending retro keeps instruction and completes on RET
   assert.equal(done.frame?.await, 'done');
   assert.equal(done.frame?.data['diagnostics'], undefined);
   assert.ok([...readJournal(run.ports, run.runDir).records].some((line) => line.type === 'RETRO'));
-  assert.equal(fs.existsSync(path.join(run.session, 'diagnostics.md')), false, 'the live toggle at the RETRO send decides the report');
+  assert.equal(run.ports.fs.exists(path.join(run.session, 'diagnostics.md')), false, 'the live toggle at the RETRO send decides the report');
 });

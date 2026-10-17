@@ -38,16 +38,13 @@ test('amend plan applies exact text edits and relints', () => {
   assert.equal(amended.text, amended.plan.governedText);
 });
 
-test('amend plan rejects ambiguous or missing current text', () => {
+test('amend plan rejects missing, ambiguous, or unknown targets', () => {
   const missing = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'SC1', current: 'no such text', proposed: 'x' }]);
   assert.ok(!missing.ok && /exactly once in the plan; found 0/.test(missing.error), JSON.stringify(missing));
   const ambiguous = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'SC1', current: '| none |', proposed: '| T2 |' }]);
   assert.ok(!ambiguous.ok && /exactly once in the plan; found 3/.test(ambiguous.error));
-});
-
-test('amend plan rejects unknown targets', () => {
-  const result = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'T9', current: '[SC1] Part 1 works', proposed: '[SC1] Part 1 works fast' }]);
-  assert.ok(!result.ok && /T9/.test(result.error));
+  const unknown = amendPlan(AMEND_PLAN, [{ kind: 'modify', target: 'T9', current: '[SC1] Part 1 works', proposed: '[SC1] Part 1 works fast' }]);
+  assert.ok(!unknown.ok && /T9/.test(unknown.error));
 });
 
 test('amend plan infers no gate from objective or manifest text', () => {
@@ -79,7 +76,7 @@ test('in-run plan REVISE is rejected with a pointer to AMEND', () => {
   assert.match(rootMachine.validate!(root, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'stalled check' }) ?? '', /AMEND/);
 });
 
-// SECTION: SC20 — plan revision scope requests use request and request-user
+// SECTION: Plan revision scope requests use request and request-user
 
 test('plan revision request approved by orchestrator', () => {
   let { result, sim, trace } = running();

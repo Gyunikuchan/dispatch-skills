@@ -400,7 +400,7 @@ test('missing satisfies emits one diagnostic per criterion', () => {
   }
 });
 
-test('SC1 grouped delete registers every path', () => {
+test('grouped delete registers every path, accepting bare and backticked paths', () => {
   const source = withDelete('src/old-a.ts, src/old-b.ts');
   const plan = parsed(source);
   const deletes = plan.changes.filter((change) => change.action === 'DELETE');
@@ -409,45 +409,43 @@ test('SC1 grouped delete registers every path', () => {
   assert.deepEqual(deletes.map((change) => change.note), ['remove the obsolete retry shims.', 'remove the obsolete retry shims.']);
   assert.deepEqual(deletes.map((change) => change.line), [line, line]);
   assert.ok(['src/old-a.ts', 'src/old-b.ts'].every((path) => plan.tasks[0]?.paths.includes(path)));
+
+  const backticked = parsed(withDelete('`src/old-a.ts`, `src/old-b.ts`'));
+  assert.deepEqual(backticked.changes.filter((change) => change.action === 'DELETE').map((change) => change.path), ['src/old-a.ts', 'src/old-b.ts']);
 });
 
-test('SC1 grouped delete accepts backticked paths', () => {
-  const plan = parsed(withDelete('`src/old-a.ts`, `src/old-b.ts`'));
-  assert.deepEqual(plan.changes.filter((change) => change.action === 'DELETE').map((change) => change.path), ['src/old-a.ts', 'src/old-b.ts']);
-});
-
-test('SC1 grouped delete flags a duplicate path', () => {
+test('grouped delete flags a duplicate path', () => {
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/old-a.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/old-a.ts" appears more than once.']);
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/fetch.ts" appears more than once.']);
 });
 
-test('SC2 rejects comma list under modify', () => {
+test('modify change heading rejects comma-separated paths', () => {
   const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
   assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')]);
 });
 
-test('SC2 rejects backticked comma list under new', () => {
+test('new change heading rejects backticked comma-separated paths', () => {
   const source = PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`');
   assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('NEW', '`tests/fetch.test.ts`, `tests/other.test.ts`')]);
 });
 
-test('SC2 rejected heading registers no path', () => {
+test('rejected multi-path change heading registers no path', () => {
   // Real headings for both paths follow; registering either from the rejected heading would add duplicate-change-path.
   const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts');
   assert.deepEqual(defects(source), ['change-heading']);
 });
 
-test('SC2 rejected sole heading emits only change-heading', () => {
+test('rejected sole multi-path heading emits only change-heading', () => {
   const source = PLAN.replace(/#### \[MODIFY\][\s\S]*?- Inputs: src\/fetch\.ts\n/, '#### [GENERATED] src/fetch.ts, docs/api.md\n- Command: `npm run docs`\n- Inputs: src/fetch.ts\n');
   assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('GENERATED', 'src/fetch.ts, docs/api.md')]);
 });
 
-test('SC3 duplicate delete notes hint grouping', () => {
+test('duplicate delete notes hint grouping', () => {
   const source = PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`);
   assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." is filler; say what changes in this file; group these [DELETE] paths under one heading.'));
 });
 
-test('SC3 duplicate modify notes keep filler message', () => {
+test('duplicate modify notes keep filler message', () => {
   const source = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n');
   assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." is filler; say what changes in this file.'));
 });
@@ -754,22 +752,16 @@ const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name
 const withPattern = (pattern: string) => PLAN.replace('`node --test tests/fetch.test.ts`', `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``);
 const withFinding = (id: string) => PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);
 
-test('keeps plan IDs out of test selectors and files: flags a defined criterion ID in a Verify command', () => {
-  const found = namedDefects(withPattern('sc1 caps'));
-  assert.equal(found.length, 1);
-  assert.match(found[0]?.message ?? '', /names plan ID SC1; name the behavior instead\.$/);
-});
+test('plan validation: keeps plan IDs out of test selectors and files', () => {
+  const verifyFound = namedDefects(withPattern('sc1 caps'));
+  assert.equal(verifyFound.length, 1);
+  assert.match(verifyFound[0]?.message ?? '', /names plan ID SC1; name the behavior instead\.$/);
 
-test('keeps plan IDs out of test selectors and files: flags a defined criterion ID in a test file basename', () => {
-  const found = namedDefects(PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts'));
-  assert.ok(found.some((item) => item.line === PLAN.split('\n').indexOf('#### [NEW] tests/fetch.test.ts') + 1), JSON.stringify(found));
-});
+  const fileFound = namedDefects(PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts'));
+  assert.ok(fileFound.some((item) => item.line === PLAN.split('\n').indexOf('#### [NEW] tests/fetch.test.ts') + 1), JSON.stringify(fileFound));
 
-test('keeps plan IDs out of test selectors and files: flags a recorded finding ID', () => {
   assert.equal(namedDefects(withFinding('R1-F001').replace('`node --test tests/fetch.test.ts`', '`node --test --test-name-pattern="R1-F001" tests/fetch.test.ts`')).length, 1);
-});
 
-test('keeps plan IDs out of test selectors and files: accepts undefined look-alikes and mapping fields', () => {
   for (const name of ['SC10', 'ESC1', 'R1-F001']) assert.deepEqual(namedDefects(withPattern(name)), [], name);
   assert.deepEqual(namedDefects(isolated), []);
 });
@@ -896,13 +888,20 @@ test('task-map-shared-context: authored map bytes reach the writer and bind the 
   assert.equal(governedPlanText(source), governedPlanText(source.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')));
 });
 
-test('Parent rejects user request', () => assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, 'user request')).includes('summary-label')));
+test('plan summary: Parent rejects invalid pins (user request, unsuffixed)', () => {
+  for (const parent of [
+    'user request',
+    '`notes.txt` · sha256:' + 'a'.repeat(64),
+    'governing.spec.md · sha256:' + 'a'.repeat(64),
+  ]) {
+    assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label'), parent);
+  }
+});
 
-test('Parent rejects unsuffixed pin', () => { for (const parent of ['`notes.txt` · sha256:' + 'a'.repeat(64), 'governing.spec.md · sha256:' + 'a'.repeat(64)]) assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label')); });
-
-test('Parent accepts spec pin', () => assert.ok(parsePlan(PLAN).ok));
-
-test('Parent accepts design increment pin in plan', () => assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok));
+test('plan summary: Parent accepts spec pin and design increment pin', () => {
+  assert.ok(parsePlan(PLAN).ok);
+  assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok);
+});
 
 test('plan retired section user review required', () => assert.ok(defects(PLAN + '\n## User Review Required\nNone.').includes('retired-section')));
 

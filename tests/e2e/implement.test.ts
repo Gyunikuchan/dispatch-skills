@@ -365,7 +365,7 @@ test('checkout: task worktrees are isolated and integration is idempotent and ke
   assert.match(c.read(path.join(c.runDir, 'wt/integration'), 'src/a.ts'), /^<<<<<<< [^\n]*\nt1\n=======\nt2\n>>>>>>> /);
 });
 
-test('checkout: RED replay applies approved checkpoint files at the input revision and rejects others', async () => {
+test('checkout: RED replay applies approved checkpoint files and rejects unapproved paths or differing content', async () => {
   const c = await checkoutRepo();
   const base = String((await c.op('init'))['base']), out = path.join(c.runDir, 'red.json');
   const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
@@ -374,6 +374,12 @@ test('checkout: RED replay applies approved checkpoint files at the input revisi
   fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'src/b.ts': null } }));
   const rejected = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts'] });
   assert.match(String(rejected['defects']), /not an approved task test path: src\/b\.ts/);
+
+  fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('differing assertion').toString('base64') } }));
+  const mismatch = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts'] });
+  assert.match(String(mismatch['defects']), /Submitted test differs from its RED checkpoint: tests\/a\.test\.ts/);
+
+  fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'src/b.ts': null } }));
   const replay = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts', 'src/b.ts'] });
   assert.deepEqual(replay['defects'], []); assert.equal(c.read(String(replay['path']), 'tests/a.test.ts'), 'red'); assert.equal(fs.existsSync(path.join(String(replay['path']), 'src/b.ts')), false);
 });
@@ -394,17 +400,6 @@ test('checkout: delivery transfers integrated changes and refuses caller drift w
   assert.deepEqual(transfer(await c.op('deliver', { base, revision })), { conflicts: [], transferred: ['src/a.ts', 'src/gone.ts'], already: [] });
   assert.equal(c.read(c.repo, 'src/a.ts'), 'a2\n');
   assert.deepEqual(transfer(await c.op('deliver', { base, revision })), { conflicts: [], transferred: [], already: ['src/a.ts', 'src/gone.ts'] });
-});
-
-test('checkout: RED replay rejects a submitted test that differs from its checkpoint', async () => {
-  const c = await checkoutRepo();
-  const base = String((await c.op('init'))['base']), out = path.join(c.runDir, 'red.json');
-  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
-  fs.mkdirSync(path.join(t1, 'tests')); fs.writeFileSync(path.join(t1, 'tests/a.test.ts'), 'passing stub');
-  const candidate = (await c.op('commit', { name: 't1', base }))['revision'];
-  fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('failing assertion').toString('base64') } }));
-  const replay = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts'] });
-  assert.match(String(replay['defects']), /Submitted test differs from its RED checkpoint: tests\/a\.test\.ts/);
 });
 
 test('checkout: integration discards an interrupted uncommitted cherry-pick before replaying the candidate', async () => {

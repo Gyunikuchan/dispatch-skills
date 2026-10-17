@@ -75,7 +75,7 @@ for (const kind of ['plan', 'design'] as const) test(`intent-gap ${kind} require
   assert.equal(revised.state.c.rounds.length, 1);
 });
 
-test('diagnostics amendment ruling parser: intent requires recorded authority', () => {
+test('ruling validation: intent requires recorded authority', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   const error = reviewMachine.validate?.(state, rulings({ 'R1-F001': { ruling: 'accept' } }));
   assert.equal(error, "event.rulings.R1-F001.ruling: expected needs-user, accept|reject with the user's quote, or accept|reject by orchestrator with a reason, for an intent finding");
@@ -84,7 +84,7 @@ test('diagnostics amendment ruling parser: intent requires recorded authority', 
   assert.match(reviewMachine.validate?.(state, rulings({})) ?? '', /missing ruling for R1-F001/);
 });
 
-test('diagnostics amendment ruling parser: needs-user records the user ruling', () => {
+test('ruling resolution: needs-user records the user ruling', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })]), rulings({ 'R1-F001': { ruling: 'needs-user' } })]);
   assert.equal(state.tag, 'decide-needs-user');
   const frame = reviewMachine.project(state);
@@ -137,19 +137,21 @@ test('deadlock: a pending rejection re-raised twice escalates', () => {
 const recovered = (id: string, over: Record<string, unknown> = {}) => finding(id, { category: 'uncategorized', originalTag: 'robustness', ...over });
 const known = (id: string) => finding(id, { locus: 'src/b.ts:L40', defect: 'quadratic scan over rows', requiredChange: 'index the lookup' });
 
-for (const ruling of ['accept', 'reject']) test(`diagnostics amendment ruling parser: orchestrator ${ruling} records settled intent`, () => {
-  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
-  const event = rulings({ 'R1-F001': { ruling, by: 'orchestrator', reason: 'settled decision D2', fix: { affectedPaths: ['src/a.ts', 'tests/a.test.ts'], dependsOn: [], verification: ['npm test'] } } });
-  assert.equal(reviewMachine.validate?.(state, event), null);
-  const next = reviewMachine.step(state, event).state;
-  assert.equal(next.tag, ruling === 'accept' ? 'fix' : 'settled');
-  assert.ok('c' in next);
-  assert.equal(next.c.findings[0]?.resolution, 'orchestrator: settled decision D2');
-  assert.equal(next.c.findings[0]?.status, ruling === 'accept' ? 'accepted' : 'rejected');
-  assert.deepEqual(next.c.findings[0]?.fix, { paths: ['src/a.ts', 'tests/a.test.ts'], dependencies: [], verification: ['npm test'] });
+test('ruling parser: orchestrator accept and reject record settled intent', () => {
+  for (const ruling of ['accept', 'reject'] as const) {
+    const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
+    const event = rulings({ 'R1-F001': { ruling, by: 'orchestrator', reason: 'settled decision D2', fix: { affectedPaths: ['src/a.ts', 'tests/a.test.ts'], dependsOn: [], verification: ['npm test'] } } });
+    assert.equal(reviewMachine.validate?.(state, event), null, ruling);
+    const next = reviewMachine.step(state, event).state;
+    assert.equal(next.tag, ruling === 'accept' ? 'fix' : 'settled', ruling);
+    assert.ok('c' in next);
+    assert.equal(next.c.findings[0]?.resolution, 'orchestrator: settled decision D2', ruling);
+    assert.equal(next.c.findings[0]?.status, ruling === 'accept' ? 'accepted' : 'rejected', ruling);
+    assert.deepEqual(next.c.findings[0]?.fix, { paths: ['src/a.ts', 'tests/a.test.ts'], dependencies: [], verification: ['npm test'] }, ruling);
+  }
 });
 
-test('diagnostics amendment ruling parser: orchestrator intent needs a nonblank reason', () => {
+test('ruling validation: orchestrator intent needs a nonblank reason', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   for (const ruling of ['accept', 'reject', 'downgrade']) for (const reason of [undefined, '', '  ', 42]) {
     const event = rulings({ 'R1-F001': { ruling, by: 'orchestrator', reason } });
@@ -158,7 +160,7 @@ test('diagnostics amendment ruling parser: orchestrator intent needs a nonblank 
   }
 });
 
-test('diagnostics amendment ruling parser: unsupported authority falls back to user validation', () => {
+test('ruling validation: unsupported authority falls back to user validation', () => {
   const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   for (const by of ['user', 'Orchestrator', 42]) {
     const event = rulings({ 'R1-F001': { ruling: 'reject', by, reason: 'D2' } });
@@ -171,7 +173,7 @@ test('diagnostics amendment ruling parser: unsupported authority falls back to u
   }
 });
 
-test('SC5 rule frame shows recovered original tag', () => {
+test('rule frame exposes recovered original tag for uncategorized finding', () => {
   const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')])]);
   assert.equal(state.tag, 'rule');
   const findings = reviewMachine.project(state).data['findings'] as Record<string, unknown>[];
@@ -181,7 +183,7 @@ test('SC5 rule frame shows recovered original tag', () => {
   assert.ok(!('originalTag' in (findings[1] ?? {})));
 });
 
-test('SC5 uncategorized finding takes an ordinary ruling', () => {
+test('uncategorized finding takes an ordinary ruling', () => {
   const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001', { originalTag: 'Intent' })])]);
   const event = rulings({ 'R1-F001': { ruling: 'accept' } });
   assert.equal(reviewMachine.validate?.(state, event), null);
@@ -190,7 +192,7 @@ test('SC5 uncategorized finding takes an ordinary ruling', () => {
   assert.deepEqual([ruled?.status, ruled?.category, ruled?.originalTag], ['accepted', 'uncategorized', 'Intent']);
 });
 
-test('SC5 resolution entries keep original tag', () => {
+test('resolution entries preserve original tag for uncategorized findings', () => {
   const state = drive([started(), prepared(1), waveDone(1, [recovered('R1-F001'), known('R1-F002')]),
     rulings({ 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } })]);
   assert.ok('c' in state);
@@ -199,7 +201,7 @@ test('SC5 resolution entries keep original tag', () => {
   assert.ok(!('originalTag' in (entries[1] ?? {})));
 });
 
-test('diagnostics amendment ruling parser: intent finding ruled with a user quote', () => {
+test('ruling resolution: intent finding ruled with a user quote', () => {
   const review = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })])]);
   for (const quote of [undefined, '', '  ']) {
     const event = rulings({ 'R1-F001': { ruling: 'reject', reason: 'user declined', quote } });

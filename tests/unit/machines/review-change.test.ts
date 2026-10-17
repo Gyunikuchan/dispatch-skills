@@ -22,15 +22,17 @@ test('review change: authorized plan fix admits the artifact target rather than 
   assert.equal(result.state.tag, 'target-check');
   assert.deepEqual(result.effects[0]?.kind === 'check-review-target' && result.effects[0].allowedPaths, ['target.plan.md']);
 });
-for (const kind of ['plan', 'design', 'code'] as const) test(`review branch: ${kind} mixed and all-failed fix receipts retain scoped admission`, () => {
-  const c = context(kind);
-  const clusters = [cluster('C1'), cluster('C2')];
-  const state: ReviewState = { tag: 'fix', c, clusters, pass: 'main', defects: [] };
-  const mixed = stepReview(state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'C1', status: 'applied' }, { clusterId: 'C2', status: 'failed' }] });
-  assert.deepEqual(mixed.effects[0]?.kind === 'check-review-target' && mixed.effects[0].allowedPaths, kind === 'code' ? ['§ Proposed Changes'] : [`target.${kind}.md`]);
-  const failed = stepReview(state, { type: 'FIXES_APPLIED', clusters: clusters.map((row) => ({ clusterId: row.clusterId, status: 'failed' })) });
-  assert.deepEqual(failed.effects[0]?.kind === 'check-review-target' && failed.effects[0].allowedPaths, []);
-  assert.deepEqual(stepReview(state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'unknown' }] }).state, state);
+test('review branch: mixed and all-failed fix receipts retain scoped admission across artifact kinds', () => {
+  for (const kind of ['plan', 'design', 'code'] as const) {
+    const c = context(kind);
+    const clusters = [cluster('C1'), cluster('C2')];
+    const state: ReviewState = { tag: 'fix', c, clusters, pass: 'main', defects: [] };
+    const mixed = stepReview(state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'C1', status: 'applied' }, { clusterId: 'C2', status: 'failed' }] });
+    assert.deepEqual(mixed.effects[0]?.kind === 'check-review-target' && mixed.effects[0].allowedPaths, kind === 'code' ? ['§ Proposed Changes'] : [`target.${kind}.md`], kind);
+    const failed = stepReview(state, { type: 'FIXES_APPLIED', clusters: clusters.map((row) => ({ clusterId: row.clusterId, status: 'failed' })) });
+    assert.deepEqual(failed.effects[0]?.kind === 'check-review-target' && failed.effects[0].allowedPaths, [], kind);
+    assert.deepEqual(stepReview(state, { type: 'FIXES_APPLIED', clusters: [{ clusterId: 'unknown' }] }).state, state, kind);
+  }
 });
 const reviewFinding = (id: string, status: ReviewFinding['status'], extra: Partial<ReviewFinding> = {}): ReviewFinding => ({ id, severity: 'MUST', category: 'correctness', locus: 'src/a.ts:L1', defect: 'defect', requiredChange: 'fix', sources: ['codex[0]'], scope: 'in', round: 1, status, ...extra });
 export const notice: ChangeNotice = { id: 'change', phase: 'review', pendingId: 'check', beforeHash: 'before', afterHash: 'after', rawDeltaRef: { version: 1, sha256: 'a'.repeat(64), bytes: 10, path: 'recovery-deltas/a.json' }, paths: ['target.plan.md'], pathCount: 1, relevance: 'relevant', reason: 'Reviewed input changed', affectedEvidence: [] };
@@ -62,26 +64,28 @@ test('review branch: changed bound preparation launches its unissued round witho
   assert.equal(launched.state.c.round, 3);
   assert.equal(launched.state.c.waveRevision, notice.afterHash);
 });
-for (const family of ['plan', 'implementation-plan', 'implementation-code', 'design', 'design-revision', 'design-integration'] as const) test(`review branch: ${family} parent applies the parked receipt without a change decision`, () => {
-  const c = context(family.includes('code') || family.includes('integration') ? 'code' : family.includes('design') ? 'design' : 'plan');
-  const check: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check' };
-  const run = { verb: 'implement' as const, argument: 'feature', slug: 'feature' }, implemented = approvalState(), design = designApproval('implement');
-  let seed: RootState;
-  if (family === 'plan') {
-    const plan = beginPlan({ path: 'feature.plan.md', spec: c.spec }, 'plan', {}).state;
-    if (!('c' in plan) || !plan.c) throw new Error('plan context');
-    seed = { tag: 'plan', run: { ...run, verb: 'plan' }, child: { tag: 'review', c: plan.c, review: check } };
-  } else if (family === 'implementation-plan' || family === 'implementation-code') seed = { tag: 'implement', run, child: { tag: family === 'implementation-plan' ? 'plan-review' : 'code-review', c: implemented.c, review: check } };
-  else if (family === 'design-revision') {
-    const revision = beginDesignRevision(design.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
-    seed = { tag: 'design', run, child: { tag: 'revision', c: design.c, child: { ...revision, tag: 'review', review: check } } };
-  } else if (family === 'design-integration') {
-    const parent = integration(); if (parent.tag !== 'integration') throw new Error('integration');
-    seed = { tag: 'design', run, child: { ...parent, review: check } };
-  } else seed = { tag: 'design', run, child: { tag: 'review', c: design.c, review: check } };
-  const next = stepRoot(seed, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'changed.json', result: 'changed', notice });
-  assert.notEqual(rootMachine.awaitOf(next.state), 'decide', 'the parked receipt applies without a change decision');
-  assert.notEqual(rootMachine.project(next.state).data['kind'], 'drift');
+test('review branch: parent applies parked receipt without change decision across artifact families', () => {
+  for (const family of ['plan', 'implementation-plan', 'implementation-code', 'design', 'design-revision', 'design-integration'] as const) {
+    const c = context(family.includes('code') || family.includes('integration') ? 'code' : family.includes('design') ? 'design' : 'plan');
+    const check: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check' };
+    const run = { verb: 'implement' as const, argument: 'feature', slug: 'feature' }, implemented = approvalState(), design = designApproval('implement');
+    let seed: RootState;
+    if (family === 'plan') {
+      const plan = beginPlan({ path: 'feature.plan.md', spec: c.spec }, 'plan', {}).state;
+      if (!('c' in plan) || !plan.c) throw new Error('plan context');
+      seed = { tag: 'plan', run: { ...run, verb: 'plan' }, child: { tag: 'review', c: plan.c, review: check } };
+    } else if (family === 'implementation-plan' || family === 'implementation-code') seed = { tag: 'implement', run, child: { tag: family === 'implementation-plan' ? 'plan-review' : 'code-review', c: implemented.c, review: check } };
+    else if (family === 'design-revision') {
+      const revision = beginDesignRevision(design.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
+      seed = { tag: 'design', run, child: { tag: 'revision', c: design.c, child: { ...revision, tag: 'review', review: check } } };
+    } else if (family === 'design-integration') {
+      const parent = integration(); if (parent.tag !== 'integration') throw new Error('integration');
+      seed = { tag: 'design', run, child: { ...parent, review: check } };
+    } else seed = { tag: 'design', run, child: { tag: 'review', c: design.c, review: check } };
+    const next = stepRoot(seed, { type: 'REVIEW_TARGET_CHECKED', effectId: 'check', manifestPath: 'changed.json', result: 'changed', notice });
+    assert.notEqual(rootMachine.awaitOf(next.state), 'decide', `${family}: the parked receipt applies without a change decision`);
+    assert.notEqual(rootMachine.project(next.state).data['kind'], 'drift', family);
+  }
 });
 
 // SECTION: Target changes around a fix
@@ -131,28 +135,32 @@ const verifyResult = (kind: 'code' | 'plan', effectId: string): Event => kind ==
   ? { type: 'VERIFY_DONE', effectId, purpose: 'fix-verify', results: [{ command: 'npm test', exit: 0, logPath: 'l.log' }], fingerprint: {} }
   : { type: 'ARTIFACT_PARSED', effectId, kind: 'plan', hash: 'h', parsed: {}, defects: [] };
 
-for (const kind of ['code', 'plan'] as const) test(`changed target after applied fixes retains accepted findings and fails admission (${kind})`, () => {
-  const fix = toFix(kind);
-  const parked = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] }, true);
-  const changed = observeChange(parked);
-  assert.equal(changed.state.tag, 'failed');
-  assert.equal(statusOfFinding(changed.state), 'accepted');
-  assert.deepEqual(observed(changed.state), [notice.id]);
-  assert.equal(changed.effects.length, 0);
-  assert.ok('c' in changed.state && 'c' in fix.state && changed.state.c.targetManifest === fix.state.c.targetManifest);
+test('changed target after applied fixes retains accepted findings and fails admission', () => {
+  for (const kind of ['code', 'plan'] as const) {
+    const fix = toFix(kind);
+    const parked = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] }, true);
+    const changed = observeChange(parked);
+    assert.equal(changed.state.tag, 'failed', kind);
+    assert.equal(statusOfFinding(changed.state), 'accepted', kind);
+    assert.deepEqual(observed(changed.state), [notice.id], kind);
+    assert.equal(changed.effects.length, 0, kind);
+    assert.ok('c' in changed.state && 'c' in fix.state && changed.state.c.targetManifest === fix.state.c.targetManifest, kind);
+  }
 });
 
-for (const kind of ['code', 'plan'] as const) test(`changed target during verification cannot complete the fix (${kind})`, () => {
-  const fix = toFix(kind);
-  const verifying = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
-  assert.equal(verifying.state.tag, 'fix-verify');
-  const first = verifying.effects.find((effect) => effect.kind === 'verify' || effect.kind === 'parse-artifact')!;
-  const parked = stepChecked(verifying, verifyResult(kind, first.id), true);
-  assert.equal(parked.state.tag, 'target-check');
-  const changed = observeChange(parked);
-  assert.equal(changed.state.tag, 'failed');
-  assert.equal(statusOfFinding(changed.state), 'accepted');
-  assert.deepEqual(observed(changed.state), [notice.id]);
+test('changed target during verification cannot complete the fix', () => {
+  for (const kind of ['code', 'plan'] as const) {
+    const fix = toFix(kind);
+    const verifying = stepChecked(fix, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+    assert.equal(verifying.state.tag, 'fix-verify', kind);
+    const first = verifying.effects.find((effect) => effect.kind === 'verify' || effect.kind === 'parse-artifact')!;
+    const parked = stepChecked(verifying, verifyResult(kind, first.id), true);
+    assert.equal(parked.state.tag, 'target-check', kind);
+    const changed = observeChange(parked);
+    assert.equal(changed.state.tag, 'failed', kind);
+    assert.equal(statusOfFinding(changed.state), 'accepted', kind);
+    assert.deepEqual(observed(changed.state), [notice.id], kind);
+  }
 });
 
 /** Applies and verifies the accepted fix; returns the next round's prepare-review scope. */
@@ -192,17 +200,19 @@ function preRuling(kind: 'code' | 'plan', rulings: Readonly<Record<string, Reado
   return reviewMachine.step(parked.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'edited.json', result, notice: { ...notice, reason, paths: [...paths], pathCount: paths.length } });
 }
 
-for (const kind of ['code', 'plan'] as const) test(`pre-ruling edit inside accepted paths enters fix (${kind})`, () => {
-  const target = fixPath(kind);
-  const fix = preRuling(kind, { 'R1-F001': acceptFix(target) }, [target], notice.reason, 'expected');
-  assert.equal(fix.state.tag, 'fix');
-  assert.equal(reviewMachine.awaitOf(fix.state), 'fix');
-  assert.equal(statusOfFinding(fix.state), 'accepted');
-  const applied = reviewMachine.step(fix.state, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
-  const check = applied.effects.find((effect) => effect.kind === 'check-review-target');
-  assert.ok(check?.kind === 'check-review-target');
-  const verifying = reviewMachine.step(applied.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'fixed.json', result: 'expected', notice: { ...notice, paths: [target], pathCount: 1, relevance: 'expected' } });
-  assert.equal(verifying.state.tag, 'fix-verify');
+test('pre-ruling edit inside accepted paths enters fix', () => {
+  for (const kind of ['code', 'plan'] as const) {
+    const target = fixPath(kind);
+    const fix = preRuling(kind, { 'R1-F001': acceptFix(target) }, [target], notice.reason, 'expected');
+    assert.equal(fix.state.tag, 'fix', kind);
+    assert.equal(reviewMachine.awaitOf(fix.state), 'fix', kind);
+    assert.equal(statusOfFinding(fix.state), 'accepted', kind);
+    const applied = reviewMachine.step(fix.state, { type: 'FIXES_APPLIED', clusters: fix.state.tag === 'fix' ? fix.state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+    const check = applied.effects.find((effect) => effect.kind === 'check-review-target');
+    assert.ok(check?.kind === 'check-review-target', kind);
+    const verifying = reviewMachine.step(applied.state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'fixed.json', result: 'expected', notice: { ...notice, paths: [target], pathCount: 1, relevance: 'expected' } });
+    assert.equal(verifying.state.tag, 'fix-verify', kind);
+  }
 });
 
 test('pre-ruling unadmitted edits retain observations and stop before fixing', () => {

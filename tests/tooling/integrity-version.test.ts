@@ -7,7 +7,7 @@ import { checkIntegrity, generateSkillHashes, MANIFEST_NAME, readVersion } from 
 import { tempDir } from '../helpers/fake-ports.ts';
 
 
-test('SC4 integrity ignores version key', () => {
+test('integrity ignores version key in skill manifest', () => {
   const root = tempDir(), skill = path.join(root, 'skills/dispatch');
   fs.mkdirSync(skill, { recursive: true });
   fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');

@@ -8,7 +8,7 @@ import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
 const section = (text: string, heading: string) => text.split(`${heading}\n`)[1]?.split('\n## ')[0] ?? '';
 
-test('SC8 retro instruction fits budget', () => {
+test('retro instruction fits byte budget', () => {
   const instruction = read('skills/dispatch/references/diagnostics.md');
   // The interpreter drops an oversize instruction, so the budget is a hard limit; CRLF checkouts must fit too.
   assert.ok(Buffer.byteLength(instruction.replace(/\r?\n/g, '\r\n')) <= DIAGNOSTIC_LIMITS.instructionBytes);
@@ -21,7 +21,7 @@ test('SC8 retro instruction fits budget', () => {
   assert.match(instruction, /Fixes must hold on any repository and machine/);
 });
 
-test('SC8 skill contract documents retro and done mention', () => {
+test('skill contract documents retro and done mention', () => {
   const contract = read('skills/dispatch/SKILL.md');
   assert.equal(contract.match(/^## Await retro$/gm)?.length, 1);
   assert.equal(section(contract, '## Await retro').trim(), 'Follow `data.diagnostics.instruction`; reply `RETRO`.');
@@ -45,7 +45,7 @@ test('worktree cleanup covers creation, failure, completion, and durable ownersh
   assert.match(cleanup, /read it after interruption or compaction/);
 });
 
-test('SC8 no legacy diagnostics text remains', () => {
+test('no legacy diagnostics text remains', () => {
   // `pending-` alone also matches review states such as `pending-rejection`, so only numbered slot files count.
   const legacy = [/replyTransport/, /\{\s*v\s*:\s*1\s*,\s*event/, /\{v,event,diagnostics\}/, /capture\.json/, /pending-(?:\d+|N)\.json/, /capture\.lock/, /diagnostics\.render\.lock/];
   const hits = scanOverlay()

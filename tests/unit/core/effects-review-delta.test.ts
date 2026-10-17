@@ -220,25 +220,27 @@ test('review-reuse: selected unchanged paths reach prepared prompt scope and lau
   assert.ok('c' in launched.state && launched.state.c.observations![0]!.use?.launchedRound === 2);
 });
 
-for (const continuation of ['dispute', 'full'] as const) test(`review-reuse: selected unchanged paths retain mandatory ${continuation} coverage`, async () => {
-  const f = harness(); f.edit('src/a.ts'); f.edit('src/c.ts');
-  const observed = await observedRule(f);
-  if (observed.state.tag !== 'rule') throw new Error('rule frame');
-  const c = { ...observed.state.c, findings: observed.state.c.findings.map((item) => item.id === 'R1-F001'
-    ? { ...item, status: continuation === 'full' ? 'fixed' as const : 'pending-rejection' as const, fix: { paths: ['src/a.ts'], dependencies: [], verification: [] }, resolution: 'Disputed guard' }
-    : { ...item, severity: 'CONSIDER' as const }) };
-  const notice = c.observations![0]!;
-  const selected = stepReview({ tag: 'rule', c }, { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'targeted', paths: ['src/b.ts'], rationale: 'Inspect dependent code.' });
-  const prepared = await f.check(selected.state, { type: 'RULINGS', rulings: { 'R1-F002': { ruling: 'accept' } } });
-  const effect = prepared.effects.find((item) => item.kind === 'prepare-review');
-  assert.ok(effect?.kind === 'prepare-review');
-  const event = (await createPrepareReview({ cwd: f.cwd, git: f.git, skillRoot: path.resolve('skills/dispatch') })(effect, f.ports, { runDir: f.runDir, attempt: 1 }))[0];
-  assert.ok(event?.type === 'REVIEW_PREPARED', JSON.stringify(event));
-  assert.deepEqual([...(event.scope['paths'] as string[])].sort(), continuation === 'full' ? ['src/a.ts', 'src/b.ts', 'src/c.ts'] : ['src/a.ts', 'src/b.ts']);
-  const prompt = f.ports.fs.readText(event.promptPaths['codex[0]']!);
-  assert.match(prompt, /review paths: .*src\/b\.ts/);
-  assert.match(prompt, /src\/a\.ts/);
-  const launched = await f.check(prepared.state, event);
-  assert.equal(launched.state.tag, 'wave');
-  assert.ok('c' in launched.state && launched.state.c.findings[0]?.revision === 'original-revision');
+test('review-reuse: selected unchanged paths retain mandatory dispute and full coverage', async () => {
+  for (const continuation of ['dispute', 'full'] as const) {
+    const f = harness(); f.edit('src/a.ts'); f.edit('src/c.ts');
+    const observed = await observedRule(f);
+    if (observed.state.tag !== 'rule') throw new Error('rule frame');
+    const c = { ...observed.state.c, findings: observed.state.c.findings.map((item) => item.id === 'R1-F001'
+      ? { ...item, status: continuation === 'full' ? 'fixed' as const : 'pending-rejection' as const, fix: { paths: ['src/a.ts'], dependencies: [], verification: [] }, resolution: 'Disputed guard' }
+      : { ...item, severity: 'CONSIDER' as const }) };
+    const notice = c.observations![0]!;
+    const selected = stepReview({ tag: 'rule', c }, { type: 'REVIEW_USE', observationId: notice.id, afterHash: notice.afterHash, action: 'targeted', paths: ['src/b.ts'], rationale: 'Inspect dependent code.' });
+    const prepared = await f.check(selected.state, { type: 'RULINGS', rulings: { 'R1-F002': { ruling: 'accept' } } });
+    const effect = prepared.effects.find((item) => item.kind === 'prepare-review');
+    assert.ok(effect?.kind === 'prepare-review');
+    const event = (await createPrepareReview({ cwd: f.cwd, git: f.git, skillRoot: path.resolve('skills/dispatch') })(effect, f.ports, { runDir: f.runDir, attempt: 1 }))[0];
+    assert.ok(event?.type === 'REVIEW_PREPARED', JSON.stringify(event));
+    assert.deepEqual([...(event.scope['paths'] as string[])].sort(), continuation === 'full' ? ['src/a.ts', 'src/b.ts', 'src/c.ts'] : ['src/a.ts', 'src/b.ts']);
+    const prompt = f.ports.fs.readText(event.promptPaths['codex[0]']!);
+    assert.match(prompt, /review paths: .*src\/b\.ts/);
+    assert.match(prompt, /src\/a\.ts/);
+    const launched = await f.check(prepared.state, event);
+    assert.equal(launched.state.tag, 'wave');
+    assert.ok('c' in launched.state && launched.state.c.findings[0]?.revision === 'original-revision');
+  }
 });

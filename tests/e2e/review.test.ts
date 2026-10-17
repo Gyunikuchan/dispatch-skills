@@ -13,6 +13,8 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import { CLEAN, fixture, until } from '../helpers/e2e.ts';
 import { JOURNAL_PROTOCOL_REVISION } from '../../skills/dispatch/scripts/core/types.ts';
 
+// SECTION: Review target mutation and fix admission
+
 test('review-target code change at native boundary records an observation and retains the capture', async () => {
   const f = fixture();
   try {
@@ -85,7 +87,9 @@ test('review code disputes an unsupported claim, carries rejection, then verifie
 });
 
 
-test('rewrite SC2 round delta preserves caller dirt and detects staged untracked deleted and ref drift', async () => {
+// SECTION: Git review round snapshot and delta
+
+test('git review round delta preserves caller dirt and detects staged untracked deleted and ref drift', async () => {
   const f = fixture();
   try {
     fs.writeFileSync(path.join(f.repo, 'src/b.ts'), 'before'); f.git('add', '.'); f.git('commit', '-qm', 'second');
@@ -104,8 +108,9 @@ test('rewrite SC2 round delta preserves caller dirt and detects staged untracked
   } finally { f.cleanup(); }
 });
 
+// SECTION: Review wave execution and session layout
 
-test('rewrite SC3 production wave journals preparation and completion once', async () => {
+test('review wave journals preparation and completion once', async () => {
   const f = fixture();
   try {
     const session = await f.initialize(); fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'changed');
@@ -160,7 +165,9 @@ for (const diagnostics of [false, true]) test(`session layout: a review with dia
   } finally { f.cleanup(); }
 });
 
-test('rewrite SC4 GPU lock excludes concurrent leases recovers dead owner and releases', async () => {
+// SECTION: Runtime process adapter and GPU locking
+
+test('GPU lock excludes concurrent leases recovers dead owner and releases', async () => {
   const f = fixture(); const file = path.join(f.dir, 'gpu.lock');
   try {
     const release = await acquireGpuLock(1000, file); await assert.rejects(acquireGpuLock(30, file), /gpu-lock-timeout/); release(); release();
@@ -181,7 +188,7 @@ test('process adapter reports output activity for stdout and stderr chunks', asy
   } finally { f.cleanup(); }
 });
 
-test('rewrite SC4 real child output cap cancels promptly and retains partial capture', async () => {
+test('process adapter output cap cancels promptly and retains partial capture', async () => {
   const f = fixture();
   try {
     const logPath = path.join(f.dir, 'cap.log'); const before = Date.now();
@@ -190,7 +197,7 @@ test('rewrite SC4 real child output cap cancels promptly and retains partial cap
   } finally { f.cleanup(); }
 });
 
- test('rewrite SC4 cross-process dead-owner recovery never overlaps GPU leases', async () => {
+test('cross-process dead-owner recovery never overlaps GPU leases', async () => {
   const f = fixture(); const file = path.join(f.dir, 'race.lock');
   try {
     fs.writeFileSync(file, JSON.stringify({ host: os.hostname(), pid: 2147483647, token: 'dead' }));
@@ -203,7 +210,9 @@ test('rewrite SC4 real child output cap cancels promptly and retains partial cap
   } finally { f.cleanup(); }
 });
 
-test('rewrite SC3 production native await precedes CLI completion and survives replay', async () => {
+// SECTION: Review lifecycle continuation and governance
+
+test('review native await precedes CLI completion and survives replay', async () => {
   const f = fixture({ delayMs: 2000, responses: [CLEAN] });
   try {
     const config = { ...f.config, 'read-delegates': { ...f.config['read-delegates'], codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-stub', effort: 'low' } }] } }, phases: { ...f.config.phases, 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } } };
@@ -224,7 +233,7 @@ test('rewrite SC3 production native await precedes CLI completion and survives r
   } finally { f.cleanup(); }
 });
 
-test('review fix bounded manifests observe non-ignored scratch and retain deletion tombstones', async () => {
+test('bounded review manifests observe non-ignored scratch and retain deletion tombstones', async () => {
   const { nodePorts } = await import('../../skills/dispatch/scripts/core/ports.ts');
   const f = fixture();
   try {
@@ -244,7 +253,7 @@ test('review fix bounded manifests observe non-ignored scratch and retain deleti
   } finally { f.cleanup(); }
 });
 
-test('review fix GPU release awaits a busy guard without blocking the event loop or losing its lease', async () => {
+test('GPU release awaits a busy guard without blocking the event loop or losing its lease', async () => {
   const f = fixture(), file = path.join(f.dir, 'release.lock');
   try {
     const release = await acquireGpuLock(1000, file); fs.writeFileSync(`${file}.guard`, 'other critical section');
@@ -270,6 +279,8 @@ test('governing spec identity passes semantic intent through CLI to reviewer pro
     assert.ok(prompt.includes(specPath.replaceAll('\\', '/')), prompt); assert.ok(prompt.includes(specHash()));
   } finally { f.cleanup(); }
 });
+
+// SECTION: Helpers
 
 function reviewArtifact(kind: 'plan' | 'design', condition = 'Original condition'): string {
  const parent = '> **Parent:** `governing.spec.md` · ' + specHash();
