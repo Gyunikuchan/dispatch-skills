@@ -107,6 +107,15 @@ tests/e2e/                 Git/subprocess flows
 - Never edit skills managed by `npx skills` (listed in `skills-lock.json`); updates overwrite local edits. When one needs different behavior here, adapt it through files this repository owns, such as this guide or a local skill that invokes it.
 - Never edit skills managed by `npx skills` (listed in `skills-lock.json`); local edits are overwritten on update. Change them upstream or report the needed change instead.
 
+### Canonical Documents
+
+Execution in `dispatch` centers on four canonical document layers:
+
+- **Spec (Mission brief):** Intent, background, user decisions, constraints, and desired outcomes. Governing authority read by all participants (authors, reviewers, and writers).
+- **Design (Strategy):** Architecture, system boundaries, critical trade-offs, and ordered delivery increments.
+- **Plan (Tactics):** Concrete execution details for a single coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria (`[SC<n>]`), and verification commands.
+- **Walkthrough (Debrief):** Post-execution record of delivered observable behavior, changes made, criterion verification evidence, deviations, follow-ups, and review findings and resolutions.
+
 ## Documentation Standards
 
 Classify each document or piece of prose by its primary audience and task. Keep each rule in one canonical home; other documents may explain its audience-specific effect and link to that home.

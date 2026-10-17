@@ -4,7 +4,7 @@ Dispatch keeps independent review and implementation inside your current agent w
 
 ## Spec, design and plan
 
-Dispatch uses three document layers. The **spec** records why the work matters and what it must achieve: the problem, requirements with acceptance conditions, constraints, alternatives and user decisions. A **design** chooses the strategy: architecture, boundaries, risks and ordered increments. A **plan** gives the tactics: tasks, file ownership, prerequisites, requirement-linked criteria and verification commands. Later layers cite upstream requirements and decisions instead of repeating them.
+Dispatch organizes work across four canonical document layers. The **spec (mission brief)** records why the work matters and what it must achieve: the problem, requirements with acceptance conditions, constraints, alternatives and user decisions. A **design (strategy)** chooses the strategy: architecture, boundaries, risks and ordered increments. A **plan (tactics)** gives the tactics: tasks, file ownership, prerequisites, requirement-linked criteria and verification commands. Later layers cite upstream requirements and decisions instead of repeating them. A **walkthrough (debrief)** records delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions.
 
 For example, a webhook spec can require safe retries without duplicate charges. The design chooses the idempotency boundary and rollout order. A plan names the storage and handler changes and checks that prove retries are safe. A standalone plan pins the spec's exact contents; an increment plan names its design increment, and that design pins the spec.
 

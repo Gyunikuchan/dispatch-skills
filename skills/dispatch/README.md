@@ -36,6 +36,15 @@ flowchart LR
     Checks --> You
 ```
 
+### Canonical documents
+
+Dispatch organizes work across four canonical document layers:
+
+- **Spec (Mission brief):** Captures intent, background, decisions, constraints, and desired outcomes. The governing contract read by all participants.
+- **Design (Strategy):** Defines overarching architecture, boundaries, risks, and ordered delivery increments.
+- **Plan (Tactics):** Details tactical execution for one coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria, and verification commands.
+- **Walkthrough (Debrief):** Records the post-execution debrief: delivered behavior, file changes, verification evidence, deviations, and review resolutions.
+
 ## Before you start
 
 You need Node.js `^22.18 || >=23.6`, at least one supported provider CLI installed and authenticated (Claude Code, Antigravity, GitHub Copilot, OpenCode, or Codex), and an active configuration with a read delegate.
