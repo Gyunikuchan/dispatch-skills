@@ -25,7 +25,8 @@ export interface FileEntry { path: string; unit: string; tests: TestEntry[]; dur
 export interface Failure { file: string; name: string; line: number }
 export interface DuplicateTitle { name: string; files: { path: string; line: number }[] }
 export interface SharedImports { imports: string[]; files: string[] }
-export interface Candidates { duplicateTitles: DuplicateTitle[]; sharedImports: SharedImports[] }
+export interface MergeCluster { file: string; prefix: string; tests: { name: string; line: number }[] }
+export interface Candidates { duplicateTitles: DuplicateTitle[]; sharedImports: SharedImports[]; mergeClusters?: MergeCluster[] }
 export interface Inventory {
   totals: { files: number; tests: number; durationMs: number };
   files: FileEntry[];
@@ -82,7 +83,40 @@ export function findCandidates(files: readonly FileEntry[]): Candidates {
   }
   const sharedImports = [...groups.values()].filter((group) => group.files.length > 1)
     .sort((a, b) => (a.files[0] ?? '').localeCompare(b.files[0] ?? ''));
-  return { duplicateTitles, sharedImports };
+
+  const mergeClusters: MergeCluster[] = [];
+  const clusterPrefixOf = (name: string): string | undefined => {
+    const trimmed = name.trim();
+    const colon = trimmed.indexOf(':');
+    if (colon > 0 && colon < 30) {
+      const head = trimmed.slice(0, colon).trim().toLowerCase();
+      const words = trimmed.slice(colon + 1).trim().split(/\s+/).filter(Boolean);
+      if (words.length >= 2) return `${head}: ${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}`;
+      if (words[0]) return `${head}: ${words[0]!.toLowerCase()}`;
+      return head;
+    }
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    return words.length >= 2 ? `${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}` : undefined;
+  };
+
+  for (const file of files) {
+    const byPrefix = new Map<string, { name: string; line: number }[]>();
+    for (const test of file.tests) {
+      const prefix = clusterPrefixOf(test.name);
+      if (!prefix) continue;
+      const list = byPrefix.get(prefix) ?? [];
+      list.push({ name: test.name, line: test.line });
+      byPrefix.set(prefix, list);
+    }
+    for (const [prefix, clusterTests] of byPrefix) {
+      if (clusterTests.length >= 3) {
+        mergeClusters.push({ file: file.path, prefix, tests: clusterTests });
+      }
+    }
+  }
+  mergeClusters.sort((a, b) => a.file.localeCompare(b.file) || a.prefix.localeCompare(b.prefix));
+
+  return { duplicateTitles, sharedImports, mergeClusters };
 }
 
 const prefixOf = (file: string) => path.posix.basename(file).replace(/\.test\.ts$/, '').split('-')[0] ?? '';
@@ -92,6 +126,7 @@ function scopeCandidates(candidates: Candidates, paths: ReadonlySet<string>): Ca
   return {
     duplicateTitles: candidates.duplicateTitles.filter((entry) => entry.files.some((file) => paths.has(file.path))),
     sharedImports: candidates.sharedImports.filter((entry) => entry.files.some((file) => paths.has(file))),
+    mergeClusters: (candidates.mergeClusters ?? []).filter((entry) => paths.has(entry.file)),
   };
 }
 

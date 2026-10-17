@@ -1,6 +1,6 @@
 ---
 name: optimise-tests
-description: Measure this repository's test suite, refactor it unit by unit with parallel scoped writers, and prove no coverage loss with a runtime and test-count delta.
+description: Measure this repository's test suite, refactor it unit by unit with parallel scoped writers, and prove no unapproved coverage loss with a runtime and test-count delta.
 disable-model-invocation: true
 metadata:
   internal: true
@@ -10,7 +10,7 @@ metadata:
 
 You, the lead, make the `tests/` suite of this repository faster and higher-signal without losing coverage. Deterministic scripts measure; native writers refactor one unit each; you own the baseline, scheduling, checks, the move pass, the gate and the handoff.
 
-**Objective**: a green suite with no production file losing covered lines, fewer low-signal tests, and a measured runtime and test-count reduction, with a ledger entry for every pruned, merged or moved test.
+**Objective**: a green suite with no unapproved covered-line loss and no production file dropping to zero coverage, fewer low-signal tests, and a measured runtime and test-count reduction, with a ledger entry for every pruned, merged or moved test.
 
 Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start; `<work>` is `.scratch/optimise-tests/<run>`. `<skill>` is the directory holding this `SKILL.md`:
 
@@ -45,7 +45,7 @@ Launch one native writer per packet, in parallel, at most `maxParallelWriters` a
 ```
 Optimise packet <id> of the dispatch-skills test suite. Read <skill>/references/criteria.md and follow it.
 Packet: <work>/before/packets/<id>.json. You own only the packet's files in <unit>. <new-files>
-Verify: the focused Node test command from .claude/CLAUDE.md § Verification Details over the files you own.
+Verify: the focused Node test command from AGENTS.md § Verification Details over the files you own.
 Ledger: append one JSON line per action to <work>/ledger/<id>.jsonl.
 Never run git write commands. Return only completion (ledger path, verify result) or a blocker.
 ```
@@ -61,8 +61,8 @@ Pass the packet only; leave your own suspicions out so each writer judges its te
 As each writer returns, run checks 2 and 3a for its packet. Run check 3b for a unit once all of its writers have returned, and check 1 once every writer has returned, so no in-flight writer's edits are judged:
 
 1. Compare `git status --porcelain` against the union of all packets' owned paths (packet files, plus new files in single-packet units). Ignore paths listed in `<work>/baseline-status.txt` and under `.scratch/`. Revert a remaining changed path under `tests/` that no packet owns, and record it as a rejected edit. Report any other remaining changed path to the user instead of reverting it, since a shared tree gives no per-writer attribution; never revert another packet's owned path.
-2. Check its ledger: each `delete` or `merge` line carries `coveredBy` or `reason` per [criteria.md](references/criteria.md); remove the change for any line that does not.
-3. Run the focused command from `.claude/CLAUDE.md` § Verification Details:
+2. Check its ledger: each `delete` or `merge` line conforms to [criteria.md](references/criteria.md) (`coveredBy`, `reason`, and `target` when justifying coverage drops); remove the change for any line that does not.
+3. Run the focused command from `AGENTS.md` § Verification Details:
    a. Over the returning packet's owned files. If red, send the failing output back to that writer once; if still red, restore only that packet's failing files and record the gap.
    b. Over the whole unit, after all its writers return. If red, attribute each failing file to its owning packet and handle it as in 3a.
 
@@ -80,16 +80,16 @@ Run the full suite again; a partial `--units` run cannot serve as the after snap
 
 ```bash
 node <skill>/scripts/inventory.ts --out <work>/after --coverage
-node <skill>/scripts/compare.ts <work>/before/inventory.json <work>/after/inventory.json > <work>/compare.md
+node <skill>/scripts/compare.ts <work>/before/inventory.json <work>/after/inventory.json --ledger <work>/ledger > <work>/compare.md
 npm test
 ```
 
-`compare.ts` exits 1 and lists each production file whose covered lines dropped (a missing file counts as zero) and each after-run failure. For each drop, find the ledger line that removed the covering test, then restore or rewrite that test, and rerun the gate from the first command.
+`compare.ts` exits 1 and lists each unapproved production file whose covered lines dropped (or dropped to zero) and each after-run failure. Pruning low-signal tests may drop covered lines only when the production file remains covered (`after.covered > 0`) and the drop is justified in the ledger with a recognized low-signal reason. For an unapproved drop, find the ledger line that removed the covering test, then restore or rewrite that test (or add justification), and rerun the gate from the first command.
 
 **Done when:** `compare.ts` exits 0 and `npm test` passes, both after the last change.
 
 ## 6. Hand off
 
-Reply in the handoff format of `.claude/CLAUDE.md` § Long-Running Work and Handoff. State whether the test count and suite duration each decreased versus the baseline; if either did not, report it as an unmet objective, not a successful optimisation. Include the `<work>/compare.md` table, the ledger paths, the counts of deleted, merged, moved and restored tests, and every rejected edit, blocker and unresolved intent question.
+Reply in the handoff format of `AGENTS.md` § Long-Running Work and Handoff. State whether the test count and suite duration each decreased versus the baseline; if either did not, report it as an unmet objective, not a successful optimisation. Include the `<work>/compare.md` table, the ledger paths, the counts of deleted, merged, moved and restored tests, and every rejected edit, blocker and unresolved intent question.
 
 **Done when:** the reply is sent.
