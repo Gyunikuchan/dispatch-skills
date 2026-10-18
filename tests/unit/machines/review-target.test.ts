@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { reviewMachine, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
-import { createFolder, fold } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { JOURNAL_PROTOCOL_REVISION, type Event, type JournalLine, type RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import { JOURNAL_PROTOCOL_REVISION, type Event, type RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 
 const started: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: JOURNAL_PROTOCOL_REVISION, verb: 'review', argument: '', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null, overrides: {}, repo: {}, config: { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } } } };
 

@@ -4,11 +4,13 @@ import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import fs from 'node:fs';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 
 test('checkpoint-commit: a later render fault retains earlier accepted effect', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   const failing = { ...awaitingMachine, render: (state: ReturnType<typeof awaitingMachine.initial>) => { if (state.tag === 'done') throw new Error('render failed'); } };
   const result = await send({ runDir, ports, machine: failing, handlers: fakeHandlers, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
@@ -21,6 +23,7 @@ test('checkpoint-commit: a later render fault retains earlier accepted effect', 
 
 test('checkpoint-commit: handler failure retains the accepted host event and open attempt', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   await send({ runDir, ports, machine: awaitingMachine, handlers: { verify: async () => { throw new Error('after external effect'); } }, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
   const lines = [...readJournal(ports, runDir).records];
@@ -32,6 +35,7 @@ test('checkpoint-commit: handler failure retains the accepted host event and ope
 for (const point of ['before-blob', 'before-append', 'torn-append', 'after-append', 'result-blob'] as const) {
   test(`checkpoint-commit: ${point} preserves only the committed transition prefix`, async () => {
     const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    memoryRunFs(ports, runDir);
     await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
     const publish = ports.fs.publishExclusive, append = ports.fs.appendDurable;
     let completed = 0;
@@ -62,12 +66,13 @@ for (const point of ['before-blob', 'before-append', 'torn-append', 'after-appen
       assert.equal((status.frame?.data['effect'] as { id: string }).id, lines.find((line) => line.type === 'EFFECT_STARTED' && line.data['kind'] === 'verify')?.data['effectId']);
       assert.equal(status.frame?.data['attempt'], 1);
     }
-    if (point === 'before-append' || point === 'torn-append') assert.ok(fs.readdirSync(path.join(runDir, 'checkpoints')).length > lines.filter((line) => line.checkpoint).length, 'unreferenced blob stays unused');
+    if (point === 'before-append' || point === 'torn-append') assert.ok(ports.fs.listFiles(path.join(runDir, 'checkpoints')).length > lines.filter((line) => line.checkpoint).length, 'unreferenced blob stays unused');
   });
 }
 
 test('checkpoint-commit: frame publication fault preserves completed state', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, ports, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   const mkdir = ports.fs.mkdir;
   ports.fs.mkdir = (dir, options) => { if (dir.endsWith('events')) throw new Error('frame directory failed'); return mkdir(dir, options); };

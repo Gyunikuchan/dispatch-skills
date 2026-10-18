@@ -6,6 +6,7 @@ import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machin
 import { approvalState } from '../machines/fixtures/implement-recovery.ts';
 import { started } from '../machines/fixtures/design-delivery.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { renderReport, renderWalkthrough } from '../../../skills/dispatch/scripts/domain/render.ts';
 import { governedPlanText } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { send } from '../../../skills/dispatch/scripts/core/interpreter.ts';
@@ -24,6 +25,7 @@ test('readable review rendering: non-plan consumers retain full findings', () =>
 
 test('readable artifact ownership: standalone, active and completed design children share idempotent plan resolution rendering', () => {
   const ports = fakePorts(), session = tempDir(), planPath = path.join(session, 'increment.plan.md');
+  memoryRunFs(ports, session);
   const begun = beginReview({ kind: 'plan', target: planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'plan.review', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const planReview = stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check. Complete explanation.', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Added check\nKeep API' } } }).state;
@@ -59,6 +61,7 @@ test('readable artifact ownership: standalone, active and completed design child
 
 test('standalone artifact reviews record history in the review log and preserve successive runs', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.plan.md');
+  memoryRunFs(ports, session);
   ports.fs.writeAtomic(target, '# Feature\n\n## Review Findings & Resolutions\nNo reviews conducted yet.\n\n## Out of Scope\nkeep\n');
   for (const kind of ['plan', 'design'] as const) {
     const begun = beginReview({ kind, target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'review', {}).state;
@@ -82,6 +85,7 @@ test('standalone artifact reviews record history in the review log and preserve 
 
 test('readable artifact ownership: code review records findings in its governing walkthrough', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
+  memoryRunFs(ports, session);
   ports.fs.writeAtomic(target, '# Delivered\n');
   const begun = beginReview({ kind: 'code', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governing: { planPath: 'feature.plan.md', walkthroughPath: target, criteria: [] } }, 'review', {}).state;
   if (!('c' in begun)) throw new Error('review');
@@ -95,6 +99,7 @@ test('readable artifact ownership: code review records findings in its governing
 
 test('readable artifact ownership: walkthrough regeneration retains later standalone review history without duplicating implementation rounds', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
+  memoryRunFs(ports, session);
   const implementation = { tag: 'complete' as const, c: approvalState().c, summary: 'Done' };
   const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature.plan.md', slug: 'feature' }, child: implementation };
   rootMachine.render!(state, ports, session);
@@ -113,6 +118,7 @@ test('readable artifact ownership: walkthrough regeneration retains later standa
 
 test('readable artifact ownership: design integration records review history in the owning design', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.design.md');
+  memoryRunFs(ports, session);
   ports.fs.writeAtomic(target, '# Design\n');
   const begun = beginReview({ kind: 'code', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.integration', {}).state;
   if (!('c' in begun)) throw new Error('review');
@@ -128,6 +134,7 @@ test('readable artifact ownership: design integration records review history in 
 
 test('task-map-authored: design increment plan keeps its authored Task Map after authoring', async () => {
   const ports = fakePorts(), session = tempDir(), runs = path.join(session, '.state', 'runs');
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'parse-artifact': async (effect) => effect.artifact === 'plan' ? parseArtifact(effect, ports, { runDir: session, attempt: 1 }) : [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects: [] }],
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint: { head: 'a'.repeat(40), index: 'i', worktree: 'w' }, diff: { paths: [] } }],
@@ -156,6 +163,7 @@ test('task-map-authored: design increment plan keeps its authored Task Map after
 
 test('revision-review-log: a reviewed design revision keeps the source review history in its own linked log', () => {
   const ports = fakePorts(), session = tempDir(), source = path.join(session, 'x.design.md'), workingPath = path.join(session, 'revision-1.design.md');
+  memoryRunFs(ports, session);
   ports.fs.writeAtomic(source, '# Design\n');
   const reviewed = (target: string, machinePath: string, defect: string) => {
     const begun = beginReview({ kind: 'design', target, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, machinePath, {}).state;

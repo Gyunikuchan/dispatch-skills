@@ -13,11 +13,13 @@ import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, Invocation, LaunchRequest, ModeId, ProcessResult, ProviderId, ProviderSpec, RunOutcome, RunResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
 import { rebind } from '../../../skills/dispatch/scripts/core/checkpoint.ts';
 
 test('rebind provenance keeps historical diagnostics without disclosing its rationale', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-rebind');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   const changed = { ...awaitingMachine, codec: { ...awaitingMachine.codec!, runtime: () => 'fixed-runtime' } };
   assert.equal((await rebind({ ports, runDir, machine: changed, handlers: fakeHandlers, reason: 'PRIVATE_RATIONALE_17' })).exitCode, 0);
@@ -180,6 +182,7 @@ test('unpathed or modeless slot records unlaunched failure attempt', async () =>
 
 test('reserve after prelaunch failure journals both records once without warning', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   const w = setupWave({ 'claude:opus:cli': [result(ok(), attempt('claude', 'opus', 'ok'))] },
     [slot('codex[0]', 'codex', { model: 'gpt-6-sol' }), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })], null, { modes: noCodex });
   const handlers: Handlers = { wave: async (effect, effectPorts, ctx) => createWaveHandler(w.deps)({ ...effect, roster: w.effect.roster }, effectPorts, ctx) };
@@ -195,6 +198,7 @@ test('reserve after prelaunch failure journals both records once without warning
 
 test('successful launch with refused output journals refusal without failure warning', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-wave');
+  memoryRunFs(ports, path.dirname(path.dirname(runDir)));
   const usage = { input: 10, output: 2, scope: 'invocation' as const, provenance: 'claude.result.usage', inputSemantics: 'uncached' as const };
   const w = setupWave({
     'claude:opus:cli': [result(ok("I can't help with that review."), attempt('claude', 'opus', 'ok', { usage }))],
@@ -274,6 +278,7 @@ const hostMachine: Machine<HostState> = {
 
 test('native and receipt attestation persists tokens and durations', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   const base = { ports, runDir, machine: hostMachine, handlers: {} };
   assert.equal((await start({ ...base, runStarted: RUN_STARTED })).frame?.await, 'native');
   const native = await send({ ...base, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', model: 'haiku', tokens: 1200, durationMs: 3000 }] } });
@@ -289,6 +294,7 @@ const notes = (lines: Iterable<JournalLine>) => [...lines].filter((line) => line
 
 test('rejected event note journals diagnostic note without moving reply sequence', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   const base = { ports, runDir, machine: awaitingMachine, handlers: fakeHandlers };
   const begun = await start({ ...base, runStarted: RUN_STARTED });
   const rejected = await send({ ...base, rawEvent: { type: 'AUTHORED', path: '../escape.md' } });
@@ -321,6 +327,7 @@ test('diagnostic note preserves dry-run and status reply boundary', async () => 
 
 test('diagnostic note bypasses machine state transition', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   const seen: string[] = [];
   let renders = 0;
   const machine: Machine<ReturnType<typeof awaitingMachine.initial>> = {

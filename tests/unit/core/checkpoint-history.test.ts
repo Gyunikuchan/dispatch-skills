@@ -12,10 +12,12 @@ import { PLAN, HASH } from '../machines/fixtures/implement-recovery.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { run, hash, design } from '../machines/fixtures/design.ts';
 
 test('checkpoint-history: nested design discovery and dry-run bypass accepted reducers', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, session);
   const handlers = { 'parse-artifact': async (effect: { id: string }) => [{ type: 'ARTIFACT_PARSED' as const, effectId: effect.id, kind: 'design' as const, hash, parsed: design, defects: [] }] };
   assert.equal((await start({ ports, machine: rootMachine, handlers, runDir, runStarted: run('implement') })).exitCode, 0);
   const changed = { ...rootMachine, step: () => { throw new Error('historical reducer called'); } };
@@ -27,6 +29,7 @@ test('checkpoint-history: nested design discovery and dry-run bypass accepted re
 
 test('checkpoint-history: reloaded history preserves prior phase durations without prefix replay', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-design');
+  memoryRunFs(ports, session);
   let now = FIXED_NOW;
   ports.clock.now = () => now;
   const handlers: Handlers = { 'parse-artifact': async (effect) => { now += 50; return [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects: [] }]; } };
@@ -61,6 +64,7 @@ test('checkpoint-history: relocated session restores nested private paths and po
 
 test('checkpoint-history: settled-plan discovery and report rendering use retained private review history', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-plan'), planPath = path.join(session, 'x.plan.md');
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] }],
     handoff: async (effect) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: '/handoff', warning: null }],

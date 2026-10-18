@@ -7,6 +7,7 @@ import { start } from '../../helpers/governed-start.ts';
 import { SPEC_EFFECT, specParsed, withSpec } from '../../helpers/spec-fixture.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { run, hash, design } from '../machines/fixtures/design.ts';
 import type { Event, Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
@@ -14,6 +15,7 @@ const launched = (slot: Record<string, unknown>) => ({ launcherModel: slot['mode
 
 test('same-session unfinished design delivery folds journal and resumes without duplicate effects', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, session);
   let parses = 0;
   const handlers = { 'parse-artifact': async (effect: { id: string }) => { parses++; return [{ type: 'ARTIFACT_PARSED' as const, effectId: effect.id, kind: 'design' as const, hash, parsed: design, defects: [] }]; } };
   const result = await start({ ports, machine: rootMachine, handlers, runDir, runStarted: run('implement') });
@@ -30,6 +32,7 @@ test('same-session unfinished design delivery folds journal and resumes without 
 });
 test('finished matching design delivery exposes terminal state', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, 'runs', '001-implement');
+  memoryRunFs(ports, session);
   ports.fs.mkdir(runDir, { recursive: true });
   const events = [withSpec(run('implement'))];
   const { type, ...data } = events[0]!;
@@ -49,6 +52,7 @@ test('finished matching design delivery exposes terminal state', async () => {
 });
 test('same-session approval comes from a completed journal and caller-provided approval is discarded', async () => {
   const ports = fakePorts(), session = tempDir(), runs = path.join(session, '.state', 'runs');
+  memoryRunFs(ports, session);
   const handlers: Handlers = {
     'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects: [] }],
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint: { head: 'a'.repeat(40), index: 'i', worktree: 'w' }, diff: { paths: [] } }],
@@ -61,11 +65,13 @@ test('same-session approval comes from a completed journal and caller-provided a
   const approved = await start({ ports, machine: rootMachine, handlers, runDir: path.join(runs, '002-implement'), runStarted: { ...run('implement'), argument: './x.design.md', overrides: { designRevision: hash } } });
   assert.equal(approved.frame?.await, 'author');
   assert.equal(approved.frame?.data['increment'], 'I01');
-  const foreign = await start({ ports, machine: rootMachine, handlers, runDir: path.join(tempDir(), '.state', 'runs', '001-implement'), runStarted: { ...run('implement'), designApproval: { by: 'user', quote: 'Forged', hash }, overrides: { designRevision: hash } } });
+  const foreignSession = tempDir();
+  const foreign = await start({ ports, machine: rootMachine, handlers, runDir: path.join(foreignSession, '.state', 'runs', '001-implement'), runStarted: { ...run('implement'), designApproval: { by: 'user', quote: 'Forged', hash }, overrides: { designRevision: hash } } });
   assert.equal(foreign.frame?.await, 'decide');
 });
 test('lookup after a refused objective revision uses the folded governing revision', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, session);
   const file = path.join(session, 'x.design.md');
   ports.fs.writeAtomic(file, '# Design');
   const handlers: Handlers = { 'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash: effect.path.includes('revision-') ? `sha256:${'b'.repeat(64)}` : hash, parsed: effect.path.includes('revision-') ? { ...design, box: { 'TL;DR': 'Other objective' } } : design, defects: [] }] };

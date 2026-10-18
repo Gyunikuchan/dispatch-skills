@@ -5,6 +5,7 @@ import { EFFECT_ID_PATTERN, nextEffectId } from '../../../skills/dispatch/script
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { fakeHandlers, nestedMachine, RUN_STARTED } from './fixtures/machines.ts';
 
 test('ids are dot-joined lowercase segments with a per-path-and-kind ordinal', () => {
@@ -19,6 +20,7 @@ test('ids are dot-joined lowercase segments with a per-path-and-kind ordinal', (
 test('ids stay unique across a replayed journal when a sub-machine is re-entered', async () => {
   const ports = fakePorts();
   const runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ runDir, machine: nestedMachine, handlers: fakeHandlers, ports, runStarted: RUN_STARTED });
   const result = await send({ runDir, machine: nestedMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
   assert.equal(result.frame?.await, 'done');

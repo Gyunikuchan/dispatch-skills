@@ -9,12 +9,14 @@ import { startWave, waveRecovery, type WaveDeps } from '../../../skills/dispatch
 import type { LinkFs } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { runPaths } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
 
 // SECTION: Terminal uncertainty and recovery disposition
 
 test('recovery-effect: missing terminal record cannot relaunch an uncertain writer', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   let launches = 0;
   const handlers = { wave: async () => { launches++; throw new Error('external command interrupted'); } };
   await start({ machine: waveMachine, ports, runDir, handlers, runStarted: RUN_STARTED });
@@ -28,6 +30,7 @@ test('recovery-effect: missing terminal record cannot relaunch an uncertain writ
 test('recovery-effect: explicit retry or stop binds the exact uncertain attempt', async () => {
   for (const action of ['retry', 'stop'] as const) {
     const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    memoryRunFs(ports, runDir);
     let launches = 0;
     const handlers = {
       wave: async (effect: Parameters<Handler>[0]) => {
@@ -61,6 +64,7 @@ test('recovery-effect: explicit retry or stop binds the exact uncertain attempt'
 
 test('recovery-effect: a proof-free terminal assertion and stale identity cannot fabricate success', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   let launches = 0;
   const handlers = { wave: async () => { launches++; throw new Error('uncertain'); } };
   await start({ ports, runDir, machine: waveMachine, handlers, runStarted: RUN_STARTED });
@@ -79,6 +83,7 @@ test('recovery-effect: a proof-free terminal assertion and stale identity cannot
 
 test('recovery-effect: actual sealed handler output survives result publication failure without repeat', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+  memoryRunFs(ports, runDir);
   await start({ ports, runDir, machine: awaitingMachine, handlers: fakeHandlers, runStarted: RUN_STARTED });
   let calls = 0;
   const handlers = {
@@ -103,6 +108,7 @@ test('recovery-effect: actual sealed handler output survives result publication 
 test('recovery-effect: handler evidence modes respect attempt and descriptor identity', async () => {
   for (const mode of ['complete', 'live', 'read', 'foreign'] as const) {
     const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    memoryRunFs(ports, runDir);
     let calls = 0, attachments = 0;
     const handler: Handler<Extract<Parameters<Handler>[0], { kind: 'wave' }>> = async (effect) => {
       calls++;
@@ -183,6 +189,7 @@ test('recovery-effect: actual worker claim reattaches without crossing its launc
 test('recovery-effect: recovery dry-run reports validity without mutation', async () => {
   for (const valid of [false, true]) {
     const ports = fakePorts(), runDir = path.join(tempDir(), 'run');
+    memoryRunFs(ports, runDir);
     let launches = 0;
     const handlers = { wave: async () => { launches++; throw new Error('uncertain external command'); } };
     await start({ ports, runDir, machine: waveMachine, handlers, runStarted: RUN_STARTED });
