@@ -43,7 +43,7 @@ export function next(cls: FailureClass, position: Position, voice: Voice, wave: 
   const disposition = failureDisposition(cls);
   if (disposition === 'terminal-run') return { kind: 'terminal', scope: 'run', reason: `${cls} is terminal for the run` };
   if (disposition === 'cascade') {
-    // Every failure, auth included, tries the next alias of the voice (ADR 0001).
+    // Every failure, auth and quota included, tries the next alias of the voice (ADR 0001): models maintain independent quotas.
     if (position.model + 1 < voice.models.length) return { kind: 'next-model', position: { model: position.model + 1, mode: position.mode } };
     if (voice.modeCascadeOn.includes(cls) && position.mode + 1 < voice.modes.length) {
       return { kind: 'next-mode', position: { model: 0, mode: position.mode + 1 } };

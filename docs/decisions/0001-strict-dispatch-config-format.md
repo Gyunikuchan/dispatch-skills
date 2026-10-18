@@ -31,7 +31,7 @@ without serving current use.
   reintroduce an effort option to a model that rejects it. Sparse maps mark only transition points.
 - `model` is a nonblank string or an ordered, non-empty array of distinct nonblank aliases. An array
   is a cascade *within one voice*, not extra votes: try aliases in order on every failure,
-  including authentication failures (aliases may use different endpoints or credentials). Duplicate
+  including authentication and quota failures (aliases may use different credentials, endpoints, or independent model quotas). Duplicate
   aliases and structurally identical targets would repeat indistinguishable calls; target comparison
   ignores object-key order but respects alias order.
 - Optional `effort` is a nonblank, provider-defined string. Omission passes no effort flag and uses

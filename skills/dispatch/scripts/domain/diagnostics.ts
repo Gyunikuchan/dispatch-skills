@@ -316,7 +316,7 @@ const PREFLIGHT = ['scripts/lib/doctor.ts', 'Detect this condition in the prefli
 const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
-  quota: ['references/providers.md', 'Check the provider quota or plan before the next run; reserves already absorb quota failures.'],
+  quota: ['references/providers.md', "Check model quota or plan before the next run, or add another model alias to the voice's model array; each model has its own quota."],
   timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
   'context-overflow': ['scripts/effects/prepare-review.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,

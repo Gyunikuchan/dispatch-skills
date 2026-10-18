@@ -26,7 +26,7 @@ test('delegates-failure-classes: every class has a disposition; integrity and co
 
 // SECTION: Model and mode cascade
 
-test('delegates-model-array-cascade: every cascade class, auth included, tries the next model first', () => {
+test('delegates-model-array-cascade: every cascade class, auth and quota included, tries the next model first', () => {
   for (const cls of ['auth', 'timeout', 'quota'] as const) {
     assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
   }
