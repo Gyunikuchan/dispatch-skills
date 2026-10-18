@@ -160,14 +160,14 @@ test('templates: task brief cleanup applies the quality bar without a new step',
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(plan.includes('- Retain: <transient|durable>'));
-  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'lasting contract', 'observable outcome', 'regression', 'no other retained test', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
-  assert.equal(plan.match(/durable bar:/g)?.length, 1);
+  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'canonical behavioral policy in [quality-bar.md](quality-bar.md#code)', 'lasting contract', 'plausible defect', 'distinct contribution', 'are trimmed after final review', 'test files listed solely by transient criteria are trimmed', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
+  assert.equal(plan.match(/canonical behavioral policy in \[quality-bar\.md\]\(quality-bar\.md#code\)/g)?.length, 1);
 });
 
 test('templates: task brief applies the durable bar and isolates transient tests', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8').replace(/\s+/g, ' ');
   for (const text of ['only in their transient files', "the quality bar's test rules", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
-  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the durable bar in the plan template'));
+  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the canonical test policy in the code section'));
 });
 
 test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });

@@ -156,9 +156,12 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 test('quality selection: reviews hold retained tests to the durable bar', () => {
   for (const kind of ['code', 'plan'] as const) {
     const text = ruleText(kind);
-    for (const term of ['the durable bar in the plan template', 'demote', 'delete', ...(kind === 'plan' ? ['rewrite', 'transient-named file'] : [])]) assert.ok(text.includes(term), `${kind}: ${term}`);
+    assert.ok(text.includes('Apply one behavioral bar to new, changed, and retained tests.'), kind);
+    if (kind === 'plan') {
+      for (const term of ['the canonical test policy in the code section', 'rewrite', 'demote', 'delete', 'transient-named file']) assert.ok(text.includes(term), `${kind}: ${term}`);
+    }
   }
-  assert.ok(flat('code').includes('rewritten to meet the bar, demoted to transient, or deleted when redundant'));
+  assert.ok(ruleText('code').includes('mark step checks transient and trim them after review'));
 });
 
 test('review prompts: prompts keep plan IDs out of tests', () => {
