@@ -22,6 +22,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 
 ### Quality and conventions
 Read `AGENTS.md`, including nested ones on the paths you edit.
+Apply host standards first, then the injected quality block under its precedence rule.
 When Governing spec is present, read the whole spec it names before the bounded plan range. Use its Path and Hash as the governing identity.
 <<slot:quality>>
 

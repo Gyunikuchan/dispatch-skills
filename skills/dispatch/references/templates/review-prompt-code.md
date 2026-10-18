@@ -46,14 +46,14 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 ## tags
 
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
-- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
-- robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races
-- security/resources: `security`, `auth`, `resource-leak`, `perf` — violations of the quality bar's security and resource rules
-- compatibility: `compatibility`, `breaking`, `migration` — callers and serialized formats; migrations
-- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); departures from the quality bar's simplicity order; `reuse`: an existing equivalent found by the quality bar's search, anchored on the new symbol, with the existing `path:L<line>` in `defect`; shared root-cause fixes
-- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: retained tests that fail the quality bar's test or naming rules, with the bar's remedy as `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); touched UI, a11y, CLI/API ergonomics
+- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — judge by the canonical code standards
+- robustness: `edge-case`, `partial-failure`, `race` — judge by the canonical code standards
+- security/resources: `security`, `auth`, `resource-leak`, `perf` — judge by the canonical code standards
+- compatibility: `compatibility`, `breaking`, `migration` — judge by the canonical code standards
+- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — classify departures from the canonical simplicity, reuse, and abstraction standards; for `reuse`, cite an existing equivalent anchored on the new symbol, with the existing `path:L<line>` in `defect`
+- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: retained tests that violate canonical test or naming standards, with the bar's remedy in `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); judge touched UI, accessibility, and CLI/API ergonomics by the canonical code standards
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
-- out of scope: `adjacent` — a concrete defect you meet outside Scope while inspecting; cite its real locus; spend no extra turns hunting
+- out of scope: `adjacent` — follow the shared Inspection rule; cite code at its real `path:L<line>` locus
 
 ## severity
 

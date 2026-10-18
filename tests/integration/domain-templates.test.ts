@@ -121,6 +121,12 @@ test('quality selection: plan review checks task dependencies, ownership, and in
 
 test('templates: every tag a review prompt offers is accepted by the validator and its schema', async () => {
   const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/domain/report.ts');
+  // Prompt vocabulary is intentionally narrower than the accepted report vocabulary.
+  const advertisedTags = {
+    code: ['intent', 'scope-creep', 'correctness', 'domain-logic', 'invariant', 'runtime', 'type', 'edge-case', 'partial-failure', 'race', 'security', 'auth', 'resource-leak', 'perf', 'compatibility', 'breaking', 'migration', 'shallow', 'seam', 'coupling', 'yagni', 'reuse', 'root-cause', 'test-gap', 'test-leak', 'ui', 'a11y', 'standards', 'adjacent'],
+    plan: ['intent-gap', 'intent', 'user-gap', 'scope-creep', 'correctness', 'domain-logic', 'invariant', 'state-machine', 'dependency-graph', 'parallel-safety', 'architecture', 'coherence', 'approach', 'standards', 'security', 'auth', 'validation', 'compatibility', 'blast-radius', 'migration', 'rollback', 'edge-case', 'partial-failure', 'race', 'perf', 'verification', 'testability', 'spec-gap', 'test-leak', 'simplicity', 'yagni', 'adjacent'],
+    design: ['intent-gap', 'intent', 'scope', 'architecture', 'boundaries', 'interfaces', 'data-flow', 'alternatives', 'simplicity', 'correctness', 'invariant', 'security', 'operations', 'risk', 'migration', 'rollback', 'dependency-graph', 'parallel-safety', 'integration', 'testability', 'standards', 'adjacent'],
+  } as const;
   const enumOf = (node: unknown): string[] | null => {
     if (!node || typeof node !== 'object') return null;
     const record = node as Record<string, unknown>;
@@ -134,27 +140,31 @@ test('templates: every tag a review prompt offers is accepted by the validator a
     const offered = [...block.matchAll(/^- [^:\n]+: (.*?)(?: \u2014 .*)?$/gm)].flatMap((line) => [...line[1]!.matchAll(/`([^`]+)`/g)].map((tag) => tag[1]!));
     assert.ok(offered.length, `${kind} prompt lists tags`);
     const schema = enumOf(JSON.parse(readFileSync(new URL(`schemas/report-${kind}.json`, root), 'utf8')));
-    for (const tag of offered) {
-      assert.ok(REVIEW_TAGS[kind].has(tag), `${kind} validator rejects prompt tag ${tag}`);
-      if (schema) assert.ok(schema.includes(tag), `${kind} schema rejects prompt tag ${tag}`);
-    }
+    assert.equal(new Set(offered).size, offered.length, `${kind} prompt repeats a tag`);
+    assert.deepEqual(new Set(offered), new Set(advertisedTags[kind]), `${kind} prompt vocabulary changed`);
+    assert.ok(offered.every((tag) => REVIEW_TAGS[kind].has(tag)), `${kind} prompt offers a tag rejected by the validator`);
+    if (schema) assert.ok(offered.every((tag) => schema.includes(tag)), `${kind} prompt offers a tag rejected by its schema`);
   }
 });
 
 test('quality selection: plans name searched equivalents and plan review checks them', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
   assert.match(plan, /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/);
-  assert.match(plan, /^- Reuse: on `\[NEW\]` entries and on `\[MODIFY\]` entries that add a helper, module, or type;/m);
+  const reuseRule = plan.match(/^- Reuse:.*$/m)?.[0];
+  assert.ok(reuseRule);
+  assert.match(reuseRule, /\bnone found\b/);
+  assert.match(reuseRule, /\[quality bar\]\(quality-bar\.md#shared\)/);
   const prompt = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(prompt.includes('each new helper, module, or type names the equivalents searched or `none found`; verify the claim by search'));
+  assert.ok(prompt.includes('for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent'));
+  assert.ok(prompt.includes('Verify each plan reuse claim by repository search'));
 });
 
 test('templates: task brief cleanup applies the quality bar without a new step', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
-  assert.match(brief, /^- After GREEN, inspect the task's changes against the quality bar, plus unclear naming/m);
+  assert.match(brief, /^- After GREEN, inspect the task's changes against the injected quality bar, including naming, branches, and abstractions\./m);
   assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
-  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
-  assert.ok(quality.includes('search the repository by name and behaviour for an existing equivalent'));
+  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(quality.includes('avoid pass-through modules, speculative seams (one adapter is hypothetical), excess coupling'));
 });
 
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
@@ -174,12 +184,17 @@ test('plan and design templates contain no retired section headers', () => { for
 
 test('quality selection keeps judging rules single-sourced', () => {
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
+  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
   assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'code', 'plan', 'design']);
-  for (const consumer of ['code', 'writer'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
+  const adjacentRule = 'Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it';
+  assert.equal(frame.split(adjacentRule).length - 1, 1);
+  assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);
+  assert.match(codePrompt, /cite code at its real `path:L<line>` locus/);
+  assert.doesNotMatch(codePrompt, /concrete defect you meet outside Scope while inspecting|spend no extra turns hunting|domain-valid formulas and algorithms|type-valid, domain-invalid states|pass-through modules; speculative seams/);
   for (const consumer of ['plan', 'design'] as const) {
-    const selected = qualityBar(bar, consumer);
-    assert.match(selected, new RegExp(`nearest ${consumer} heading as locus`));
-    assert.equal(selected.split('- Adjacent findings:').length, 2);
+    const kindPrompt = readFileSync(new URL(`review-prompt-${consumer}.md`, root), 'utf8');
+    assert.match(kindPrompt, /Cite existing code as `path\/to\/file:L<line>` inside `defect`/);
   }
   assert.doesNotMatch(bar, /^- Standards:/m);
   for (const kind of ['plan', 'design']) {
@@ -192,5 +207,5 @@ test('quality selection keeps judging rules single-sourced', () => {
     for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- [^:]+: `[^`]+`(?:, `[^`]+`)*$/);
     for (const rule of ['claimed independence checked against', 'each new helper, module, or type names the equivalents searched', 'real alternatives weighed', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
   }
-  for (const rule of ['Spec alignment:', 'claimed independence checked against', 'each new helper, module, or type names the equivalents searched', 'real alternatives weighed', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
+  for (const rule of ['Spec alignment:', 'claimed independence checked against', 'each new exported or shared symbol, helper, module, or type, search the repository', 'real alternatives weighed', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
 });

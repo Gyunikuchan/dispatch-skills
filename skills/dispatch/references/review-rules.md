@@ -8,6 +8,8 @@ Review prompts carry the settled governing spec path and hash. Reviewers read th
 
 Verify findings against source and governing outcomes. Accept demonstrated defects regardless of votes; reject unsupported claims with evidence. Recorded user decisions govern until new defects warrant reopening.
 
+Apply the selected standards in the [quality bar](templates/quality-bar.md) when adjudicating findings. The shared [review prompt](templates/review-prompt.md) owns adjacent discovery and scope.
+
 ## Intent and findings
 
 Read `data.findingsPath` when present; use inline `data.findings` otherwise. The file contains the current round's full findings; inline summaries identify them.

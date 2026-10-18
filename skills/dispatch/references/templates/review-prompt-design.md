@@ -63,3 +63,4 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 ## closing
 
 Cite existing code as `path/to/file:L<line>` inside `defect`.
+For an adjacent finding, use the nearest design heading as locus.

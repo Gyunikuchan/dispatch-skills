@@ -74,3 +74,4 @@ If unspecified, target `8 + proposed-change entries`, at most 24; on re-review c
 ## closing
 
 Cite existing code as `path/to/file:L<line>` inside `defect`.
+For an adjacent finding, use the nearest plan heading as locus.

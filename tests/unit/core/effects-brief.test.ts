@@ -161,15 +161,44 @@ test('quality selection assembles every review and writer kind and reports selec
   let id = 0;
   const review = (kind: string) => prepare({ kind: 'prepare-review', id: `review.${++id}`, round: 1, review: { kind, target: kind === 'code' ? 'HEAD' : target, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 });
   const writer = (stage: 'task' | 'hotfix') => brief({ kind: 'write-brief', id: `write-brief.${++id}`, stage, input: {} }, ports, { runDir, attempt: 1 });
+  const codeRules = [
+    '- Correctness and domain invariants:',
+    '- Robustness and compatibility:',
+    '- Interface quality:',
+    '- Naming and structure:',
+    'runtime behavior, and type validity',
+    'empty, zero, and boundary inputs',
+    'unhandled branches, unguarded indexing',
+    'floating promises',
+    'partial failures, floating promises, partial updates, races, and unbounded designs',
+    'affected callers, persisted schemas, and serialized formats',
+    'version skew with graceful degradation and rollback',
+    'accessible UI and ergonomic CLI/API behavior',
+    'clear names',
+    'unnecessary branches',
+    'pass-through modules, speculative seams (one adapter is hypothetical), excess coupling',
+    'shared root causes',
+  ];
   const assertQuality = (text: string, consumer: QualityConsumer) => {
     const quality = qualityBar(bar, consumer).split('## quality\n\n')[1]!;
     assert.equal(text.split(quality).length, 2, consumer);
     for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
       assert.equal(text.split(marker).length - 1, (qualitySections[consumer] as readonly string[]).includes(section) ? 1 : 0, `${consumer}: ${section}`);
     }
+    if (consumer === 'code' || consumer === 'plan' || consumer === 'writer') {
+      for (const rule of codeRules) assert.ok(text.includes(rule), `${consumer}: ${rule}`);
+    } else {
+      for (const rule of codeRules.slice(0, 4)) assert.ok(!text.includes(rule), `${consumer}: ${rule}`);
+    }
     assert.ok(text.includes('Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed.'));
-    if (consumer === 'code' || consumer === 'writer') assert.doesNotMatch(text, /- Adjacent findings:|Adjacent findings in plan and design reviews|nearest plan or design heading/);
-    else assert.match(text, new RegExp(`nearest ${consumer} heading as locus`));
+    assert.ok(text.includes('Applicable host rule files govern first.'), consumer);
+    if (consumer === 'writer') {
+      assert.doesNotMatch(text, /Report an adjacent finding only when|nearest plan or design heading|path:L<line>/);
+    } else {
+      assert.ok(text.includes('Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it; those interfaces or call sites may be outside Scope only as needed to substantiate the defect.'), consumer);
+      if (consumer === 'code') assert.ok(text.includes('path:L<line>'), consumer);
+      else assert.match(text, new RegExp(`nearest ${consumer} heading as locus`));
+    }
   };
   for (const kind of ['code', 'plan', 'design'] as const) {
     const event = only(await review(kind));

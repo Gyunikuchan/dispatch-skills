@@ -1,6 +1,6 @@
 # Plan
 
-Settle the governing spec through [spec operation](../spec-stage.md) before tactical authoring. Read the whole spec and every emitted `data.read` path/section, including shared + plan + code quality sections for standalone and nested increment plans. A standalone plan Parent pins the spec path and hash; an increment plan pins its design increment, whose design pins the spec. Give each criterion `Satisfies: REQ-<n>` traceability. Keep tactics here and intent in the spec; use the [revision protocol](../spec-stage.md#revision-protocol) for intent changes.
+Settle the governing spec through [spec operation](../spec-stage.md) before tactical authoring. Read the whole spec and follow every emitted `data.read` path and section as the required quality input, including for nested increment plans. A standalone plan Parent pins the spec path and hash; an increment plan pins its design increment, whose design pins the spec. Give each criterion `Satisfies: REQ-<n>` traceability. Keep tactics here and intent in the spec; use the [revision protocol](../spec-stage.md#revision-protocol) for intent changes.
 
 Use the canonical template's hierarchy: current context, plain-language task outcomes, nested file details, then verification and reviews.
 

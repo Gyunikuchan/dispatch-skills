@@ -20,7 +20,7 @@ At the emitted `decide` frame with `data.kind: spec-approval`, show `data.path` 
 
 The spec owns why/what, REQ acceptance and intent/user decisions (DEC). Design owns strategy, architecture and architectural decisions (AD). Plan owns tactics, task ownership, criteria and checks. Keep each meaning in its owning layer; cite upstream IDs. Ordinary design/plan authoring never rewrites the spec.
 
-Every downstream author and reviewer reads the whole governing spec. Native writers read it in full plus the plan's shared range through Task Map and their own task, assigned criteria and Verification Plan rows. Honor emitted paths and hashes. Before drafting a design or plan, read every `data.read` entry and its named sections. The quality-bar reader map in the [contract](../SKILL.md#await-author) applies to standalone and nested authoring; emitted read sections are required input, not optional background.
+Every downstream author and reviewer reads the whole governing spec. Native writers read it in full plus the plan's shared range through Task Map and their own task, assigned criteria and Verification Plan rows. Honor emitted paths and hashes. Before drafting a design or plan, follow every emitted `data.read` path and section; those entries are the authoritative required input for standalone and nested authoring.
 
 ## Revision protocol
 

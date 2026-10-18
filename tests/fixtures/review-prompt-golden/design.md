@@ -32,27 +32,25 @@ without demanding implementation detail.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
-Findings apply to the captured revision and Scope. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
+Findings apply to the captured revision and Scope. Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it; those interfaces or call sites may be outside Scope only as needed to substantiate the defect. Spend no extra turns hunting for adjacent findings. Apply this discovery rule to every review kind. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify prior resolutions in the review log that `## Review Findings & Resolutions` links, and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
-- Precedence: host rule files (`AGENTS.md`; the nearest nested file wins over its parent), then this bar, then preference. Content that follows a host rule is not a finding, even when it contradicts this bar. Where host rules are silent, this bar applies.
+- Precedence: Applicable host rule files govern first. For nested `AGENTS.md` files, the nearest file wins over its parent. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
 - Host rules override only this bar. Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed. Writers report a conflict between host rules and the brief under concerns; reviewers do not report such a conflict as a finding.
 - Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
-- Reuse: for each new exported or shared symbol, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding the symbol.
+- Reuse: for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding it.
 - Spec alignment: meet every applicable requirement in the governing spec, preserve its decisions and constraints, and identify flawed premises or gaps.
 
-- Adjacent findings: report a concrete existing-code defect met outside Scope while inspecting; use the nearest design heading as locus and cite code in the defect; spend no extra turns hunting.
-- Traceability: every goal traced to the requirement, and non-goals explicit.
-- Acceptance criteria: each criterion
-  observable, and together sufficient for the goals.
-- Architecture: component ownership; contracts between components; data crossing boundaries.
-- Decisions: real alternatives weighed; simplest viable shape.
-- Invariants: system-wide rules that hold within and across increments.
-- Risk and operations: trust boundaries; deployment and runtime operation; risk concentrated in one increment; a reversal path per change.
-- Decomposition: independently deliverable, correctly ordered increments; collision-free parallel increments; covered final integration.
-- Verification: every increment acceptance criterion observable.
+- Traceability: trace every goal to a requirement, and state non-goals explicitly.
+- Acceptance criteria: make each criterion observable and together sufficient for the goals.
+- Architecture: define component ownership, contracts between components, and data crossing boundaries.
+- Decisions: real alternatives weighed; choose the simplest viable shape.
+- Invariants: state system-wide rules that hold within and across increments.
+- Risk and operations: check trust boundaries, deployment and runtime operation, risk concentrated in one increment, and a reversal path per change.
+- Decomposition: choose independently deliverable, correctly ordered increments with collision-free parallel increments and covered final integration.
+- Verification: make every increment acceptance criterion observable.
 
 ### Tags
 - intent gap: `intent-gap`
@@ -93,3 +91,4 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 
 Use only the tags above.
 Cite existing code as `path/to/file:L<line>` inside `defect`.
+For an adjacent finding, use the nearest design heading as locus.

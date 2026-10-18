@@ -117,12 +117,20 @@ test('quality selection: code and plan reviews name data-access and exposure ris
 
 test('quality selection: every review contains each selected rule once and excludes other sections', () => {
   const bar = read(templates, 'quality-bar.md');
+  const codeRules = [
+    '- Correctness and domain invariants:',
+    '- Robustness and compatibility:',
+    '- Interface quality:',
+    '- Naming and structure:',
+  ];
   for (const kind of ['code', 'plan', 'design'] as const) {
+    const prompt = assembled(kind);
     const quality = qualityBar(bar, kind).split('## quality\n\n')[1]!;
-    assert.equal(assembled(kind).split(quality).length, 2, kind);
+    assert.equal(prompt.split(quality).length, 2, kind);
     for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
-      assert.equal(assembled(kind).split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
+      assert.equal(prompt.split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
     }
+    for (const rule of codeRules) assert.equal(prompt.includes(rule), kind !== 'design', `${kind}: ${rule}`);
   }
 });
 
@@ -146,8 +154,8 @@ test('quality selection rejects missing, empty, duplicate sections and invalid c
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
   for (const kind of ['code', 'design', 'plan'] as const) {
     const text = flat(kind);
-    assert.equal(text.split('follows a host rule is not a finding, even when it contradicts').length, 2, kind);
-    assert.equal(text.split('Where host rules are silent,').length, 2, kind);
+    assert.equal(text.split('Applicable host rule files govern first.').length, 2, kind);
+    assert.equal(text.split('This bar supplements host rules where they are silent and yields where they conflict.').length, 2, kind);
   }
 });
 
@@ -169,13 +177,12 @@ test('review prompts: prompts keep plan IDs out of tests', () => {
   for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'criterion, task, or finding IDs; plan or session paths']) assert.ok(text.includes(term), term);
 });
 
-test('quality selection keeps artifact finding loci out of code and writer criteria', () => {
+test('quality selection keeps artifact finding loci in review kind blocks', () => {
   const bar = read(templates, 'quality-bar.md');
-  for (const consumer of ['code', 'writer'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
+  for (const consumer of ['code', 'writer', 'plan', 'design'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
   for (const consumer of ['plan', 'design'] as const) {
-    const selected = qualityBar(bar, consumer);
-    assert.match(selected, new RegExp(`nearest ${consumer} heading as locus`));
-    assert.equal(selected.split('- Adjacent findings:').length, 2);
-    assert.doesNotMatch(selected, new RegExp(`nearest ${consumer === 'plan' ? 'design' : 'plan'} heading`));
+    const kindBlock = read(templates, `review-prompt-${consumer}.md`);
+    assert.match(kindBlock, new RegExp(`nearest ${consumer} heading as locus`));
+    assert.doesNotMatch(kindBlock, new RegExp(`nearest ${consumer === 'plan' ? 'design' : 'plan'} heading`));
   }
 });
