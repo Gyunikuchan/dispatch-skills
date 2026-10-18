@@ -36,7 +36,7 @@ test('prompt: assembled frame + kind block filled with fixed inputs equals the g
     if (kind !== 'code') {
       assert.ok(prompt.indexOf('`intent-gap`') < prompt.indexOf('- intent:'));
       assert.match(prompt, /§ Spec: <heading>/);
-      if (kind === 'plan') assert.match(prompt, /`spec-gap` is a test-spec gap/);
+      if (kind === 'plan') assert.match(prompt, /`spec-gap` remains a test-spec gap/);
       else assert.doesNotMatch(prompt, /`spec-gap`/);
     }
   }
@@ -166,7 +166,15 @@ test('quality selection: reviews hold retained tests to the durable bar', () => 
     const text = ruleText(kind);
     assert.ok(text.includes('Apply one behavioral bar to new, changed, and retained tests.'), kind);
     if (kind === 'plan') {
-      for (const term of ['the canonical test policy in the code section', 'rewrite', 'demote', 'delete', 'transient-named file']) assert.ok(text.includes(term), `${kind}: ${term}`);
+      for (const term of ["code section's test policy", 'repair the rationale or test', 'demote the criterion to transient', 'remove it when redundant']) assert.ok(text.includes(term), `${kind}: ${term}`);
+      const prompt = flat(kind);
+      for (const term of [
+        '`<skills-dir>/dispatch/references/templates/plan.md#field-notes`',
+        'test selectors and named-test matching',
+        '`[FINAL]` gate classification',
+        'transient-test placement',
+        'treat any violation as a defect',
+      ]) assert.ok(prompt.includes(term), `${kind}: ${term}`);
     }
   }
   assert.ok(ruleText('code').includes('mark step checks transient and trim them after review'));

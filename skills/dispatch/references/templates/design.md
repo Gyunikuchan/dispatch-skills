@@ -66,6 +66,6 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Execution Status and Review Findings & Resolutions: machine-managed; excluded from governed content.
 - Execution Status: every increment's state (completed, active, ready, blocked, invalidated) and one ledger-derived Next Action line.
 
-- Keep the template section order: live status, approach, and decisions first, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
+- Judge design quality against the selected shared and design criteria in the [quality bar](quality-bar.md). Keep the template section order: live status, approach, and decisions first, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. State shared constraints once; keep exceptions beside affected contracts.
 - Retain required sections and increment fields; omit optional empty subsections. Use no fixed word limit or second manually maintained summary.
 - Review history: follow [review rules](../review-rules.md) for the compact findings table and the sibling review log.

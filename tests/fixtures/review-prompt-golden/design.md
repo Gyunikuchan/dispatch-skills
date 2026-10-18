@@ -13,11 +13,8 @@ code has been written yet.
 - Advisory Tool Turn Target: Unspecified
 
 ### Review against
-- First check that every governing spec REQ is met, no DEC is contradicted, and no premise is flawed.
-  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
-- The design and its per-increment acceptance criteria.
-
-Apply the selected quality bar to these governing targets.
+- Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
 
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
@@ -44,13 +41,12 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Spec alignment: meet every applicable requirement in the governing spec, preserve its decisions and constraints, and identify flawed premises or gaps.
 
 - Traceability: trace every goal to a requirement, and state non-goals explicitly.
-- Acceptance criteria: make each criterion observable and together sufficient for the goals.
+- Acceptance and verification: make every criterion observable and together sufficient for the goals, including each increment's acceptance criteria.
 - Architecture: define component ownership, contracts between components, and data crossing boundaries.
-- Decisions: real alternatives weighed; choose the simplest viable shape.
+- Decisions: weigh real alternatives; apply the shared simplicity order when choosing.
 - Invariants: state system-wide rules that hold within and across increments.
 - Risk and operations: check trust boundaries, deployment and runtime operation, risk concentrated in one increment, and a reversal path per change.
 - Decomposition: choose independently deliverable, correctly ordered increments with collision-free parallel increments and covered final integration.
-- Verification: make every increment acceptance criterion observable.
 
 ### Tags
 - intent gap: `intent-gap`

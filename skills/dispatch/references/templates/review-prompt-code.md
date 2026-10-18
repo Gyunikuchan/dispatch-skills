@@ -31,6 +31,8 @@ success criteria well, not merely whether it matches the plan.
 - With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
+Judge quality using the selected sections of the [quality bar](quality-bar.md). The tags below classify findings; they do not add judging criteria.
+
 ## inspection
 
 Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
@@ -46,12 +48,12 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 ## tags
 
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
-- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — judge by the canonical code standards
-- robustness: `edge-case`, `partial-failure`, `race` — judge by the canonical code standards
-- security/resources: `security`, `auth`, `resource-leak`, `perf` — judge by the canonical code standards
-- compatibility: `compatibility`, `breaking`, `migration` — judge by the canonical code standards
-- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — classify departures from the canonical simplicity, reuse, and abstraction standards; for `reuse`, cite an existing equivalent anchored on the new symbol, with the existing `path:L<line>` in `defect`
-- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: retained tests that violate canonical test or naming standards, with the bar's remedy in `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`); judge touched UI, accessibility, and CLI/API ergonomics by the canonical code standards
+- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type`
+- robustness: `edge-case`, `partial-failure`, `race`
+- security/resources: `security`, `auth`, `resource-leak`, `perf`
+- compatibility: `compatibility`, `breaking`, `migration`
+- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — for `reuse`, cite an existing equivalent anchored on the new symbol, with the existing `path:L<line>` in `defect`
+- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: a retained test that fails the quality bar, with its remedy in `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`)
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
 - out of scope: `adjacent` — follow the shared Inspection rule; cite code at its real `path:L<line>` locus
 

@@ -2,14 +2,13 @@
 
 Rules for one unit writer optimising one packet. The packet lists files, line counts, durations, slow tests, and duplicate or merge candidates. Candidates are leads; inspect the tests before changing them.
 
-The canonical behavioral test bar lives in `skills/dispatch/references/templates/quality-bar.md`. Apply it to new, changed, and retained tests. Use `AGENTS.md` § Code Comments for comment and `// SECTION:` conventions.
+The canonical behavioral test bar lives in the [code section of the quality bar](../../../../skills/dispatch/references/templates/quality-bar.md#code). Apply it to new, changed, and retained tests. Use `AGENTS.md` § Code Comments for comment and `// SECTION:` conventions.
 
 ## Scope
 
 - Edit only packet files. In split units, create no files; propose any required move or split in the ledger.
 - Report helper, fixture, and cross-unit requests to the lead in the completion response; do not add unsupported ledger record kinds.
 - Preserve every baseline failure. Leave a failing test unchanged and report any proposed action on it as a blocker for lead review.
-- Keep assertions for useful failure modes and distinct cross-layer contracts.
 
 ## Evidence records
 
@@ -39,9 +38,9 @@ A retained-scenario record has this shape:
 {"kind":"retain","contract":"A blank label returns the documented validation error.","plausibleDefect":"The guard accepts a whitespace-only label.","observableOutcome":"The caller receives the validation error and stored state is unchanged.","distinctContribution":"Covers the public whitespace boundary.","before":[{"file":"tests/unit/labels.test.ts","name":"rejects blank label"}],"after":[{"file":"tests/unit/labels.test.ts","name":"rejects blank label"}]}
 ```
 
-All four explanations are required and nonblank. `after` must name at least one surviving test. Every baseline test must occur in an action or retained scenario, and every after test must occur in a retained scenario. A deleted or merged before test cannot also be retained. Keep the record positive: name the lasting contract, plausible defect, observable result, and distinct contribution.
+All four explanations are required and nonblank. `after` must name at least one surviving test. Every baseline test must occur in an action or retained scenario, and every after test must occur in a retained scenario. A deleted or merged before test cannot also be retained. Keep each retained record positive by naming its contract, plausible defect, observable result, and distinct contribution.
 
-One scenario may cover related tests when they share the same consumer behavior:
+Related tests may share one retained-scenario record only when they exercise the same consumer behavior. Record each test identity and explain its distinct contribution:
 
 ```json
 {"kind":"retain","contract":"Missing and explicitly undefined values return the configured default.","plausibleDefect":"The lookup returns undefined instead of the default.","observableOutcome":"The caller receives the configured default.","distinctContribution":"The absent-key case checks lookup misses; the stored-undefined case checks fallback after a successful lookup.","before":[{"file":"tests/unit/config.test.ts","name":"uses default for absent key"},{"file":"tests/unit/config.test.ts","name":"uses default for stored undefined"}],"after":[{"file":"tests/unit/config.test.ts","name":"uses default for absent key"},{"file":"tests/unit/config.test.ts","name":"uses default for stored undefined"}]}
@@ -75,7 +74,7 @@ Only a target with `after: 0` needs an individual user approval. After presentin
 
 ## Proof and savings
 
-Inspection is the default proof. Use targeted temporary fault injection only when it resolves uncertainty about whether a retained test distinguishes the intended defect. Preserve useful failure and boundary cases; resolve uncertainty about a required contract before deleting a test. Do not merge unrelated outcomes to lower test counts.
+Inspection is the default proof. Use targeted temporary fault injection only when it resolves uncertainty about whether a retained test distinguishes the intended defect.
 
 The comparison report measures reported leaf-test counts and suite wall-clock duration. Ledger claims are separate: the optional single `savings` record may report `scenariosRemoved`, `casesRemoved`, `cosmeticTableMerges`, and `repeatedSetupCallsReduced`, with concrete `evidence`. Each count is a nonnegative integer. The report labels these values as ledger-reported, not inventory-measured; omitted values remain unmeasured. Count removed cases or reduced setup only when the evidence supports those changes. A table merge that retains every case is cosmetic and is not removed work.
 

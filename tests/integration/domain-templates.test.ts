@@ -114,7 +114,8 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
 test('quality selection: plan review checks task dependencies, ownership, and independence', () => {
   const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8');
-  assert.match(bar, /claimed independence checked against\s+producer\/consumer interfaces/);
+  assert.match(bar, /^- Task graph: check prerequisites and ownership boundaries; check claimed independence against producer\/consumer interfaces\./m);
+  assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
   assert.match(prompt, /The plan summary, success criteria and task graph/);
   assert.match(prompt, /`dependency-graph`, `parallel-safety`/);
 });
@@ -153,7 +154,7 @@ test('quality selection: plans name searched equivalents and plan review checks 
   const reuseRule = plan.match(/^- Reuse:.*$/m)?.[0];
   assert.ok(reuseRule);
   assert.match(reuseRule, /\bnone found\b/);
-  assert.match(reuseRule, /\[quality bar\]\(quality-bar\.md#shared\)/);
+  assert.match(reuseRule, /\[quality bar's shared reuse criterion\]\(quality-bar\.md#shared\)/);
   const prompt = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(prompt.includes('for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent'));
   assert.ok(prompt.includes('Verify each plan reuse claim by repository search'));
@@ -161,7 +162,7 @@ test('quality selection: plans name searched equivalents and plan review checks 
 
 test('templates: task brief cleanup applies the quality bar without a new step', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
-  assert.match(brief, /^- After GREEN, inspect the task's changes against the injected quality bar, including naming, branches, and abstractions\./m);
+  assert.match(brief, /^- After GREEN, inspect the task's changes against the injected quality bar\./m);
   assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(quality.includes('avoid pass-through modules, speculative seams (one adapter is hypothetical), excess coupling'));
@@ -176,8 +177,8 @@ test('templates: plan template defines the durable bar and isolates transient te
 
 test('templates: task brief applies the durable bar and isolates transient tests', () => {
   const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8').replace(/\s+/g, ' ');
-  for (const text of ['only in their transient files', "the quality bar's test rules", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
-  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes('the canonical test policy in the code section'));
+  for (const text of ['only in their transient files', "the bar's test criteria", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
+  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes("code section's test policy"));
 });
 
 test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });
@@ -192,6 +193,7 @@ test('quality selection keeps judging rules single-sourced', () => {
   assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);
   assert.match(codePrompt, /cite code at its real `path:L<line>` locus/);
   assert.doesNotMatch(codePrompt, /concrete defect you meet outside Scope while inspecting|spend no extra turns hunting|domain-valid formulas and algorithms|type-valid, domain-invalid states|pass-through modules; speculative seams/);
+  for (const criterion of ['type-valid but domain-invalid states', 'N+1 queries, and unpaginated reads', 'avoid pass-through modules, speculative seams']) assert.ok(!codePrompt.includes(criterion), criterion);
   for (const consumer of ['plan', 'design'] as const) {
     const kindPrompt = readFileSync(new URL(`review-prompt-${consumer}.md`, root), 'utf8');
     assert.match(kindPrompt, /Cite existing code as `path\/to\/file:L<line>` inside `defect`/);
@@ -200,12 +202,12 @@ test('quality selection keeps judging rules single-sourced', () => {
   for (const kind of ['plan', 'design']) {
     const prompt = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
     assert.doesNotMatch(prompt, /^## quality$/m);
-    assert.match(prompt, /Apply the selected quality bar to these governing targets/);
+    assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
     const tags = prompt.split('## tags')[1]!.split('## severity')[0]!;
     assert.match(tags, /`dependency-graph`, `parallel-safety`/);
     assert.doesNotMatch(tags, /\u2014|findings/);
     for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- [^:]+: `[^`]+`(?:, `[^`]+`)*$/);
-    for (const rule of ['claimed independence checked against', 'each new helper, module, or type names the equivalents searched', 'real alternatives weighed', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
+    for (const rule of ['check claimed independence against', 'for each new exported or shared symbol, helper, module, or type, search the repository', 'weigh real alternatives', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
   }
-  for (const rule of ['Spec alignment:', 'claimed independence checked against', 'each new exported or shared symbol, helper, module, or type, search the repository', 'real alternatives weighed', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
+  for (const rule of ['Spec alignment:', 'check claimed independence against', 'for each new exported or shared symbol, helper, module, or type, search the repository', 'weigh real alternatives', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
 });

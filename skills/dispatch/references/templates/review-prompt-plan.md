@@ -23,15 +23,10 @@ executing the plan as written delivers the requirement.
 
 ## against
 
-- First check governing intent and premises. A standalone plan must cover every spec REQ.
-  An increment plan must meet its inherited acceptance criteria and applicable REQs; check remaining
-  requirement coverage through the approved design's increment mapping. Preserve all governing constraints and DECs.
-  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
-  `spec-gap` is a test-spec gap, distinct from `intent-gap`.
+- Governing targets: every spec REQ and DEC for a standalone plan; inherited acceptance criteria and applicable REQs for an increment plan, using the approved design's increment mapping to check remaining coverage.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags. `spec-gap` remains a test-spec gap, distinct from `intent-gap`.
 - The plan summary, success criteria and task graph.
 - Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
-
-Apply the selected quality bar to these governing targets.
 
 ## inspection
 

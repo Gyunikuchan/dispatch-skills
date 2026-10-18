@@ -23,11 +23,8 @@ code has been written yet.
 
 ## against
 
-- First check that every governing spec REQ is met, no DEC is contradicted, and no premise is flawed.
-  Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
-- The design and its per-increment acceptance criteria.
-
-Apply the selected quality bar to these governing targets.
+- Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
 
 ## inspection
 
