@@ -5,7 +5,7 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 ## shared
 
-- Precedence: host rule files (`AGENTS.md` / `CLAUDE.md`; the nearest nested file wins over its parent), then this bar, then preference. Content that follows a host rule is not a finding, even when it contradicts this bar. Where host rules are silent, this bar applies.
+- Precedence: host rule files (`AGENTS.md`; the nearest nested file wins over its parent), then this bar, then preference. Content that follows a host rule is not a finding, even when it contradicts this bar. Where host rules are silent, this bar applies.
 - Host rules override only this bar. Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed. Writers report a conflict between host rules and the brief under concerns; reviewers do not report such a conflict as a finding.
 - Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
 - Reuse: for each new exported or shared symbol, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding the symbol.

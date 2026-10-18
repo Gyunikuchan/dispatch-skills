@@ -25,7 +25,7 @@ Populate the template variables (kind blocks declare the rest):
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
+Adhere to this project's conventions: read `AGENTS.md`, including nested ones on
 reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
 <<slot:inspection>>
