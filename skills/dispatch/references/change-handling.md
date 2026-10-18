@@ -18,7 +18,7 @@ The orchestrator can attach `changeDispositions` to its normal host event. Bind 
 
 Retaining evidence preserves its actual revision and recorded coverage. Refresh marks named verification obligations pending and preserves drafts, candidates, integration commits, acceptance history, attempts and handles. Recheck retained work; select a concrete repair before launching more production writes. Failed required checks remain unresolved, and mandatory final gates still run against the selected delivery candidate. At completion, account for observations that could affect required criteria.
 
-For changed requirements, use [plan reconciliation](verbs/implement.md#amendments). Escalate actual changed intent, new external dependencies/runtime prerequisites or work disposal under the existing user gate. Review coverage uses the separate [review applicability contract](review-rules.md#review-provenance-and-applicability).
+For changed requirements, use [plan reconciliation](verbs/implement.md#amendments). Escalate actual changed intent, new external dependencies/runtime prerequisites or discarded work under the [user gate](decision-frame.md#user-gate-boundaries). Review coverage uses the separate [review applicability contract](review-rules.md#review-provenance-and-applicability).
 
 ## Concrete write boundaries
 

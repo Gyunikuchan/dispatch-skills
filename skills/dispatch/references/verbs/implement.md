@@ -18,7 +18,7 @@ Each task uses one continuous writer invocation from inspection through envelope
 
 For changed observed inputs, verification mutation or a delivery collision, follow [change handling](../change-handling.md). Select affected obligations as the orchestrator and retain approved write scope and attempt identities.
 
-Send each decision through `DECISION` with its exact `kind` and an `answer` matching the pending frame:
+Send each decision through `DECISION` with its exact `kind` and an `answer` matching the pending frame; format user escalations per [Decision Frame](../decision-frame.md):
 
 - `DECISION kind=run-stop`: `{ by: "user", quote }` at a level or scope gate.
 - `DECISION kind=level-classification`: `{ evaluatedLevel, rationale, gateScope }`; echo the complete gate snapshot.
@@ -26,6 +26,7 @@ Send each decision through `DECISION` with its exact `kind` and an `answer` matc
 - `DECISION kind=integration-conflict`: `{ by: "orchestrator", action: "resolve" | "discard", rationale, amendment? }`.
 - `DECISION kind=request`: `{ by: "orchestrator", action: "approve" | "decline" | "escalate", rationale }`.
 - `DECISION kind=request-user`: `{ by: "user", requestId, choice: "accept" | "decline", quote }`; only after `escalate`.
+- `DECISION kind=needs-user` / `concerns`: `{ decision: "accept" | "stop", by: "orchestrator" | "user", quote }`; rule autonomously as orchestrator with evidence, or escalate to user under user gates.
 
 ### Writer receipts
 
@@ -45,7 +46,7 @@ When a live writer needs work outside its task scope, reply `REQUEST` with `{ ta
 
 - `approve` after an `AMEND` brings the paths in scope; the driver then resumes scheduling.
 - `decline`, then tell the writer to continue within its scope.
-- `escalate` when you disagree with the writer or the need changes intent; the user answers with `request-user`.
+- `escalate` when you disagree with the writer or the need changes intent; present the [Decision Frame](../decision-frame.md#writer-requests-request-user) to the user; the user answers with `request-user`.
 
 A `scope` request comes from a submitted candidate, not a live writer. `approve` admits exactly its paths without `AMEND`; inspect them first and decline incidental output that does not belong in delivery.
 
@@ -66,7 +67,7 @@ A submission against an older brief must still pass current scope admission. A w
 - Retirement archives work references and retains integrated bytes. Removing those bytes requires an approved scoped compensating task, named in `reconciliation.compensating`, with `by: { by: "user", quote }`.
 - A retired live writer requires `retire: [{ task, disposition: "stop" | "retain" }]`; a `stop` disposition requires a user quote. Its slot remains occupied until a cancelled/terminal receipt. Retain its handle and submission history.
 
-Attach a user quote for actual changed intent, a new external dependency/runtime prerequisite or work disposal. Ordinary requirement retirement alone does not discard work. See [change handling](../change-handling.md) for evidence dispositions and durable continuation.
+Attach a user quote for actual changed intent, a new external dependency/runtime prerequisite or discarded work under the [user gate](../decision-frame.md#user-gate-boundaries). Ordinary requirement retirement alone does not discard work. See [change handling](../change-handling.md) for evidence dispositions and durable continuation.
 
 ### Integration conflicts
 
@@ -78,6 +79,6 @@ If replay fails after a resolved pick, use the failure frame's explicit `retry` 
 
 Retired accepted work retains its recorded paths and verification contract for replay resolution. Repair within that retained scope; the checks test preserved work without restoring retired requirements or widening a live writer's scope. Replay remaps live and retired integration references while keeping original commits in history.
 
-Independent branches continue after task failure; descendants remain blocked. Keep running handles and completed receipts across status/resume. At a consolidated failure decision, verify each failed task's `amendment` against plan intent, invariants, and code, treating `unresolvedTargets` as unverified; then retry with clarified context, send `AMEND` citing the amendment, or stop with artifacts retained. Preservation does not claim repair or retry.
+Independent branches continue after task failure; descendants remain blocked. Keep running handles and completed receipts across status/resume. At a consolidated failure decision, verify each failed task's `amendment` against plan intent, invariants, and code, treating `unresolvedTargets` as unverified; then retry with clarified context, send `AMEND` citing the amendment, or stop per [Decision Frame](../decision-frame.md#implementation-failure-failure) with artifacts retained. Preservation does not claim repair or retry.
 
 After all tasks are accepted, the current runtime checks caller drift, transfers the integrated delta, and removes private worktrees. Concerns, final code review/fixes, generated-artifact regeneration, aggregate gates, and final evidence then run in the caller checkout. This order differs from pre-delivery review in private integration: review or final-gate failure can leave delivered edits for repair. After the final review and fixes, the driver trims test files owned only by `Retain: transient` criteria, keeps their evidence as `verified at <revision>`, drops their Verify commands, and then runs the final gate. Other final criterion passes must postdate mutation. Retain caller changes and report completion only with every criterion evidenced.

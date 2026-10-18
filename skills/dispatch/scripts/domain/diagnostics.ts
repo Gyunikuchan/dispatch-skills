@@ -71,7 +71,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/machines', 'ask change-resolution checkpoint design-revision design diagnostics execution-config implement-tasks implement-types implement plan plan-reconciliation review revision root spec types', '.ts'),
   ...files('scripts/policy', 'cascade drift hotfix roster rounds', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
-  ...files('references', 'change-handling diagnostics glossary providers review-rules spec-stage worktree-cleanup', '.md'),
+  ...files('references', 'change-handling decision-frame diagnostics glossary providers review-rules spec-stage worktree-cleanup', '.md'),
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
   ...files('references/templates', 'design plan review-prompt-code review-prompt-design review-prompt-plan review-prompt quality-bar spec walkthrough write-brief-hotfix write-brief-task write-brief', '.md'),
   ...files('references/templates/schemas', 'report-code report-design report-plan', '.json'),

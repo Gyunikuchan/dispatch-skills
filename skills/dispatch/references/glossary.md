@@ -2,7 +2,7 @@
 
 | Term | Meaning | Banned synonym |
 |---|---|---|
-| orchestrator | Internal term for the host agent that verifies findings and answers awaits | master agent |
+| orchestrator | Internal term for the host agent that acts as the user's executive deputy, verifies findings, and answers awaits | master agent |
 | host agent | The user's current agent, which coordinates Dispatch and rules on evidence | |
 | host platform | The agent environment that runs the host agent and determines native writer availability | |
 | subagent | Native worker launched by the host agent with bounded write permission | slave agent, sub-agent |

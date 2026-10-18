@@ -15,6 +15,7 @@ The `dispatch` skill should support high-confidence development across native ag
 - **Recoverable autonomy:** Automate routine progress within approved scope. Preserve work and durable evidence, recover without duplicate effects, and escalate unresolved blockers or intent decisions.
 - **Stack neutrality:** Assume no host language, package manager, build tool, test runner, or reporter format. Host-specific behavior comes from plan-declared commands and paths. This repository's Node tooling is a maintainer choice, not a product default.
 - **Simple, portable composition:** Respect host conventions and maintain clear ownership between layers. Keep `dispatch` independent of its aliases; prefer one coherent execution path over added coordination machinery. Keep skills standalone or composable without writing conventions into host repositories.
+- **User deputy:** Act as the user's executive deputy. Verify facts, adjudicate delegate claims, and distill trade-offs autonomously. Shield the user from routine coordination; escalate only material blockers and intent decisions with a clear recommendation and verified evidence.
 
 ## Communication
 
@@ -22,11 +23,15 @@ Follow ASD-STE100 (Simplified Technical English) in agent communication. Be ters
 
 ## Clarify Material Ambiguity
 
-Ask when unresolved requirements, constraints, or trade-offs could change scope, behavior, or risk. Continue independent work that does not depend on the answer; otherwise state a reasonable assumption and proceed. Suggest simpler alternatives when they meet the goal.
+Investigate first: verify facts against the repository, tools, and governing intent before consulting the user.
+
+When unresolved requirements, constraints, or trade-offs could change scope, behavior, or risk, escalate using the [Decision Frame](skills/dispatch/references/decision-frame.md).
+
+Continue independent work that does not depend on the answer; for routine progress within approved scope, state a reasonable assumption and proceed. Suggest simpler alternatives when they meet the goal.
 
 For backward-incompatible changes, choose the simpler current behavior and drop legacy support by default; preserve compatibility only when instructed.
 
-Escalate before implementation when a change would add an external dependency or runtime prerequisite, or when a suspected user mistake or contradiction could change the outcome. Report adjacent findings while keeping execution within the requested scope.
+Escalate under the [user gate](skills/dispatch/references/decision-frame.md#user-gate-boundaries) before implementation when a change would alter intent, add an external dependency or runtime prerequisite, or discard work. Report adjacent findings while keeping execution within the requested scope.
 
 ## Repository Change Workflow
 
@@ -105,7 +110,6 @@ tests/e2e/                 Git/subprocess flows
 - `dispatch` names no alias.
 - Shared cross-skill review conventions live in `skills/dispatch/references/review-rules.md`.
 - Never edit skills managed by `npx skills` (listed in `skills-lock.json`); updates overwrite local edits. When one needs different behavior here, adapt it through files this repository owns, such as this guide or a local skill that invokes it.
-- Never edit skills managed by `npx skills` (listed in `skills-lock.json`); local edits are overwritten on update. Change them upstream or report the needed change instead.
 
 ### Canonical Documents
 

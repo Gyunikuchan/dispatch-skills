@@ -14,7 +14,7 @@ Keep one resolved canonical spec. New/session-authored specs use `<session>/<slu
 
 At `medium` and above, design or plan authoring waits for approval of the settled spec hash. This includes plans authored inside implementation and nested increment plans. At `low`, proceed and show the spec in the handoff. Spec settlement also applies to standalone review, but settlement alone does not add an approval gate to standalone code review.
 
-At the emitted `decide` frame with `data.kind: spec-approval`, show `data.path` and `data.hash` to the user. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Design approval and production-write approval remain separate authorizations.
+At the emitted `decide` frame with `data.kind: spec-approval`, present the [Decision Frame](decision-frame.md#spec-approval-spec-approval) with `data.path`, `data.hash`, distilled intent, key requirements, and settled decisions. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Design approval and production-write approval remain separate authorizations.
 
 ## Readers and document layers
 
