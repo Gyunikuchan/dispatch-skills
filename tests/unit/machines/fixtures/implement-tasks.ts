@@ -5,6 +5,7 @@ import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../../skills/dis
 import { parseRedMatrix } from '../../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskSignature } from '../../../../skills/dispatch/scripts/machines/implement-tasks.ts';
+import { launchOf } from '../../../helpers/launch.ts';
 
 // SECTION: Fixture plan — T1 (RED) and T2 are independent; T3 depends on T1.
 
@@ -132,7 +133,11 @@ export function start(concurrency: number, sim: Sim = {}): { result: Result; tra
 }
 
 export type Slot = { task: string; action: string; handle: string | null; attempt: number; signature: string; model: string; envelopePath: string; worktree: string; briefHash: string };
-export const slots = (result: Result): Slot[] => result.state.tag === 'tasks' ? (implementData(result.state)['tasks'] as Slot[]) : [];
+export type FrameRow = { task: string; action: string; attempt: number; handle: string | null; launchPath: string };
+/** Compact tasks-frame rows as the host reads them. */
+export const frameRows = (result: Result): FrameRow[] => result.state.tag === 'tasks' ? (implementData(result.state)['tasks'] as FrameRow[]) : [];
+/** Each compact row merged with its launch record, so receipts copy launch fields. */
+export const slots = (result: Result): Slot[] => frameRows(result).map((row) => ({ ...row, ...launchOf(result.state, row.task) }) as unknown as Slot);
 export const record = (result: Result, id: string) => 'c' in result.state && result.state.c ? result.state.c.tasks[id] : undefined;
 export const launch = (result: Result, sim: Sim, trace: Trace): Result => {
   for (const slot of slots(result).filter((item) => item.action === 'launch')) result = host(result, { type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}`, model: slot.model }, sim, trace);

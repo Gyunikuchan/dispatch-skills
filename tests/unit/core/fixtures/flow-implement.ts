@@ -13,6 +13,7 @@ import { governedPlanText } from '../../../../skills/dispatch/scripts/domain/pla
 import { rootMachine } from '../../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../../helpers/memory-run-fs.ts';
+import { withLaunch } from '../../../helpers/launch.ts';
 import { stepImplement } from '../../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, FP, HASH } from '../../machines/fixtures/implement-recovery.ts';
 
@@ -119,10 +120,10 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   assert.deepEqual([classification.frame?.await, classification.frame?.data['kind']], ['decide', 'level-classification']);
   const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded and recoverable behavior change.', gateScope: classification.frame?.data['gateScope'] } } });
   assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › tasks']);
-  const [slot] = write.frame?.data['tasks'] as { task: string; action: string; attempt: number; signature: string; envelopePath: string }[];
+  const [slot] = withLaunch(write.frame?.data['tasks'] as { task: string; launchPath: string }[], runDir, ports.fs.readText);
   assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
   const envelopePath = String(slot?.envelopePath);
-  const launched = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: (slot as unknown as { model: string }).model, ...(typeof write.frame!.data['effort'] === 'string' ? { effort: write.frame!.data['effort'] as string } : {}) } });
+  const launched = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: slot!.model, ...(typeof write.frame!.data['effort'] === 'string' ? { effort: write.frame!.data['effort'] as string } : {}) } });
   assert.equal((launched.frame?.data['tasks'] as { action: string }[])[0]?.action, 'running');
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');
@@ -133,7 +134,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
     evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],
   }));
-  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath, briefHash: String((launched.frame?.data['tasks'] as { briefHash: string }[])[0]?.briefHash), model: (slot as unknown as { model: string }).model } });
+  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath, briefHash: withLaunch(launched.frame?.data['tasks'] as { launchPath: string }[], runDir, ports.fs.readText)[0]!.briefHash, model: slot!.model } });
   assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence'], JSON.stringify(evidence.frame));
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
   assert.equal(done.frame?.await, 'done', JSON.stringify(done.frame));

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
+import { withLaunch } from '../helpers/launch.ts';
 
 // SECTION: Helpers — a live two-task run through the public CLI with real Git worktrees.
 
@@ -11,7 +12,8 @@ type Fixture = ReturnType<typeof fixture>;
 type CliFrame = Awaited<ReturnType<Fixture['cli']>>;
 type TaskSlot = { task: string; action: string; attempt: number; signature: string; handle: string | null; worktree: string; envelopePath: string; model?: string; briefHash?: string };
 type EffortFrame = { data: Record<string, unknown> };
-const taskSlots = (frame: CliFrame) => (frame.data['tasks'] ?? []) as TaskSlot[];
+// Compact frame rows link launch records under the absolute run dir.
+const taskSlots = (frame: CliFrame, run: string) => withLaunch((frame.data['tasks'] ?? []) as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as TaskSlot[];
 const effortOf = (frame: EffortFrame) => typeof frame.data['effort'] === 'string' ? { effort: frame.data['effort'] as string } : {};
 const includes = (file: string, text: string) => `node -e "process.exit(require('node:fs').readFileSync('${file}','utf8').includes('${text}') ? 0 : 1)"`;
 
@@ -82,14 +84,14 @@ async function liveRun(f: Fixture, source: string, inputs: Record<string, string
   frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with the fixture plan.' } });
   frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScope: frame.data['gateScope'] } });
   const launchFrame = frame;
-  for (const slot of taskSlots(launchFrame).filter((item) => item.action === 'launch')) {
+  for (const slot of taskSlots(launchFrame, run).filter((item) => item.action === 'launch')) {
     frame = await f.reply(run, { type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}`, model: slot.model!, ...effortOf(launchFrame) });
   }
   return { run, frame, session };
 }
 
 async function submitTask(f: Fixture, run: string, frame: CliFrame, spec: TaskSpec, text = `export const ${spec.text};\n`) {
-  const slot = taskSlots(frame).find((item) => item.task === spec.id);
+  const slot = taskSlots(frame, run).find((item) => item.task === spec.id);
   assert.ok(slot?.handle, JSON.stringify(frame));
   fs.writeFileSync(path.join(slot.worktree, spec.file), text);
   fs.writeFileSync(slot.envelopePath, JSON.stringify({ schemaVersion: 1, stage: 'COMPLETE', status: 'DONE', summary: `Delivered ${spec.id}.`, evidence: [`CRITERION ${spec.criterion} | ${spec.file} | delivers the checked behavior`], files: [{ path: spec.file, note: `Delivered by ${spec.id}.` }] }));
@@ -129,7 +131,7 @@ test('replacement-work: retirement preserves integrated bytes', async () => {
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     frame = await replacePlan(f, run, frame, session, plan([T1]), { reconciliation: { retained: ['T1'], changed: [], added: [], retired: ['T2'], intentChanged: false, dependencyChanged: false } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.handle]), [['T1', 'writer-T1']], 'T1 keeps its writer');
+    assert.deepEqual(taskSlots(frame, run).map((slot) => [slot.task, slot.handle]), [['T1', 'writer-T1']], 'T1 keeps its writer');
     frame = await submitTask(f, run, frame, T1);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     for (const file of ['src/a.ts', 'src/b.ts']) assert.equal(fs.readFileSync(path.join(f.repo, file), 'utf8'), 'export const value = 2;\n', file);
@@ -144,10 +146,10 @@ test('replacement-work: new prerequisite validates the retained consumer', async
   try {
     let { run, frame, session } = await liveRun(f, plan([T1, T2]));
     frame = await submitTask(f, run, frame, T2);
-    const launches = taskSlots(frame).length;
+    const launches = taskSlots(frame, run).length;
     frame = await replacePlan(f, run, frame, session, plan([T1, { ...T2, prerequisites: 'T1' }]), { reconciliation: { retained: ['T1'], changed: ['T2'], added: [], retired: [], intentChanged: false, dependencyChanged: false } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    assert.equal(taskSlots(frame).length, launches, 'accepted T2 is not relaunched');
+    assert.equal(taskSlots(frame, run).length, launches, 'accepted T2 is not relaunched');
     frame = await submitTask(f, run, frame, T1);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     const criteria = frame.data['criteria'] as { id: string; obligation?: { observationId: string } }[];
@@ -174,7 +176,7 @@ test('replacement-work: approved compensating removal keeps prior refs', async (
     frame = await replacePlan(f, run, frame, session, replacement, { reconciliation, by: { by: 'user', quote: 'Revert value B.' }, rationale: 'Revert value B.' });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     const launchFrame = frame;
-    for (const slot of taskSlots(launchFrame).filter((item) => item.action === 'launch')) frame = await f.reply(run, { type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}`, model: slot.model!, ...effortOf(launchFrame) });
+    for (const slot of taskSlots(launchFrame, run).filter((item) => item.action === 'launch')) frame = await f.reply(run, { type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}`, model: slot.model!, ...effortOf(launchFrame) });
     frame = await submitTask(f, run, frame, T3);
     frame = await submitTask(f, run, frame, T1);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));

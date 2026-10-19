@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { AMEND_PLAN } from './fixtures/implement-amend.ts';
+import { launchOf } from '../../helpers/launch.ts';
 import { answer, host, launch, record, run, start, submit, type Result, type Sim, type Trace } from './fixtures/implement-tasks.ts';
 
 // SECTION: Helpers — T2 conflicts with accepted T1 on both tasks' files.
@@ -41,8 +42,8 @@ function conflicted(): Run {
   result = launch(result, sim, trace);
   result = submit(result, 'T1', sim, trace);
   const state: Run = { result, sim, trace, failing };
-  const t2 = (result.state.tag === 'tasks' ? implementData(result.state)['tasks'] as { task: string; attempt: number; signature: string; handle: string; model: string; envelopePath: string; briefHash: string }[] : []).find((slot) => slot.task === 'T2')!;
-  send(state, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: t2.handle, model: t2.model, envelopePath: t2.envelopePath, briefHash: t2.briefHash });
+  const t2 = launchOf(result.state, 'T2');
+  send(state, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: t2.handle!, model: t2.model, envelopePath: t2.envelopePath, briefHash: t2.briefHash });
   return state;
 }
 const resolveDecision: Event = { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'resolve', rationale: 'Merge both edits.' } };
@@ -148,8 +149,8 @@ function conflictedAfterT3(paths: string[], plan = AMEND_PLAN): Run {
   result = submit(result, 'T3', sim, trace);
   const state: Run = { result, sim, trace, failing };
   send(state, (() => {
-    const t2 = (implementData(state.result.state)['tasks'] as { task: string; attempt: number; signature: string; handle: string; model: string; envelopePath: string; briefHash: string }[]).find((slot) => slot.task === 'T2')!;
-    return { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: t2.handle, model: t2.model, envelopePath: t2.envelopePath, briefHash: t2.briefHash } as Event;
+    const t2 = launchOf(state.result.state, 'T2');
+    return { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: t2.handle!, model: t2.model, envelopePath: t2.envelopePath, briefHash: t2.briefHash } as Event;
   })());
   assert.equal(state.result.state.tag, 'integration-conflict');
   return state;

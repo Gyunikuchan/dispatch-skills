@@ -8,6 +8,7 @@ import { start } from '../../helpers/governed-start.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
+import { withLaunch } from '../../helpers/launch.ts';
 import { run, hash, design } from '../machines/fixtures/design.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
@@ -30,7 +31,7 @@ test('level-journal: nested design replay classifies before its first writer and
     },
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint, diff: { paths: [] } }],
     verify: async (effect) => [{ type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, results: [], fingerprint }],
-    'write-brief': async (effect) => { writes++; return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: 'brief', sha256: hash, envelopePath: `${effect.id}.outcome.json` }]; },
+    'write-brief': async (effect) => { writes++; return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: path.join(runDir, 'brief'), sha256: hash, envelopePath: `${effect.id}.outcome.json` }]; },
     'check-envelope': async (effect) => [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered', evidence: [] }, defects: [], diff: { paths: [effect.id.includes('i02') ? 'src/b.ts' : 'src/a.ts'] } }],
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts', 'src/b.ts'] }, promptPaths: { 'codex[0]': 'prompt' } }],
     'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: effect.roster.some((slot) => !slot['native'] && !slot['reserve']) ? 1 : 0, roster: effect.roster, native: effect.id === 'design.integration.wave.1' ? [{ sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' }] : [], early: [], claimPath: null, inputPath: 'input' }],
@@ -68,10 +69,10 @@ test('level-journal: nested design replay classifies before its first writer and
     result = await send({ ports, machine: rootMachine, handlers, runDir });
     assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
-    const [pending] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; envelopePath: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'launched', task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}`, model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) } });
-    const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string; briefHash: string; model: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath, briefHash: slot!.briefHash, model: slot!.model } });
+    const [pending] = withLaunch(result.frame?.data['tasks'] as { launchPath: string }[], runDir, ports.fs.readText);
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { ...pending!.receipts[0], handle: `agent-${increment}` } });
+    const [slot] = withLaunch(result.frame?.data['tasks'] as { launchPath: string }[], runDir, ports.fs.readText);
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: slot!.receipts.find((receipt) => receipt['status'] === 'submitted') });
     assert.equal(result.exitCode, 0, JSON.stringify(result.frame));
     if (increment === 'I01') {
       assert.deepEqual((result.frame?.data['levelAssessment'] as { gateScope: unknown } | undefined)?.gateScope, capturedGateScope);

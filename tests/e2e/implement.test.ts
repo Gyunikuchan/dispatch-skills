@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
+import { withLaunch } from '../helpers/launch.ts';
 import { hashes } from '../../scripts/generate-hashes.ts';
 import { executionTopology } from '../../skills/dispatch/scripts/domain/execution-config.ts';
 import type { Frame } from '../../skills/dispatch/scripts/core/types.ts';
@@ -135,7 +136,7 @@ async function fixedControllerDelivery() {
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     frame = reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Fixture-only diagnostic label, without routing changes.', gateScope: frame.data['gateScope'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    const [slot] = frame.data['tasks'] as (ReceiptSlot & { worktree: string; briefPath: string })[];
+    const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as (ReceiptSlot & { worktree: string; briefPath: string })[];
     assert.ok(slot);
     const brief = fs.readFileSync(slot.briefPath, 'utf8');
     assert.ok(brief.replaceAll('\\', '/').includes(controllerEntry.replaceAll('\\', '/')), brief);
@@ -246,9 +247,10 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded, reversible helper change.', gateScope: frame.data['gateScope'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    const [slot] = frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; briefPath: string; briefSha256: string; envelopePath: string; worktree: string }[];
+    const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as { task: string; action: string; attempt: number; signature: string; briefPath: string; briefHash: string; envelopePath: string; worktree: string; launchPath: string }[];
     assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
-    const brief = fs.readFileSync(slot!.briefPath); assert.equal(`sha256:${crypto.createHash('sha256').update(brief).digest('hex')}`, slot!.briefSha256);
+    const brief = fs.readFileSync(slot!.briefPath); assert.equal(`sha256:${crypto.createHash('sha256').update(brief).digest('hex')}`, slot!.briefHash);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(run, slot!.launchPath), 'utf8')).attempt, slot!.attempt, 'root wrote the launch record the frame row names');
     const launchFrame = frame;
     frame = await f.reply(run, launchedReceipt(slot!, 'agent-1', launchFrame));
     assert.equal((frame.data['tasks'] as { action: string }[])[0]?.action, 'running', JSON.stringify(frame));
@@ -261,7 +263,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
     const previewPath = path.join(run, previewEvent);
     const preview = JSON.parse(fs.readFileSync(previewPath, 'utf8')) as Record<string, unknown>;
     assert.deepEqual([preview['task'], preview['attempt'], preview['signature']], ['T1', slot!.attempt, slot!.signature]);
-    assert.deepEqual([preview['type'], preview['status'], preview['briefHash']], ['WRITE_RECEIPT', 'submitted', slot!.briefSha256]);
+    assert.deepEqual([preview['type'], preview['status'], preview['briefHash']], ['WRITE_RECEIPT', 'submitted', slot!.briefHash]);
     fs.writeFileSync(previewPath, JSON.stringify({ ...preview, handle: 'agent-1', model: (slot as unknown as { model: string }).model }));
     fs.writeFileSync(envelopePath, '{"schemaVersion":1,"status":"DONE","stage":"COMPLETE","summary":""}');
     const invalidReceipt = await f.launch(['send', '--run', run, '--event', `@${path.join(run, previewEvent)}`, '--dry-run']).done;
@@ -337,7 +339,7 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
     const run = f.absoluteRun(frame.run);
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approve this scope.' } });
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScope: frame.data['gateScope'] } });
-    const [slot] = frame.data['tasks'] as (ReceiptSlot & { worktree: string })[];
+    const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as (ReceiptSlot & { worktree: string })[];
     assert.equal(slot?.task, 'T1', JSON.stringify(frame));
     const launchFrame = frame;
     frame = await f.reply(run, launchedReceipt(slot!, 'writer-1', launchFrame));
@@ -669,9 +671,9 @@ test('prewrite-level: accepted deviation reapplies parked in-scope draft to chan
 
 // SECTION: Task graph through the public CLI
 
-type TaskSlot = { task: string; action: string; attempt: number; signature: string; handle: string | null; worktree: string; envelopePath: string; checkpointPath: string; model?: string; briefHash?: string; briefPath?: string; paths?: string[] };
+type TaskSlot = { task: string; action: string; attempt: number; signature: string; handle: string | null; worktree: string; envelopePath: string; checkpointPath: string; model?: string; briefHash?: string; briefPath?: string; paths?: string[]; launchPath: string; notice?: string };
 type CliFrame = Awaited<ReturnType<ReturnType<typeof fixture>['cli']>>;
-const taskSlots = (frame: CliFrame) => (frame.data['tasks'] ?? []) as TaskSlot[];
+const taskSlots = (frame: CliFrame, repo: string) => withLaunch((frame.data['tasks'] ?? []) as { launchPath: string }[], path.resolve(repo, frame.run), (file) => fs.readFileSync(file, 'utf8')) as unknown as TaskSlot[];
 
 async function taskGraph(cap: number, independent = false) {
   const f = fixture();
@@ -768,11 +770,11 @@ No reviews conducted yet.
 type TaskGraph = Awaited<ReturnType<typeof taskGraph>>;
 async function launchTasks(g: TaskGraph, frame: CliFrame) {
   let next = frame;
-  for (const slot of taskSlots(frame).filter((item) => item.action === 'launch')) next = await g.f.reply(g.run, launchedReceipt(slot, `writer-${slot.task}`, frame));
+  for (const slot of taskSlots(frame, g.f.repo).filter((item) => item.action === 'launch')) next = await g.f.reply(g.run, launchedReceipt(slot, `writer-${slot.task}`, frame));
   return next;
 }
 async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' = 'valid') {
-  const slot = taskSlots(frame).find((item) => item.task === id)!;
+  const slot = taskSlots(frame, g.f.repo).find((item) => item.task === id)!;
   assert.ok(slot, JSON.stringify(frame));
   const file = { T1: 'a', T2: 'b', T3: 'c' }[id]!;
   const name = { T1: 'normalizes shared value', T2: 'consumer b observes contract', T3: 'consumer c observes contract' }[id]!;
@@ -799,25 +801,25 @@ test('${name}', () => { assert.equal(value, 2);${dependent ? ' assert.equal(shar
 test('prewrite-level: live CLI taskGraph resolves classification before writer launch', async () => {
   const g = await taskGraph(2), f = g.f;
   try {
-    assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1']);
-    const first = taskSlots(g.frame)[0]!;
+    assert.deepEqual(taskSlots(g.frame, g.f.repo).map((slot) => slot.task), ['T1']);
+    const first = taskSlots(g.frame, g.f.repo)[0]!;
     assert.match(fs.readFileSync(path.join(first.worktree, 'src/a.ts'), 'utf8'), /caller input/);
     assert.equal(fs.readFileSync(path.join(first.worktree, 'local.config'), 'utf8'), 'local setting\n');
     let frame = await finishTask(g, await launchTasks(g, g.frame), 'T1');
-    assert.deepEqual(taskSlots(frame).map((slot) => slot.task), ['T2', 'T3'], JSON.stringify(frame));
-    for (const slot of taskSlots(frame)) assert.equal(fs.readFileSync(path.join(slot.worktree, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
-    assert.notEqual(taskSlots(frame)[0]!.worktree, taskSlots(frame)[1]!.worktree);
+    assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => slot.task), ['T2', 'T3'], JSON.stringify(frame));
+    for (const slot of taskSlots(frame, g.f.repo)) assert.equal(fs.readFileSync(path.join(slot.worktree, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
+    assert.notEqual(taskSlots(frame, g.f.repo)[0]!.worktree, taskSlots(frame, g.f.repo)[1]!.worktree);
     assert.match(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), /caller input/);
     frame = await launchTasks(g, frame);
     const journal = path.join(g.run, 'events.jsonl'), before = fs.readFileSync(journal, 'utf8');
     await f.cli(['status', '--run', g.run]);
     const dry = await f.cli(['send', '--run', g.run, '--dry-run']);
-    assert.deepEqual(taskSlots(dry).map((slot) => slot.handle), ['writer-T2', 'writer-T3']);
+    assert.deepEqual(taskSlots(dry, g.f.repo).map((slot) => slot.handle), ['writer-T2', 'writer-T3']);
     assert.equal(fs.readFileSync(journal, 'utf8'), before);
     frame = await f.cli(['send', '--run', g.run]);
-    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.action, slot.handle]), [['T2', 'running', 'writer-T2'], ['T3', 'running', 'writer-T3']]);
+    assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => [slot.task, slot.action, slot.handle]), [['T2', 'running', 'writer-T2'], ['T3', 'running', 'writer-T3']]);
     frame = await finishTask(g, frame, 'T3');
-    assert.deepEqual(taskSlots(frame).map((slot) => slot.task), ['T2']);
+    assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => slot.task), ['T2']);
     frame = await finishTask(g, frame, 'T2');
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     assert.equal(f.git('diff', '--cached', '--name-only').trim(), 'notes.txt');
@@ -838,8 +840,8 @@ test('task graph: cap one uses isolated acceptance for every task', async () => 
   try {
     let frame = g.frame;
     for (const id of ['T1', 'T2', 'T3']) {
-      assert.deepEqual(taskSlots(frame).map((slot) => slot.task), [id], JSON.stringify(frame));
-      assert.notEqual(taskSlots(frame)[0]!.worktree, g.f.repo);
+      assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => slot.task), [id], JSON.stringify(frame));
+      assert.notEqual(taskSlots(frame, g.f.repo)[0]!.worktree, g.f.repo);
       frame = await finishTask(g, await launchTasks(g, frame), id);
     }
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
@@ -849,11 +851,11 @@ test('task graph: cap one uses isolated acceptance for every task', async () => 
 test('task graph: failed branch leaves an independent writer running and blocks descendants', async () => {
   const g = await taskGraph(2, true);
   try {
-    assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1', 'T2']);
+    assert.deepEqual(taskSlots(g.frame, g.f.repo).map((slot) => slot.task), ['T1', 'T2']);
     let frame = await launchTasks(g, g.frame);
-    const failedSlot = taskSlots(frame).find((slot) => slot.task === 'T1')!;
+    const failedSlot = taskSlots(frame, g.f.repo).find((slot) => slot.task === 'T1')!;
     frame = await g.f.reply(g.run, { type: 'WRITE_RECEIPT', status: 'failed', task: 'T1', attempt: failedSlot.attempt, signature: failedSlot.signature, handle: failedSlot.handle!, model: failedSlot.model!, detail: 'fixture scope violation' });
-    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.handle]), [['T2', 'writer-T2']]);
+    assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => [slot.task, slot.handle]), [['T2', 'writer-T2']]);
     frame = await finishTask(g, frame, 'T2');
     assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure');
     const tasks = (frame.data['items'] as { tasks: { task: string; status: string }[] }[])[0]!.tasks;
@@ -870,7 +872,7 @@ for (const red of ['missing', 'setup'] as const) {
       assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));
       assert.match(JSON.stringify(frame.data), red === 'missing' ? /checkpoint|ENOENT/i : /RED replay rejected|load\/setup error/i);
       assert.equal(fs.readFileSync(path.join(g.f.repo, 'src/b.ts'), 'utf8'), 'export const value = 1;\n');
-      assert.ok(fs.existsSync(taskSlots(g.frame)[0]!.worktree), 'failed artifact remains available');
+      assert.ok(fs.existsSync(taskSlots(g.frame, g.f.repo)[0]!.worktree), 'failed artifact remains available');
     } finally { g.f.cleanup(); }
   });
 }
@@ -969,13 +971,13 @@ async function liveRun(f: ReturnType<typeof fixture>, name: string, source: stri
   frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScope: frame.data['gateScope'] } });
   assert.equal(frame.await, 'write', JSON.stringify(frame));
   const launchFrame = frame;
-  for (const slot of taskSlots(launchFrame).filter((item) => item.action === 'launch')) frame = await f.reply(run, launchedReceipt(slot, `writer-${slot.task}`, launchFrame));
+  for (const slot of taskSlots(launchFrame, f.repo).filter((item) => item.action === 'launch')) frame = await f.reply(run, launchedReceipt(slot, `writer-${slot.task}`, launchFrame));
   return { run, frame };
 }
 
 /** Writes the given files into the task worktree, records a DONE envelope, and submits its receipt; the nth criterion cites the nth file. */
 async function submitTask(f: ReturnType<typeof fixture>, run: string, frame: CliFrame, id: string, files: Record<string, string>, criteria: string[]) {
-  const slot = taskSlots(frame).find((item) => item.task === id);
+  const slot = taskSlots(frame, f.repo).find((item) => item.task === id);
   assert.ok(slot?.handle, JSON.stringify(frame));
   for (const [file, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(slot.worktree, file)), { recursive: true }); fs.writeFileSync(path.join(slot.worktree, file), text); }
   fs.writeFileSync(slot.envelopePath, JSON.stringify({
@@ -1008,7 +1010,7 @@ test('level-journal: writer REQUEST is answered by AMEND that widens the task sc
   const f = fixture();
   try {
     let { run, frame } = await liveRun(f, 'request', twoValuePlan(), { 'src/b.ts': 'export const value = 1;\n' });
-    const t1 = taskSlots(frame).find((slot) => slot.task === 'T1')!;
+    const t1 = taskSlots(frame, f.repo).find((slot) => slot.task === 'T1')!;
     frame = await f.reply(run, { type: 'REQUEST', task: 'T1', attempt: t1.attempt, need: 'Add a companion module for value A.', paths: ['src/extra.ts'], rationale: 'Value A re-exports a companion constant.' });
     assert.equal(frame.await, 'decide', JSON.stringify(frame));
     assert.equal(frame.data['kind'], 'request', JSON.stringify(frame));
@@ -1020,11 +1022,12 @@ test('level-journal: writer REQUEST is answered by AMEND that widens the task sc
     assert.match(rejected.stdout, /outside the scope of T1; send AMEND/);
     frame = await f.reply(run, { type: 'AMEND', delta: companionDelta, notify: [{ task: 'T1', notice: 'src/extra.ts is now in scope for SC1.' }], rationale: 'T1 requested a companion path required by value A.' });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    const amended = taskSlots(frame).find((slot) => slot.task === 'T1')!;
+    const amended = taskSlots(frame, f.repo).find((slot) => slot.task === 'T1')!;
     assert.deepEqual(amended.paths, ['src/a.ts', 'src/extra.ts']);
     assert.equal(amended.handle, 'writer-T1');
     assert.notEqual(amended.briefHash, t1.briefHash);
-    assert.deepEqual((frame.data['amended'] as { task: string; notice: string }[]).map((row) => [row.task, row.notice]), [['T1', 'src/extra.ts is now in scope for SC1.']]);
+    assert.deepEqual((frame.data['amended'] as { task: string; launchPath: string }[]).map((row) => [row.task, row.launchPath]), [['T1', amended.launchPath]]);
+    assert.equal(amended.notice, 'src/extra.ts is now in scope for SC1.');
     frame = await submitTask(f, run, frame, 'T1', { 'src/a.ts': 'export const value = 2;\n', 'src/extra.ts': 'export const companion = true;\n' }, ['SC1']);
     frame = await submitTask(f, run, frame, 'T2', { 'src/b.ts': 'export const value = 2;\n' }, ['SC2']);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
@@ -1036,11 +1039,11 @@ test('applies live amendment while sibling keeps running', async () => {
   const f = fixture();
   try {
     let { run, frame } = await liveRun(f, 'amend', twoValuePlan(), { 'src/b.ts': 'export const value = 1;\n' });
-    const before = Object.fromEntries(taskSlots(frame).map((slot) => [slot.task, slot]));
+    const before = Object.fromEntries(taskSlots(frame, f.repo).map((slot) => [slot.task, slot]));
     assert.deepEqual(Object.keys(before), ['T1', 'T2']);
     frame = await f.reply(run, { type: 'AMEND', delta: companionDelta, notify: [{ task: 'T1', notice: 'Add src/extra.ts for SC1.' }], rationale: 'Value A needs a companion module.' });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    const after = Object.fromEntries(taskSlots(frame).map((slot) => [slot.task, slot]));
+    const after = Object.fromEntries(taskSlots(frame, f.repo).map((slot) => [slot.task, slot]));
     // The sibling keeps its handle, attempt, and brief; only the notified writer is re-briefed.
     assert.deepEqual([after['T2']?.handle, after['T2']?.attempt, after['T2']?.briefHash, after['T2']?.envelopePath], ['writer-T2', before['T2']!.attempt, before['T2']!.briefHash, before['T2']!.envelopePath]);
     assert.equal(after['T1']?.handle, 'writer-T1');
@@ -1048,7 +1051,7 @@ test('applies live amendment while sibling keeps running', async () => {
     assert.match(fs.readFileSync(after['T1']!.briefPath!, 'utf8'), /src\/extra\.ts/);
     frame = await submitTask(f, run, frame, 'T2', { 'src/b.ts': 'export const value = 2;\n' }, ['SC2']);
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.handle]), [['T1', 'writer-T1']]);
+    assert.deepEqual(taskSlots(frame, f.repo).map((slot) => [slot.task, slot.handle]), [['T1', 'writer-T1']]);
     frame = await submitTask(f, run, frame, 'T1', { 'src/a.ts': 'export const value = 2;\n', 'src/extra.ts': 'export const companion = true;\n' }, ['SC1']);
     assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     for (const file of ['src/a.ts', 'src/b.ts']) assert.equal(fs.readFileSync(path.join(f.repo, file), 'utf8'), 'export const value = 2;\n');
@@ -1067,7 +1070,7 @@ test('resolves two-task integration conflict in place', async () => {
       { id: 'T2', title: 'Entry two', criteria: ['SC2'], changes: [{ action: 'MODIFY', path: 'src/shared.ts', note: 'Register entry two.' }] },
     ]);
     let { run, frame } = await liveRun(f, 'conflict', source, { 'src/shared.ts': "export const entries = [\n  'base',\n];\n" });
-    assert.deepEqual(taskSlots(frame).map((slot) => slot.task), ['T1', 'T2']);
+    assert.deepEqual(taskSlots(frame, f.repo).map((slot) => slot.task), ['T1', 'T2']);
     frame = await submitTask(f, run, frame, 'T1', { 'src/shared.ts': "export const entries = [\n  'base',\n  'one',\n];\n" }, ['SC1']);
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     frame = await submitTask(f, run, frame, 'T2', { 'src/shared.ts': "export const entries = [\n  'base',\n  'two',\n];\n" }, ['SC2']);

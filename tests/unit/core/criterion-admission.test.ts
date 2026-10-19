@@ -10,6 +10,7 @@ import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
 import { AMEND_PLAN, AMEND_TEXT, governedHash } from '../machines/fixtures/implement-amend.ts';
 import { answer, launch, run, start, type Sim } from '../machines/fixtures/implement-tasks.ts';
+import { launchOf } from '../../helpers/launch.ts';
 
 // SECTION: Helpers and harness
 
@@ -78,8 +79,8 @@ for (const method of ['replacement', 'AMEND']) test(`criterion-admission: ${meth
     'CRITERION SC1 | src/a.ts | original behavior', 'CRITERION SC14 | src/a.ts | added behavior',
     'RED-MATRIX SC14 | tests/part-1.test.ts:rejects bad input | exit 1 test:rejects bad input',
   ] });
-  const slot = (revision.frame?.data['tasks'] as Record<string, unknown>[]).find((row) => row['task'] === 'T1')!;
-  const submitted = await h.reply({ type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot['attempt'], signature: slot['signature'], handle: slot['handle'], model: slot['model'], envelopePath: slot['envelopePath'], briefHash: slot['briefHash'] });
+  const slot = launchOf(h.state(), 'T1');
+  const submitted = await h.reply({ type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, model: slot.model, envelopePath: slot.envelopePath, briefHash: slot.briefHash });
   assert.equal(submitted.frame?.error, undefined, JSON.stringify(submitted));
   const state = h.state();
   assert.ok(state.tag === 'implement' && 'c' in state.child && state.child.c);

@@ -11,7 +11,7 @@ import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, val
 import {
   beginReview, reviewArtifactId, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState,
 } from './review.ts';
-import { beginImplement, implementAwait, implementData, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
+import { beginImplement, implementAwait, implementData, implementLaunches, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { activeTasks } from './implement-tasks.ts';
 import { beginSpec, beginSpecApproval, beginSpecRead, specApprovalRequired, specAwait, specData, stepSpec, validateSpec, type SpecCtx, type SpecState } from './spec.ts';
 import { answers, isRecord, never, nextId, staleGoverning, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
@@ -429,6 +429,8 @@ function renderImplementation(ports: Ports, implementation: ImplementState, walk
   for (const amendment of 'c' in implementation ? implementation.c?.amendments ?? [] : []) {
     if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
   }
+  // Compact write frames link each running writer to this record, so it is rewritten whenever its binding changes.
+  for (const entry of implementLaunches(implementation, runDir)) writeIfChanged(ports, entry.path, JSON.stringify(entry.record));
   if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
   if (walkthrough) writeReviewHistory(ports, walkthroughPath, walkthrough, resolutionSectionOf(walkthrough)!, reviewKeyOf(runDir, 'implementation'));

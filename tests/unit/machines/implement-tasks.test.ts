@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { reconcileTasks, taskScope, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
-import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
+import * as implement from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { runOwnedPaths } from '../../../skills/dispatch/scripts/effects/snapshot.ts';
+import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, frameRows, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
+import { AMEND_PLAN } from './fixtures/implement-amend.ts';
+import { started } from './fixtures/design-delivery.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
+import { launchOf, type Launch } from '../../helpers/launch.ts';
 import { FP as RECOVERY_FP, failure, host as recoveryHost } from './fixtures/implement-recovery.ts';
 
 test('governing spec reaches standalone task briefs through scheduling', () => {
@@ -599,4 +608,192 @@ test('tasks: launch receipts must echo the configured writer model or disclose a
   const failure = { type: 'WRITE_RECEIPT' as const, status: 'failed' as const, ...launched, detail: 'timeout: stalled' };
   assert.equal(validateImplement(result.state, { ...failure, model: 'host-default' }), null);
   assert.match(validateImplement(result.state, { ...failure, model: 'writer-a' }) ?? '', /active writer model/);
+});
+
+// SECTION: Launch records and compact frames
+
+const RUN_DIR = path.join('session', '.state', 'runs', '001-implement');
+const launchesOf = (result: Result) => implement.implementLaunches(result.state, RUN_DIR) as unknown as { path: string; record: Launch }[];
+const valid = (result: Result, receipts: readonly Record<string, unknown>[]) => receipts.map((receipt) => validateImplement(result.state, receipt as never));
+const LAUNCH_FIELDS = ['task', 'attempt', 'signature', 'action', 'handle', 'model', 'briefPath', 'briefHash', 'envelopePath', 'checkpointPath', 'worktree', 'paths', 'receipts'];
+const amendRunning = (): { result: Result; sim: Sim; trace: Trace } => {
+  const sim: Sim = { plan: AMEND_PLAN };
+  const { result, trace } = start(3, sim);
+  return { result: launch(result, sim, trace), sim, trace };
+};
+const amendEvent = (delta: readonly object[], notify: { task: string; notice: string }[] = [], extra: Record<string, unknown> = {}): Event =>
+  ({ type: 'AMEND', delta, notify, rationale: 'Plan changed mid-run.', ...extra }) as unknown as Event;
+const SC1_FAST = { kind: 'modify', target: 'SC1', current: '[SC1] Part 1 works', proposed: '[SC1] Part 1 works fast' };
+const DROP_T2 = [
+  { kind: 'remove', target: 'T2', current: '| T2 | Part two | Deliver part two. | none | SC2 |' },
+  { kind: 'remove', target: 'SC2', current: '- [SC2] Part 2 works\n  - Satisfies: REQ-1\n  - Changes: src/b.ts\n  - Verify: `node --test tests/part-2.test.ts`\n  - Evidence: verify\n  - Test rationale: pins part 2.\n' },
+  { kind: 'remove', target: 'T2', current: '### T2 — Part two\n#### [MODIFY] src/b.ts\n- Changes: part two.\n\n' },
+];
+
+test('launch record gives a launching writer every launch field and a valid launched receipt while frame rows stay compact', () => {
+  const { result } = start(2, {});
+  const t1 = record(result, 'T1')!;
+  const [first] = launchesOf(result);
+  assert.equal(first!.path, path.join(RUN_DIR, 'implement.launch.t1', 'launch.json'));
+  assert.equal(implement.launchRel('T1'), 'implement.launch.t1/launch.json');
+  for (const field of LAUNCH_FIELDS) assert.ok(field in first!.record, field);
+  assert.deepEqual(
+    [first!.record.task, first!.record.attempt, first!.record.signature, first!.record.action, first!.record.handle, first!.record.model, first!.record.briefPath, first!.record.briefHash, first!.record.envelopePath, first!.record.checkpointPath, first!.record.worktree, first!.record.paths],
+    ['T1', 1, t1.signature, 'launch', null, 'writer-a', t1.brief!.path, t1.brief!.sha256, t1.brief!.envelopePath, t1.brief!.checkpointPath, 'run/wt/task-t1', pathsOf('T1')],
+  );
+  assert.deepEqual(first!.record.receipts.map((receipt) => [receipt['status'], receipt['handle']]), [['launched', '<host-assigned handle>']]);
+  assert.deepEqual(valid(result, first!.record.receipts), [null]);
+  assert.deepEqual(frameRows(result), [
+    { task: 'T1', action: 'launch', attempt: 1, handle: null, launchPath: 'implement.launch.t1/launch.json' },
+    { task: 'T2', action: 'launch', attempt: 1, handle: null, launchPath: 'implement.launch.t2/launch.json' },
+  ]);
+});
+
+test('launch record: a running writer offers submitted and failed receipts that pass validation and complete the task', () => {
+  const sim: Sim = {};
+  let { result, trace } = start(2, sim);
+  result = launch(result, sim, trace);
+  const t2 = launchOf(result.state, 'T2');
+  assert.deepEqual(t2.receipts.map((receipt) => [receipt['status'], receipt['handle']]), [['submitted', 'agent-T2-1'], ['failed', 'agent-T2-1']]);
+  assert.deepEqual(valid(result, t2.receipts), [null, null]);
+  assert.equal(t2.receipts[0]!['briefHash'], t2.briefHash);
+  result = host(result, t2.receipts[0] as unknown as Event, sim, trace);
+  assert.equal(record(result, 'T2')?.status, 'accepted');
+});
+
+test('launch record: concurrent tasks whose briefs share one directory get distinct paths inside the run dir', () => {
+  const { result } = start(2, {});
+  const launches = launchesOf(result);
+  assert.equal(path.dirname(launches[0]!.record.briefPath), path.dirname(launches[1]!.record.briefPath));
+  assert.equal(new Set(launches.map((entry) => entry.path)).size, 2);
+  for (const entry of launches) assert.ok(!path.relative(RUN_DIR, entry.path).startsWith('..'), entry.path);
+});
+
+test('launch record: every record path is run-owned, so snapshots ignore it', () => {
+  const { result } = start(2, {});
+  const ports = fakePorts(), root = tempDir(), runDir = path.join(root, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, root);
+  const launches = implement.implementLaunches(result.state, runDir) as unknown as { path: string; record: Launch }[];
+  assert.equal(launches.length, 2);
+  for (const entry of launches) ports.fs.writeAtomic(entry.path, JSON.stringify(entry.record));
+  const owned = runOwnedPaths(ports, root, runDir);
+  for (const entry of launches) assert.ok(owned.includes(path.relative(root, entry.path).replaceAll('\\', '/')), entry.path);
+});
+
+test('launch record: a pending amendment carries the notice and the regenerated brief, and its submitted receipt passes', () => {
+  let { result, sim, trace } = amendRunning();
+  const before = launchOf(result.state, 'T1');
+  result = host(result, amendEvent([SC1_FAST], [{ task: 'T1', notice: 'SC1 now requires speed.' }]), sim, trace);
+  const after = launchOf(result.state, 'T1'), latest = record(result, 'T1')!.briefs!.at(-1)!;
+  assert.equal(after.notice, 'SC1 now requires speed.');
+  assert.deepEqual([after.briefPath, after.briefHash, after.envelopePath, after.checkpointPath], [latest.path, latest.sha256, latest.envelopePath, latest.checkpointPath]);
+  assert.notEqual(after.briefHash, before.briefHash);
+  assert.equal(launchOf(result.state, 'T2').notice, undefined);
+  assert.deepEqual(implementData(result.state)['amended'], [{ task: 'T1', launchPath: 'implement.launch.t1/launch.json' }]);
+  const submitted = after.receipts.find((receipt) => receipt['status'] === 'submitted')!;
+  assert.deepEqual([submitted['envelopePath'], submitted['briefHash']], [latest.envelopePath, latest.sha256]);
+  assert.deepEqual(valid(result, after.receipts), [null, null]);
+});
+
+test('launch record: a writer that finished under the pre-amendment brief echoes its own hash, and validation names it stale', () => {
+  let { result, sim, trace } = amendRunning();
+  const before = launchOf(result.state, 'T1');
+  result = host(result, amendEvent([SC1_FAST], [{ task: 'T1', notice: 'SC1 now requires speed.' }]), sim, trace);
+  const submitted = launchOf(result.state, 'T1').receipts.find((receipt) => receipt['status'] === 'submitted')!;
+  const stale = { ...submitted, envelopePath: before.envelopePath, briefHash: before.briefHash };
+  assert.match(valid(result, [stale])[0] ?? '', /stale brief; an amendment changed the paths or criteria of T1/);
+});
+
+test('launch record: a cascade relaunch keeps the retained brief with the new attempt and model', () => {
+  const sim: Sim = {};
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const first = launchOf(result.state, 'T1');
+  result = host(result, first.receipts.find((receipt) => receipt['status'] === 'failed') as unknown as Event, sim, trace);
+  const relaunch = launchOf(result.state, 'T1');
+  assert.deepEqual([relaunch.action, relaunch.attempt, relaunch.model, relaunch.handle], ['launch', 2, 'writer-b', null]);
+  assert.deepEqual([relaunch.briefPath, relaunch.briefHash, relaunch.envelopePath, relaunch.checkpointPath], [first.briefPath, first.briefHash, first.envelopePath, first.checkpointPath]);
+  assert.deepEqual(valid(result, relaunch.receipts), [null]);
+  result = host(result, { ...relaunch.receipts[0], handle: 'agent-T1-2' } as unknown as Event, sim, trace);
+  const running = launchOf(result.state, 'T1');
+  assert.deepEqual(valid(result, running.receipts), [null, null]);
+  result = host(result, running.receipts[0] as unknown as Event, sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+});
+
+test('launch record: a writer retired with stop is cancelled through a valid receipt', () => {
+  let { result, sim, trace } = amendRunning();
+  result = host(result, amendEvent(DROP_T2, [], { by: { by: 'user', quote: 'Drop part two.' }, retire: [{ task: 'T2', disposition: 'stop' }] }), sim, trace);
+  const t2 = launchOf(result.state, 'T2');
+  assert.deepEqual([t2.action, t2.retirement, t2.receipts.map((receipt) => receipt['status'])], ['cancel', 'stop', ['cancelled']]);
+  assert.deepEqual(valid(result, t2.receipts), [null]);
+  result = host(result, t2.receipts[0] as unknown as Event, sim, trace);
+  assert.equal(record(result, 'T2'), undefined);
+});
+
+test('launch record: a writer retired with retain keeps its disposition and may still finish or stop', () => {
+  let { result, sim, trace } = amendRunning();
+  result = host(result, amendEvent(DROP_T2, [], { retire: [{ task: 'T2', disposition: 'retain' }] }), sim, trace);
+  const retained = launchOf(result.state, 'T2');
+  assert.deepEqual([retained.action, retained.retirement, retained.retainedSubmission, retained.receipts.map((receipt) => receipt['status'])], ['running', 'retain', undefined, ['submitted', 'failed', 'cancelled']]);
+  assert.deepEqual(valid(result, retained.receipts), [null, null, null]);
+  const stopped = host(result, retained.receipts[2] as unknown as Event, sim, trace);
+  assert.equal(record(stopped, 'T2'), undefined);
+  result = host(result, retained.receipts[0] as unknown as Event, sim, trace);
+  assert.equal(record(result, 'T2'), undefined);
+});
+
+test('launch record: root writes each design increment launch record under the run dir', () => {
+  const { result } = start(2, {});
+  const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, session);
+  const active = started();
+  assert.equal(active.tag, 'increment');
+  const state = { tag: 'design', run: { verb: 'implement', argument: 'x.design.md', slug: 'feature' }, child: { ...active, child: result.state } } as unknown as RootState;
+  rootMachine.render!(state, ports, runDir);
+  for (const task of ['T1', 'T2']) {
+    const written = JSON.parse(ports.fs.readText(path.join(runDir, implement.launchRel(task)))) as Launch;
+    assert.deepEqual(written, launchOf(state, task));
+  }
+});
+
+test('launch record: a state without context yields none, and launchOf needs an active implementation', () => {
+  assert.deepEqual(implement.implementLaunches(initialImplement(), RUN_DIR), []);
+  const { result } = start(2, {});
+  const run = { verb: 'implement', argument: 'x.plan.md', slug: 'feature' };
+  assert.throws(() => launchOf({ tag: 'review', c: { histories: {} }, review: {} }, 'T1'), /no active implementation/);
+  assert.throws(() => launchOf({ tag: 'done', run, last: { verb: 'implement', state: result.state }, counters: {}, done: {}, handoff: null, warning: null }, 'T1'), /no active implementation/);
+  assert.equal(launchOf({ tag: 'implement', run, child: result.state }, 'T1').task, 'T1');
+});
+
+/** Six independent writers; `scale` multiplies each task's paths and criteria. */
+function sixWriterPlan(scale: number): ParsedPlan {
+  const ids = [1, 2, 3, 4, 5, 6];
+  const files = (n: number) => Array.from({ length: scale }, (_, j) => `src/part-${n}/file-${j}.ts`);
+  const owned = (n: number) => Array.from({ length: scale }, (_, k) => `SC${n * 100 + k}`);
+  const criteria = ids.flatMap((n) => owned(n).map((id, k) => criterion(id, files(n)[k]!, 'verify')));
+  return {
+    ...PLAN, criteria, planIds: criteria.map((row) => row.id),
+    changes: ids.flatMap(files).map((file, line) => ({ action: 'MODIFY' as const, path: file, note: 'part', command: null, line })),
+    tasks: ids.map((n) => task(`T${n}`, files(n), owned(n))),
+  };
+}
+const frameBytes = (state: ImplementState) => Buffer.byteLength(JSON.stringify(implementData(state)));
+function sixWriters(scale: number, notice: string): { tasks: number; amended: number } {
+  const sim: Sim = { plan: sixWriterPlan(scale) };
+  let { result, trace } = start(6, sim);
+  result = launch(result, sim, trace);
+  assert.deepEqual(frameRows(result).map((row) => row.action), Array(6).fill('running'));
+  if (result.state.tag !== 'tasks') throw new Error('tasks frame');
+  const c = result.state.c;
+  const amended = Object.values(c.tasks).map((row) => ({ task: row.id, briefPath: row.brief!.path, briefHash: row.brief!.sha256, notice }));
+  return { tasks: frameBytes(result.state), amended: frameBytes({ ...result.state, c: { ...c, amended } }) };
+}
+
+test('frame size independent of task content keeps six writers within fixed tasks and amendment caps', () => {
+  const notice = 'Criterion wording changed; keep the public API stable.';
+  const base = sixWriters(1, notice), grown = sixWriters(10, notice.repeat(10));
+  assert.ok(base.tasks <= 2048, `tasks frame ${base.tasks} bytes`);
+  assert.ok(base.amended <= 3072, `amendment frame ${base.amended} bytes`);
+  assert.deepEqual(grown, base);
 });

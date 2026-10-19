@@ -98,30 +98,6 @@ test('review fix terminal summary truncation preserves complete UTF-8 characters
   }
 });
 
-test('level-journal: write frames bind failure receipts to the task model', () => {
-  const task = { task: 'T1', attempt: 2, signature: 'sig', handle: 'writer', model: 'model-task', envelopePath: 't1.json' };
-  const events = awaitEnvelopes('write', { tasks: [task], model: 'model-run' });
-  assert.ok(events.some((event) => event.type === 'WRITE_RECEIPT' && event.status === 'failed' && event.task === 'T1' && event.model === 'model-task'));
-  assert.ok(events.some((event) => event.type === 'WRITE_RECEIPT' && event.status === 'failed' && event.task === undefined && event.model === 'model-run'));
-});
-
-test('level-journal: projectFrame launches only unlaunched task slots when writers overlap', () => {
-  const tasks = [
-    { task: 'T1', action: 'running', attempt: 1, signature: 'sig-running', handle: 'writer-T1', model: 'model', envelopePath: 't1.json' },
-    { task: 'T2', action: 'launch', attempt: 2, signature: 'sig-launch', handle: '', model: 'model', envelopePath: 't2.json' },
-  ];
-  const machine = {
-    ...awaitingMachine,
-    awaitOf: () => 'write' as const,
-    project: () => ({ at: 'implement › tasks', data: { tasks } }),
-    validate: (_state: unknown, event: import('../../../skills/dispatch/scripts/core/types.ts').HostEvent) =>
-      event.type === 'WRITE_RECEIPT' && event.status === 'launched' && event.task === 'T1' ? 'T1 already has a writer handle' : null,
-  };
-  const frame = projectFrame(machine, awaitingMachine.initial(), 'run');
-  const launches = frame.events?.filter((event) => event.type === 'WRITE_RECEIPT' && event.status === 'launched') ?? [];
-  assert.deepEqual(launches.map((event) => event.type === 'WRITE_RECEIPT' && event.task), ['T2']);
-});
-
 test('plan review rule example uses the plan path', () => {
   const config = { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 2 }, targets: { low: 1 } } } };
   const events: Event[] = [
@@ -155,41 +131,44 @@ test('replyEvent selects only a placeholder-free single event', () => {
   assert.equal(replyEvent([{ type: 'AUTHORED', path: '<path>' }]), undefined);
 });
 
-const WRITING = { tasks: [{ task: 'T1', action: 'running', attempt: 1, signature: 'sig', handle: 'writer-T1', model: 'm', envelopePath: 't1.json', briefHash: 'sha256:brief' }, { task: 'T2', action: 'launch', attempt: 1, signature: 'sig2', handle: '', model: 'm' }], effort: 'high' };
+const row = (task: string, action: string, handle: string | null) => ({ task, action, attempt: 1, handle, launchPath: `implement.launch.${task.toLowerCase()}/launch.json` });
+const WRITING = { tasks: [row('T1', 'running', 'writer-T1'), row('T2', 'launch', null), row('T3', 'running', 'writer-T3')], effort: 'high' };
 
-test('renders write receipt reply template', () => {
+test('compact tasks frame reply templates: one REQUEST per running writer with a handle and no task receipts', () => {
   const events = awaitEnvelopes('write', WRITING);
-  const receipts = events.filter((event) => event.type === 'WRITE_RECEIPT');
-  const identity = { task: 'T1', attempt: 1, signature: 'sig', handle: 'writer-T1' };
-  assert.deepEqual(receipts, [
-    { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: 't1.json', briefHash: 'sha256:brief', model: 'm', effort: 'high' },
-    { type: 'WRITE_RECEIPT', status: 'failed', ...identity, detail: '<observed failure>', model: 'm', effort: 'high' },
-    { type: 'WRITE_RECEIPT', status: 'cancelled', ...identity },
-    { type: 'WRITE_RECEIPT', status: 'launched', task: 'T2', attempt: 1, signature: 'sig2', handle: '<host-assigned handle>', model: 'm', effort: 'high' },
-  ]);
-  for (const event of receipts) assert.equal(validateHostEvent('write', event).ok, true, JSON.stringify(event));
+  assert.equal(events.some((event) => event.type === 'WRITE_RECEIPT'), false, 'hosts copy receipts from launch records');
+  const requests = events.filter((event) => event.type === 'REQUEST');
+  assert.deepEqual(requests, ['T1', 'T3'].map((task) => ({ type: 'REQUEST', task, attempt: 1, need: '<what the writer needs>', paths: ['<requested path>'], rationale: '<writer rationale>' })));
+  for (const event of events) assert.equal(validateHostEvent('write', event).ok, true, JSON.stringify(event));
+});
+
+test('compact tasks frame reply templates: AMEND and REPLACE_PLAN notify a live writer, never a launch-only frame', () => {
+  const events = awaitEnvelopes('write', WRITING);
+  const orchestrator = events.filter((event) => event.type === 'AMEND' || event.type === 'REPLACE_PLAN');
+  assert.deepEqual(orchestrator.map((event) => [event.type, 'notify' in event ? event.notify.map((item) => item.task) : []]), [['AMEND', ['T1']], ['REPLACE_PLAN', ['T1']]]);
+  for (const tasks of [[row('T2', 'launch', null)], [row('T1', 'running', '')], []]) assert.deepEqual(awaitEnvelopes('write', { tasks }), [], JSON.stringify(tasks));
+  const [fromRequest] = awaitEnvelopes('decide', { kind: 'request', request: { task: 'T1' } }).filter((event) => event.type === 'AMEND');
+  assert.ok(fromRequest?.type === 'AMEND');
+  assert.deepEqual(fromRequest.notify.map((item) => item.task), ['T1']);
+  assert.equal(validateHostEvent('decide', fromRequest).ok, true);
+});
+
+test('compact tasks frame reply templates: the projected frame keeps validated live-writer replies only', () => {
+  const machine = {
+    ...awaitingMachine,
+    awaitOf: () => 'write' as const,
+    project: () => ({ at: 'implement › tasks', data: WRITING }),
+    validate: (_state: unknown, event: import('../../../skills/dispatch/scripts/core/types.ts').HostEvent) => event.type === 'REQUEST' && event.task === 'T3' ? 'T3 is retiring' : null,
+  };
+  const frame = projectFrame(machine, awaitingMachine.initial(), 'run');
+  assert.deepEqual(frame.events?.map((event) => [event.type, 'task' in event ? event.task : null]), [['REQUEST', 'T1'], ['AMEND', null], ['REPLACE_PLAN', null]]);
+});
+
+test('compact tasks frame reply templates: hotfix-shaped data keeps its two taskless receipts', () => {
   assert.deepEqual(awaitEnvelopes('write', { envelopePath: 'hotfix.json', model: 'm' }), [
     { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'hotfix.json' },
     { type: 'WRITE_RECEIPT', status: 'failed', detail: '<observed failure>', model: 'm' },
   ]);
-});
-
-test('renders request reply template', () => {
-  const requests = awaitEnvelopes('write', WRITING).filter((event) => event.type === 'REQUEST');
-  assert.deepEqual(requests, [{ type: 'REQUEST', task: 'T1', attempt: 1, need: '<what the writer needs>', paths: ['<requested path>'], rationale: '<writer rationale>' }]);
-  assert.equal(validateHostEvent('write', requests[0]).ok, true);
-});
-
-test('renders amend reply template', () => {
-  const [amend] = awaitEnvelopes('write', WRITING).filter((event) => event.type === 'AMEND');
-  assert.ok(amend?.type === 'AMEND');
-  assert.deepEqual(amend.notify.map((row) => row.task), ['T1']);
-  assert.equal(validateHostEvent('write', amend).ok, true);
-  const [fromRequest] = awaitEnvelopes('decide', { kind: 'request', request: { task: 'T1' } }).filter((event) => event.type === 'AMEND');
-  assert.ok(fromRequest?.type === 'AMEND');
-  assert.deepEqual(fromRequest.notify.map((row) => row.task), ['T1']);
-  assert.equal(validateHostEvent('decide', fromRequest).ok, true);
-  assert.equal(awaitEnvelopes('write', { tasks: [] }).some((event) => event.type === 'AMEND'), false, 'no live writer to notify');
 });
 
 test('renders generic decision reply template', () => {

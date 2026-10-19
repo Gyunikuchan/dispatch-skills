@@ -1,5 +1,6 @@
 // @ts-check
 
+import path from 'node:path';
 import { qualitySections } from '../domain/prompt.ts';
 import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
@@ -1920,15 +1921,14 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
       stage: 'task', effort: state.c.writer?.effort, concurrency: writeConcurrency(state.c.run.config), settledLevel: state.c.run.level,
       // NOTE: a REPLACE_PLAN binds this hash as `expectedHash`, so a stale revision is rejected before any effect.
       planPath: state.c.planPath, planHash: state.c.planHash,
-      levelAssessment: state.c.levelAssessment, levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
+      // NOTE: gateScope stays in context, completion data and level decide frames; this frame needs only the verdict.
+      levelAssessment: state.c.levelAssessment ? { evaluatedLevel: state.c.levelAssessment.evaluatedLevel, rationale: state.c.levelAssessment.rationale } : null,
+      levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
+      // Rows stay fixed-size; launch fields, receipts and amendment notices live in each row's launch record.
       tasks: activeTasks(state.c.tasks).filter((record) => record.status === 'running').map((record) => ({
-        task: record.id, action: record.removed ? record.retirement === 'retain' ? 'running' : 'cancel' : record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt, signature: record.signature,
-        model: activeModel(state.c, record), briefPath: record.brief?.path, briefSha256: record.brief?.sha256, briefHash: record.brief?.sha256,
-        envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath, worktree: record.worktree, paths: planTask(state.c, record.id)?.paths ?? [],
-        ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
-        ...(record.retirement ? { retirement: record.retirement } : {}),
+        task: record.id, action: launchAction(record), attempt: record.attempt, handle: record.handle, launchPath: launchRel(record.id),
       })),
-      amended: state.c.amended,
+      amended: state.c.amended.map((row) => ({ task: row.task, launchPath: launchRel(row.task) })),
     };
     case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity, choose an inline hotfix, or stop.', ['accept-known-red', 'inline-hotfix', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
     case 'level-classification': return { ...decideData('level-classification', 'Assess the complete settled implementation scope once before the first production write. Return the evaluated level, concise evidence-based rationale and this exact gateScope.', ['low', 'medium', 'high'], [{ level: state.c.run.level, source: state.c.run.levelSource }]), gateScope: state.gateScope, settledLevel: state.c.run.level, stopAllowed: true };
@@ -1990,6 +1990,53 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
     observations: c.observations ?? [],
     review: review['completion'] ?? review, limitations: [...c.concerns, ...Object.values(c.evidence).filter((item) => item['outcome'] === 'waived').map((item) => `${item.id}: user-waived criterion; ${item['evidence']}`)], finalGate: c.finalGate,
   };
+}
+
+// SECTION: Launch records
+
+/** Host action for a running task record. */
+function launchAction(record: TaskRecord): 'launch' | 'running' | 'cancel' {
+  return record.removed ? record.retirement === 'retain' ? 'running' : 'cancel' : record.handle ? 'running' : 'launch';
+}
+
+/** Run-relative launch record path; one directory per task keeps concurrent writers apart. */
+export function launchRel(task: string): string {
+  return `implement.launch.${task.toLowerCase()}/launch.json`;
+}
+
+/** Launch record per running writer: the full brief binding plus the receipts the host copies, so write frames stay fixed-size. */
+export function implementLaunches(state: ImplementState, runDir: string): { path: string; record: Readonly<Record<string, unknown>> }[] {
+  const c = 'c' in state ? state.c : null;
+  if (!c) return [];
+  const effort = c.writer?.effort ? { effort: c.writer.effort } : {};
+  return activeTasks(c.tasks).filter((record) => record.status === 'running').map((record) => {
+    const action = launchAction(record), model = activeModel(c, record);
+    const identity = { task: record.id, attempt: record.attempt, signature: record.signature, handle: record.handle ?? '' };
+    // NOTE: `submitted` binds the latest issued brief; a writer that finished under an earlier brief reports that brief's hash and envelope instead.
+    const finished = [
+      { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: record.brief?.envelopePath, briefHash: record.brief?.sha256, model, ...effort },
+      { type: 'WRITE_RECEIPT', status: 'failed', ...identity, detail: '<observed failure>', model, ...effort },
+    ];
+    const cancelled = { type: 'WRITE_RECEIPT', status: 'cancelled', ...identity };
+    // A retained retirement may still finish once (its submission is archived, never admitted) or confirm it stopped.
+    const receipts: Record<string, unknown>[] = action === 'launch'
+      ? [{ type: 'WRITE_RECEIPT', status: 'launched', ...identity, handle: '<host-assigned handle>', model: c.writer?.models[record.modelIndex], ...effort }]
+      : action === 'cancel' ? [cancelled]
+        : record.retirement === 'retain' ? [...finished, cancelled] : finished;
+    const notice = c.amended.findLast((row) => row.task === record.id)?.notice;
+    return {
+      path: path.join(runDir, launchRel(record.id)),
+      record: {
+        task: record.id, attempt: record.attempt, signature: record.signature, action, handle: record.handle, model, ...effort,
+        briefPath: record.brief?.path, briefHash: record.brief?.sha256, envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath,
+        worktree: record.worktree, paths: planTask(c, record.id)?.paths ?? [],
+        ...(record.retirement ? { retirement: record.retirement } : {}),
+        ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
+        ...(notice !== undefined ? { notice } : {}),
+        receipts,
+      },
+    };
+  });
 }
 
 /** Model behind a task's live handle: the attested launch, else its cascade entry; launch slots always show the configured model. */

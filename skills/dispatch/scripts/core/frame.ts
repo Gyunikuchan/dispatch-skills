@@ -97,24 +97,13 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
     }
     case 'fix': return [{ type: 'FIXES_APPLIED', clusters: rows(data['clusters']).map((cluster) => ({ clusterId: cluster['clusterId'], status: 'applied', affectedPaths: cluster['affectedPaths'] })) }];
     case 'write': {
-      const candidates = rows(data['tasks']).filter((task) => typeof task['task'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0 && typeof task['signature'] === 'string' && typeof task['handle'] === 'string' && task['handle']);
-      const effort = typeof data['effort'] === 'string' && data['effort'] ? { effort: data['effort'] } : {};
-      const events: HostEvent[] = candidates.flatMap((task) => {
-        const identity = { task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: String(task['handle']) };
-        const model = String(task['model'] ?? data['model'] ?? '<actual launched model>');
-        return [
-          { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: String(task['envelopePath'] ?? data['envelopePath']), briefHash: typeof task['briefHash'] === 'string' && task['briefHash'] ? task['briefHash'] : '<brief hash the writer echoes>', model, ...effort },
-          { type: 'WRITE_RECEIPT', status: 'failed', ...identity, detail: '<observed failure>', model, ...effort },
-          { type: 'WRITE_RECEIPT', status: 'cancelled', ...identity },
-          { type: 'REQUEST', task: identity.task, attempt: identity.attempt, need: '<what the writer needs>', paths: ['<requested path>'], rationale: '<writer rationale>' },
-        ];
-      });
+      // NOTE: task receipts live in each writer's launch record; frames template only live-writer requests and plan revisions.
+      const live = rows(data['tasks']).filter((task) => task['action'] === 'running' && typeof task['task'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0 && typeof task['handle'] === 'string' && task['handle']);
+      const events: HostEvent[] = live.map((task) => ({ type: 'REQUEST', task: String(task['task']), attempt: Number(task['attempt']), need: '<what the writer needs>', paths: ['<requested path>'], rationale: '<writer rationale>' }));
       if (typeof data['envelopePath'] === 'string' && data['envelopePath']) events.push({ type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: data['envelopePath'] });
       if (typeof data['model'] === 'string' && data['model']) events.push({ type: 'WRITE_RECEIPT', status: 'failed', detail: '<observed failure>', model: data['model'] });
-      const launches = rows(data['tasks']).filter((task) => task['action'] === 'launch' && typeof task['task'] === 'string' && typeof task['signature'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0);
-      for (const task of launches) events.push({ type: 'WRITE_RECEIPT', status: 'launched', task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>', model: String(task['model'] ?? '<actual launched model>'), ...effort });
       // Only live writers can be told about an amendment, so the example needs one to notify.
-      if (candidates.length) events.push(amendExample(String(candidates[0]!['task'])), replaceExample(String(candidates[0]!['task'])));
+      if (live.length) events.push(amendExample(String(live[0]!['task'])), replaceExample(String(live[0]!['task'])));
       return events;
     }
     case 'evidence': return [{ type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), { outcome: 'pass', evidence: '<observed criterion evidence>' }])) }];

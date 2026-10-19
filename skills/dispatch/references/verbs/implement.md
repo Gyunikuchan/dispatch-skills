@@ -6,9 +6,9 @@ When intent changes, revise the spec before amending the plan. Follow the [revis
 
 Use `start implement --session-dir <dir> --orchestrator <platform> -- <objective-or-plan-or-design-path>`. The driver reuses settled plan evidence when available, verifies baseline, records production approval, then emits bounded writer briefs and verification summaries. For design delivery it reuses matching unfinished same-chat journals and binds derived approvals to the governed revision.
 
-At `write`, launch the configured native writer for each task slot marked `launch`, using its worktree and verified brief hash. Retain each handle and report launch/completion through [the contract](../..). Apply the configured cap and available native capacity; capability failures require a named failure rather than shared-checkout execution.
+At `write`, launch the configured native writer for each `tasks` row marked `launch`, using the worktree and verified brief hash from its launch record. Retain each handle and report launch/completion through [the contract](../..). Apply the configured cap and available native capacity; capability failures require a named failure rather than shared-checkout execution.
 
-On model fallback per [providers](../providers.md#providers), the driver can retain the brief while advancing the launch attempt. Pass the replacement writer the current task entry's `task`, `attempt`, `signature`, and `model`, plus the frame's stage-level `effort`; use these for launch and receipts. Use that entry's `briefPath`, `briefHash`, `envelopePath`, and `checkpointPath` for the retained brief. Its embedded attempt identifies brief creation; the current frame governs the launch.
+On model fallback per [providers](../providers.md#providers), the driver can retain the brief while advancing the launch attempt. Read the task's current launch record: pass the replacement writer its `task`, `attempt`, `signature`, `model`, and `effort`, and copy its `launched` receipt. Its `briefPath`, `briefHash`, `envelopePath`, and `checkpointPath` name the retained brief. The brief's embedded attempt identifies brief creation; the launch record governs the launch.
 
 Before the first production write, assess the complete settled implementation scope once: after plan, baseline, and applicable authorization are concrete. This applies to ordinary tasks, inline baseline hotfixes, and the first child of a design. A classified run uses the assessment; an explicit level remains unless the assessment recommends higher and the user adopts it. Retries, later phases, amendments, and later design increments inherit that settled level.
 
@@ -35,6 +35,8 @@ Report each writer through `WRITE_RECEIPT` with `status`:
 - `launched`: `task`, `attempt`, `signature`, host-assigned `handle`, attested `model`/`effort`, and `substitution` when they differ.
 - `submitted`: identity, `envelopePath`, and `briefHash` of the brief the writer finished under.
 - `failed`: identity and `detail`. `cancelled`: identity, after the writer confirms it stopped.
+
+Copy each receipt from the row's launch record `receipts`: `launched` for `launch` rows, `submitted` or `failed` for `running` rows, `cancelled` for `cancel` rows and retained retirements. A retained retirement also offers `submitted` and `failed`: it may finish once, archived and never admitted. Copied `submitted` binds the latest issued brief; when the writer finished under an earlier brief, echo the `briefHash` and `envelopePath` it reports, so validation rejects a stale submission.
 
 Taskless hotfix receipts carry only `submitted` or `failed` and omit identity.
 
