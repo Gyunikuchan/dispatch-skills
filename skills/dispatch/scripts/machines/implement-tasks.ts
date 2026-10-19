@@ -6,7 +6,8 @@ import type { PlanAmendment, TreeFingerprint } from '../core/types.ts';
 import { effectiveEvidence, type RedMatrixRow } from './implement-types.ts';
 
 export type TaskStatus = 'pending' | 'running' | 'submitted' | 'accepted' | 'failed';
-export type TaskBriefPaths = { path: string; sha256: string; envelopePath: string; checkpointPath: string };
+/** `delta` is the amendment delta issued beside a regenerated brief to a live writer that holds its delivered base. */
+export type TaskBriefPaths = { path: string; sha256: string; envelopePath: string; checkpointPath: string; delta?: { path: string; sha256: string } };
 export type TaskRecord = {
   id: string;
   status: TaskStatus;
@@ -24,6 +25,10 @@ export type TaskRecord = {
   /** Model the host reported launching for the active handle; differs from the cascade entry only under a disclosed substitution. */
   launchedModel?: string;
   brief: TaskBriefPaths | null;
+  /** Full brief the live writer was given; every amendment delta binds to it until a relaunch or new attempt delivers another. */
+  deliveredBase?: { path: string; sha256: string; envelopePath: string } | null;
+  /** Deltas issued since `deliveredBase`. */
+  deltaSeq?: number;
   candidate: string | null;
   integrated: string | null;
   redRows: readonly RedMatrixRow[];

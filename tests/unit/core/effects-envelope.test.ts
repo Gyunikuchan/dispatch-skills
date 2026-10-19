@@ -195,3 +195,35 @@ test('self-check preview admits a RED_READY receipt that changes the task declar
   const verdict = await preview(state as never, event as never, { 'check-envelope': handler } as never, ports, runDir);
   assert.equal(verdict, null);
 });
+
+test('amendment delta self check binds the latest delta envelope and hash and passes for a writer holding only the base brief and that delta', async () => {
+  const { previewReceipt: preview } = await import('../../../skills/dispatch/scripts/core/interpreter.ts');
+  const cwd = tempDir();
+  const runDir = path.join(cwd, 'run');
+  fs.mkdirSync(runDir);
+  const git: Git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => ['src/a.ts'], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => ['src/a.ts'], log: async () => '' };
+  const handlers = createHandlers({ cwd, git, os: 'linux', skillRoot: SKILL_ROOT, tempRoot: cwd, workspaceRoot: cwd, orchestratorPlatform: null, wave: async () => [], selfCheckCommand: (_runDir, file) => `dispatch send --dry-run ${file}` });
+  const ports = fakePorts();
+  const task = { id: 'T1', attempt: 1, signature: 'sig', worktree: cwd, constraints: [], prerequisites: [] };
+  const issue = async (id: string, extra: Record<string, unknown>) => {
+    const event = resultOf(await handlers['write-brief']!({ kind: 'write-brief', id, stage: 'task', input: { task, settledScope: { paths: ['src/a.ts'] }, criteria: [{ id: 'SC1' }], ...extra } }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'BRIEF_READY');
+    return event as Extract<ResultEvent, { type: 'BRIEF_READY' }>;
+  };
+  const base = await issue('implement.write-brief.1', {});
+  const binding = { path: base.path, sha256: base.sha256 };
+  await issue('implement.write-brief.2', { revisionNotice: { notice: 'first' }, deltaBase: { ...binding, seq: 1 } });
+  const latest = await issue('implement.write-brief.3', { revisionNotice: { notice: 'second' }, deltaBase: { ...binding, seq: 2 } });
+  const eventPath = (id: string) => path.join(runDir, id, 'self-check.event.json');
+  assert.ok(fs.readFileSync(base.path, 'utf8').includes(`dispatch send --dry-run ${eventPath('implement.write-brief.1')}`));
+  const delta = fs.readFileSync(latest.delta!.path, 'utf8');
+  assert.ok(delta.includes(`dispatch send --dry-run ${eventPath('implement.write-brief.3')}`));
+  assert.ok(delta.includes(`Base: ${base.path} · ${base.sha256}`));
+  const receipt = JSON.parse(fs.readFileSync(eventPath('implement.write-brief.3'), 'utf8')) as Record<string, unknown>;
+  assert.deepEqual([receipt['envelopePath'], receipt['briefHash']], [latest.envelopePath, latest.delta!.sha256]);
+  fs.writeFileSync(latest.envelopePath, JSON.stringify(complete));
+  const plan = { tasks: [{ id: 'T1', paths: ['src/a.ts'], criteria: ['SC1'] }], criteria: [{ id: 'SC1', tests: [] }] };
+  const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: { worktree: cwd, baseline: { head: 'h', index: 'i', worktree: 'w' }, attempt: 1, signature: 'sig', handle: 'h1' } } } } };
+  ports.git = { run: async (argv) => argv.slice(2).map(() => 'a'.repeat(40)).join('\n') };
+  assert.equal(await preview(state as never, { ...receipt, handle: 'h1' } as never, handlers, ports, runDir), null);
+});

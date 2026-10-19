@@ -258,6 +258,7 @@ export function runPaths(runDir: string) {
     heartbeat: (id: string, attempt: number) => inEffect(id, `heartbeat${attemptInfix(attempt)}.json`),
     done: (id: string, attempt: number) => inEffect(id, `done${attemptInfix(attempt)}.json`),
     brief: (id: string) => inEffect(id, 'brief.md'),
+    delta: (id: string) => inEffect(id, 'delta.md'),
     envelope: (id: string) => inEffect(id, 'outcome.json'),
     scope: (id: string) => inEffect(id, 'scope.json'),
     restore: (id: string) => inEffect(id, 'restore.json'),

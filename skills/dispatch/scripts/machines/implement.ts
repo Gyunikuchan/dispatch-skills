@@ -932,7 +932,11 @@ function continueAmend(c: Context): S {
   const [rebrief, ...rest] = c.rebriefQueue;
   if (rebrief) {
     const { c: next, id } = effectId({ ...c, rebriefQueue: rest }, 'write-brief');
-    return { state: { tag: 'task-brief', c: next, effectId: id, task: rebrief.task, notice: rebrief.notice }, effects: [{ kind: 'write-brief', id, stage: 'task', input: taskBriefInput(next, next.tasks[rebrief.task] as TaskRecord, rebrief.notice) }] };
+    const record = next.tasks[rebrief.task] as TaskRecord;
+    // NOTE: only a launched writer holds its delivered base; an unlaunched one reads the regenerated full brief at launch.
+    const base = record.handle ? record.deliveredBase : null;
+    const deltaBase = base ? { deltaBase: { path: base.path, sha256: base.sha256, seq: (record.deltaSeq ?? 0) + 1 } } : {};
+    return { state: { tag: 'task-brief', c: next, effectId: id, task: rebrief.task, notice: rebrief.notice }, effects: [{ kind: 'write-brief', id, stage: 'task', input: { ...taskBriefInput(next, record, rebrief.notice), ...deltaBase } }] };
   }
   const resume = c.amendResume ?? { kind: 'schedule' as const };
   const done = { ...c, amendResume: null };
@@ -1015,7 +1019,10 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
     }
     case 'relaunch': {
       const record = c.tasks[id] as TaskRecord;
-      return stay({ tag: 'tasks', c: withTask(c, id, { status: 'running', attempt: record.attempt + 1, handle: null, modelIndex: record.modelIndex + 1 }) });
+      // NOTE: a relaunched writer holds no earlier brief, so it reads the latest full brief and binds its hash.
+      const { delta: _delta, ...brief } = record.brief ?? { path: '', sha256: '', envelopePath: '', checkpointPath: '' };
+      const delivered = record.brief ? { brief, deliveredBase: { path: brief.path, sha256: brief.sha256, envelopePath: brief.envelopePath }, deltaSeq: 0 } : {};
+      return stay({ tag: 'tasks', c: withTask(c, id, { status: 'running', attempt: record.attempt + 1, handle: null, modelIndex: record.modelIndex + 1, ...delivered }) });
     }
     case 'scope-rebase': {
       if (result['conflict'] === true || !text('path') || !text('revision')) return taskFailed(c, id, `Scope rebase preserved the original draft but could not apply it cleanly: ${list('conflicts').join(', ') || text('detail') || 'invalid transfer result'}.`);
@@ -1128,16 +1135,22 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
     case 'task-brief': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return state.notice !== undefined ? beginFailure(state.c, `Amended brief for ${state.task} failed: ${event.cls}: ${event.detail}`) : taskFailed(state.c, state.task, `write-brief failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'BRIEF_READY' || !answers(event, state.effectId)) return stay(state);
-      if (event.stage !== 'task' || !nonEmpty(event.path) || !/^sha256:[a-f0-9]{64}$/.test(event.sha256) || !nonEmpty(event.envelopePath)) return taskFailed(state.c, state.task, 'write-brief returned a mismatched stage, invalid hash, or missing envelope path.');
-      const brief = { path: event.path, sha256: event.sha256, envelopePath: event.envelopePath, checkpointPath: checkpointPathOf(event.envelopePath) };
-      const entry: TaskBriefHistory = { ...brief, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
+      const isHash = (value: unknown): boolean => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
+      if (event.stage !== 'task' || !nonEmpty(event.path) || !isHash(event.sha256) || !nonEmpty(event.envelopePath) || (event.delta !== undefined && (!nonEmpty(event.delta.path) || !isHash(event.delta.sha256)))) return taskFailed(state.c, state.task, 'write-brief returned a mismatched stage, invalid hash, or missing envelope path.');
+      const full = { path: event.path, sha256: event.sha256, envelopePath: event.envelopePath, checkpointPath: checkpointPathOf(event.envelopePath) };
+      const delivered = { deliveredBase: { path: event.path, sha256: event.sha256, envelopePath: event.envelopePath }, deltaSeq: 0 };
       if (state.notice !== undefined) {
         // NOTE: a regenerated brief keeps the live writer; earlier briefs stay valid while their scope equals the current one.
         const record = state.c.tasks[state.task] as TaskRecord;
-        const c = withTask(state.c, state.task, { brief, briefs: [...(record.briefs ?? []), entry] });
+        const brief = event.delta ? { ...full, delta: { path: event.delta.path, sha256: event.delta.sha256 } } : full;
+        const entry: TaskBriefHistory = { ...brief, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
+        // A delta extends the delivered base; without one, the writer has not launched and reads this full brief.
+        const base = event.delta ? { deltaSeq: (record.deltaSeq ?? 0) + 1 } : delivered;
+        const c = withTask(state.c, state.task, { brief, briefs: [...(record.briefs ?? []), entry], ...base });
         return continueAmend({ ...c, amended: [...c.amended, { task: state.task, briefPath: event.path, briefHash: event.sha256, notice: state.notice }] });
       }
-      return schedule(withTask(state.c, state.task, { status: 'running', handle: null, brief, briefs: [entry] }));
+      const entry: TaskBriefHistory = { ...full, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
+      return schedule(withTask(state.c, state.task, { status: 'running', handle: null, brief: full, briefs: [entry], ...delivered }));
     }
     case 'tasks': {
       if (event.type === 'WRITE_RECEIPT' && typeof event.task === 'string') return taskReceipt(state.c, event as TaskReceipt);
@@ -2012,9 +2025,11 @@ export function implementLaunches(state: ImplementState, runDir: string): { path
   return activeTasks(c.tasks).filter((record) => record.status === 'running').map((record) => {
     const action = launchAction(record), model = activeModel(c, record);
     const identity = { task: record.id, attempt: record.attempt, signature: record.signature, handle: record.handle ?? '' };
-    // NOTE: `submitted` binds the latest issued brief; a writer that finished under an earlier brief reports that brief's hash and envelope instead.
+    // A live amended writer reads the delta; a launching writer reads the full brief.
+    const delta = action === 'running' ? record.brief?.delta : undefined;
+    // NOTE: `submitted` binds the latest issued brief or delta; a writer that finished under an earlier brief reports that brief's hash and envelope instead.
     const finished = [
-      { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: record.brief?.envelopePath, briefHash: record.brief?.sha256, model, ...effort },
+      { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: record.brief?.envelopePath, briefHash: delta?.sha256 ?? record.brief?.sha256, model, ...effort },
       { type: 'WRITE_RECEIPT', status: 'failed', ...identity, detail: '<observed failure>', model, ...effort },
     ];
     const cancelled = { type: 'WRITE_RECEIPT', status: 'cancelled', ...identity };
@@ -2029,6 +2044,7 @@ export function implementLaunches(state: ImplementState, runDir: string): { path
       record: {
         task: record.id, attempt: record.attempt, signature: record.signature, action, handle: record.handle, model, ...effort,
         briefPath: record.brief?.path, briefHash: record.brief?.sha256, envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath,
+        ...(delta ? { deltaPath: delta.path, deltaHash: delta.sha256 } : {}),
         worktree: record.worktree, paths: planTask(c, record.id)?.paths ?? [],
         ...(record.retirement ? { retirement: record.retirement } : {}),
         ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
@@ -2060,9 +2076,12 @@ function validateTaskEvent(c: Context, event: HostEvent): string | null {
     if (receipt.status !== 'submitted') return null;
     const entry = record.briefs?.find((row) => row.envelopePath === receipt.envelopePath);
     if (!entry) return 'event.envelopePath: name the envelope path of a brief issued to this attempt.';
+    const latest = record.briefs?.at(-1);
+    // NOTE: each delta re-sends every current task section, so only the latest delta binds; a full brief keeps the stale-scope rule.
+    if (entry.delta && receipt.briefHash === entry.delta.sha256) return entry === latest ? null : `event.briefHash: superseded delta; a later amendment replaced it. Resubmit against delta ${latest?.delta?.sha256 ?? latest?.sha256 ?? 'current'}.`;
     if (receipt.briefHash !== entry.sha256) return 'event.briefHash: echo the hash of the brief the writer worked from.';
     const task = planTask(c, receipt.task);
-    if (entry !== record.briefs?.at(-1) && (!task || entry.scope !== taskScope(c.plan!, task))) return `event.briefHash: stale brief; an amendment changed the paths or criteria of ${receipt.task}. Resubmit against brief ${record.brief?.sha256 ?? 'current'}.`;
+    if (entry !== latest && (!task || entry.scope !== taskScope(c.plan!, task))) return `event.briefHash: stale brief; an amendment changed the paths or criteria of ${receipt.task}. Resubmit against brief ${record.brief?.sha256 ?? 'current'}.`;
     return null;
   }
   if (event.type === 'REQUEST') {

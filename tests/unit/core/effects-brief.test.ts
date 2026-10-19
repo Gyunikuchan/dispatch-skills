@@ -266,3 +266,72 @@ test('governing spec defaults ignore context and Git log and unreadable supplied
 });
 
 
+
+// SECTION: Amendment deltas — a live writer holding its base brief reads only the current task sections.
+
+const deltaInput = {
+  planPath: 'docs/example.plan.md', planHash: `sha256:${'a'.repeat(64)}`, governingOutcome: { title: 'Example', outcome: 'Deliver behavior' },
+  sharedContext: '# Example plan\n\n## Background\n- SHARED-CONTEXT-MARKER', siblingTasks: [{ id: 'T2', outcome: 'SIBLING-ROW-MARKER', prerequisites: [], criteria: ['SC2'], paths: ['src/b.ts'], overlap: [] }],
+  task: { id: 'T1', title: 'Feature', summary: 'TASK-SUMMARY-MARKER', dependents: ['T3'], attempt: 1, signature: 'SIGNATURE-MARKER', worktree: 'run/wt/task-t1', inputRevision: 'b0', constraints: ['Keep the public API stable.'], prerequisites: [{ id: 'T0', integrated: 'i-T0' }], checkpoint: { root: 'run/wt/task-t1', paths: ['tests/a.test.ts'] }, amendmentNotice: 'SC1 now requires speed.' },
+  settledScope: { paths: ['src/a.ts', 'tests/a.test.ts'], approvedPaths: ['src/a.ts', 'tests/a.test.ts'], changes: [{ action: 'MODIFY', path: 'src/a.ts' }] },
+  revisionNotice: { notice: 'SC1 now requires speed.', revision: 'amend-1', rationale: 'Plan changed mid-run.' },
+  previousBriefs: [{ path: 'run/base/brief.md', sha256: `sha256:${'b'.repeat(64)}`, scope: '{}' }],
+  criteria: [{ id: 'SC1', title: 'works fast', verify: [{ command: 'node --test tests/a.test.ts', final: false }] }],
+  envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE' }, rules: { writerStage: 'task', keyDecisions: ['RULES-MARKER'] }, priorFindings: [{ id: 'FINDING-MARKER' }], evidence: ['EVIDENCE-MARKER'],
+  selfCheck: 'dispatch send --dry-run <Expected Envelope Path>',
+};
+const deltaBase = { path: 'run/base/brief.md', sha256: `sha256:${'b'.repeat(64)}`, seq: 2 };
+
+test('amendment delta carries the base binding and current task sections, and leaves the full brief bytes unchanged', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  memoryRunFs(ports, runDir);
+  const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const id = 'implement.write-brief.7';
+  const withDelta = only(await handler({ kind: 'write-brief', id, stage: 'task', input: { ...deltaInput, deltaBase } }, ports, { runDir, attempt: 1 }));
+  assert.equal(withDelta.type, 'BRIEF_READY'); if (withDelta.type !== 'BRIEF_READY') return;
+  const full = ports.fs.readText(withDelta.path);
+  assert.ok(withDelta.delta, 'delta returned');
+  const text = ports.fs.readText(withDelta.delta!.path);
+  assert.equal(withDelta.delta!.path, path.join(runDir, id, 'delta.md'));
+  assert.equal(withDelta.delta!.sha256, `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`);
+  assert.notEqual(withDelta.delta!.sha256, withDelta.sha256);
+  const envelopePath = path.join(runDir, id, 'outcome.json');
+  for (const value of [
+    `Base: run/base/brief.md · sha256:${'b'.repeat(64)}`, 'Amendment: 2', 'SC1 now requires speed.', 'amend-1', 'Plan changed mid-run.',
+    envelopePath, `dispatch send --dry-run ${envelopePath}`, `dispatch checkpoint --root "run/wt/task-t1" --out "${path.join(runDir, id, 'red.json')}" -- "tests/a.test.ts"`,
+    'run/wt/task-t1', 'Keep the public API stable.', 'i-T0', 'tests/a.test.ts', 'node --test tests/a.test.ts', 'works fast',
+  ]) assert.ok(text.includes(value), value);
+  for (const excluded of ['SHARED-CONTEXT-MARKER', 'SIBLING-ROW-MARKER', 'RULES-MARKER', 'FINDING-MARKER', 'EVIDENCE-MARKER', 'Spec alignment:', 'Security and resources:', 'SIGNATURE-MARKER']) assert.ok(!text.includes(excluded), excluded);
+  assert.ok(Buffer.byteLength(text) * 3 < Buffer.byteLength(full), 'delta is a small fraction of the full brief');
+  assert.ok(text.includes('TASK-SUMMARY-MARKER') && text.includes('T3'), 'delta carries the whole current task section');
+  for (const heading of ['## Task, graph, and worktree', '## Settled scope', '## Criteria']) assert.ok(text.includes(heading) && full.includes(heading), heading);
+
+  const plainRun = tempDir(), plainPorts = fakePorts();
+  memoryRunFs(plainPorts, plainRun);
+  const plain = only(await handler({ kind: 'write-brief', id, stage: 'task', input: deltaInput }, plainPorts, { runDir: plainRun, attempt: 1 }));
+  assert.equal(plain.type, 'BRIEF_READY'); if (plain.type !== 'BRIEF_READY') return;
+  assert.equal(plainPorts.fs.readText(plain.path).split(plainRun).join('<run>'), full.split(runDir).join('<run>'));
+});
+
+test('amendment delta is absent without a delta base and for hotfix briefs', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  memoryRunFs(ports, runDir);
+  const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const plain = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.8', stage: 'task', input: deltaInput }, ports, { runDir, attempt: 1 }));
+  assert.equal(plain.type, 'BRIEF_READY'); if (plain.type !== 'BRIEF_READY') return;
+  assert.equal(plain.delta, undefined);
+  assert.equal(ports.fs.exists(path.join(runDir, 'implement.write-brief.8', 'delta.md')), false);
+  const hotfix = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.9', stage: 'hotfix', input: { deltaBase, hotfix: { maxFiles: 1, maxLines: 10, singleShot: true, model: 'writer-a', external: [], preRed: false, paths: ['src/a.ts'] } } }, ports, { runDir, attempt: 1 }));
+  assert.equal(hotfix.type, 'BRIEF_READY'); if (hotfix.type !== 'BRIEF_READY') return;
+  assert.equal(hotfix.delta, undefined);
+  assert.equal(ports.fs.exists(path.join(runDir, 'implement.write-brief.9', 'delta.md')), false);
+});
+
+test('amendment delta write failure fails the effect', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  memoryRunFs(ports, runDir);
+  const write = ports.fs.writeAtomic;
+  ports.fs.writeAtomic = (file, data) => { if (file.endsWith('delta.md')) throw new Error('disk full'); return write(file, data); };
+  const event = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.10', stage: 'task', input: { ...deltaInput, deltaBase } }, ports, { runDir, attempt: 1 }));
+  assert.ok(event.type === 'EFFECT_FAILED' && /delta: disk full/.test(event.detail));
+});

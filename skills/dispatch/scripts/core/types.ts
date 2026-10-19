@@ -289,7 +289,7 @@ export type ResultEvent =
   | { type: 'WAVE_PROGRESS'; effectId: string; slot: SlotId; status: SlotStatus }
   | { type: 'WAVE_DONE'; effectId: string; round: number; slots: SlotOutcome[]; findings: Finding[] }
   | { type: 'VERIFY_DONE'; effectId: string; purpose: VerifyPurpose; results: CommandResult[]; fingerprint: TreeFingerprint }
-  | { type: 'BRIEF_READY'; effectId: string; stage: WriteStage; path: string; sha256: string; envelopePath: string }
+  | { type: 'BRIEF_READY'; effectId: string; stage: WriteStage; path: string; sha256: string; envelopePath: string; delta?: { path: string; sha256: string } }
   | { type: 'ENVELOPE_CHECKED'; effectId: string; envelope: WriteEnvelope | null; defects: string[]; diff: PathDiff }
   | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
   | { type: 'RECOVERY_ASSESSED'; effectId: string; purpose: 'drift' | 'hotfix'; beforeHash: string; afterHash: string; notice: ChangeNotice; judgement?: { violations: readonly string[]; violationCount?: number; withdrawn: boolean; files: number; lines: number } }

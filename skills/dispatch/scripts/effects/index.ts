@@ -89,9 +89,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const events = await createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
       const ready = events.find((event) => event.type === 'BRIEF_READY');
       if (!ready || ready.type !== 'BRIEF_READY') return events;
-      // NOTE: the brief embeds only the event path, so the preview receipt is written after rendering to echo the brief hash.
+      // NOTE: the brief embeds only the event path, so the preview receipt is written after rendering to echo the brief hash;
+      // an amended live writer holds the delta, so its hash binds instead.
       const receipt = identity
-        ? { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: ready.envelopePath, briefHash: ready.sha256, model: '<host-attested model>' }
+        ? { type: 'WRITE_RECEIPT', status: 'submitted', ...identity, envelopePath: ready.envelopePath, briefHash: ready.delta?.sha256 ?? ready.sha256, model: '<host-attested model>' }
         : { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: ready.envelopePath };
       try { ports.fs.writeAtomic(eventPath, `${JSON.stringify(receipt)}\n`); } catch (error) {
         return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `self-check event: ${error instanceof Error ? error.message : String(error)}` }];

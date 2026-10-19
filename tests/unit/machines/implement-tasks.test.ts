@@ -691,7 +691,7 @@ test('launch record: a pending amendment carries the notice and the regenerated 
   assert.equal(launchOf(result.state, 'T2').notice, undefined);
   assert.deepEqual(implementData(result.state)['amended'], [{ task: 'T1', launchPath: 'implement.launch.t1/launch.json' }]);
   const submitted = after.receipts.find((receipt) => receipt['status'] === 'submitted')!;
-  assert.deepEqual([submitted['envelopePath'], submitted['briefHash']], [latest.envelopePath, latest.sha256]);
+  assert.deepEqual([submitted['envelopePath'], submitted['briefHash']], [latest.envelopePath, latest.delta?.sha256]);
   assert.deepEqual(valid(result, after.receipts), [null, null]);
 });
 
@@ -796,4 +796,120 @@ test('frame size independent of task content keeps six writers within fixed task
   assert.ok(base.tasks <= 2048, `tasks frame ${base.tasks} bytes`);
   assert.ok(base.amended <= 3072, `amendment frame ${base.amended} bytes`);
   assert.deepEqual(grown, base);
+});
+
+// SECTION: Amendment deltas — a live writer reads a delta bound to the full brief it was launched with.
+
+type DeltaLaunch = Launch & { deltaPath?: string; deltaHash?: string };
+const deltaLaunch = (result: Result, id: string) => launchOf(result.state, id) as DeltaLaunch;
+const submittedOf = (launched: Launch) => launched.receipts.find((receipt) => receipt['status'] === 'submitted')!;
+const deltaBases = (trace: Trace) => trace.effects.flatMap((effect) => effect.kind === 'write-brief' ? [effect.input['deltaBase']] : []);
+const notifyT1 = (notice: string) => [{ task: 'T1', notice }];
+const SC1_FASTER = { kind: 'modify', target: 'SC1', current: '[SC1] Part 1 works fast', proposed: '[SC1] Part 1 works faster' };
+const CONSTRAINT_LOG = { kind: 'modify', target: 'T1', current: '- Constraints: Preserve the stable API.', proposed: '- Constraints: Preserve the stable API and log calls.' };
+const CONSTRAINT_TRACE = { kind: 'modify', target: 'T1', current: '- Constraints: Preserve the stable API and log calls.', proposed: '- Constraints: Preserve the stable API and trace calls.' };
+const T1_AFTER_T2 = { kind: 'modify', target: 'T1', current: '| T1 | Part one | Deliver part one. | none | SC1 |', proposed: '| T1 | Part one | Deliver part one. | T2 | SC1 |' };
+/** Folds the recorded events from the run start, as journal replay does. */
+const replayed = (trace: Trace): Result => {
+  let state = initialImplement();
+  for (const event of [run(3), ...trace.events]) state = stepImplement(state, event).state;
+  return { state, effects: [] };
+};
+
+test('amendment delta binds the launch record and submitted receipt to the delta or the latest full brief', () => {
+  let { result, sim, trace } = amendRunning();
+  const base = deltaLaunch(result, 'T1');
+  assert.equal('deltaPath' in base, false);
+  result = host(result, amendEvent([SC1_FAST], notifyT1('SC1 now requires speed.')), sim, trace);
+  assert.deepEqual(deltaBases(trace).at(-1), { path: base.briefPath, sha256: base.briefHash, seq: 1 });
+  const after = deltaLaunch(result, 'T1'), latest = record(result, 'T1')!.briefs!.at(-1)!;
+  assert.ok(latest.delta, 'latest brief records its delta');
+  assert.deepEqual([after.deltaPath, after.deltaHash, after.briefPath, after.briefHash, after.envelopePath], [latest.delta!.path, latest.delta!.sha256, latest.path, latest.sha256, latest.envelopePath]);
+  const submitted = submittedOf(after);
+  assert.deepEqual([submitted['envelopePath'], submitted['briefHash']], [latest.envelopePath, latest.delta!.sha256]);
+  assert.deepEqual(valid(result, [submitted, { ...submitted, briefHash: latest.sha256 }]), [null, null]);
+  assert.match(valid(result, [{ ...submitted, briefHash: `sha256:${'f'.repeat(64)}` }])[0] ?? '', /echo the hash of the brief the writer worked from/);
+  assert.match(valid(result, [{ ...submitted, envelopePath: base.envelopePath, briefHash: base.briefHash }])[0] ?? '', /stale brief/);
+  assert.equal('deltaPath' in deltaLaunch(result, 'T2'), false);
+  result = host(result, submitted as unknown as Event, sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+});
+
+test('amendment delta relaunch and fresh launch carry only the full brief', () => {
+  const fresh = start(1, {});
+  assert.equal('deltaPath' in deltaLaunch(fresh.result, 'T1'), false);
+  assert.deepEqual(deltaBases(fresh.trace), [undefined]);
+
+  let { result, sim, trace } = amendRunning();
+  result = host(result, amendEvent([SC1_FAST], notifyT1('SC1 now requires speed.')), sim, trace);
+  const latest = record(result, 'T1')!.briefs!.at(-1)!;
+  assert.equal(deltaLaunch(result, 'T1').deltaHash, latest.delta?.sha256 ?? 'live writer offered a delta');
+  result = host(result, deltaLaunch(result, 'T1').receipts.find((receipt) => receipt['status'] === 'failed') as unknown as Event, sim, trace);
+  const relaunch = deltaLaunch(result, 'T1');
+  assert.deepEqual([relaunch.action, relaunch.attempt, 'deltaPath' in relaunch, 'deltaHash' in relaunch, relaunch.briefPath, relaunch.briefHash], ['launch', 2, false, false, latest.path, latest.sha256]);
+  result = host(result, { ...relaunch.receipts[0], handle: 'agent-T1-2' } as unknown as Event, sim, trace);
+  const running = deltaLaunch(result, 'T1');
+  assert.deepEqual(['deltaPath' in running, submittedOf(running)['briefHash'], submittedOf(running)['envelopePath']], [false, latest.sha256, latest.envelopePath]);
+  assert.deepEqual(valid(result, running.receipts), [null, null]);
+
+  const hotfix = recoveryHost(failure(), { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'writer', rationale: 'bad branch' } });
+  const brief = hotfix.effects.find((effect) => effect.kind === 'write-brief');
+  assert.ok(brief?.kind === 'write-brief' && brief.stage === 'hotfix');
+  assert.equal('deltaBase' in brief.input, false);
+});
+
+test('amendment delta repeated in one scope binds the launch brief and rejects only the superseded delta', () => {
+  let { result, sim, trace } = amendRunning();
+  const base = deltaLaunch(result, 'T1');
+  result = host(result, amendEvent([CONSTRAINT_LOG], notifyT1('Log calls.')), sim, trace);
+  result = host(result, amendEvent([CONSTRAINT_TRACE], notifyT1('Trace calls.')), sim, trace);
+  assert.deepEqual(deltaBases(trace).slice(-2), [1, 2].map((seq) => ({ path: base.briefPath, sha256: base.briefHash, seq })));
+  const [, first, second] = record(result, 'T1')!.briefs!;
+  const submitted = submittedOf(deltaLaunch(result, 'T1'));
+  assert.equal(submitted['briefHash'], second!.delta!.sha256);
+  const at = (entry: { envelopePath: string }, briefHash: string) => ({ ...submitted, envelopePath: entry.envelopePath, briefHash });
+  assert.deepEqual(valid(result, [at(second!, second!.delta!.sha256), at(second!, second!.sha256), at(base, base.briefHash), at(first!, first!.sha256)]), [null, null, null, null]);
+  const superseded = valid(result, [at(first!, first!.delta!.sha256)])[0] ?? '';
+  assert.match(superseded, /superseded delta/);
+  assert.ok(superseded.includes(second!.delta!.sha256), superseded);
+  const replay = replayed(trace);
+  assert.deepEqual(launchesOf(replay), launchesOf(result));
+  assert.equal(valid(replay, [at(first!, first!.delta!.sha256)])[0], superseded);
+});
+
+test('amendment delta repeated scope changes reject the launch brief and first full brief as stale', () => {
+  let { result, sim, trace } = amendRunning();
+  const base = deltaLaunch(result, 'T1');
+  result = host(result, amendEvent([SC1_FAST], notifyT1('SC1 now requires speed.')), sim, trace);
+  result = host(result, amendEvent([SC1_FASTER], notifyT1('SC1 now requires more speed.')), sim, trace);
+  assert.deepEqual(deltaBases(trace).slice(-2), [1, 2].map((seq) => ({ path: base.briefPath, sha256: base.briefHash, seq })));
+  const [, first, second] = record(result, 'T1')!.briefs!;
+  const submitted = submittedOf(deltaLaunch(result, 'T1'));
+  const at = (entry: { envelopePath: string }, briefHash: string) => ({ ...submitted, envelopePath: entry.envelopePath, briefHash });
+  assert.deepEqual(valid(result, [at(second!, second!.delta!.sha256), at(second!, second!.sha256)]), [null, null]);
+  const rejected = valid(result, [at(base, base.briefHash), at(first!, first!.sha256), at(first!, first!.delta!.sha256)]);
+  assert.match(rejected[0] ?? '', /stale brief/);
+  assert.match(rejected[1] ?? '', /stale brief/);
+  assert.match(rejected[2] ?? '', /superseded delta/);
+  const replay = replayed(trace);
+  assert.deepEqual(launchesOf(replay), launchesOf(result));
+  assert.deepEqual(valid(replay, [at(base, base.briefHash), at(first!, first!.delta!.sha256)]), [rejected[0], rejected[2]]);
+});
+
+test('amendment delta context-only amendments carry the new constraint or prerequisite', () => {
+  const lastBrief = (trace: Trace) => trace.effects.findLast((effect) => effect.kind === 'write-brief')!;
+  let { result, sim, trace } = amendRunning();
+  const scope = record(result, 'T1')!.briefs!.at(-1)!.scope;
+  result = host(result, amendEvent([CONSTRAINT_LOG], notifyT1('Log calls.')), sim, trace);
+  let effect = lastBrief(trace);
+  assert.ok(effect.kind === 'write-brief' && effect.input['deltaBase']);
+  assert.deepEqual((effect.input['task'] as { constraints: string[] }).constraints, ['Preserve the stable API and log calls.']);
+  assert.equal(record(result, 'T1')!.briefs!.at(-1)!.scope, scope);
+
+  ({ result, sim, trace } = amendRunning());
+  result = host(result, amendEvent([T1_AFTER_T2], notifyT1('T1 now follows T2.')), sim, trace);
+  effect = lastBrief(trace);
+  assert.ok(effect.kind === 'write-brief' && effect.input['deltaBase']);
+  assert.deepEqual((effect.input['task'] as { prerequisites: unknown[] }).prerequisites, [{ id: 'T2', integrated: null }]);
+  assert.equal(record(result, 'T1')!.briefs!.at(-1)!.scope, scope);
 });

@@ -29,14 +29,45 @@ function siblingRow(value: unknown): string {
   return `- ${String(row.id)} | ${String(row.outcome)} | prerequisites: ${list(row.prerequisites, String)} | criteria: ${list(row.criteria, String)} | paths: ${list(row.paths, (path: string) => `\`${path}\``)} | overlap: ${overlap}`;
 }
 
+function render(value: unknown): string {
+  if (typeof value === 'string') return value.trim() || '(none)';
+  if (Array.isArray(value)) return value.length ? value.map((item) => `- ${typeof item === 'string' ? item.trim() : JSON.stringify(item)}`).join('\n') : '(none)';
+  if (value === undefined || value === null) return '(none)';
+  return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+const sections = (rows: readonly (readonly [string, string])[]): string => rows.map(([heading, body]) => `## ${heading}\n\n${body}`).join('\n\n');
+
+type DeltaBase = { path: string; sha256: string; seq: number };
+
+function deltaBaseOf(input: Readonly<Record<string, unknown>>): DeltaBase | null {
+  const base = input['deltaBase'] as Partial<DeltaBase> | undefined;
+  return base && typeof base.path === 'string' && typeof base.sha256 === 'string' && Number.isSafeInteger(base.seq) ? base as DeltaBase : null;
+}
+
+/** Amendment delta: the current task sections a live writer applies on top of the base brief it already holds. */
+function deltaText(input: Readonly<Record<string, unknown>>, base: DeltaBase, values: Readonly<Record<string, string>>): string {
+  // NOTE: the signature repeats every criterion definition; the Criteria section already carries them.
+  const { signature: _signature, ...task } = (input['task'] ?? {}) as Readonly<Record<string, unknown>>;
+  const header = [
+    '# Amendment delta', '',
+    `Base: ${base.path} · ${base.sha256}`,
+    `Amendment: ${base.seq}`, '',
+    'You hold the base brief. Each section below replaces the base brief section or value of the same name; every other base brief section still applies. Report this delta\'s hash as `briefHash` unless you read a newer brief or delta.',
+  ].join('\n');
+  return `${header}\n\n${sections([
+    ['Plan revision notices', render(input['revisionNotice'])],
+    ['Expected Envelope Path', values['Expected Envelope Path']!],
+    ['Self Check Command', values['Self Check Command']!],
+    ['Checkpoint Command', values['Checkpoint Command']!],
+    ['Task, graph, and worktree', render(task)],
+    ['Settled scope', render(input['settledScope'])],
+    ['Criteria', render(input['criteria'])],
+  ])}\n`;
+}
+
 function structuredContext(input: Readonly<Record<string, unknown>>): string {
   const rows: [string, string][] = [];
-  const render = (value: unknown): string => {
-    if (typeof value === 'string') return value.trim() || '(none)';
-    if (Array.isArray(value)) return value.length ? value.map((item) => `- ${typeof item === 'string' ? item.trim() : JSON.stringify(item)}`).join('\n') : '(none)';
-    if (value === undefined || value === null) return '(none)';
-    return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
-  };
   const spec = input['governingSpec'];
   if (typeof spec === 'object' && spec !== null && 'path' in spec && 'hash' in spec) rows.push(['Governing spec', `Path: ${String(spec.path)}\nHash: ${String(spec.hash)}`]);
   if (typeof input['planPath'] === 'string' || typeof input['planHash'] === 'string') {
@@ -63,14 +94,15 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   rows.push(['Repository rules', render(input['rules'])]);
   rows.push(['Prior review findings', render(input['priorFindings'])]);
   rows.push(['Verification evidence', `Evidence, not specification.\n${render(input['evidence'])}`]);
-  return `\n${rows.map(([heading, body]) => `## ${heading}\n\n${body}`).join('\n\n')}\n`;
+  return `\n${sections(rows)}\n`;
 }
 
 export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
   return async (effect, ports, ctx) => {
     const envelopePath = runPaths(ctx.runDir).envelope(effect.id);
     const briefPath = runPaths(ctx.runDir).brief(effect.id);
-    let text: string;
+    const base = effect.stage === 'task' ? deltaBaseOf(effect.input) : null;
+    let text: string, delta: string | null = null;
     try {
       const dir = path.join(deps.skillRoot, 'references', 'templates');
       const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)), undefined, [qualityBar(ports.fs.readText(path.join(dir, 'quality-bar.md')), 'writer')]);
@@ -84,13 +116,18 @@ export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
       const values: Record<string, string> = { 'Expected Envelope Path': envelopePath, 'Self Check Command': selfCheck, 'Checkpoint Command': checkpointCommand };
       const rendered = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
       text = `${rendered}${structuredContext(effect.input)}`;
+      if (base) delta = deltaText(effect.input, base, values);
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];
     }
     try { writeRendered(ports, briefPath, text); } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `brief: ${error instanceof Error ? error.message : String(error)}` }];
     }
-    const sha256 = crypto.createHash('sha256').update(text).digest('hex');
-    return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: briefPath, sha256: `sha256:${sha256}`, envelopePath }];
+    const deltaPath = runPaths(ctx.runDir).delta(effect.id);
+    if (delta !== null) try { writeRendered(ports, deltaPath, delta); } catch (error) {
+      return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `delta: ${error instanceof Error ? error.message : String(error)}` }];
+    }
+    const hash = (value: string): string => `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+    return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: briefPath, sha256: hash(text), envelopePath, ...(delta !== null ? { delta: { path: deltaPath, sha256: hash(delta) } } : {}) }];
   };
 }

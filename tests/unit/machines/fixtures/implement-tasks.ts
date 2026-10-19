@@ -66,7 +66,10 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
       if (replacement) return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: replacement.hash, parsed: replacement.plan, defects: (replacement.defects ?? []) as never };
       return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: sim.planHash ?? HASH, parsed: sim.plan ?? PLAN, defects: [] };
     }
-    case 'write-brief': return { type: 'BRIEF_READY', effectId: effect.id, stage: 'task', path: `run/${id}.brief.md`, sha256: briefSha(effect.id), envelopePath: `run/${id}-${effect.id}.outcome.json` };
+    case 'write-brief': return {
+      type: 'BRIEF_READY', effectId: effect.id, stage: 'task', path: `run/${id}.brief.md`, sha256: briefSha(effect.id), envelopePath: `run/${id}-${effect.id}.outcome.json`,
+      ...(effect.input['deltaBase'] ? { delta: { path: `run/${id}.delta.md`, sha256: briefSha(`${effect.id}.delta`) } } : {}),
+    };
     case 'check-envelope': return { type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: sim.envelope ? sim.envelope(id!) : defaultEnvelope(id!, plan), defects: [], diff: { paths: sim.diff ? sim.diff(id!) : pathsOf(id!, plan) } };
     case 'verify': return {
       type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, fingerprint: FP,
