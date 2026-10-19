@@ -10,7 +10,7 @@ const VERBS: readonly Verb[] = ['ask', 'design', 'plan', 'review', 'implement'];
 const FLAGS: Readonly<Record<string, readonly string[]>> = {
   start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'spec'],
   send: ['run', 'event', 'dry-run', 'refresh-config'], status: ['run'], doctor: ['level', 'json'],
-  session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
+  session: ['objective', 'session-dir', 'session-id', 'provider', 'model', 'mode'], 'wave-worker': ['run', 'effect', 'attempt'],
   checkpoint: ['root', 'out'],
   rebind: ['run', 'reason', 'event'],
 };
@@ -27,7 +27,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
   }
   if (command === 'session') {
     out.action = args.shift() ?? '';
-    if (!['init', 'reactivate', 'handoff'].includes(out.action)) throw new UsageError('session requires init, reactivate, or handoff');
+    if (!['init', 'reactivate', 'handoff', 'quota-reprobe'].includes(out.action)) throw new UsageError('session requires init, reactivate, handoff, or quota-reprobe');
   }
   while (args.length) {
     const token = args.shift()!;
@@ -66,7 +66,15 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
   if (command === 'wave-worker') { need('effect'); need('attempt'); if (!Number.isSafeInteger(Number(out.flags['attempt'])) || Number(out.flags['attempt']) < 1) throw new UsageError('Invalid worker attempt'); }
   if (command === 'checkpoint') { need('root'); need('out'); if (!out.paths?.length) throw new UsageError('checkpoint requires repository paths after --'); }
   if (command === 'rebind') { need('run'); need('reason'); if (!String(out.flags['reason']).trim() || out.argument || out.paths) throw new UsageError('rebind requires a reason and no positional paths'); if (out.flags['event'] !== undefined && !/^@.+/.test(String(out.flags['event']))) throw new UsageError('rebind --event requires @path'); }
-  if (command === 'session') { if (out.action === 'init') need('objective'); else need('session-dir'); }
+  if (command === 'session') {
+    if (out.action === 'init') need('objective'); else need('session-dir');
+    const quotaFlags = ['provider', 'model', 'mode'];
+    if (out.action === 'quota-reprobe') {
+      need('provider'); need('mode');
+      if (out.paths || out.argument || ['objective', 'session-id'].some((name) => out.flags[name] !== undefined)) throw new UsageError('quota-reprobe accepts only session-dir, provider, model, and mode');
+      for (const name of quotaFlags) if (out.flags[name] !== undefined && !String(out.flags[name]).trim()) throw new UsageError(`--${name} requires a nonempty value`);
+    } else if (quotaFlags.some((name) => out.flags[name] !== undefined)) throw new UsageError('provider, model, and mode are for quota-reprobe');
+  }
   return out;
 }
 

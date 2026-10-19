@@ -72,7 +72,7 @@ test('diagnostics report: renders input cache-read cache-write output tokens', (
   const text = render([facts()]);
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
-  assert.match(text, /^- Measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · coverage 1\/1$/m);
+  assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
 });
 
 test('diagnostics report: renders unavailable as dash', () => {
@@ -82,7 +82,7 @@ test('diagnostics report: renders unavailable as dash', () => {
   })]);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), text);
   assert.ok(text.includes('| claude | all models | — | — | — | — | 0/1 |'), text);
-  assert.match(text, /orchestrator —/);
+  assert.match(text, /orchestrator frame exposure —/);
 });
 
 test('diagnostics report: excludes estimates from measured totals', () => {
@@ -94,13 +94,42 @@ test('diagnostics report: excludes estimates from measured totals', () => {
       invocation({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, usage: { input: 9000, output: 1000 } }),
     ],
   })]);
-  assert.match(text, /^- Measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · coverage 1\/1$/m);
-  assert.match(text, /^- Estimated, excluded from measured totals: native and write ~15,000 · orchestrator ~1,000$/m);
+  assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
+  assert.match(text, /^- Estimated, excluded from measured totals: native and write ~15,000 · orchestrator frame exposure ~1,000$/m);
   assert.ok(text.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
   assert.ok(text.includes('| ~5,000 | ok |'), text);
 });
 
 // SECTION: Heuristics, severity, and model attribution
+
+test('elapsed waits and partial usage remain explicit', () => {
+  const usage = normalizeUsage({ input: 3000, cacheRead: 2000, output: 40, reasoning: 20 }, 'includes-cache');
+  assert.ok(usage);
+  const run = facts({
+    hostGaps: [{ await: 'rule', ms: 7_271_110 }],
+    orchestratorBytes: 4000,
+    invocations: [
+      invocation({ usage }),
+      bare({ provider: 'claude', outcome: 'timeout' }),
+      bare({ surface: 'native', mode: 'native', estimated: true }),
+    ],
+  });
+  const gap = assertShape(only(heuristics(run), 'H6')[0], 'speed');
+  assert.match(gap.evidence, /elapsed host-await gap/i);
+  assert.match(gap.evidence, /2h 1m 11s/);
+  assert.match(gap.impact, /work, pauses and scheduling/);
+  assert.match(gap.proposedFix, /evidence/);
+  assert.doesNotMatch(gap.evidence + gap.impact, /active reasoning|reset duration|host turn/);
+  const text = render([run]);
+  assert.match(text, /Provider CLI measured tokens: 3,040 \(input 1,000 · cache read 2,000 · cache write — · output 40\) · launch coverage 1\/2/);
+  assert.match(text, /native and write — · orchestrator frame exposure ~1,000/);
+  assert.match(text, /Full conversation totals are unavailable/);
+  assert.match(text, /frame exposure is not full orchestrator usage/);
+  assert.ok(text.includes('| — | ok |'), 'unattested native usage stays unavailable');
+  const quota = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' })] })), 'H1')[0]!;
+  assert.match(quota.proposedFix, /another model alias/);
+  assert.doesNotMatch(quota.proposedFix, /each model has its own quota/);
+});
 
 test('diagnostics report: heuristic H1 fires for CLI failures', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
@@ -251,8 +280,8 @@ test('heuristic precision H5 needs three metered invocations and a share above t
 
 test('heuristic precision H6 makes no driver-repeat claim', () => {
   const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
-  assert.equal(finding.impact, 'Long host turns dominate wall time.');
-  assert.equal(finding.proposedFix, "Record in the retro which sub-steps of the `rule` turn took longest (for example finding verification or test runs) so the next change targets them.");
+  assert.match(finding.impact, /internal activity is unknown/);
+  assert.match(finding.proposedFix, /activity evidence for the `rule` await/);
   assert.doesNotMatch(`${finding.impact} ${finding.proposedFix}`, /driver/);
 });
 
@@ -265,7 +294,7 @@ test('diagnostics report: equivalent codex and claude usage yield equal totals a
   const [a, b] = [heuristics(run('codex', codex)), heuristics(run('claude', claude))];
   assert.deepEqual(a.map((f) => [f.source, f.category, f.evidence.replace('codex', 'P')]), b.map((f) => [f.source, f.category, f.evidence.replace('claude', 'P')]));
   assert.deepEqual(a.map((f) => f.source), ['H4']);
-  const measuredLine = (text: string) => /^- Measured tokens: .*$/m.exec(text)?.[0];
+  const measuredLine = (text: string) => /^- Provider CLI measured tokens: .*$/m.exec(text)?.[0];
   assert.equal(measuredLine(render([run('codex', codex)])), measuredLine(render([run('claude', claude)])));
   assert.equal(normalizeUsage({ input: 100, cacheRead: 300, output: 1 }, 'includes-cache')?.input, 0);
 });
@@ -461,8 +490,8 @@ test('repeated failures emit actionable H1', () => {
   }
 });
 
-test('long host turn advice names sub-steps', () => {
+test('long host-await advice requires activity evidence', () => {
   const [finding] = only(heuristics(facts({ hostGaps: [{ await: 'evidence', ms: 600_001 }] })), 'H6');
-  assert.match(finding!.proposedFix, /^Record in the retro which sub-steps of the `evidence` turn took longest/);
-  assert.match(finding!.proposedFix, /verification or test runs/);
+  assert.match(finding!.proposedFix, /activity evidence for the `evidence` await/);
+  assert.match(finding!.proposedFix, /before attributing the gap/);
 });

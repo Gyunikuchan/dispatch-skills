@@ -239,7 +239,7 @@ describe('completed flow diagnostics', () => {
     ]);
     assert.equal(facts.repairs, 1, 'a second write attempt is a repair');
     const report = renderDiagnostics([facts]).text;
-    assert.ok(report.includes('- Measured tokens: 3,650 (input 650 · cache read 2,400 · cache write 100 · output 500) · coverage 2/3'), 'measured totals exclude estimates; unlaunched attempts never count against coverage');
+    assert.ok(report.includes('- Provider CLI measured tokens: 3,650 (input 650 · cache read 2,400 · cache write 100 · output 500) · launch coverage 2/3'), 'measured totals exclude estimates; unlaunched attempts never count against coverage');
     assert.ok(report.includes('native and write ~6,200'), 'attested native and write tokens stay a separate estimate');
     assert.ok(report.includes('| codex | all models | 600 | 400 | — | 200 | 1/2 |'));
     assert.ok(report.includes('| claude | haiku | 10 | — | — | 50 | — |'), 'per-model counters split the cascade');

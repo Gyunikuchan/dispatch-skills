@@ -8,25 +8,46 @@ Select the source bytes explicitly, including any verified local fixes and local
 
 Set absolute paths: `target` is the candidate repository; `session` is its initialized session under `target/.scratch`; `source` is the complete skill to capture. Set `dest` to `session/.state/scratch/controller/skills/dispatch` and `inventory` to `session/.state/scratch/controller-inventory.json`. Helpers, snapshots and inventories stay in ignored local session scratch; local configuration must not enter commits.
 
-Materialize the named blocks below as `.mjs` helpers under the session's `.state/scratch`. This wrapper accepts positional `reference`, `session`, and `Capture controller` or `Verify controller` arguments. Run it with Node, then invoke the emitted helper with the required flags as separate argv values. It refuses ambiguous sections or fences.
+Materialize the named blocks below as `.mjs` helpers under the session's `.state/scratch`. This wrapper accepts positional `reference`, `target`, `session`, and `Capture controller` or `Verify controller` arguments. Use canonical absolute paths. Run it with Node, then invoke the emitted helper with the required flags as separate argv values. It checks initialized-session ownership and every helper write path before creating scratch or publishing bytes, and refuses ambiguous sections or fences.
 
 ```javascript
 import fs from 'node:fs';
 import path from 'node:path';
-const [reference, session, heading] = process.argv.slice(2);
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args.length !== 4 || args.slice(0, 3).some(value => !path.isAbsolute(value) || path.resolve(value) !== value)) throw new Error('Canonical absolute reference, target and session plus helper heading required');
+// macOS system aliases are fixed; mutable links remain invalid.
+if (process.platform === 'darwin') for (let i = 0; i < 3; i++) {
+  const alias = /^\/(var|tmp|etc)(?=\/|$)/.exec(args[i]);
+  if (alias && fs.realpathSync('/' + alias[1]) === '/private/' + alias[1]) args[i] = '/private' + args[i];
+}
+const [reference, target, session, heading] = args;
 if (!['Capture controller', 'Verify controller'].includes(heading)) throw new Error('Unknown helper');
+const stat = value => { try { return fs.lstatSync(value); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
+const unlinked = value => { for (let current = value; ; current = path.dirname(current)) { if (stat(current)?.isSymbolicLink()) throw new Error('Linked preparation path'); if (current === path.dirname(current)) break; } };
+const state = path.join(session, '.state'), scratch = path.join(state, 'scratch');
+const manifestPath = path.join(session, 'manifest.json');
+const helper = path.join(scratch, heading === 'Capture controller' ? 'capture-controller.mjs' : 'verify-controller.mjs');
+for (const value of [reference, target, session, state, scratch, manifestPath, helper]) unlinked(value);
+for (const value of [reference, target, session]) if (fs.realpathSync(value) !== value) throw new Error('Use canonical absolute input paths');
+if (!stat(target)?.isDirectory() || (stat(state) && !stat(state).isDirectory()) || !stat(manifestPath)?.isFile()) throw new Error('Expected target repository and initialized session');
+const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: target, encoding: 'utf8', windowsHide: true, timeout: 25000 }).trim();
+if (fs.realpathSync(repositoryRoot) !== target) throw new Error('Expected target repository root');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const canonicalTarget = target.normalize('NFC').replaceAll('\\', '/');
+const safeId = value => /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/.test(value) ? value : crypto.createHash('sha256').update(value).digest('hex').slice(0, 12);
+if (!manifest || manifest.schemaVersion !== 1 || manifest.folderName !== path.basename(session) || !/^\d{8}T\d{4}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(manifest.folderName) || typeof manifest.sessionId !== 'string' || manifest.safeSessionId !== safeId(manifest.sessionId) || manifest.repositoryRoot !== (process.platform === 'win32' ? canonicalTarget.toLowerCase() : canonicalTarget) || session !== path.join(target, '.scratch/dispatch-skills', manifest.folderName)) throw new Error('Invalid target session ownership');
+if (stat(scratch) && !stat(scratch).isDirectory()) throw new Error('Expected scratch directory');
 const text = fs.readFileSync(reference, 'utf8');
 const sections = text.split(/^## /m).filter(section => section.split(/\r?\n/, 1)[0] === heading);
 if (sections.length !== 1) throw new Error('Expected exactly one named section');
 const blocks = [...sections[0].matchAll(/^```javascript\r?\n([\s\S]*?)^```\s*$/gm)];
 if (blocks.length !== 1) throw new Error('Expected exactly one javascript block');
-const scratch = path.join(fs.realpathSync(session), '.state/scratch');
-fs.mkdirSync(scratch, { recursive: true });
-const helper = path.join(scratch, heading === 'Capture controller' ? 'capture-controller.mjs' : 'verify-controller.mjs');
-try {
-  if (fs.lstatSync(helper).isSymbolicLink() || fs.readFileSync(helper, 'utf8') !== blocks[0][1]) throw new Error('Existing helper differs or is linked');
-} catch (error) {
-  if (error.code !== 'ENOENT') throw error;
+if (stat(helper)) {
+  if (!stat(helper).isFile() || !fs.readFileSync(helper).equals(Buffer.from(blocks[0][1]))) throw new Error('Existing helper differs or is not a regular file');
+} else {
+  fs.mkdirSync(scratch, { recursive: true });
   fs.writeFileSync(helper, blocks[0][1], { flag: 'wx' });
 }
 console.log(helper);

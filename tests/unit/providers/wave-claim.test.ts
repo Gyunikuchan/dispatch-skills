@@ -52,6 +52,89 @@ function claims(fs: LinkFs, alive: Set<number>, now = 0): ClaimDeps {
 const seeded = () => { const fs = memLinkFs(); fs.writeAtomic(inputPath(RUN, 'e1'), JSON.stringify(input)); return fs; };
 const claim = (fs: LinkFs, n: number, value: object) => fs.writeAtomic(claimPath(RUN, 'e1', n), JSON.stringify(value));
 
+test('quota decisions survive worker recovery boundaries', async (t) => {
+  for (const boundary of ['input', 'claim', 'slot outcome']) {
+    await t.test(`retained input survives ${boundary} without refreshing quota`, async () => {
+      const fs = seeded();
+      const key = { provider: 'codex', model: null, mode: 'cli' };
+      const retained = { ...input, quota: { schemaVersion: 1, policyVersion: 1, decidedAt: 0, decisions: [{ key, generation: '00000000-0000-4000-8000-000000000001', skipped: true, reason: 'quota-cooldown', observedAt: 0, expiresAt: 3600000 }] } };
+      fs.writeAtomic(inputPath(RUN, 'e1'), JSON.stringify(retained));
+      if (boundary !== 'input') claim(fs, 1, { pid: 1, host: 'h', startedAt: 0 });
+      if (boundary === 'slot outcome') fs.writeAtomic(outcomePath(RUN, 'e1', 1, 'codex[0]'), JSON.stringify({ state: 'success', slot: 'codex[0]', drafts: [], records: [] }));
+      assert.deepEqual(arbitrate(claims(fs, new Set(), 7200000), RUN, 'e1', 1, TIMEOUT), { action: 'launch', attempt: 2 });
+      const fresh = worker(fs, () => 7200000);
+      const result = await runWaveWorker(RUN, 'e1', 2, fresh);
+      assert.equal(fresh.launched, 0);
+      assert.equal(result.launched && result.finals[0]?.state, 'failed');
+      assert.equal(fs.readText(inputPath(RUN, 'e1')), JSON.stringify(retained));
+    });
+  }
+  for (const completed of [false, true]) await t.test(`${completed ? 'completed publication' : 'live claim'} reattaches without preparing another snapshot`, async () => {
+    const f = orphanRecovery();
+    const bytes = f.fs.readText(inputPath(RUN, 'e1'));
+    claim(f.fs, 1, { pid: 10, host: 'h', startedAt: 0 });
+    f.deps.proc.isAlive = () => true;
+    if (completed) f.fs.writeAtomic(runPaths(RUN).done('e1', 1), '{"at":0,"slots":1}');
+    Object.assign(f.deps, { quota: { modes: () => ['cli'], snapshot: () => assert.fail('retained input must not consult mutable quota state') } });
+    assert.equal(await startWave(f.effect, { runDir: RUN, attempt: 2 }, f.deps).attempt, 1);
+    assert.deepEqual(f.launches, []);
+    assert.equal(f.fs.readText(inputPath(RUN, 'e1')), bytes);
+  });
+  await t.test('reprobe and a quota observation cannot alter not-yet-started combinations or sibling slots', async () => {
+    const fs = seeded();
+    const generation = '00000000-0000-4000-8000-000000000001';
+    const keys = ['first', 'next'].map((model) => ({ provider: 'codex', model, mode: 'cli' }));
+    const frozen = { ...input, roster: [{ ...input.roster[0]!, model: ['first', 'next'] }, { ...input.roster[0]!, slot: 'codex[1]', model: ['first', 'next'] }], paths: { ...input.paths, 'codex[1]': input.paths['codex[0]']! }, quota: { schemaVersion: 1, policyVersion: 1, decidedAt: 0, decisions: keys.map((key) => ({ key, generation, skipped: false, reason: null })) } };
+    fs.writeAtomic(inputPath(RUN, 'e1'), JSON.stringify(frozen));
+    const w = worker(fs);
+    const calls: (string | null)[] = [], observations: unknown[] = [];
+    let mutableGeneration = generation;
+    Object.assign(w, {
+      run: async (_provider: unknown, req: { model: string | null }) => {
+        calls.push(req.model);
+        if (req.model === 'first') { mutableGeneration = '00000000-0000-4000-8000-000000000002'; return { outcome: { status: 'fail', cls: 'quota', detail: 'quota' }, invocations: [] }; }
+        return { outcome: { status: 'ok', text: '{"status":"CLEAN","findings":[]}', sessionId: null, resume: null }, invocations: [] };
+      },
+      quotaFailure: (key: unknown, captured: string) => { observations.push({ key, captured, current: mutableGeneration }); },
+    });
+    const result = await runWaveWorker(RUN, 'e1', 1, w);
+    assert.deepEqual(calls.sort(), ['first', 'first', 'next', 'next']);
+    assert.equal(observations.length, 2);
+    for (const row of observations as { captured: string; current: string }[]) { assert.equal(row.captured, generation); assert.notEqual(row.current, generation); }
+    assert.deepEqual(result.launched && result.finals.map((row) => row.state), ['success', 'success']);
+    assert.equal(fs.readText(inputPath(RUN, 'e1')), JSON.stringify(frozen));
+  });
+  await t.test('already published concurrent waves keep their eligible decisions', async () => {
+    const fs = seeded();
+    const key = { provider: 'codex', model: null, mode: 'cli' };
+    const quota = { schemaVersion: 1, policyVersion: 1, decidedAt: 0, decisions: [{ key, generation: '00000000-0000-4000-8000-000000000001', skipped: false, reason: null }] };
+    for (const id of ['e1', 'e2']) fs.writeAtomic(inputPath(RUN, id), JSON.stringify({ ...input, effectId: id, quota }));
+    const w = worker(fs);
+    await Promise.all(['e1', 'e2'].map((id) => runWaveWorker(RUN, id, 1, w)));
+    assert.equal(w.launched, 2);
+  });
+  await t.test('crash after quota publication keeps captured input for a fenced replacement', async () => {
+    const fs = seeded(), key = { provider: 'codex', model: null, mode: 'cli' };
+    const generation = '00000000-0000-4000-8000-000000000001';
+    const retained = JSON.stringify({ ...input, quota: { schemaVersion: 1, policyVersion: 1, decidedAt: 0, decisions: [{ key, generation, skipped: false, reason: null }] } });
+    fs.writeAtomic(inputPath(RUN, 'e1'), retained);
+    let published = 0, crash = true;
+    const w = worker({ ...fs, writeAtomic: (file, text) => {
+      if (crash && file.endsWith('.outcome.json')) { crash = false; throw new Error('crash after observation'); }
+      fs.writeAtomic(file, text);
+    } });
+    Object.assign(w, { run: async () => ({ outcome: { status: 'fail', cls: 'quota', detail: 'quota' }, invocations: [] }), quotaFailure: (_key: unknown, captured: string) => { assert.equal(captured, generation); published++; } });
+    await assert.rejects(runWaveWorker(RUN, 'e1', 1, w), /crash after observation/);
+    assert.equal(published, 1);
+    assert.equal(fs.readText(runPaths(RUN).done('e1', 1)), null);
+    assert.deepEqual(arbitrate(claims(fs, new Set()), RUN, 'e1', 1, TIMEOUT), { action: 'launch', attempt: 2 });
+    const result = await runWaveWorker(RUN, 'e1', 2, w);
+    assert.equal(result.launched && result.finals[0]?.state, 'failed');
+    assert.equal(published, 2);
+    assert.equal(fs.readText(inputPath(RUN, 'e1')), retained);
+  });
+});
+
 test('a tombstone fences a late worker in both link orderings', async () => {
   // Tombstone first: the worker's link fails, so no slot launches.
   const fs = seeded();

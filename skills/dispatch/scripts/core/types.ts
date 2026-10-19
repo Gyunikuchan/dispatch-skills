@@ -29,6 +29,12 @@ export type FailureClass =
 
 export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type Level = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export type QuotaKey = { provider: string; model: string | null; mode: string };
+export type QuotaGeneration = { schemaVersion: 1; key: QuotaKey; generation: string };
+export type QuotaObservation = QuotaGeneration & { bucket: number; observedAt: number };
+export type QuotaDecision = { key: QuotaKey; generation: string | null; skipped: boolean; reason: 'quota-cooldown' | null; observedAt?: number; expiresAt?: number };
+export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: number; decisions: QuotaDecision[] };
 export type ClassifiedLevel = Extract<Level, 'low' | 'medium' | 'high'>;
 
 export type ScopeDelta = {

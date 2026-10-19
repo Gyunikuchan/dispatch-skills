@@ -17,6 +17,8 @@ import { sessionDirOf } from './effects/handoff.ts';
 import { rebind } from './core/checkpoint.ts';
 import { listWorkerClaims, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
+import { publishQuotaFailure, readQuotaState, reprobeQuota } from './lib/quota-store.ts';
+import { H, quotaSnapshot } from './policy/quota.ts';
 import { discoverSpecCandidate } from './core/spec-discovery.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
 import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.ts';
@@ -64,12 +66,15 @@ function runtime() {
   });
   return { ports, platform, discovery };
 }
-function workerDeps(): WorkerDeps {
+function workerDeps(runDir: string): WorkerDeps {
   const { ports, platform, discovery } = runtime();
   return {
     fs: nodeLinkFs, proc: ports.proc, clock: ports.clock, specs: SPECS,
     configSelectors: Object.fromEntries(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'].flatMap((key) => { const value = ports.env.get(key); return typeof value === 'string' ? [[key, value]] : []; })),
     modes: (provider) => SPECS[provider].modes.filter((mode) => discovery.resolve(provider, mode.id).status === 'path').map((mode) => mode.id),
+    quotaFailure(key, generation, observedAt) {
+      return publishQuotaFailure({ sessionDir: sessionDirOf(runDir), repositoryRoot: findRepoRoot(process.cwd()) ?? process.cwd(), bucketWidth: H }, key, generation, observedAt).warning;
+    },
     async run(provider, request, mode) {
       const failedLaunch = (cls: 'not-found' | 'config', detail: string) => ({
         outcome: { status: 'fail' as const, cls, detail },
@@ -91,9 +96,17 @@ function workerDeps(): WorkerDeps {
   };
 }
 function waveRuntime(): Omit<WaveDeps, 'context'> {
-  const { ports } = runtime();
+  const { ports, discovery } = runtime();
   return {
     fs: nodeLinkFs, proc: ports.proc, clock: ports.clock,
+    quota: {
+      modes: (provider) => SPECS[provider]?.modes.filter((mode) => discovery.resolve(provider, mode.id).status === 'path').map((mode) => mode.id) ?? [],
+      snapshot(runDir, keys, now) {
+        const state = readQuotaState({ sessionDir: sessionDirOf(runDir), repositoryRoot: findRepoRoot(process.cwd()) ?? process.cwd(), bucketWidth: H }, keys, now);
+        for (const warning of state.warnings) ports.proc.stderr(`[dispatch] ${warning}\n`);
+        return quotaSnapshot(keys, state.generations, state.observations, now);
+      },
+    },
     launchWorker(runDir, id, attempt) {
       const child = spawn(process.execPath, [ENTRY, 'wave-worker', '--run', runDir, '--effect', id, '--attempt', String(attempt)], { detached: true, stdio: 'ignore', windowsHide: true, cwd: process.cwd(), env: process.env });
       child.on('error', (error) => ports.proc.stderr(`wave worker launch: ${error.message}\n`)); child.unref();
@@ -147,7 +160,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   try { command = parseCommand(argv, policy); } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 1; }
   const runDir = path.resolve(textFlag(command, 'run') ?? '.');
   try {
-    if (command.command === 'wave-worker') { await runWaveWorker(runDir, textFlag(command, 'effect')!, Number(command.flags['attempt']), workerDeps()); return 0; }
+    if (command.command === 'wave-worker') { await runWaveWorker(runDir, textFlag(command, 'effect')!, Number(command.flags['attempt']), workerDeps(runDir)); return 0; }
     if (command.command === 'checkpoint') {
       const root = path.resolve(textFlag(command, 'root')!);
       emit({ v: 1, out: path.resolve(textFlag(command, 'out')!), ...writeCheckpoint(runtime().ports, root, path.resolve(textFlag(command, 'out')!), command.paths!) }); return 0;
@@ -172,6 +185,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
     if (command.command === 'session') {
       const repo = findRepoRoot(process.cwd()); if (!repo) throw new UsageError('session requires a Git repository');
+      if (command.action === 'quota-reprobe') {
+        const provider = textFlag(command, 'provider')!, mode = textFlag(command, 'mode')!;
+        if (!isProviderId(provider)) throw new UsageError('Unknown --provider');
+        if (!SPECS[provider].modes.some((entry) => entry.id === mode)) throw new UsageError('Unknown --mode for provider');
+        const key = { provider, model: textFlag(command, 'model') ?? null, mode };
+        let result;
+        try { result = reprobeQuota({ sessionDir: path.resolve(textFlag(command, 'session-dir')!), repositoryRoot: repo, bucketWidth: H }, key); }
+        catch { throw new UsageError('Quota reprobe requires an owned session and writable unlinked quota state'); }
+        emit({ v: 1, action: 'quota-reprobe', key: result.key, appliesTo: 'future-waves' }); return 0;
+      }
       let dir: string;
       if (command.action === 'init') {
         const id = textFlag(command, 'session-id') ?? platformSessionId((name) => process.env[name]) ?? crypto.randomUUID();

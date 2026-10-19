@@ -10,7 +10,7 @@
 //   <slot>[.a<n>].outcome.json one SlotFinal per roster slot
 //   done[.a<n>].json          written last
 
-import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, RecoveryCapability } from '../core/types.ts';
+import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, RecoveryCapability, QuotaKey, QuotaSnapshot } from '../core/types.ts';
 import { effectDigest } from '../domain/effect-digest.ts';
 import { portableEffect } from '../lib/portable-effect.ts';
 import { stableValue } from '../domain/stable-value.ts';
@@ -25,6 +25,7 @@ import { attemptOf, runPaths } from '../lib/session.ts';
 
 export const HEARTBEAT_MS = 30_000;
 export const STALE_GRACE_MS = 30_000;
+const QUOTA_WARNING = 'Quota state unavailable; use the normal provider cascade.';
 /** Slot budgets a worker may spend: the primary voice, then one full reserve run. */
 export const WORKER_BUDGETS = 2;
 
@@ -57,6 +58,7 @@ export type WaveInput = {
   cwd: string;
   roster: readonly RosterSlot[];
   paths: Readonly<Record<string, SlotPaths>>;
+  quota?: QuotaSnapshot;
 };
 
 /** Host context the handler cannot derive from the effect alone. */
@@ -185,6 +187,7 @@ export type WorkerDeps = {
   run(provider: ProviderId, req: DelegateRequest, mode: ModeId): Promise<RunResult>;
   outputCapBytes?: number;
   configSelectors?: Readonly<Record<string, string>>;
+  quotaFailure?(key: QuotaKey, generation: string, observedAt: number): string | void;
 };
 
 export const REPORT_CLASS: Readonly<Record<ReportFailureKind, FailureClass>> = {
@@ -223,6 +226,13 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     if (remaining <= 0) return { ok: false, cls: 'timeout', reason: `${slot.slot}: wave deadline passed`, records, invocations, position };
     const mode = modes[position.mode] ?? 'cli';
     const model = voice.models[position.model] ?? null;
+    const quota = input.quota?.schemaVersion === 1 && input.quota.policyVersion === 1 ? input.quota.decisions.find((row) => row.key.provider === provider && row.key.model === model && row.key.mode === mode) : undefined;
+    if (quota?.skipped === true && quota.reason === 'quota-cooldown') {
+      records.push(`${slot.slot} ${model ?? 'default'}@${mode} → skipped-quota: quota-cooldown`);
+      const decision = next('quota', position, voice, { orchestratorPlatform: null, reserveAvailable: false });
+      if (decision.kind === 'next-model' || decision.kind === 'next-mode') { position = decision.position; continue; }
+      return { ok: false, cls: 'quota', reason: 'skipped-quota: quota-cooldown', records, invocations, position };
+    }
     const req: DelegateRequest = {
       promptPath: paths.promptPath, model, effort: slot.effort ?? null, sandbox: slot.sandbox ?? true, schemaPath: null, resume: null,
       cwd: input.cwd, timeoutMs: Math.min(input.timeoutMs, remaining), outputCapBytes: deps.outputCapBytes ?? 10 * 1024 * 1024,
@@ -249,6 +259,13 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     } else {
       cls = outcome.cls;
       reason = `${outcome.cls}: ${outcome.detail}`;
+      if (cls === 'quota' && quota?.generation) {
+        try {
+          const warning = deps.quotaFailure?.({ provider, model, mode }, quota.generation, deps.clock.now());
+          if (warning && !records.includes(QUOTA_WARNING)) records.push(QUOTA_WARNING);
+        }
+        catch { if (!records.includes(QUOTA_WARNING)) records.push(QUOTA_WARNING); }
+      }
     }
     if (outcome.status === 'ok') {
       // The runner saw a clean exit; the attempt that produced the rejected output journals the class it earned.
@@ -345,6 +362,10 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
 // SECTION: Handler
 
 export type WaveDeps = ClaimDeps & {
+  quota?: {
+    modes(provider: ProviderId): readonly ModeId[];
+    snapshot(runDir: string, keys: readonly QuotaKey[], now: number): QuotaSnapshot;
+  };
   context(effect: WaveEffect): WaveContext;
   /** Starts the detached worker for attempt n (`runWaveWorker` in its own process). */
   launchWorker(runDir: string, id: string, n: number): void;
@@ -358,7 +379,13 @@ function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: 
   const file = runPaths(ctx.runDir).input(effect.id);
   if (deps.fs.readText(file) === null) {
     const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster };
-    deps.fs.writeAtomic(file, JSON.stringify(input));
+    if (deps.quota) {
+      const keys = roster.filter((slot) => !slot.native).flatMap((slot) => deps.quota!.modes(slot.provider as ProviderId).flatMap((mode) => (modelsOf(slot).length ? modelsOf(slot) : [null]).map((model) => ({ provider: slot.provider, model, mode }))));
+      const unique = [...new Map(keys.map((key) => [JSON.stringify(key), key])).values()];
+      input.quota = deps.quota.snapshot(ctx.runDir, unique, deps.clock.now());
+    }
+    // Competing first sends must retain the decision of the first complete input publication.
+    publishExclusive(deps.fs, file, JSON.stringify(input));
   }
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);
   if (latest > 0 && deps.fs.readText(runPaths(ctx.runDir).done(effect.id, latest)) !== null) return latest;

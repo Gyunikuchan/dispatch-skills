@@ -46,6 +46,7 @@ function steppedPorts(): { ports: FakePorts; advance: (ms: number) => void; now:
 function reviewRun(toggle: { on: boolean }, session = tempDir(), id = '001-review') {
   const ports = fakePorts(), runDir = path.join(session, '.state/runs', id);
   memoryRunFs(ports, session);
+  ports.fs.mkdir(path.join(session, '.state/quota'), { recursive: true });
   const handlers: Handlers = {
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: [], empty: true }, promptPaths: {} }],
     handoff: createHandoff({ tempRoot: session, workspaceRoot: path.dirname(session) }),

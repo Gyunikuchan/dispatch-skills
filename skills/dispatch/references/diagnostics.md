@@ -11,4 +11,4 @@ Reply `RETRO` with `observations`: `[{id,component,category,evidence,impact,prop
 
 Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine. Use dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.
 
-Checkpoint phase history preserves timing attribution. H6 elapsed time needs evidence of internal activities.
+Checkpoint phase history preserves timing attribution. H6 host-await gaps need activity evidence.

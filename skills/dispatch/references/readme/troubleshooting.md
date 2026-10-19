@@ -63,7 +63,11 @@ Doctor checks Node, configuration, available executables, resolved targets and w
 
 ## Understand diagnostics coverage
 
-Token counts are measured only when a provider CLI reports them. In `diagnostics.md`, `—` marks an unavailable value, not zero. `~` marks a token figure that is attested or estimated rather than measured: counts your host agent reported for native subagents and writers, and Dispatch's estimate of host-agent tokens. Measured totals exclude `~` figures. The Coverage column shows how many launched CLI invocations reported usage, for example `3/4`.
+Token counts are measured only when a provider CLI reports them. In `diagnostics.md`, `—` marks an unavailable value, not zero. Provider CLI measurements show uncached input, cache read, cache write and output separately. Reasoning included in output is not added again. The Coverage column shows how many launched CLI invocations reported usage, for example `3/4`.
+
+`~` marks an attested or estimated token figure: optional counts your host agent reported for native subagents and writers, or Dispatch's estimate of orchestrator frame exposure from frame bytes. Measured totals exclude `~` figures. Frame exposure covers emitted frames only, not full orchestrator usage. These measurements and estimates do not establish full conversation totals. See [native and writer attestations](../providers.md) for the optional reporting fields.
+
+Host time and H6 host-await gaps are elapsed journal intervals. They can include work, pauses and scheduling. A long gap does not measure active reasoning or establish a usage-reset duration; activity evidence is needed to attribute it. Checkpoint phase history preserves the same timing attribution.
 
 While diagnostics is on, Dispatch rewrites the report whenever a run in the session finishes or faults; until then, a run in progress has no report. If the handoff does not mention the report, it had no findings.
 

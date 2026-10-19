@@ -57,12 +57,15 @@ test('no legacy diagnostics text remains', () => {
 test('checkpoint diagnostics retain phase attribution and partial usage proof without private recovery data', () => {
   const instruction = read('skills/dispatch/references/diagnostics.md');
   assert.match(instruction, /Checkpoint phase history preserves timing attribution/);
-  assert.match(instruction, /H6 elapsed time needs evidence of internal activities/);
+  assert.match(instruction, /H6 host-await gaps need activity evidence/);
   const recovery = read('skills/dispatch/references/change-handling.md');
   assert.match(recovery, /saved diagnostic phase history/);
   const human = read('skills/dispatch/references/readme/troubleshooting.md');
   assert.match(human, /unavailable value, not zero/);
   assert.match(human, /Measured totals exclude `~` figures/);
+  assert.match(human, /frame exposure/);
+  assert.match(human, /full conversation totals/);
+  assert.match(human, /work, pauses and scheduling/);
   assert.match(human, /Review `diagnostics.md` before sharing it/);
   assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
 });

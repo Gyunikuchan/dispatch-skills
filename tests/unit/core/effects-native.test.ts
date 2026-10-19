@@ -65,7 +65,7 @@ test('a native capture read failure is one EFFECT_FAILED io', async () => {
 
 test('a wave worker launch failure is one EFFECT_FAILED io', async () => {
   const deps = {
-    fs: { readText: () => null, writeAtomic: () => { throw new Error('EROFS'); }, writeTemp: () => '', link: () => {}, list: () => [], remove: () => {} },
+    fs: { readText: () => null, writeAtomic: () => {}, writeTemp: () => { throw new Error('EROFS'); }, link: () => {}, list: () => [], remove: () => {} },
     proc: { host: 'h', isAlive: () => true }, clock: { now: () => 1000 },
     context: () => ({ review: 'code' as const, orchestratorPlatform: null, cwd: '/repo', paths: {} }),
     launchWorker: () => {}, awaitWorker: async () => {},

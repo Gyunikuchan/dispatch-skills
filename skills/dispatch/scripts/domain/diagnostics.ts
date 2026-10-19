@@ -67,9 +67,9 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/core', 'checkpoint effect-recovery diagnostics effect-id frame interpreter journal lock ports progress spec-discovery types validate', '.ts'),
   ...files('scripts/domain', 'effect-digest engine-fault private-state criterion-id design diagnostics execution-config fix-clustering path-identity plan prompt render report sanitize spec stable-value types', '.ts'),
   ...files('scripts/effects', 'checkpoint-references artifacts assess-recovery check-envelope check-review-target checkout git handoff index parse-artifact prepare-review recovery-manifest review-manifest restore snapshot verify wave-native wave write-brief', '.ts'),
-  ...files('scripts/lib', 'immutable-artifact portable-effect runtime-identity cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform session', '.ts'),
+  ...files('scripts/lib', 'immutable-artifact portable-effect runtime-identity cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/machines', 'ask change-resolution checkpoint design-revision design diagnostics execution-config implement-tasks implement-types implement plan plan-reconciliation review revision root spec types', '.ts'),
-  ...files('scripts/policy', 'cascade drift hotfix roster rounds', '.ts'),
+  ...files('scripts/policy', 'cascade drift hotfix quota roster rounds', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
   ...files('references', 'change-handling decision-frame diagnostics glossary providers review-rules self-build spec-stage worktree-cleanup', '.md'),
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
@@ -316,7 +316,7 @@ const PREFLIGHT = ['scripts/lib/doctor.ts', 'Detect this condition in the prefli
 const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
-  quota: ['references/providers.md', "Check model quota or plan before the next run, or add another model alias to the voice's model array; each model has its own quota."],
+  quota: ['references/providers.md', "Check model quota or plan before the next run, or add another model alias to the voice's model array; quota limits may be shared."],
   timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
   'context-overflow': ['scripts/effects/prepare-review.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
@@ -383,7 +383,7 @@ export function heuristics(run: RunFacts): Finding[] {
     if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
   const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
-  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest host turn: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Long host turns dominate wall time.', `Record in the retro which sub-steps of the \`${gap.await}\` turn took longest (for example finding verification or test runs) so the next change targets them.`);
+  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest elapsed host-await gap: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Elapsed gaps can include work, pauses and scheduling; internal activity is unknown.', `Use activity evidence for the \`${gap.await}\` await before attributing the gap or proposing a timing fix.`);
   if (run.rejectedEvents.length) {
     const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
     add('H8', 'correctness', 'scripts/core/validate.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
@@ -491,8 +491,9 @@ export function renderDiagnostics(input: readonly RunFacts[]): { text: string; f
     `- Build: ${unique(runs.map((run) => `dispatch ${run.version ?? DASH} · build ${run.build ?? DASH}`))}`,
     `- Host: ${unique(runs.map((run) => run.host ?? DASH))} · OS: ${unique(runs.map((run) => run.os ?? DASH))}`,
     `- Runs: ${runs.length} · wall time: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
-    `- Measured tokens: ${usageSummary(invocations)} · coverage ${coverage(invocations)}`,
-    `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`} · orchestrator ${bytes === undefined ? DASH : `~${num(Math.ceil(bytes / 4))}`}`,
+    `- Provider CLI measured tokens: ${usageSummary(invocations)} · launch coverage ${coverage(invocations)}`,
+    `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`} · orchestrator frame exposure ${bytes === undefined ? DASH : `~${num(Math.ceil(bytes / 4))}`}`,
+    '- Full conversation totals are unavailable: provider measurements cover reported launches only; frame exposure is not full orchestrator usage.',
     `- Host retro: ${collected.length ? `${sum(collected.map((r) => r.values.length))} accepted · ${sum(collected.map((r) => r.rejected))} rejected` : 'not collected'}`,
     '', 'Top findings:', '',
     ...(findings.length ? findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`) : ['- none']), '',

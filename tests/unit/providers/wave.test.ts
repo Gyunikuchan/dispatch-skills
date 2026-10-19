@@ -7,6 +7,7 @@ import type { LinkFs } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import type { DelegateRequest, ModeId, ProviderId, RunOutcome } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { fakePorts } from '../../helpers/fake-ports.ts';
+import { quotaSnapshot } from '../../../skills/dispatch/scripts/policy/quota.ts';
 
 const CLEAN = JSON.stringify({ status: 'CLEAN', findings: [] });
 const FINDING = JSON.stringify({ status: 'FINDINGS', findings: [{ severity: 'MUST', locus: 'src/a.ts:L3', tag: 'correctness', defect: 'loop never ends', requiredChange: 'bound it' }] });
@@ -57,7 +58,7 @@ function setup(script: Script, roster: Record<string, unknown>[], orchestrator: 
     awaitWorker: async () => { await Promise.all(workers); },
   };
   const effect = { kind: 'wave' as const, id: 'e1', round: 1, roster, timeoutMs: 60000 };
-  return { fs, calls, requests, deps, effect, context };
+  return { fs, calls, requests, deps, effect, context, worker };
 }
 
 const slot = (name: string, provider: string, extra: Record<string, unknown> = {}) => ({ slot: name, provider, index: 0, native: false, reserve: false, ...extra });
@@ -68,6 +69,76 @@ const done = (events: readonly ResultEvent[]) => {
   return last?.type === 'WAVE_DONE' ? last : assert.fail('no WAVE_DONE');
 };
 const states = (events: readonly ResultEvent[]) => done(events).slots.map((row) => [row['slot'], row['state']]);
+
+test('quota snapshots preserve cascade coverage across waves', async (t) => {
+  for (const review of ['ask', 'code', 'plan', 'design'] as const) {
+    await t.test(`${review} skips only the failed alias and retains distinct slots`, async () => {
+      const w = setup({ 'claude:a:cli': [ok(CLEAN), ok(CLEAN)], 'claude:b:cli': [ok(CLEAN), ok(CLEAN)] }, [slot('claude[0]', 'claude', { model: ['a', 'b'] }), slot('claude[1]', 'claude', { model: ['a', 'b'] })]);
+      w.context.review = review;
+      const key = { provider: 'claude', model: 'a', mode: 'cli' };
+      const marker = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
+      Object.assign(w.deps, { quota: { modes: () => ['cli'], snapshot: () => quotaSnapshot([key], [marker], [{ ...marker, bucket: 0, observedAt: 999 }], 1000) } });
+      const events = await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 });
+      assert.deepEqual(w.calls, ['claude:b:cli', 'claude:b:cli']);
+      assert.deepEqual(states(events), [['claude[0]', 'success'], ['claude[1]', 'success']]);
+      assert.deepEqual(done(events).slots.map((row) => row['invocations']), [[], []]);
+      assert.match(JSON.stringify(done(events).slots), /skipped-quota/);
+    });
+  }
+  await t.test('a real failure publishes its captured generation before completion', async () => {
+    const w = setup({ 'claude:a:cli': [fail('quota')], 'claude:b:cli': [ok(CLEAN)] }, [slot('claude[0]', 'claude', { model: ['a', 'b'] })]);
+    const key = { provider: 'claude', model: 'a', mode: 'cli' };
+    const marker = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
+    const publications: unknown[] = [];
+    Object.assign(w.deps, { quota: { modes: () => ['cli'], snapshot: () => quotaSnapshot([key], [marker], [], 1000) } });
+    Object.assign(w.worker, { quotaFailure: (...args: unknown[]) => { publications.push(args); } });
+    await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 });
+    assert.deepEqual(publications, [[key, marker.generation, 1000]]);
+  });
+  for (const route of ['alternate mode', 'reserve', 'native host', 'two-phase native', 'named failure'] as const) await t.test(`all suppressed primaries retain ${route} coverage`, async () => {
+    const provider = route === 'alternate mode' ? 'agy' : 'claude';
+    const roster = [slot(`${provider}[0]`, provider, { model: 'a' }), ...(route === 'reserve' ? [slot('codex[9]', 'codex', { reserve: true })] : [])];
+    const w = setup({ [`${provider}:a:cli`]: [ok(CLEAN)], 'agy:a:desktop': [ok(CLEAN)], 'codex:-:cli': [ok(CLEAN)] }, roster, route.includes('native') ? 'claude' : null);
+    w.context.nativeHost = route === 'native host';
+    const key = { provider, model: 'a', mode: 'cli' };
+    const marker = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
+    Object.assign(w.deps, { quota: { modes: w.worker.modes, snapshot: () => quotaSnapshot([key], [marker], [{ ...marker, bucket: 0, observedAt: 999 }], 1000) } });
+    const ctx = { runDir: '/run', attempt: 1 };
+    const events = route === 'two-phase native'
+      ? await finishWave(w.effect, ctx, startWave(w.effect, ctx, w.deps), [{ sourceKey: 'claude[0]#fallback', text: CLEAN }], { ...w.deps, review: 'code' })
+      : await createWaveHandler(w.deps)(w.effect, fakePorts(), ctx);
+    const expected = route === 'reserve' ? 'reserve' : route === 'native host' || route === 'two-phase native' ? 'native' : route === 'named failure' ? 'failed' : 'success';
+    assert.deepEqual(states(events), [[`${provider}[0]`, expected]]);
+    assert.deepEqual(w.calls, route === 'alternate mode' ? ['agy:a:desktop'] : route === 'reserve' ? ['codex:-:cli'] : []);
+  });
+  await t.test('snapshot enumeration includes every reserve alias and available mode', async () => {
+    const w = setup({ 'claude:a:cli': [ok(CLEAN)] }, [slot('claude[0]', 'claude', { model: 'a' }), slot('agy[9]', 'agy', { reserve: true, model: ['x', 'y'] })]);
+    let keys: unknown;
+    Object.assign(w.deps, { quota: { modes: w.worker.modes, snapshot: (_run: string, actual: unknown) => { keys = actual; return quotaSnapshot([], [], [], 1000); } } });
+    await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 });
+    assert.deepEqual(keys, [{ provider: 'claude', model: 'a', mode: 'cli' }, { provider: 'agy', model: 'x', mode: 'cli' }, { provider: 'agy', model: 'y', mode: 'cli' }, { provider: 'agy', model: 'x', mode: 'desktop' }, { provider: 'agy', model: 'y', mode: 'desktop' }]);
+  });
+  await t.test('publication failure preserves accepted fallback and a visible bounded warning', async () => {
+    const w = setup({ 'claude:a:cli': [fail('quota')], 'claude:b:cli': [ok(CLEAN)] }, [slot('claude[0]', 'claude', { model: ['a', 'b'] })]);
+    const key = { provider: 'claude', model: 'a', mode: 'cli' };
+    const marker = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
+    Object.assign(w.deps, { quota: { modes: w.worker.modes, snapshot: () => quotaSnapshot([key], [marker], [], 1000) } });
+    Object.assign(w.worker, { quotaFailure: () => 'Quota state unavailable; use the normal provider cascade.' });
+    const result = done(await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 }));
+    assert.equal(result.slots[0]?.['state'], 'success');
+    assert.equal((result.slots[0]?.['records'] as string[]).filter((record) => record === 'Quota state unavailable; use the normal provider cascade.').length, 1);
+  });
+  await t.test('suppressed reserve cannot turn uncovered coverage into an empty success', async () => {
+    const w = setup({}, [slot('claude[0]', 'claude'), slot('codex[9]', 'codex', { reserve: true })]);
+    const keys = ['claude', 'codex'].map((provider) => ({ provider, model: null, mode: 'cli' }));
+    const markers = keys.map((key) => ({ schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' }));
+    Object.assign(w.deps, { quota: { modes: w.worker.modes, snapshot: () => quotaSnapshot(keys, markers, markers.map((row) => ({ ...row, bucket: 0, observedAt: 999 })), 1000) } });
+    const result = await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 });
+    assert.deepEqual(states(result), [['claude[0]', 'failed']]);
+    assert.deepEqual(w.calls, []);
+    assert.equal(done(result).slots[0]?.['cls'], 'quota');
+  });
+});
 
 test('native reserve does not enter plan review frame', () => {
   const w = setup({}, [slot('copilot[0]', 'copilot', { native: true, model: ['primary', 'fallback'] }), slot('copilot[1]', 'copilot', { native: true, reserve: true })], 'copilot');

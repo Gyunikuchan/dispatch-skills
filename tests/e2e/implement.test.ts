@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
 import { hashes } from '../../scripts/generate-hashes.ts';
@@ -21,7 +22,7 @@ const submittedReceipt = (slot: ReceiptSlot, handle: string, frame: EffortFrame)
 // Delivery also returns blob ids for transient trimming; these cases assert transfer outcomes only.
 const transfer = ({ blobs: _blobs, ...rest }: Record<string, unknown>) => rest;
 
-test('fixed controller completes delivery and continuation after candidate runtime changes', async () => {
+async function fixedControllerDelivery() {
   const f = fixture();
   try {
     f.git('config', 'core.autocrlf', 'false');
@@ -32,20 +33,16 @@ test('fixed controller completes delivery and continuation after candidate runti
     const scratch = path.join(session, '.state/scratch');
     fs.mkdirSync(scratch, { recursive: true });
     const reference = fs.readFileSync(new URL('../../skills/dispatch/references/self-build.md', import.meta.url), 'utf8');
-    const extract = (heading: string, name: string) => {
-      const sections = reference.split(/^## /m).filter((section) => section.split(/\r?\n/, 1)[0] === heading);
-      assert.equal(sections.length, 1, `one ${heading} section`);
-      const blocks = [...sections[0]!.matchAll(/^```javascript\r?\n([\s\S]*?)^```\s*$/gm)];
-      assert.equal(blocks.length, 1, `one ${heading} javascript block`);
-      const helper = path.join(scratch, name);
-      fs.writeFileSync(helper, blocks[0]![1]!); return helper;
-    };
-    const captureHelper = extract('Capture controller', 'capture-controller.mjs');
-    const verifyHelper = extract('Verify controller', 'verify-controller.mjs');
+    const section = reference.split(/^## /m).find(value => value.split(/\r?\n/, 1)[0] === 'Prepare the session')!;
+    const entry = path.join(f.dir, 'materialize.mjs');
+    fs.writeFileSync(entry, [...section.matchAll(/^```javascript\r?\n([\s\S]*?)^```\s*$/gm)][0]![1]!);
     const dest = path.join(scratch, 'controller/skills/dispatch'), inventory = path.join(scratch, 'controller-inventory.json');
     const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${path.join(f.dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' };
     for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete env[key];
     const invoke = (entry: string, args: string[]) => execFileSync(process.execPath, [entry, ...args], { cwd: f.repo, env, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const materialize = (heading: string) => invoke(entry, [fileURLToPath(new URL('../../skills/dispatch/references/self-build.md', import.meta.url)), f.repo, session, heading]).trim();
+    const captureHelper = materialize('Capture controller');
+    const verifyHelper = materialize('Verify controller');
     const captured = JSON.parse(invoke(captureHelper, ['--target', f.repo, '--session', session, '--source', candidate, '--dest', dest, '--inventory', inventory])) as { controllerEntry: string; identity: string; files: { path: string; bytes: number; sha256: string }[] };
     const controllerEntry = captured.controllerEntry;
     const verify = () => {
@@ -194,7 +191,7 @@ test('fixed controller completes delivery and continuation after candidate runti
       fs.writeFileSync(path.join(evidenceDir, 'events.jsonl'), journal);
     }
   } finally { f.cleanup(); }
-});
+}
 
 test('prewrite-level: CLI approval reaches classification before writer receipt, verification and handoff', async () => {
   const f = fixture();
@@ -1120,3 +1117,6 @@ test('trims transient tests before final gate', async () => {
     assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
   } finally { f.cleanup(); }
 });
+
+// Run after the other cases to avoid concurrent E2E startup contention.
+test('fixed controller completes delivery and continuation after candidate runtime changes', fixedControllerDelivery);

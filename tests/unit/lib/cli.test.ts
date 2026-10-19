@@ -5,6 +5,22 @@ import { LEVELS, normalizeProvider, parsePins } from '../../../skills/dispatch/s
 const policy = { levels: LEVELS, pins: parsePins, provider: (text: string) => ['codex', 'claude', 'agy', 'opencode', 'copilot'].includes(normalizeProvider(text)) ? normalizeProvider(text) : null };
 const start = ['start', 'ask', '--session-dir', 'chat', '--orchestrator', 'codex'];
 
+test('quota reprobe validates its exact session action', () => {
+  const args = ['session', 'quota-reprobe', '--session-dir', 'chat', '--provider', 'codex', '--mode', 'cli'];
+  const command = parseCommand(args, policy);
+  assert.equal(command.action, 'quota-reprobe');
+  assert.equal(command.flags['model'] ?? null, null);
+  assert.equal(parseCommand([...args, '--model', '../literal alias'], policy).flags['model'], '../literal alias');
+  for (const name of ['session-dir', 'provider', 'mode']) {
+    const index = args.indexOf('--' + name);
+    assert.throws(() => parseCommand(args.filter((_, i) => i !== index && i !== index + 1), policy));
+  }
+  for (const extra of [['--objective', 'x'], ['--session-id', 'x'], ['--model', ' '], ['--provider', 'codex'], ['--', 'x'], ['--']]) assert.throws(() => parseCommand([...args, ...extra], policy));
+  for (const action of ['init', 'reactivate', 'handoff']) for (const name of ['provider', 'model', 'mode']) {
+    assert.throws(() => parseCommand(['session', action, ...(action === 'init' ? ['--objective', 'x'] : ['--session-dir', 'chat']), '--' + name, 'x'], policy));
+  }
+});
+
 // SECTION: Invocation and command parsing
 
 test('rejects context for every start verb', () => {

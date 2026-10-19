@@ -6,7 +6,8 @@ import { scanOverlay, type FileTable } from './scan.ts';
 // The approved observation-boundary plan adds one real-Git fixture file.
 // The approved plan-replacement plan adds tests/e2e/plan-replacement.test.ts for real-Git retirement and replay.
 // The approved authority/continuation plan adds two real-main and real-Git fixture files; the I01 spec-stage plan adds tests/e2e/spec-stage.test.ts.
-export const E2E_CAP = 10;
+// The approved self-build and quota plan adds preparation, quota-state and quota-routing filesystem/subprocess suites.
+export const E2E_CAP = 13;
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));
