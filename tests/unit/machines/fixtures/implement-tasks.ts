@@ -42,8 +42,11 @@ export type Sim = {
   envelope?: (id: string) => Record<string, unknown>;
   diff?: (id: string) => string[];
   commitPaths?: (id: string) => string[];
-  verify?: (purpose: string, command: string, task: string | null) => Outcome;
+  /** `cwd` tells the task worktree (green) from the integration tree for the shared `scoped` purpose. */
+  verify?: (purpose: string, command: string, task: string | null, cwd?: string) => Outcome;
   conflict?: string[];
+  /** Paths the conflicting integration reports; defaults to a file no task owns. */
+  conflictPaths?: string[];
   redDefects?: string[];
   resolve?: (input: Record<string, unknown>) => Record<string, unknown>;
   /** Parse results for `REPLACE_PLAN` files, keyed by path; other parses return the run plan. */
@@ -54,7 +57,11 @@ export type Trace = { effects: Effect[]; events: Event[] };
 
 export const taskOf = (state: ImplementState): string | null => 'task' in state && typeof state.task === 'string' ? state.task : null;
 export const pathsOf = (id: string, plan: ParsedPlan = PLAN) => plan.tasks.find((row) => row.id === id)!.paths;
-export const defaultEnvelope = (id: string, plan: ParsedPlan = PLAN) => ({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: `Delivered ${id}`, evidence: [...plan.tasks.find((row) => row.id === id)!.criteria.map((sc) => `CRITERION ${sc} | ${plan.criteria.find((row) => row.id === sc)!.changes[0]} | behavior`), ...(id === 'T1' ? [RED_ROW] : [])] });
+/** Automated Tests commands no criterion lists; writers self-check them and integration gates them. */
+export const CONTRACT_PLAN: ParsedPlan = { ...PLAN, verification: { ...PLAN.verification, automated: ['npm run lint'] } };
+const contractOf = (plan: ParsedPlan) => plan.verification.automated.filter((command) => !plan.criteria.some((row) => row.verify.some((entry) => entry.command === command)));
+export const checkRows = (plan: ParsedPlan, exit = 0) => contractOf(plan).map((command) => `CHECK ${command} | exit ${exit}`);
+export const defaultEnvelope = (id: string, plan: ParsedPlan = PLAN) => ({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: `Delivered ${id}`, evidence: [...plan.tasks.find((row) => row.id === id)!.criteria.map((sc) => `CRITERION ${sc} | ${plan.criteria.find((row) => row.id === sc)!.changes[0]} | behavior`), ...(id === 'T1' ? [RED_ROW] : []), ...checkRows(plan)] });
 export const defaultVerify = (purpose: string): Outcome => purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'] } : { exit: 0 };
 
 export function answer(state: ImplementState, effect: Effect, sim: Sim): Event | null {
@@ -74,7 +81,7 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
     case 'verify': return {
       type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, fingerprint: FP,
       results: effect.commands.map((row) => {
-        const outcome = sim.verify?.(effect.purpose, String(row['command']), id) ?? defaultVerify(effect.purpose);
+        const outcome = sim.verify?.(effect.purpose, String(row['command']), id, effect.cwd) ?? defaultVerify(effect.purpose);
         const failed = outcome.failedTests ?? [];
         return { command: String(row['command']), exit: outcome.exit, logPath: `${effect.id}.log`, failedTests: failed, failureId: outcome.exit ? `${row['command']}::${failed[0] ?? 'exit'}` : null, diagnostic: '', baselineHits: outcome.baselineHits ?? [], scanUnreadable: outcome.scanUnreadable ?? [], inputFingerprint: effect.id };
       }),
@@ -87,7 +94,7 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
         commit: { revision: `c-${id}`, paths: sim.commitPaths ? sim.commitPaths(id ?? 'T1') : pathsOf(id ?? 'T1', plan) },
         red: { path: `run/wt/${input['name']}`, defects: sim.redDefects?.includes(id ?? '') ? ['checkpoint names an unapproved path'] : [], files: [] },
         'scope-rebase': { path: `run/wt/${input['name']}`, revision: input['revision'], conflict: false, conflicts: [] },
-        integrate: sim.conflict?.includes(id ?? '') ? { conflict: true, paths: ['src/shared.ts'], detail: 'both modified' } : { revision: `i-${id}`, conflict: false, paths: [] },
+        integrate: sim.conflict?.includes(id ?? '') ? { conflict: true, paths: sim.conflictPaths ?? ['src/shared.ts'], detail: 'both modified' } : { revision: `i-${id}`, conflict: false, paths: [] },
         resolve: sim.resolve ? sim.resolve(input) : { revision: `r-${String(input['attempt'])}`, paths: ['src/shared.ts'] },
         trim: { trimmed: input['allowed'] ?? [], already: [], refused: [] },
         reset: { path: `run/wt/${input['name']}` }, deliver: { conflicts: [], transferred: ['src/a.ts'], already: [], blobs: Object.fromEntries(plan.criteria.flatMap((row) => row.changes).map((file) => [file, `blob-${file}`])) }, cleanup: {},

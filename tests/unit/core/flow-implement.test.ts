@@ -14,9 +14,17 @@ import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, FP, HASH } from '../machines/fixtures/implement-recovery.ts';
-import { authoringFlow, completionFlow, PLAN, SKILL_ROOT } from './fixtures/flow-implement.ts';
+import { authoringFlow, completionFlow, PLAN, SKILL_ROOT, type CommandRun } from './fixtures/flow-implement.ts';
 
-for (const planMode of ['external'] as const) test(`implement-completion-rules: ${planMode} flow binds a real walkthrough and replays completion`, () => completionFlow(planMode));
+for (const planMode of ['external'] as const) test(`implement-completion-rules: ${planMode} flow binds a real walkthrough and replays completion`, async () => {
+  const runs: CommandRun[] = [];
+  await completionFlow(planMode, undefined, runs);
+  const location = (dir: string) => ({ '.': 'caller', 'wt/T1': 'task', 'wt/integration': 'integration' } as Record<string, string>)[dir] ?? dir;
+  const gates = ['node --test tests/value.test.ts', 'npm run lint'];
+  // Each gate runs the criterion command and the contract command; final verification reruns both on the caller checkout.
+  assert.deepEqual(runs.filter((row) => gates.includes(row.command)).map((row) => [row.command, location(row.cwd)]),
+    ['caller', 'task', 'integration', 'caller'].flatMap((where) => gates.map((command) => [command, where])));
+});
 
 test('governing spec default preserves implementation review artifacts criteria and structural focus', async () => {
   const state = approvalState();

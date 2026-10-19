@@ -60,8 +60,11 @@ export const PLAN = `# Normalize values
 *No reviews conducted yet.*
 `;
 
-/** One completion flow through real handlers: binds a walkthrough and replays completion. */
-export async function completionFlow(planMode: 'external' | 'session' | 'objective', configurePorts?: (ports: Ports, runDir: string) => void): Promise<void> {
+/** A spawned verify command and its working directory relative to the caller root (`.` for the caller checkout). */
+export type CommandRun = { command: string; cwd: string };
+
+/** One completion flow through real handlers: binds a walkthrough and replays completion; appends every spawned command to `runs`. */
+export async function completionFlow(planMode: 'external' | 'session' | 'objective', configurePorts?: (ports: Ports, runDir: string) => void, runs: CommandRun[] = []): Promise<void> {
   const cwd = tempDir();
   const sessionRoot = path.join(cwd, 'chat');
   const runDir = path.join(sessionRoot, '.state', 'runs', 'run-1');
@@ -98,20 +101,22 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
     slots: effect.roster.map((slot) => ({ slot: String(slot['slot']), state: 'success', claim: 'Reviewed changed paths; no findings.' })), findings: [],
   }]; };
   const baseHandlers = createHandlers({ skillRoot: SKILL_ROOT, cwd, os: 'linux', git, tempRoot: path.join(cwd, 'tmp'), workspaceRoot: cwd, orchestratorPlatform: 'claude', wave });
-  // NOTE: fake Git cannot host worktrees, so every checkout op resolves to the caller tree and delivery transfers the changed paths.
+  // NOTE: fake Git cannot host worktrees, so checkout ops share the caller files; task and init name distinct empty directories so each verify location stays observable.
   // NOTE: a trim `observe` input only reports the caller blobs at the review boundary, matching the real handler.
   const observe = (files: unknown) => Array.isArray(files)
     ? { observed: Object.fromEntries(files.map((file: string) => [file, fs.existsSync(path.join(cwd, file)) ? crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex') : null])) }
     : null;
+  const taskTree = path.join(cwd, 'wt', 'T1'), integrationTree = path.join(cwd, 'wt', 'integration');
+  fs.mkdirSync(taskTree, { recursive: true }); fs.mkdirSync(integrationTree, { recursive: true });
+  const treeOf = (op: string) => op === 'task' ? taskTree : op === 'init' ? integrationTree : cwd;
   const checkout = async (effect: Extract<Effect, { kind: 'checkout' }>) => [{ type: 'CHECKOUT_DONE' as const, effectId: effect.id, op: effect.op,
-    result: observe((effect.input as Record<string, unknown> | undefined)?.['observe']) ?? { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
+    result: observe((effect.input as Record<string, unknown> | undefined)?.['observe']) ?? { path: treeOf(effect.op), base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
   const handlers = { ...baseHandlers, checkout, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
   const ports = fakePorts();
   memoryRunFs(ports, runDir);
   configurePorts?.(ports, runDir);
   ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
-  const commands: string[] = [];
-  ports.spawn = { run: async (argv) => { commands.push(argv.at(-1) ?? ''); return { exit: 0, stdout: 'ok', stderr: '' }; } };
+  ports.spawn = { run: async (argv, spawnOptions) => { runs.push({ command: argv.at(-1) ?? '', cwd: path.relative(cwd, spawnOptions.cwd).split(path.sep).join('/') || '.' }); return { exit: 0, stdout: 'ok', stderr: '' }; } };
   const options = { runDir, machine: rootMachine, handlers, ports, runRel: 'chat/.state/runs/run-1' };
 
   const approval = await start({ ...options, runStarted });
@@ -131,7 +136,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   revision = 1;
   ports.fs.writeAtomic(envelopePath, JSON.stringify({
     schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Values are normalized.',
-    evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
+    evidence: ['CRITERION SC1 | src/value.ts | trims values before processing', 'CHECK npm run lint | exit 0'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],
   }));
   const evidence = await send({ ...options, rawEvent: { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath, briefHash: withLaunch(launched.frame?.data['tasks'] as { launchPath: string }[], runDir, ports.fs.readText)[0]!.briefHash, model: slot!.model } });
@@ -139,7 +144,6 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
   assert.equal(done.frame?.await, 'done', JSON.stringify(done.frame));
   assert.equal(done.frame?.data['outcome'], 'complete', JSON.stringify(done.frame));
-  assert.equal(commands.filter((command) => command === 'node --test tests/value.test.ts').length, 4, 'baseline, task, integration, and caller-checkout final runs execute');
   const walkthroughs = fs.readdirSync(sessionRoot).filter((name) => name.endsWith('.walkthrough.md'));
   assert.equal(walkthroughs.length, 1); assert.equal(reviewed.path?.replaceAll('\\', '/'), path.join(sessionRoot, walkthroughs[0]!).replaceAll('\\', '/'));
   assert.match(fs.readFileSync(path.join(sessionRoot, walkthroughs[0] as string), 'utf8'), /## Verification/);

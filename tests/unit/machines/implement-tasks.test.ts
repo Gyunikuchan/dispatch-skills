@@ -9,7 +9,7 @@ import { reconcileTasks, taskScope, taskSignature } from '../../../skills/dispat
 import * as implement from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { runOwnedPaths } from '../../../skills/dispatch/scripts/effects/snapshot.ts';
-import { HASH, FP, criterion, task, PLAN, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, frameRows, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
+import { HASH, FP, criterion, task, PLAN, CONTRACT_PLAN, checkRows, run, RED_ROW, taskOf, pathsOf, defaultEnvelope, defaultVerify, answer, pump, host, classify, start, slots, frameRows, record, launch, submit, launchedTasks, type Outcome, type Sim, type Result, type Trace, type Slot } from './fixtures/implement-tasks.ts';
 import { AMEND_PLAN } from './fixtures/implement-amend.ts';
 import { started } from './fixtures/design-delivery.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
@@ -912,4 +912,301 @@ test('amendment delta context-only amendments carry the new constraint or prereq
   assert.ok(effect.kind === 'write-brief' && effect.input['deltaBase']);
   assert.deepEqual((effect.input['task'] as { prerequisites: unknown[] }).prerequisites, [{ id: 'T2', integrated: null }]);
   assert.equal(record(result, 'T1')!.briefs!.at(-1)!.scope, scope);
+});
+
+// SECTION: Contract self-check and integration gate — criteria-less Automated Tests gate every task.
+
+const LINT = 'npm run lint', SC1_CHECK = 'node --test tests/sc1.test.ts', INTEGRATION = 'run/wt/integration';
+type ContractRecord = { contractFailure?: unknown; reason: string | null; status: string; handle: string | null; attempt: number; failures: number };
+const contractRecord = (result: Result, id: string) => record(result, id) as unknown as ContractRecord;
+/** Fails the listed commands on the integration tree for tasks the predicate selects. */
+const failAtIntegration = (commands: readonly string[], fails: (task: string | null) => boolean, failedTest = 'test:lint'): NonNullable<Sim['verify']> =>
+  (purpose, command, task, cwd) => commands.includes(command) && cwd === INTEGRATION && fails(task) ? { exit: 1, failedTests: [failedTest] } : defaultVerify(purpose);
+const briefsOf = (trace: Trace, id: string, from = 0) => trace.effects.slice(from).flatMap((effect) => effect.kind === 'write-brief' && (effect.input['task'] as { id?: string } | undefined)?.id === id ? [effect.input] : []);
+const integrationLog = (trace: Trace) => `${trace.effects.findLast((effect) => effect.kind === 'verify' && effect.cwd === INTEGRATION)!.id}.log`;
+const lintRow = (trace: Trace, passedBefore: boolean) => ({ command: LINT, exit: 1, logPath: integrationLog(trace), passedBefore });
+const headOf = (result: Result) => (result.state as { c: implement.Context }).c.integration!.head;
+const checkoutInputs = (trace: Trace, op: string, from: number) => trace.effects.slice(from).flatMap((effect) => effect.kind === 'checkout' && effect.op === op ? [effect.input as Readonly<Record<string, unknown>>] : []);
+const retryDecision = { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'Lint config repaired.' } } as Event;
+/** Runs every other launched writer to submission until the run asks the failure decision. */
+function toFailure(result: Result, sim: Sim, trace: Trace): Result {
+  for (let guard = 0; result.state.tag === 'tasks' && guard < 6; guard++) {
+    result = launch(result, sim, trace);
+    const slot = slots(result).find((item) => item.action === 'running');
+    if (!slot) break;
+    result = submit(result, slot.task, sim, trace);
+  }
+  assert.equal(result.state.tag, 'failure');
+  return result;
+}
+
+test('contract self-check admission briefs carry each contract command and the CHECK schema row', () => {
+  const { trace } = start(1, { plan: CONTRACT_PLAN });
+  const [input] = briefsOf(trace, 'T1');
+  assert.deepEqual(input?.['contractChecks'], [LINT]);
+  assert.ok((input?.['envelopeSchema'] as { evidence: string[] }).evidence.includes('CHECK <contract command> | exit <code>'));
+});
+
+test('contract self-check admission fails a DONE envelope without a CHECK row naming the command', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, envelope: (id) => defaultEnvelope(id, PLAN) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.deepEqual([contractRecord(result, 'T1').status, contractRecord(result, 'T1').reason], ['failed', 'Evidence is missing CHECK rows for npm run lint.']);
+});
+
+test('contract self-check admission admits a CHECK row with a nonzero exit', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, envelope: (id) => ({ ...defaultEnvelope(id, PLAN), evidence: [...defaultEnvelope(id, PLAN).evidence, ...checkRows(CONTRACT_PLAN, 1)] }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+});
+
+test('contract self-check admission leaves the hotfix brief without contract checks', () => {
+  const origin = failure();
+  const plan = origin.c.plan!;
+  const contract = { ...origin, c: { ...origin.c, plan: { ...plan, verification: { ...plan.verification, automated: [...plan.verification.automated, LINT] } } } };
+  const hotfix = recoveryHost(contract, { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'writer', rationale: 'bad branch' } });
+  const brief = hotfix.effects.find((effect) => effect.kind === 'write-brief');
+  assert.ok(brief?.kind === 'write-brief' && brief.stage === 'hotfix');
+  assert.equal('contractChecks' in brief.input, false);
+  assert.doesNotMatch(JSON.stringify(brief.input), /CHECK </);
+});
+
+test('contract gate resume returns a first-task lint failure to its live writer as a delta until it passes', () => {
+  let failing = true;
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT], (task) => failing && task === 'T1') };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const handle = contractRecord(result, 'T1').handle;
+  const from = trace.effects.length;
+  result = submit(result, 'T1', sim, trace);
+  assert.deepEqual(checkoutInputs(trace, 'reset', from), [{ name: 'integration', revision: 'b0' }]);
+  assert.deepEqual(checkoutInputs(trace, 'task', from), [{ name: 'task-t1', revision: 'b0', keep: true, links: [], ignored: [] }]);
+  const contractFailure = { previous: 'b0', rows: [lintRow(trace, true)], route: 'resume' };
+  const resumed = contractRecord(result, 'T1');
+  assert.deepEqual(resumed.contractFailure, contractFailure);
+  assert.deepEqual([resumed.status, resumed.handle, resumed.attempt, resumed.failures, headOf(result)], ['running', handle, 1, 1, 'b0']);
+  const briefs = briefsOf(trace, 'T1', from);
+  assert.equal(briefs.length, 1);
+  assert.ok(briefs[0]!['deltaBase'], 'live writer reads a delta');
+  assert.deepEqual(briefs[0]!['contractFailure'], contractFailure);
+  assert.equal('revisionNotice' in briefs[0]!, false);
+  const launched = launchOf(result.state, 'T1') as Launch & { deltaPath?: string };
+  assert.deepEqual([launched.action, launched.handle, launched.deltaPath], ['running', handle, 'run/T1.delta.md']);
+  assert.match(launched.notice ?? '', /npm run lint/);
+
+  const branch: Trace = { effects: [...trace.effects], events: [...trace.events] };
+  const request = host(result, { type: 'REQUEST', task: 'T1', attempt: 1, need: 'Edit the lint config.', paths: ['.eslintrc.json'], rationale: 'The lint rule needs a config change.' }, sim, branch);
+  assert.equal(request.state.tag, 'request-decision');
+
+  failing = false;
+  result = submit(result, 'T1', sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  assert.equal(contractRecord(result, 'T1').contractFailure ?? null, null);
+});
+
+test('contract gate resume attributes a second-task lint failure through the accepted gate', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT], (task) => task === 'T2') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  result = launch(result, sim, trace);
+  assert.deepEqual(slots(result).map((slot) => slot.task), ['T2']);
+  result = submit(result, 'T2', sim, trace);
+  assert.deepEqual(contractRecord(result, 'T2').contractFailure, { previous: 'i-T1', rows: [lintRow(trace, true)], route: 'resume' });
+  assert.deepEqual([contractRecord(result, 'T2').status, headOf(result)], ['running', 'i-T1']);
+});
+
+test('contract gate resume returns a known-red lint failure that a second task reintroduces after the first fixed it', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: (purpose, command, task, cwd) => command !== LINT ? defaultVerify(purpose) : purpose === 'baseline' || (cwd === INTEGRATION && task === 'T2') ? { exit: 1, failedTests: ['test:lint'] } : { exit: 0 } };
+  let { result, trace } = afterFailingBaseline(sim);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.deepEqual(contractRecord(result, 'T2').contractFailure, { previous: 'i-T1', rows: [lintRow(trace, true)], route: 'resume' });
+  assert.deepEqual([contractRecord(result, 'T2').status, headOf(result)], ['running', 'i-T1']);
+});
+
+test('contract gate resolution rejects a known-red lint failure that a second task resolution reintroduces after the first fixed it', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, conflict: ['T2'], resolve: (input) => ({ revision: `r-${String(input['attempt'])}`, paths: ['src/b.ts'] }), verify: (purpose, command, task, cwd) => command !== LINT ? defaultVerify(purpose) : purpose === 'baseline' || (cwd === INTEGRATION && task === 'T2') ? { exit: 1, failedTests: ['test:lint'] } : { exit: 0 } };
+  let { result, trace } = afterFailingBaseline(sim);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.equal(result.state.tag, 'integration-conflict');
+  result = host(result, { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'resolve', rationale: 'Keep both edits.' } }, sim, trace);
+  assert.equal(result.state.tag, 'integration-conflict');
+  assert.notEqual(contractRecord(result, 'T2').status, 'accepted');
+  assert.match((implementData(result.state)['evidence'] as string[]).join(' '), /npm run lint/);
+});
+
+test('contract self-check admission requires only the CHECK rows its live brief issued after an amendment adds a contract command', () => {
+  const sim: Sim = { plan: AMEND_PLAN, envelope: (id) => defaultEnvelope(id, AMEND_PLAN) };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const addLint = { kind: 'modify', target: LINT, current: '- None: criterion commands cover the change.', proposed: `- \`${LINT}\`` };
+  result = host(result, amendEvent([addLint]), sim, trace);
+  assert.ok((result.state as { c: implement.Context }).c.plan!.verification.automated.includes(LINT), 'amendment adds the contract command');
+  result = submit(result, 'T1', sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+});
+
+test('contract self-check admission binds CHECK rows to the submitted original brief after a notified amendment adds a contract command', () => {
+  const sim: Sim = { plan: AMEND_PLAN, envelope: (id) => defaultEnvelope(id, AMEND_PLAN) };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const original = record(result, 'T1')!.brief!;
+  const addLint = { kind: 'modify', target: LINT, current: '- None: criterion commands cover the change.', proposed: `- \`${LINT}\`` };
+  result = host(result, amendEvent([addLint], [{ task: 'T1', notice: 'Run npm run lint before you submit.' }]), sim, trace);
+  const t1 = record(result, 'T1')!;
+  assert.notEqual(t1.briefs!.at(-1)!.envelopePath, original.envelopePath, 'notified writer holds a newer brief');
+  assert.deepEqual(t1.briefs!.at(-1)!.contractChecks, [LINT]);
+  const live = launchOf(result.state, 'T1') as Launch;
+  result = host(result, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: live.attempt, signature: live.signature, handle: live.handle!, model: live.model, envelopePath: original.envelopePath, briefHash: original.sha256 } as Event, sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+});
+
+test('contract gate discard clears the contract failure so the next launch brief carries no failure section', () => {
+  let failing = true;
+  const plan = { ...AMEND_PLAN, verification: { ...AMEND_PLAN.verification, automated: [LINT] } };
+  const sim: Sim = { plan, verify: failAtIntegration([LINT], (task) => failing && task === 'T2') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.equal((contractRecord(result, 'T2').contractFailure as { route: string } | undefined)?.route, 'resume');
+  failing = false;
+  sim.conflict = ['T2'];
+  sim.conflictPaths = ['src/b.ts'];
+  result = submit(result, 'T2', sim, trace);
+  assert.equal(result.state.tag, 'integration-conflict');
+  const narrow = [
+    { kind: 'modify', target: 'T2', current: '#### [MODIFY] src/b.ts\n- Changes: part two.', proposed: '#### [NEW] src/d.ts\n- Purpose: part two.' },
+    { kind: 'modify', target: 'SC2', current: '  - Changes: src/b.ts', proposed: '  - Changes: src/d.ts' },
+  ];
+  result = host(result, amendEvent(narrow, [], { by: { by: 'user', quote: 'Move it.' } }), sim, trace);
+  sim.conflict = [];
+  const from = trace.effects.length;
+  result = host(result, { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'discard', rationale: 'Drop T2 work.', amendment: 'amend-1' } } as Event, sim, trace);
+  assert.equal(contractRecord(result, 'T2').contractFailure ?? null, null);
+  const briefs = briefsOf(trace, 'T2', from);
+  assert.ok(briefs.length, 'discarded task is rebriefed');
+  assert.equal('contractFailure' in briefs.at(-1)!, false);
+});
+
+test('contract gate resume attributes a lint failure after a resolution that passed lint', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, conflict: ['T1'], resolve: (input) => ({ revision: `r-${String(input['attempt'])}`, paths: ['src/a.ts'] }), verify: failAtIntegration([LINT], (task) => task === 'T2') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(result.state.tag, 'integration-conflict');
+  result = host(result, { type: 'DECISION', kind: 'integration-conflict', answer: { by: 'orchestrator', action: 'resolve', rationale: 'Keep both edits.' } }, sim, trace);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  const resolved = headOf(result);
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.deepEqual(contractRecord(result, 'T2').contractFailure, { previous: resolved, rows: [lintRow(trace, true)], route: 'resume' });
+});
+
+test('contract gate resume relaunches an ended writer session with the resume full brief', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT], (task) => task === 'T1') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  const resumeBrief = record(result, 'T1')!.brief!;
+  assert.ok(briefsOf(trace, 'T1').at(-1)!['contractFailure'], 'resume brief carries the failure');
+  const ended = (launchOf(result.state, 'T1') as Launch).receipts.find((receipt) => receipt['status'] === 'failed')!;
+  result = host(result, ended as unknown as Event, sim, trace);
+  const relaunch = launchOf(result.state, 'T1') as Launch & { deltaPath?: string };
+  assert.deepEqual([relaunch.action, relaunch.briefPath, relaunch.briefHash, relaunch.deltaPath], ['launch', resumeBrief.path, resumeBrief.sha256, undefined]);
+});
+
+test('contract gate escalation keeps the criterion-only integration reason and sets no contract failure', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([SC1_CHECK], (task) => task === 'T1', 'test:x') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  const failed = contractRecord(result, 'T1');
+  assert.deepEqual([failed.status, failed.reason, failed.contractFailure ?? null], ['failed', `Integration verification failed: ${SC1_CHECK} (${SC1_CHECK}::test:x)`, null]);
+  result = host(toFailure(result, sim, trace), retryDecision, sim, trace);
+  const retry = briefsOf(trace, 'T1').at(-1)!;
+  assert.equal((retry['task'] as { attempt: number }).attempt, 2);
+  assert.equal('contractFailure' in retry, false);
+});
+
+test('contract gate escalation fails the task when a criterion command fails beside the contract command', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT, SC1_CHECK], (task) => task === 'T1', 'test:x') };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const from = trace.effects.length;
+  result = submit(result, 'T1', sim, trace);
+  const log = integrationLog(trace), failed = contractRecord(result, 'T1');
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.reason, `Integration verification failed: ${SC1_CHECK} (${SC1_CHECK}::test:x); ${LINT} (exit 1; log ${log}; ${LINT}::test:x)`);
+  const contractFailure = { previous: 'b0', rows: [{ command: LINT, exit: 1, logPath: log, passedBefore: true }], route: 'escalate' };
+  assert.deepEqual(failed.contractFailure, contractFailure);
+  assert.deepEqual(briefsOf(trace, 'T1', from), []);
+  result = host(toFailure(result, sim, trace), retryDecision, sim, trace);
+  const retry = briefsOf(trace, 'T1').at(-1)!;
+  assert.equal((retry['task'] as { attempt: number }).attempt, 2);
+  assert.deepEqual(retry['contractFailure'], contractFailure);
+});
+
+test('contract gate escalation records no prior pass for a contract command red at baseline', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: (purpose, command, _task, cwd) => command !== LINT ? defaultVerify(purpose) : purpose === 'baseline' ? { exit: 1, failedTests: ['test:old'] } : cwd === INTEGRATION ? { exit: 1, failedTests: ['test:new'] } : { exit: 0 } };
+  const { result, trace } = afterFailingBaseline(sim);
+  const failed = contractRecord(result, 'T1'), log = integrationLog(trace);
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(failed.contractFailure, { previous: 'b0', rows: [{ command: LINT, exit: 1, logPath: log, passedBefore: false }], route: 'escalate' });
+  assert.ok(failed.reason?.includes(`log ${log}`), failed.reason ?? '');
+});
+
+test('contract gate escalation fails a writer at the attempt cap', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT], (task) => task === 'T1') };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  for (const failures of [1, 2]) {
+    result = submit(result, 'T1', sim, trace);
+    assert.deepEqual([contractRecord(result, 'T1').status, contractRecord(result, 'T1').failures], ['running', failures]);
+  }
+  const from = trace.effects.length;
+  result = submit(result, 'T1', sim, trace);
+  const failed = contractRecord(result, 'T1');
+  assert.deepEqual([failed.status, failed.failures, (failed.contractFailure as { route: string } | undefined)?.route], ['failed', 3, 'escalate']);
+  assert.ok(failed.reason?.includes(`log ${integrationLog(trace)}`), failed.reason ?? '');
+  assert.deepEqual(briefsOf(trace, 'T1', from), []);
+});
+
+test('contract gate escalation fails a writer with no handle', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, verify: failAtIntegration([LINT], (task) => task === 'T1') };
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const slot = slots(result).find((item) => item.task === 'T1')!;
+  const receipt: Event = { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, model: slot.model, envelopePath: slot.envelopePath, briefHash: slot.briefHash };
+  // Stop before the integration batch answers, then drop the handle as an ended session would.
+  result = stepImplement(result.state, receipt);
+  for (let guard = 0; result.effects.length && !(result.effects[0]!.kind === 'verify' && result.effects[0]!.cwd === INTEGRATION); guard++) {
+    assert.ok(guard < 50, 'integration verify reached');
+    const effect = result.effects[0]!;
+    trace.effects.push(effect);
+    result = stepImplement(result.state, answer(result.state, effect, sim)!);
+  }
+  const c = (result.state as { c: implement.Context }).c;
+  result = { ...result, state: { ...result.state, c: { ...c, tasks: { ...c.tasks, T1: { ...c.tasks['T1']!, handle: null } } } } as ImplementState };
+  const from = trace.effects.length;
+  result = pump(result, sim, trace);
+  const failed = contractRecord(result, 'T1');
+  assert.deepEqual([failed.status, (failed.contractFailure as { route: string } | undefined)?.route], ['failed', 'escalate']);
+  assert.ok(failed.reason?.includes(`log ${integrationLog(trace)}`), failed.reason ?? '');
+  assert.deepEqual(briefsOf(trace, 'T1', from), []);
+});
+
+test('contract gate absent keeps briefs, integration commands, and the regression reason unchanged', () => {
+  const sim: Sim = { verify: failAtIntegration([SC1_CHECK], (task) => task === 'T1', 'test:x') };
+  let { result, trace } = start(1, sim);
+  const [input] = briefsOf(trace, 'T1');
+  assert.equal('contractChecks' in input!, false);
+  assert.ok(!(input!['envelopeSchema'] as { evidence: string[] }).evidence.some((row) => row.startsWith('CHECK')));
+  result = launch(result, sim, trace);
+  const from = trace.effects.length;
+  result = submit(result, 'T1', sim, trace);
+  const integration = trace.effects.filter((effect) => effect.kind === 'verify' && effect.cwd === INTEGRATION);
+  assert.deepEqual(integration.map((effect) => effect.kind === 'verify' && effect.commands.map((row) => row['command'])), [[SC1_CHECK]]);
+  const failed = contractRecord(result, 'T1');
+  assert.deepEqual([failed.status, failed.reason, failed.contractFailure ?? null], ['failed', `Integration verification failed: ${SC1_CHECK} (${SC1_CHECK}::test:x)`, null]);
+  assert.deepEqual(checkoutInputs(trace, 'task', from).filter((row) => row['keep']), []);
+  assert.deepEqual(briefsOf(trace, 'T1', from), []);
 });

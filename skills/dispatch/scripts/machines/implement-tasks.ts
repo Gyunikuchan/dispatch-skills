@@ -51,10 +51,16 @@ export type TaskRecord = {
   retainedSubmission?: string | null;
   /** Earlier integration commits of this task, kept addressable after a delivery rebase. */
   integratedHistory?: readonly string[];
+  /** Contract commands that passed on `previous` before this task's latest integration; a failure is attributable only to these. */
+  contractBase?: { previous: string; passed: readonly string[] } | null;
+  /** Failing contract rows of the latest integration gate; every later brief carries them until acceptance clears them. */
+  contractFailure?: ContractFailure | null;
 };
+export type ContractFailure = { previous: string; rows: readonly { command: string; exit: number; logPath: string; passedBefore: boolean }[]; route: 'resume' | 'escalate' };
 /** A retired task record; its candidate and integrated commits stay addressable and integrated bytes stay delivered. */
 export type RetiredTask = TaskRecord & { retiredBy: string };
-export type TaskBriefHistory = TaskBriefPaths & { scope: string };
+/** `contractChecks` records the contract commands this brief issued; admission requires CHECK rows only for those. */
+export type TaskBriefHistory = TaskBriefPaths & { scope: string; contractChecks?: readonly string[] };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
 /** Paths, criterion definitions, prerequisites, and task constraints define a task's work; reconciliation reopens a changed signature. */

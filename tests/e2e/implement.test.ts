@@ -271,7 +271,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
     const invalidVerdict = JSON.parse(invalidReceipt.stdout) as { v: number; valid: boolean; error?: string };
     assert.deepEqual([invalidVerdict.v, invalidVerdict.valid], [1, false]);
     assert.match(invalidVerdict.error ?? '', /summary|evidence/i); assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), beforePreview);
-    fs.writeFileSync(envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Values normalized', evidence: ['CRITERION SC1 | src/a.ts | normalizes value before use'], files: [{ path: 'src/a.ts', note: 'Normalizes values.' }] }));
+    fs.writeFileSync(envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Values normalized', evidence: ['CRITERION SC1 | src/a.ts | normalizes value before use', `CHECK node -e "console.log('final gate')" | exit 0`], files: [{ path: 'src/a.ts', note: 'Normalizes values.' }] }));
     const validReceipt = await f.cli(['send', '--run', run, '--event', `@${path.join(run, previewEvent)}`, '--dry-run']); assert.deepEqual(validReceipt, { v: 1, valid: true });
     frame = await f.reply(run, submittedReceipt(slot!, 'agent-1', launchFrame)); assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8').replace(/\r\n/g, '\n'), 'export const value = 2;\n');
@@ -344,7 +344,7 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
     const launchFrame = frame;
     frame = await f.reply(run, launchedReceipt(slot!, 'writer-1', launchFrame));
     fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
-    fs.writeFileSync(slot!.envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'The scoped change is delivered.', evidence: ['CRITERION SC1 | src/a.ts | Preserved the value contract.'], files: [{ path: 'src/a.ts', note: 'Updated the value implementation.' }] }));
+    fs.writeFileSync(slot!.envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'The scoped change is delivered.', evidence: ['CRITERION SC1 | src/a.ts | Preserved the value contract.', 'CHECK node -e "process.exit(0)" | exit 0'], files: [{ path: 'src/a.ts', note: 'Updated the value implementation.' }] }));
     frame = await f.reply(run, submittedReceipt(slot!, 'writer-1', launchFrame));
     assert.equal(frame.await, 'decide', JSON.stringify(frame));
     assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));

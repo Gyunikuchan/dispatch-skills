@@ -327,6 +327,45 @@ test('amendment delta is absent without a delta base and for hotfix briefs', asy
   assert.equal(ports.fs.exists(path.join(runDir, 'implement.write-brief.9', 'delta.md')), false);
 });
 
+// SECTION: Contract self-check — briefs list contract commands and carry an integration gate failure until it passes.
+
+const contractFailure = { previous: 'i-T0', route: 'resume', rows: [
+  { command: 'npm run lint', exit: 1, logPath: 'run/logs/lint.log', passedBefore: true },
+  { command: 'npm run typecheck', exit: 2, logPath: 'run/logs/typecheck.log', passedBefore: false },
+] };
+
+test('contract self-check section renders commands and gate failures in full and delta briefs, and is absent without either key', async () => {
+  const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const render = async (input: Record<string, unknown>) => {
+    const runDir = tempDir(), ports = fakePorts();
+    memoryRunFs(ports, runDir);
+    const event = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.11', stage: 'task', input: { ...input, deltaBase } }, ports, { runDir, attempt: 1 }));
+    assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') throw new Error('no brief');
+    return { full: ports.fs.readText(event.path).split(runDir).join('<run>'), delta: ports.fs.readText(event.delta!.path) };
+  };
+  const checks = await render({ ...deltaInput, contractChecks: ['npm run lint', 'npm run typecheck'] });
+  for (const text of [checks.full, checks.delta]) {
+    assert.match(text, /## Contract self-check/);
+    for (const value of ['npm run lint', 'npm run typecheck', 'CHECK <command> | exit <code>']) assert.ok(text.includes(value), value);
+    assert.doesNotMatch(text, /Integration contract failure/);
+  }
+  const failed = await render({ ...deltaInput, contractFailure });
+  for (const text of [failed.full, failed.delta]) {
+    assert.match(text, /## Integration contract failure/);
+    for (const value of ['npm run lint', 'exit 1', 'run/logs/lint.log', 'npm run typecheck', 'exit 2', 'run/logs/typecheck.log', 'resubmit', 'REQUEST', 'BLOCKED']) assert.ok(text.includes(value), value);
+    assert.equal(text.split('passed before this task integrated').length - 1, 1, 'passed-before clause only for the passedBefore row');
+    assert.match(text, /npm run lint[^\n]*passed before this task integrated/);
+    assert.doesNotMatch(text, /## Contract self-check/);
+  }
+  const plain = await render(deltaInput);
+  const plainRun = tempDir(), plainPorts = fakePorts();
+  memoryRunFs(plainPorts, plainRun);
+  const baseline = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.11', stage: 'task', input: { ...deltaInput, deltaBase, contractChecks: [], contractFailure: null } }, plainPorts, { runDir: plainRun, attempt: 1 }));
+  assert.equal(baseline.type, 'BRIEF_READY'); if (baseline.type !== 'BRIEF_READY') return;
+  assert.equal(plainPorts.fs.readText(baseline.path).split(plainRun).join('<run>'), plain.full, 'empty keys render the same bytes as absent keys');
+  for (const text of [plain.full, plain.delta]) assert.doesNotMatch(text, /Contract self-check|Integration contract failure|CHECK <command>/);
+});
+
 test('amendment delta write failure fails the effect', async () => {
   const runDir = tempDir(), ports = fakePorts();
   memoryRunFs(ports, runDir);

@@ -6,7 +6,7 @@ import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEv
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
-import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
+import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, contractCommands, criterionEvidenceRows, missingCheckRows, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, reviewArtifactId, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
@@ -14,7 +14,7 @@ import { applyDispositions, bindingHash, evidenceAssessment, observe, openObserv
 import type { EvidenceObligation } from './implement-types.ts';
 import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, taskMapRows, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskDeclaredTests, taskScope, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskDeclaredTests, taskScope, taskTestPaths, worktreeName, writeConcurrency, type ContractFailure, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { amendPlan, replacementPlan, type RevisedPlan } from './revision.ts';
 import { reconcilePlan } from './plan-reconciliation.ts';
 import { slugOf } from './plan.ts';
@@ -101,6 +101,8 @@ export type Context = {
   trimmed: readonly string[] | null;
   /** Paths named by applied code-review fixes; trim rebinds these transient tests to their observed post-review content. */
   reviewFixed?: readonly string[];
+  /** Contract commands that passed at the latest accepted integration head; empty when that acceptance ran no gate. */
+  lastGate?: { head: string; passed: readonly string[] } | null;
 };
 
 /** The integrating task's conflict; `head` is the revision the next resolution attempt starts from. */
@@ -115,7 +117,7 @@ export type WriterRequest = { requestId: string; task: string; attempt: number; 
 export type AmendmentRecord = { id: string; kind?: 'amend' | 'replace'; reconciliation?: PlanReconciliation; retire?: readonly WriterRetirement[]; delta: readonly PlanEdit[]; notify: readonly { task: string; notice: string }[]; rationale: string; by: { by: 'user'; quote: string } | null; beforeHash: string; afterHash: string; removed: readonly string[]; dropped: Readonly<Record<string, readonly string[]>>; path: string; text: string };
 type AmendResume = { kind: 'schedule' } | { kind: 'admit'; task: string } | { kind: 'recheck'; task: string } | { kind: 'conflict'; conflict: Conflict };
 
-type CheckoutStep = 'observe' | 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'resolve' | 'discard' | 'reset' | 'rebase' | 'deliver' | 'trim' | 'cleanup';
+type CheckoutStep = 'observe' | 'init' | 'task' | 'relaunch' | 'resume' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'resolve' | 'discard' | 'reset' | 'rebase' | 'deliver' | 'trim' | 'cleanup';
 
 export type ImplementState =
 
@@ -143,7 +145,7 @@ export type ImplementState =
   | { tag: 'request-decision'; c: Context; request: WriterRequest; stage: 'orchestrator' | 'user'; orchestratorRationale: string | null }
   | { tag: 'approval'; c: Context }
   | { tag: 'needs-user'; c: Context; ids: readonly string[] }
-  | { tag: 'task-checkout'; c: Context; effectId: string; step: CheckoutStep; task: string | null; reason: string | null; conflict?: Conflict; input?: Readonly<Record<string, unknown>>; observe?: { durable: readonly string[]; rebind: readonly string[] } }
+  | { tag: 'task-checkout'; c: Context; effectId: string; step: CheckoutStep; task: string | null; reason: string | null; conflict?: Conflict; input?: Readonly<Record<string, unknown>>; observe?: { durable: readonly string[]; rebind: readonly string[] }; gate?: { notice: string } }
   | { tag: 'task-brief'; c: Context; effectId: string; task: string; notice?: string }
   | { tag: 'task-prewrite-snapshot'; c: Context; effectId: string; task: string }
   | { tag: 'tasks'; c: Context }
@@ -515,10 +517,12 @@ function briefDesignBinding(c: Context): Readonly<Record<string, unknown>> | nul
   };
 }
 
-function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readonly<Record<string, unknown>> {
+/** `revision: false` marks a notice that comes from the integration gate, not a plan revision. */
+function taskBriefInput(c: Context, record: TaskRecord, notice?: string, options: { revision?: boolean } = {}): Readonly<Record<string, unknown>> {
   const plan = c.plan!;
   const brief = selectTaskBrief(plan, record.id)!;
   const testPaths = taskTestPaths(plan, brief.task);
+  const checks = contractCommands(plan);
   return {
     planPath: c.planPath, planHash: c.planHash, governingSpec: c.governingSpec,
     designBinding: briefDesignBinding(c), reopenedDefects: c.designBinding?.repair,
@@ -535,16 +539,19 @@ function taskBriefInput(c: Context, record: TaskRecord, notice?: string): Readon
     },
     settledScope: { paths: brief.task.paths, approvedPaths: brief.task.paths, changes: brief.changes },
     ...(notice ? {
-      revisionNotice: { notice, revision: c.amendments.at(-1)?.id ?? null, rationale: c.amendments.at(-1)?.rationale ?? null },
+      ...(options.revision !== false ? { revisionNotice: { notice, revision: c.amendments.at(-1)?.id ?? null, rationale: c.amendments.at(-1)?.rationale ?? null } } : {}),
       previousBriefs: (record.briefs ?? []).map((row) => ({ path: row.path, sha256: row.sha256, scope: row.scope })),
     } : {}),
     criteria: brief.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, tests: criterion.tests, red: criterion.red, verify: criterion.verify, evidence: effectiveEvidence(criterion), preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
+    ...(checks.length ? { contractChecks: checks } : {}),
+    ...(record.contractFailure ? { contractFailure: record.contractFailure } : {}),
     envelopeSchema: {
       schemaVersion: 1, stage: 'COMPLETE',
       status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string',
       evidence: [
         'CRITERION <SC#> | <one path from that criterion Changes list> | <delivered behavior>',
         ...(testPaths.length ? ['RED-MATRIX <SC#> | <approved-test-path>:<leaf test> | exit <nonzero> test:<exact failing test name>[; test:<exact failing test name>]'] : []),
+        ...(checks.length ? ['CHECK <contract command> | exit <code>'] : []),
       ],
       concerns: 'required non-empty string array only for DONE_WITH_CONCERNS',
       missingContext: 'required non-empty string array only for NEEDS_CONTEXT', blockers: 'required non-empty string array only for BLOCKED',
@@ -582,11 +589,14 @@ function integrate(c: Context, id: string): S {
   return checkout(c, 'integrate', 'integrate', { task: id, candidate: record.candidate, expected: c.integration!.head }, id);
 }
 
-function accept(c0: Context, id: string, revision: string): S {
+/** `rows` are the gate results at `revision`; their passing contract commands attribute the next task's gate failure. */
+function accept(c0: Context, id: string, revision: string, rows: readonly VerifyRecord[] | null): S {
   const record = c0.tasks[id] as TaskRecord;
   const paths = planTask(c0, id)?.paths ?? [];
   const redMatrix = [...c0.redMatrix.filter((row) => !record.redRows.some((next) => next.id === row.id)), ...record.redRows];
-  const c = withTask({ ...c0, integration: { ...c0.integration!, head: revision }, redMatrix }, id, { status: 'accepted', handle: null, integrated: revision, reason: null, amendment: null, parked: null });
+  const contract = contractCommands(c0.plan!);
+  const lastGate = contract.length ? { lastGate: { head: revision, passed: (rows ?? []).filter((row) => row.exit === 0 && contract.includes(row.command)).map((row) => row.command) } } : {};
+  const c = withTask({ ...c0, integration: { ...c0.integration!, head: revision }, redMatrix, ...lastGate }, id, { status: 'accepted', handle: null, integrated: revision, reason: null, amendment: null, parked: null, contractFailure: null });
   return schedule(transientEvidence(markMutation(c, paths), id, revision));
 }
 
@@ -629,15 +639,23 @@ function verifyResolution(c: Context, conflict0: Conflict, revision: string, del
   const integration = new Set(plan.criteria.filter((row) => !owned.has(row.id) && row.changes.some((file) => paths.includes(file) && scope.has(file))).map((row) => row.id));
   for (const mapping of commandMappings(plan)) if (!mapping.final && (mapping.criteria.some((id) => integration.has(id)) || conflict.failed?.includes(mapping.command))) commands.set(mapping.command, { command: mapping.command, mapping });
   const next = conflict.replay ? { ...c, integration: { ...c.integration!, head: revision } } : withTask(c, conflict.task, { integrated: revision });
-  if (!commands.size) return completeResolution(next, { ...conflict, head: revision });
+  if (!commands.size) return completeResolution(next, { ...conflict, head: revision }, null);
   const batch = beginVerify(next, 'scoped', [...commands.values()], c.integration!.path);
   return { state: { tag: 'task-verify', c: batch.c, effectId: batch.id, task: conflict.task, purpose: 'resolution', previous: null, conflict: { ...conflict, head: revision } }, effects: [batch.effect] };
 }
 
-function completeResolution(c: Context, conflict: Conflict): S {
-  if (!conflict.replay) return accept(c, conflict.task, conflict.head);
+function completeResolution(c: Context, conflict: Conflict, rows: readonly VerifyRecord[] | null): S {
+  if (!conflict.replay) return accept(c, conflict.task, conflict.head, rows);
   const { archivedName, base, head } = conflict.replay;
   return checkout(c, 'rebase', 'init', { rebase: true, archivedName, replay: { base, head } }, null, archivedName, conflict);
+}
+
+/** Contract commands that passed on : the accepted gate there, else baseline passes at the integration base. A contract failure is attributable to a task only for these. */
+function contractPassedAt(c: Context, head: string): string[] {
+  const contract = contractCommands(c.plan!);
+  if (!contract.length) return [];
+  if (c.lastGate?.head === head) return [...c.lastGate.passed];
+  return head === c.integration!.base ? c.baseline.filter((row) => row.status === 'pass' && contract.includes(row.command)).map((row) => row.command) : [];
 }
 
 /** False once an amendment removed the conflicting task from the plan or its task record. */
@@ -701,6 +719,11 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return taskFailed(c, id, `Writer returned ${envelope.status}: ${envelope.summary}`, envelope.amendment ? resolveAmendment(plan, envelope.amendment) : null);
   const missing = criterionEvidenceRows(envelope.evidence, taskCriteria(plan, task));
   if (missing.length) return taskFailed(c, id, `Evidence is missing criterion rows for ${missing.join(', ')}.`);
+  // NOTE: any exit is admitted; the row proves the writer ran the check, and the integration gate judges the result.
+  // NOTE: an amendment may change contract commands after the brief this submission binds, so require only commands that brief issued.
+  const issued = record.briefs?.find((row) => row.envelopePath === record.brief?.envelopePath)?.contractChecks;
+  const unchecked = missingCheckRows(envelope.evidence, contractCommands(plan).filter((command) => !issued || issued.includes(command)));
+  if (unchecked.length) return taskFailed(c, id, `Evidence is missing CHECK rows for ${unchecked.join(', ')}.`);
   const redCriteriaOfTask = taskRedCriteria(plan, task);
   // Amendment overlays add criteria after parse, so their IDs join the recorded plan IDs.
   const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
@@ -934,9 +957,7 @@ function continueAmend(c: Context): S {
     const { c: next, id } = effectId({ ...c, rebriefQueue: rest }, 'write-brief');
     const record = next.tasks[rebrief.task] as TaskRecord;
     // NOTE: only a launched writer holds its delivered base; an unlaunched one reads the regenerated full brief at launch.
-    const base = record.handle ? record.deliveredBase : null;
-    const deltaBase = base ? { deltaBase: { path: base.path, sha256: base.sha256, seq: (record.deltaSeq ?? 0) + 1 } } : {};
-    return { state: { tag: 'task-brief', c: next, effectId: id, task: rebrief.task, notice: rebrief.notice }, effects: [{ kind: 'write-brief', id, stage: 'task', input: { ...taskBriefInput(next, record, rebrief.notice), ...deltaBase } }] };
+    return { state: { tag: 'task-brief', c: next, effectId: id, task: rebrief.task, notice: rebrief.notice }, effects: [{ kind: 'write-brief', id, stage: 'task', input: { ...taskBriefInput(next, record, rebrief.notice), ...liveDelta(record) } }] };
   }
   const resume = c.amendResume ?? { kind: 'schedule' as const };
   const done = { ...c, amendResume: null };
@@ -1040,9 +1061,11 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
         const head = c.integration!.head;
         return stay({ tag: 'integration-conflict', c, conflict: { task: id, candidate: (c.tasks[id] as TaskRecord).candidate as string, base: head, head, attempt: 0, paths: list('paths'), detail: text('detail'), evidence: [] } });
       }
-      const integrated = withTask(c, id, { integrated: text('revision') });
+      const previous = c.integration!.head;
+      const contract = contractCommands(c.plan!);
+      const integrated = withTask(c, id, { integrated: text('revision'), ...(contract.length ? { contractBase: { previous, passed: contractPassedAt(c, previous) } } : {}) });
       const commands = taskVerifyCommands(c, id);
-      return commands.length ? taskVerify(integrated, id, 'integration', c.integration!.path, commands, c.integration!.head) : accept(integrated, id, text('revision'));
+      return commands.length ? taskVerify(integrated, id, 'integration', c.integration!.path, commands, previous) : accept(integrated, id, text('revision'), null);
     }
     case 'resolve': {
       const conflict = state.conflict!;
@@ -1060,7 +1083,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       const conflict = state.conflict!;
       const integration = { ...c.integration!, head: conflict.base };
       const record = c.tasks[conflict.task];
-      const next = record ? withTask({ ...c, integration }, conflict.task, { status: 'pending', handle: null, baseline: null, brief: null, briefs: [], candidate: null, candidatePaths: [], admittedPaths: [], integrated: null, redRows: [], preserveDraft: false, parked: null }) : { ...c, integration };
+      const next = record ? withTask({ ...c, integration }, conflict.task, { status: 'pending', handle: null, baseline: null, brief: null, briefs: [], candidate: null, candidatePaths: [], admittedPaths: [], integrated: null, redRows: [], preserveDraft: false, parked: null, contractBase: null, contractFailure: null }) : { ...c, integration };
       return schedule(next);
     }
     case 'observe': {
@@ -1074,7 +1097,18 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       const snap = effectId(next, 'snapshot');
       return { state: { tag: 'trim-snapshot', c: snap.c, effectId: snap.id }, effects: [{ kind: 'snapshot', id: snap.id, since: c.lastFingerprint }] };
     }
-    case 'reset': return taskFailed(c, id, state.reason ?? 'Integration verification failed.');
+    case 'reset': {
+      if (!state.gate) return taskFailed(c, id, state.reason ?? 'Integration verification failed.');
+      // NOTE: the writer keeps its handle and attempt; `keep` moves the task branch back to its input and preserves the draft.
+      const record = c.tasks[id] as TaskRecord, integration = c.integration!;
+      const next = withTask(c, id, { status: 'running', failures: record.failures + 1, candidate: null, candidatePaths: [], integrated: null, redRows: [], parked: null });
+      return checkout(next, 'resume', 'task', { name: taskWorktreeName(record), revision: record.input, keep: true, links: integration.links, ignored: integration.ignored }, id, state.gate.notice);
+    }
+    case 'resume': {
+      const record = c.tasks[id] as TaskRecord, notice = state.reason ?? '';
+      const { c: next, id: brief } = effectId(c, 'write-brief');
+      return { state: { tag: 'task-brief', c: next, effectId: brief, task: id, notice }, effects: [{ kind: 'write-brief', id: brief, stage: 'task', input: { ...taskBriefInput(next, record, notice, { revision: false }), ...liveDelta(record) } }] };
+    }
     case 'rebase': {
       // NOTE: a replay conflict leaves the caller tree untouched and the prior integration archived; no task is re-pended.
       const manifest = isRecord(result['manifest']) ? result['manifest'] : {};
@@ -1143,13 +1177,13 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
         // NOTE: a regenerated brief keeps the live writer; earlier briefs stay valid while their scope equals the current one.
         const record = state.c.tasks[state.task] as TaskRecord;
         const brief = event.delta ? { ...full, delta: { path: event.delta.path, sha256: event.delta.sha256 } } : full;
-        const entry: TaskBriefHistory = { ...brief, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
+        const entry: TaskBriefHistory = { ...brief, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!), contractChecks: contractCommands(state.c.plan!) };
         // A delta extends the delivered base; without one, the writer has not launched and reads this full brief.
         const base = event.delta ? { deltaSeq: (record.deltaSeq ?? 0) + 1 } : delivered;
         const c = withTask(state.c, state.task, { brief, briefs: [...(record.briefs ?? []), entry], ...base });
         return continueAmend({ ...c, amended: [...c.amended, { task: state.task, briefPath: event.path, briefHash: event.sha256, notice: state.notice }] });
       }
-      const entry: TaskBriefHistory = { ...full, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!) };
+      const entry: TaskBriefHistory = { ...full, scope: taskScope(state.c.plan!, planTask(state.c, state.task)!), contractChecks: contractCommands(state.c.plan!) };
       return schedule(withTask(state.c, state.task, { status: 'running', handle: null, brief: full, briefs: [entry], ...delivered }));
     }
     case 'tasks': {
@@ -1177,8 +1211,10 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
       if (!rows) return failVerify(state, `${state.purpose} verification returned malformed command results.`);
       if (state.purpose === 'resolution' || state.purpose === 'reverify') {
         const task = state.task;
-        const failing = rows.filter((row) => row.status === 'regression');
-        if (!failing.length) return state.purpose === 'resolution' ? completeResolution(state.c, state.conflict!) : continueAmend(transientEvidence({ ...state.c, reverifyQueue: state.c.reverifyQueue.filter((id) => id !== task) }, task, state.c.integration!.head));
+        // NOTE: like the integration gate, a resolution that reintroduces a known-red id still fails a contract command that passed on its base.
+        const before = state.purpose === 'resolution' ? contractPassedAt(state.c, state.conflict!.base) : [];
+        const failing = rows.filter((row) => row.status === 'regression' || (row.exit !== 0 && before.includes(row.command)));
+        if (!failing.length) return state.purpose === 'resolution' ? completeResolution(state.c, state.conflict!, rows) : continueAmend(transientEvidence({ ...state.c, reverifyQueue: state.c.reverifyQueue.filter((id) => id !== task) }, task, state.c.integration!.head));
         if (state.purpose === 'resolution') state = { ...state, conflict: { ...state.conflict!, failed: [...new Set([...(state.conflict!.failed ?? []), ...failing.map((row) => row.command)])] } };
         return failVerify(state, failing.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; '));
       }
@@ -1188,8 +1224,14 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
         return greenVerify(concerns.length ? { ...state.c, concerns: [...new Set([...state.c.concerns, ...concerns])] } : state.c, state.task);
       }
       const regression = rows.filter((row) => row.status === 'regression');
-      if (regression.length) return failVerify(state, `${state.purpose === 'green' ? 'Task' : 'Integration'} verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
-      return state.purpose === 'green' ? integrate(state.c, state.task) : accept(state.c, state.task, (state.c.tasks[state.task] as TaskRecord).integrated as string);
+      if (state.purpose === 'integration') {
+        // NOTE: a known-red id still gates a contract command that passed before this task, since the task reintroduced it.
+        const before = (state.c.tasks[state.task] as TaskRecord).contractBase?.passed ?? [];
+        const gate = rows.filter((row) => row.status === 'regression' || (row.exit !== 0 && before.includes(row.command)));
+        if (gate.length) return contractGate(state, gate);
+      }
+      if (regression.length) return failVerify(state, `Task verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
+      return state.purpose === 'green' ? integrate(state.c, state.task) : accept(state.c, state.task, (state.c.tasks[state.task] as TaskRecord).integrated as string, rows);
     }
     case 'delivered-snapshot': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return startFailureFromEffect(state.c, event.cls, event.detail);
@@ -1198,6 +1240,33 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
     }
     default: return never(state, 'task state');
   }
+}
+
+/**
+ * Routes an integration regression. A failure of only contract commands that passed before this task integrated returns
+ * to the live writer under the attempt cap; any other failure resets the integration tree and fails the task.
+ */
+function contractGate(state: Extract<ImplementState, { tag: 'task-verify' }>, regression: readonly VerifyRecord[]): S {
+  const c = state.c, record = c.tasks[state.task] as TaskRecord, contract = contractCommands(c.plan!);
+  const isContract = (row: VerifyRecord): boolean => contract.includes(row.command);
+  const contractText = (row: VerifyRecord): string => `${row.command} (exit ${row.exit}; log ${row.logPath}${row.failureId ? `; ${row.failureId}` : ''})`;
+  const reason = `Integration verification failed: ${regression.map((row) => isContract(row) ? contractText(row) : `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`;
+  const failing = regression.filter(isContract);
+  if (!failing.length) return failVerify(state, reason);
+  const passed = record.contractBase?.passed ?? [];
+  const resume = regression.every((row) => passed.includes(row.command)) && record.handle !== null && !record.removed && record.failures + 1 < MAX_WRITE_ATTEMPTS;
+  const contractFailure: ContractFailure = { previous: record.contractBase?.previous ?? state.previous!, rows: failing.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, passedBefore: passed.includes(row.command) })), route: resume ? 'resume' : 'escalate' };
+  const next = { ...state, c: withTask(c, state.task, { contractFailure }) };
+  if (!resume) return failVerify(next, reason);
+  const notice = `Integration contract gate failed after this task integrated: ${failing.map(contractText).join('; ')}. Fix within task scope and resubmit, or send REQUEST or return BLOCKED.`;
+  const reset = checkout(next.c, 'reset', 'reset', { name: 'integration', revision: state.previous }, state.task, reason);
+  return { ...reset, state: { ...reset.state, gate: { notice } } as ImplementState };
+}
+
+/** Delta binding for a launched writer; an unlaunched one reads the regenerated full brief at launch. */
+function liveDelta(record: TaskRecord): { deltaBase?: { path: string; sha256: string; seq: number } } {
+  const base = record.handle ? record.deliveredBase : null;
+  return base ? { deltaBase: { path: base.path, sha256: base.sha256, seq: (record.deltaSeq ?? 0) + 1 } } : {};
 }
 
 /** Integration failures restore the previous accepted revision before the task is marked failed. */

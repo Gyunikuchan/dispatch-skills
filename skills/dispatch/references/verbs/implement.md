@@ -71,6 +71,19 @@ A submission against an older brief must still pass current scope admission. A w
 
 Attach a user quote for actual changed intent, a new external dependency/runtime prerequisite or discarded work under the [user gate](../decision-frame.md#user-gate-boundaries). Ordinary requirement retirement alone does not discard work. See [change handling](../change-handling.md) for evidence dispositions and durable continuation.
 
+### Integration contract gate
+
+Automated Tests commands that no criterion lists are contract commands. Each task writer runs them before it submits and records one `CHECK <command> | exit <code>` row per command its latest brief issued; an envelope without one of those rows fails, and any exit is admitted. Hotfix briefs carry no contract commands: every later integration and the final verification run each contract command, and a hotfix writer has no live route for a failure.
+
+After each integration the driver runs every contract command. A failure is attributed to the task only when the command passed on the head the task integrated onto, even when its failure identity is an accepted baseline failure:
+
+- Attributed failure, live writer under the attempt cap: the driver resets the integration head and rewinds the task worktree with the draft kept. Relay the launch record's `notice` and `deltaPath` as for an amendment; the writer fixes within its scope and resubmits, or sends `REQUEST`. If the writer session ended, send a `failed` receipt; the relaunch brief carries the failure.
+- Any other failure, or a criterion command that fails beside it: the task fails with a reason that names each log path, and the run reaches the failure decision. A retry brief carries the failure until acceptance.
+
+A conflict resolution that fails such a command is not accepted; it stays in the integration-conflict decision.
+
+Final verification still runs every contract command on the caller checkout.
+
 ### Integration conflicts
 
 When a candidate conflicts with accepted work, the driver keeps the conflict in the integration worktree. Resolve the conflict markers there within the involved tasks' paths, against both tasks' intent and criteria, then reply `integration-conflict` `resolve`; the driver commits the resolution and verifies affected criteria, and a refused or failing attempt returns the frame with evidence. To drop the candidate instead, first send a user-gated `AMEND` that records the discarded work, then reply `discard` naming that amendment. An open conflict blocks amendments that rewind or re-verify accepted work.

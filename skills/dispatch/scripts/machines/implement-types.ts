@@ -204,6 +204,19 @@ export function commandMappings(plan: ParsedPlan): CommandMapping[] {
   return [...byCommand].map(([command, record]) => ({ command, criteria: [...record.criteria].sort(), paths: [...record.paths].sort(), final: record.final })).sort((a, b) => a.command.localeCompare(b.command));
 }
 
+/** Contract commands: Automated Tests no criterion lists; writers self-check them and every task integration gates them. */
+export function contractCommands(plan: ParsedPlan): string[] {
+  return commandMappings(plan).filter((mapping) => !mapping.final && !mapping.criteria.length).map((mapping) => mapping.command);
+}
+
+const CHECK_ROW = /^CHECK\s+(.+?)\s*\|\s*exit\s+(-?\d+)$/;
+
+/** Contract commands with no `CHECK <command> | exit <code>` row; any integer exit counts, since integration judges regressions. */
+export function missingCheckRows(evidence: readonly string[], commands: readonly string[]): string[] {
+  const checked = new Set(evidence.flatMap((row) => { const match = CHECK_ROW.exec(row.trim()); return match ? [match[1] as string] : []; }));
+  return commands.filter((command) => !checked.has(command));
+}
+
 export function generatedCommands(plan: ParsedPlan): { command: string; path: string }[] {
   return plan.changes.flatMap((change) => change.action === 'GENERATED' && change.command ? [{ command: change.command, path: change.path }] : []);
 }

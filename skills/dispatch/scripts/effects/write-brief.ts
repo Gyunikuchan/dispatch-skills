@@ -38,6 +38,24 @@ function render(value: unknown): string {
 
 const sections = (rows: readonly (readonly [string, string])[]): string => rows.map(([heading, body]) => `## ${heading}\n\n${body}`).join('\n\n');
 
+/** Contract self-check and integration gate sections; empty or absent keys add none, so non-contract briefs keep their bytes. */
+function contractSections(input: Readonly<Record<string, unknown>>): [string, string][] {
+  const rows: [string, string][] = [];
+  const checks = Array.isArray(input['contractChecks']) ? input['contractChecks'].filter((item): item is string => typeof item === 'string') : [];
+  if (checks.length) rows.push(['Contract self-check', [
+    'After your last edit and before you submit, run each command below in your worktree in addition to the mapped commands. Record one `CHECK <command> | exit <code>` evidence row per command.',
+    ...checks.map((command) => `- \`${command}\``),
+  ].join('\n')]);
+  const failure = input['contractFailure'] as { rows?: unknown } | null | undefined;
+  const failed = failure && Array.isArray(failure.rows) ? failure.rows as { command: string; exit: number; logPath: string; passedBefore: boolean }[] : [];
+  if (failed.length) rows.push(['Integration contract failure', [
+    ...failed.map((row) => `- \`${row.command}\` exit ${row.exit}; log ${row.logPath}${row.passedBefore ? '; passed before this task integrated and fails after it' : ''}`),
+    '',
+    'Fix the failure within the task scope and resubmit. When the fix needs other paths, send a writer request (`REQUEST`) or return `BLOCKED`.',
+  ].join('\n')]);
+  return rows;
+}
+
 type DeltaBase = { path: string; sha256: string; seq: number };
 
 function deltaBaseOf(input: Readonly<Record<string, unknown>>): DeltaBase | null {
@@ -63,6 +81,7 @@ function deltaText(input: Readonly<Record<string, unknown>>, base: DeltaBase, va
     ['Task, graph, and worktree', render(task)],
     ['Settled scope', render(input['settledScope'])],
     ['Criteria', render(input['criteria'])],
+    ...contractSections(input),
   ])}\n`;
 }
 
@@ -82,6 +101,7 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   if (input['previousBriefs']) rows.push(['Previous brief provenance', render(input['previousBriefs'])]);
   rows.push(['Settled scope', render(input['settledScope'])]);
   rows.push(['Criteria', render(input['criteria'])]);
+  rows.push(...contractSections(input));
   if (input['designBinding']) rows.push(['Governing design and inherited contract', render(input['designBinding'])]);
   if (input['reopenedDefects']) rows.push(['Integration repair context', render(input['reopenedDefects'])]);
   rows.push(['Envelope schema', render(input['envelopeSchema'])]);

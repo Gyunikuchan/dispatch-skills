@@ -119,6 +119,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks.
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add an exported or shared symbol, helper, module, or type, apply the [quality bar's shared reuse criterion](quality-bar.md#shared). Record the names searched and why none was reused, or write `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
+- Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, the driver runs it after each integration, and final verification runs it on the caller checkout. Put broad or slow gates in a criterion Verify marked `[FINAL]`.
 - `[GENERATED]`: the driver reruns Command before completion verification; a task producing an Input must be a (transitive) prerequisite.
 
 - Satisfies: required on every criterion; name the governing spec REQ IDs.
