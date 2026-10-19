@@ -7,6 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
+import { hashes } from '../../scripts/generate-hashes.ts';
+import { executionTopology } from '../../skills/dispatch/scripts/domain/execution-config.ts';
+import type { Frame } from '../../skills/dispatch/scripts/core/types.ts';
 
 // SECTION: Writer receipts
 
@@ -17,6 +20,181 @@ const launchedReceipt = (slot: ReceiptSlot, handle: string, frame: EffortFrame) 
 const submittedReceipt = (slot: ReceiptSlot, handle: string, frame: EffortFrame) => ({ type: 'WRITE_RECEIPT', status: 'submitted', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle, envelopePath: slot.envelopePath, briefHash: slot.briefHash!, model: slot.model!, ...effortOf(frame) });
 // Delivery also returns blob ids for transient trimming; these cases assert transfer outcomes only.
 const transfer = ({ blobs: _blobs, ...rest }: Record<string, unknown>) => rest;
+
+test('fixed controller completes delivery and continuation after candidate runtime changes', async () => {
+  const f = fixture();
+  try {
+    f.git('config', 'core.autocrlf', 'false');
+    const candidate = path.join(f.repo, 'skills/dispatch');
+    fs.cpSync(f.skill, candidate, { recursive: true });
+    f.git('add', 'skills'); f.git('commit', '-qm', 'candidate baseline');
+    const session = await f.initialize();
+    const scratch = path.join(session, '.state/scratch');
+    fs.mkdirSync(scratch, { recursive: true });
+    const reference = fs.readFileSync(new URL('../../skills/dispatch/references/self-build.md', import.meta.url), 'utf8');
+    const extract = (heading: string, name: string) => {
+      const sections = reference.split(/^## /m).filter((section) => section.split(/\r?\n/, 1)[0] === heading);
+      assert.equal(sections.length, 1, `one ${heading} section`);
+      const blocks = [...sections[0]!.matchAll(/^```javascript\r?\n([\s\S]*?)^```\s*$/gm)];
+      assert.equal(blocks.length, 1, `one ${heading} javascript block`);
+      const helper = path.join(scratch, name);
+      fs.writeFileSync(helper, blocks[0]![1]!); return helper;
+    };
+    const captureHelper = extract('Capture controller', 'capture-controller.mjs');
+    const verifyHelper = extract('Verify controller', 'verify-controller.mjs');
+    const dest = path.join(scratch, 'controller/skills/dispatch'), inventory = path.join(scratch, 'controller-inventory.json');
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${path.join(f.dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' };
+    for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete env[key];
+    const invoke = (entry: string, args: string[]) => execFileSync(process.execPath, [entry, ...args], { cwd: f.repo, env, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const captured = JSON.parse(invoke(captureHelper, ['--target', f.repo, '--session', session, '--source', candidate, '--dest', dest, '--inventory', inventory])) as { controllerEntry: string; identity: string; files: { path: string; bytes: number; sha256: string }[] };
+    const controllerEntry = captured.controllerEntry;
+    const verify = () => {
+      const result = JSON.parse(invoke(verifyHelper, ['--dest', dest, '--inventory', inventory])) as { identity: string; status: string };
+      assert.equal(result.identity, captured.identity); assert.equal(result.status, 'verified');
+    };
+    const digest = (file: string) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    for (const file of captured.files) assert.equal(digest(path.join(candidate, file.path)), file.sha256, file.path);
+    for (const prefix of ['scripts/', 'references/', 'references/templates/']) assert.ok(captured.files.some((file) => file.path.startsWith(prefix)), prefix);
+    for (const name of ['config.local.jsonc', 'config.sample.jsonc', 'skill-hashes.json']) assert.ok(captured.files.some((file) => file.path === name), name);
+    fs.writeFileSync(f.entry, "throw new Error('obsolete overlay used');\n");
+    let latest: Frame;
+    const cli = (entry: string, args: string[]) => {
+      verify();
+      const frame = JSON.parse(invoke(entry, args)) as Frame;
+      latest = frame;
+      verify();
+      return frame;
+    };
+    const doctor = (entry: string) => {
+      verify();
+      const text = invoke(entry, ['doctor']);
+      verify();
+      const report = JSON.parse(invoke(entry, ['doctor', '--json'])) as { integrity: { status: string }; configPath: string };
+      assert.equal(report.integrity.status, 'ok', JSON.stringify(report));
+      verify(); return { text, report };
+    };
+    const before = doctor(controllerEntry);
+    assert.match(before.text, /^Node /);
+    const plan = path.join(f.repo, 'self-build.plan.md');
+    const runtimePath = 'skills/dispatch/scripts/lib/doctor.ts', manifestPath = 'skills/dispatch/skill-hashes.json';
+    const candidateCheck = `node -e "const cp=require('node:child_process'),assert=require('node:assert/strict');const text=cp.execFileSync(process.execPath,['skills/dispatch/scripts/dispatch.ts','doctor'],{encoding:'utf8',windowsHide:true,timeout:25000});const integrity=text.split(String.fromCharCode(10)).find(line=>line.startsWith('Integrity '));assert.equal(JSON.parse(integrity.slice(10)).status,'ok');assert.ok(text.startsWith('Candidate self-build Node '),'candidate diagnostic marker missing');"`;
+    const generateCandidateHashes = `node --input-type=module -e "import fs from 'node:fs';import {generateSkillHashes} from './skills/dispatch/scripts/lib/integrity.ts';fs.writeFileSync('skills/dispatch/skill-hashes.json',JSON.stringify(generateSkillHashes('skills/dispatch'),null,2)+String.fromCharCode(10));"`;
+    fs.writeFileSync(plan, `# Mark candidate diagnostics
+
+> **TL;DR:** Distinguish the candidate diagnostic label.
+> **Parent:** \`governing.spec.md\` · ${specHash()}
+> **Decide:** none
+> **Risk:** low — fixture output label
+> **Scope:** ${runtimePath}, ${manifestPath}
+
+## Key Decisions & Context
+- Preserve execution configuration and topology.
+
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | Mark diagnostics | Candidate diagnostics identify the candidate runtime. | none | SC1 |
+
+## Proposed Changes
+### T1 — Mark diagnostics
+#### [MODIFY] ${runtimePath}
+- Prefix the first Node label with Candidate self-build.
+#### [GENERATED] ${manifestPath}
+- Command: \`${generateCandidateHashes}\`
+- Inputs: ${runtimePath}
+
+## Success Criteria
+- [SC1] Candidate diagnostics identify the candidate runtime
+  - Satisfies: REQ-1
+  - Changes: ${runtimePath}, ${manifestPath}
+  - Verify: \`${candidateCheck}\`
+  - Evidence: verify
+  - Test rationale: Exercise the real candidate CLI separately after delivery.
+
+## Verification Plan
+### Automated Tests
+- None: Criterion Verify checks the candidate CLI at scoped and final gates.
+### Manual Verification
+- Observe candidate diagnostics.
+`);
+    f.git('add', 'self-build.plan.md'); f.git('commit', '-qm', 'self-build plan');
+    let frame = cli(controllerEntry, ['start', 'implement', '--session-dir', session, '--orchestrator', 'codex', '--level', 'low', '--level-source', 'explicit', '--', plan]);
+    const run = f.absoluteRun(frame.run);
+    const reply = (event: unknown) => {
+      const resolved = latest.reply.replaceAll('<skills-dir>', path.dirname(dest));
+      assert.ok(resolved.replaceAll('\\', '/').includes(controllerEntry.replaceAll('\\', '/')), resolved);
+      const named = /--event @(\S+)$/.exec(resolved)?.[1]; assert.ok(named, resolved);
+      const eventPath = path.resolve(f.repo, named);
+      fs.writeFileSync(eventPath, JSON.stringify(event));
+      return cli(controllerEntry, ['send', '--run', run, '--event', `@${eventPath}`]);
+    };
+    assert.equal(frame.data['kind'], 'baseline', JSON.stringify(frame));
+    const baselineFailures = frame.data['items'] as { failureId: string; diagnostic: string }[];
+    assert.equal(baselineFailures.length, 1);
+    assert.match(baselineFailures[0]!.diagnostic, /candidate diagnostic marker missing/);
+    frame = reply({ type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids: baselineFailures.map((item) => item.failureId) } });
+    assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
+    frame = reply({ type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Implement candidate fixture diagnostics' } });
+    assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
+    frame = reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Fixture-only diagnostic label, without routing changes.', gateScope: frame.data['gateScope'] } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    const [slot] = frame.data['tasks'] as (ReceiptSlot & { worktree: string; briefPath: string })[];
+    assert.ok(slot);
+    const brief = fs.readFileSync(slot.briefPath, 'utf8');
+    assert.ok(brief.replaceAll('\\', '/').includes(controllerEntry.replaceAll('\\', '/')), brief);
+    const launchFrame = frame;
+    frame = reply(launchedReceipt(slot, 'simulated-native-writer', launchFrame));
+    const originalConfig = fs.readFileSync(path.join(candidate, 'config.local.jsonc'));
+    const topology = executionTopology(JSON.parse(originalConfig.toString()) as Record<string, unknown>);
+    const writerRuntime = path.join(slot.worktree, runtimePath);
+    const originalRuntime = fs.readFileSync(writerRuntime, 'utf8');
+    assert.ok(originalRuntime.includes('`Node ${input.node}`'));
+    fs.writeFileSync(writerRuntime, originalRuntime.replace('`Node ${input.node}`', '`Candidate self-build Node ${input.node}`'));
+    hashes(slot.worktree);
+    const submittedRuntime = digest(writerRuntime), submittedManifest = digest(path.join(slot.worktree, manifestPath));
+    assert.notEqual(submittedRuntime, captured.files.find((file) => file.path === 'scripts/lib/doctor.ts')!.sha256);
+    fs.writeFileSync(slot.envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Candidate diagnostics identify the changed driver.', evidence: [`CRITERION SC1 | ${runtimePath} | candidate marker implemented with refreshed integrity metadata`], files: [{ path: runtimePath, note: 'Candidate diagnostic label.' }, { path: manifestPath, note: 'Refreshed candidate digests.' }] }));
+    frame = reply(submittedReceipt(slot, 'simulated-native-writer', launchFrame));
+    assert.equal(frame.await, 'evidence', JSON.stringify(frame));
+    assert.equal(fs.existsSync(slot.worktree), false);
+    assert.equal(digest(path.join(f.repo, runtimePath)), submittedRuntime);
+    assert.equal(digest(path.join(f.repo, manifestPath)), submittedManifest);
+    assert.deepEqual(fs.readFileSync(path.join(candidate, 'config.local.jsonc')), originalConfig);
+    assert.equal(executionTopology(JSON.parse(fs.readFileSync(path.join(candidate, 'config.local.jsonc'), 'utf8')) as Record<string, unknown>), topology);
+    const journalBefore = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    const launchesBefore = f.launches(); assert.ok(launchesBefore.length > 0, 'actual provider review worker launched');
+    // A fresh process resumes the delivered run without replaying its accepted delivery.
+    frame = cli(controllerEntry, ['status', '--run', run]);
+    assert.equal(frame.await, 'evidence', JSON.stringify(frame));
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), journalBefore);
+    const candidateResult = doctor(path.join(candidate, 'scripts/dispatch.ts')), controllerResult = doctor(controllerEntry);
+    assert.match(candidateResult.text, /^Candidate self-build Node /);
+    assert.match(controllerResult.text, /^Node /);
+    assert.equal(candidateResult.report.configPath, path.join(candidate, 'config.local.jsonc'));
+    assert.equal(controllerResult.report.configPath, path.join(dest, 'config.local.jsonc'));
+    assert.notEqual(candidateResult.report.configPath, path.join(f.skill, 'config.local.jsonc'));
+    assert.notEqual(controllerResult.report.configPath, path.join(f.skill, 'config.local.jsonc'));
+    frame = reply({ type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'Candidate doctor has valid integrity and the required candidate label; controller doctor remains unchanged.' } } });
+    assert.equal(frame.await, 'done', JSON.stringify(frame)); assert.equal(frame.data['outcome'], 'complete');
+    verify();
+    const journal = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    assert.equal(digest(path.join(f.repo, runtimePath)), submittedRuntime);
+    assert.equal(digest(path.join(f.repo, manifestPath)), submittedManifest);
+    assert.equal(f.launches().length, launchesBefore.length);
+    assert.equal(journal.includes('RUNTIME_REBOUND'), false);
+    const deliveries = (text: string) => text.trim().split('\n').map((line) => JSON.parse(line) as { type: string; data: { op?: string; result?: { transferred?: string[]; conflicts?: string[] } } }).filter((event) => event.type === 'CHECKOUT_DONE' && event.data.op === 'deliver' && event.data.result?.conflicts?.length === 0);
+    assert.equal(deliveries(journalBefore).length, 1, 'exactly one successful candidate delivery before suspension');
+    assert.equal(deliveries(journal).length, 1, 'continuation preserves exactly one successful candidate delivery');
+    assert.deepEqual(deliveries(journal)[0]!.data.result!.transferred, [runtimePath, manifestPath]);
+    const evidenceDir = process.env['TEST_SELF_BUILD_EVIDENCE_DIR'];
+    if (evidenceDir) {
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      fs.copyFileSync(inventory, path.join(evidenceDir, 'controller-inventory.json'));
+      fs.writeFileSync(path.join(evidenceDir, 'proof.json'), JSON.stringify({ controllerEntry, controllerIdentity: captured.identity, candidateHead: f.git('rev-parse', 'HEAD').trim(), candidateFiles: captured.files.map((file) => ({ path: file.path, sha256: digest(path.join(candidate, file.path)) })), submittedRuntime, submittedManifest, candidateResult, controllerResult, workerLaunches: launchesBefore, deliveryCount: deliveries(journal).length, candidateVerifyCommand: candidateCheck, continuation: 'status at evidence then send to complete without rebind' }, null, 2));
+      fs.writeFileSync(path.join(evidenceDir, 'events.jsonl'), journal);
+    }
+  } finally { f.cleanup(); }
+});
 
 test('prewrite-level: CLI approval reaches classification before writer receipt, verification and handoff', async () => {
   const f = fixture();
