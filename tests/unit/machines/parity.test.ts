@@ -61,7 +61,9 @@ const decide = (kind: 'escalation' | 'needs-user' | 'opt-in', answer: unknown): 
 const handed: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null });
 const authored: Step = { type: 'AUTHORED', path: 'x.plan.md' };
 const plan = { argument: 'x.plan.md', overrides: { kind: 'plan' } };
-const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(), prepared, wave([f(2)])];
+// A first match of an applied fix links and continues; the second match halts as a regression.
+const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(), prepared, wave([f(2)]), rule('accept', 2), applied, verified(), prepared, wave([f(3)])];
+const planRegression = [...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), rule('accept', 2), applied, parsed(), prepared, wave([f(3)])];
 const REVISED_SPEC = `${SPEC_SOURCE}\nRevised.\n`;
 const specSettled: Step = (effect) => specParsed(id(effect));
 const specRevisedSettled: Step = (effect) => specParsed(id(effect), 'fixture.spec.md', REVISED_SPEC);
@@ -98,7 +100,7 @@ const implementBrief: Step = (effect) => ({ type: 'BRIEF_READY', effectId: id(ef
 const implementClassification: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };
   const current = raw.tag === 'implement' && raw.child ? raw.child : state as ImplementState;
-  return { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScope: implementData(current)['gateScope'] } };
+  return { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScopeHash: implementData(current)['gateScopeHash'] } };
 };
 const implementLaunched: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };
@@ -233,9 +235,12 @@ test('review-target transitions table matches step', () => {
   const emptyPrepared = reviewMachine.step(emptyParent, { type: 'REVIEW_PREPARED', effectId: 'prepare', scope: { empty: true }, promptPaths: {} });
   if (emptyPrepared.state.tag !== 'target-check') throw new Error('empty target check');
   const emptyCheck = emptyPrepared.state;
+  // Replay records only tag changes, so the same-tree rerun of a red check needs a direct fixture.
+  const { targetManifest: _target, targetManifestRef: _targetRef, priorManifest: _prior, priorManifestRef: _priorRef, ...unboundCtx } = checking.state.c;
+  const redVerify: ReviewState = { tag: 'fix-verify', c: { ...unboundCtx, effectId: 'verify' }, clusters: [cluster], pass: 'main' };
   parity(reviewMachine, [
     [run('review'), prepared, wave([f(1)]), rule('accept'), applyFailed, applyFailed, applyFailed],
-    [run('review'), prepared, wave([f(1)]), rule('accept'), applied, verified(1), applied, verified(1), applied, verified(1)],
+    [run('review'), prepared, wave([f(1)]), rule('accept'), applied, verified(1), verified(1), applied, verified(1), verified(1), applied, verified(1), verified(1)],
     [run('review'), prepared, wave([f(1)]), rule('accept'), applied, unrunnable, repaired, verified()],
     [run('review', { ...plan }), prepared, wave([f(1)]), rule('accept'), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }])],
     [run('review', {}, 0)], [run('review', badPins)], [run('review'), failed], [run('review'), empty],
@@ -247,7 +252,7 @@ test('review-target transitions table matches step', () => {
     [run('review'), prepared, wave([f(1)]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review'), prepared, wave([f(1, { category: 'intent' }), f(1, { id: 'R1-F002', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'accept' } } },
-      decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'keep' } }), applied, verified(1), applied, failed],
+      decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'keep' } }), applied, verified(1), verified(1), applied, failed],
     [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', ['R1-F001']), applied, verified()],
     [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', [])],
     [run('review'), prepared, wave([f(1), f(1, { id: 'R1-F002', scope: 'adjacent', locus: 'b' })]),
@@ -267,7 +272,8 @@ test('review-target transitions table matches step', () => {
     ...respecs.map(([state, event]) => [
       { ...state, c: { ...(state as Exclude<ReviewState, { tag: 'booting' }>).c, spec: { ...observedCtx.spec, kind: 'plan' as const, governingSpec: { path: 'x.spec.md', hash: specHash() } } } } as ReviewState, event,
     ] as const),
-    [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }]]);
+    [emptyCheck, { type: 'REVIEW_TARGET_CHECKED', effectId: emptyCheck.effectId, manifestPath: 'empty.json', result: 'unchanged' }],
+    [redVerify, { type: 'VERIFY_DONE', effectId: 'verify', purpose: 'fix-verify', results: [{ command: 'c', exit: 1, logPath: 'l' }], fingerprint: {} }]]);
 });
 
 test('ask transitions table matches step', () => {
@@ -285,7 +291,7 @@ test('plan transitions table matches step', () => {
     [run('plan'), authored, parsed(), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('reject')],
     [run('plan', {}, 1), authored, parsed(), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, parsed()],
     [run('plan', {}, 1), authored, parsed(), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', [])],
-    [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
+    [run('plan'), authored, parsed(), ...planRegression, decide('escalation', 'stop')],
   ], planRespecs());
 });
 
@@ -349,7 +355,7 @@ function rootSpecScenarios(): readonly (readonly Step[])[] {
     [designRun(), { type: 'AUTHORED', path: 'x.design.md' }, (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'design', hash: designHash, parsed: design, defects: [] }), (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'design', hash: designHash, parsed: design, defects: [] }), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash: designHash } }],
     [run('plan', {}, 0), authored, parsed()], [run('plan'), authored, failed], [run('plan'), authored, parsed(), prepared, wave([])],
     [run('plan'), authored, parsed(), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('reject')],
-    [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
+    [run('plan'), authored, parsed(), ...planRegression, decide('escalation', 'stop')],
     [run('review'), empty], [run('review'), prepared, wave([])], [run('review'), prepared, failed],
     [run('review'), prepared, wave([f(1)]), rule('accept')],
     [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('reject')],

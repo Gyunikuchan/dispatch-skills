@@ -325,9 +325,10 @@ test('diagnostics report: multi-model aggregate leaves model attribution unavail
 
 // SECTION: Scope gate and redaction
 
-test('retro observations: rejects more than three observations', () => {
-  const result = retroObservations(['a', 'b', 'c', 'd'].map((id) => observation({ id })));
-  assert.deepEqual(result.values.map((v) => v.id), ['a', 'b', 'c']);
+test('retro observations: rejects more than twenty observations', () => {
+  const ids = Array.from({ length: 21 }, (_, i) => `o${i + 1}`);
+  const result = retroObservations(ids.map((id) => observation({ id })));
+  assert.deepEqual(result.values.map((v) => v.id), ids.slice(0, 20));
   assert.equal(result.rejected, 1);
   assert.deepEqual(retroObservations([]), { values: [], rejected: 0 });
 });

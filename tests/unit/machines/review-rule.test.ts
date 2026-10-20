@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
-import type { Event, HostEvent, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import { start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import type { Event, HostEvent, Machine, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { resolutionRounds, reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { parseReport } from '../../../skills/dispatch/scripts/domain/report.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { fakeHandlers, RUN_STARTED } from '../core/fixtures/machines.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -106,15 +111,21 @@ test('review-needs-user-accept: a user-accepted finding joins the fix batch', ()
 });
 
 test('regression → decide:escalation → escalated on stop', () => {
-  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001')]), rulings({ 'R1-F001': { ruling: 'accept' } })]);
-  assert.equal(fix.tag, 'fix');
-  const clusterId = fix.tag === 'fix' ? fix.clusters[0]?.clusterId : '';
-  const round2 = drive([
-    { type: 'FIXES_APPLIED', clusters: [{ clusterId, status: 'applied' }] },
-    { type: 'VERIFY_DONE', effectId: 'review.verify.1', purpose: 'fix-verify', results: [], fingerprint: {} },
-  ], fix);
+  const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 3 }, targets: { low: 1 } } } };
+  const applyAndVerify = (fix: ReviewState, n: number): ReviewState => {
+    assert.equal(fix.tag, 'fix');
+    const clusterId = fix.tag === 'fix' ? fix.clusters[0]?.clusterId : '';
+    return drive([
+      { type: 'FIXES_APPLIED', clusters: [{ clusterId, status: 'applied' }] },
+      { type: 'VERIFY_DONE', effectId: `review.verify.${n}`, purpose: 'fix-verify', results: [], fingerprint: {} },
+    ], fix);
+  };
+  const round2 = applyAndVerify(drive([started({ config }), prepared(1), waveDone(1, [finding('R1-F001')]), rulings({ 'R1-F001': { ruling: 'accept' } })]), 1);
   assert.equal(round2.tag, 'prepare');
-  const halted = drive([prepared(2), waveDone(2, [finding('R2-F001')])], round2);
+  const reopened = drive([prepared(2), waveDone(2, [finding('R2-F001')])], round2);
+  assert.equal(reopened.tag, 'rule', 'the first match of an applied fix reopens it');
+  const round3 = applyAndVerify(drive([rulings({ 'R2-F001': { ruling: 'accept' } })], reopened), 2);
+  const halted = drive([prepared(3), waveDone(3, [finding('R3-F001')])], round3);
   assert.equal(halted.tag, 'decide-escalation');
   assert.deepEqual(reviewMachine.project(halted).data['items'], ['R1-F001']);
   assert.match(reviewMachine.validate?.(halted, { type: 'DECISION', kind: 'escalation', answer: 'go' }) ?? '', /only "stop"/);
@@ -221,4 +232,45 @@ test('ruling resolution: intent finding ruled with a user quote', () => {
   assert.equal(fix.tag, 'fix');
   assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
   assert.equal('c' in fix && fix.c.findings[0]?.resolution, 'user: yes, rename it');
+});
+
+// SECTION: Rule frame transport and fallback evidence
+
+test('rule frame inlines finding text capped at 512 UTF-8 bytes while the findings file keeps the full text', async () => {
+  const long = `a${'é'.repeat(400)}`;
+  const exact = 'x'.repeat(512);
+  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { defect: long, requiredChange: exact })])]);
+  assert.equal(state.tag, 'rule');
+  const machine: Machine<number> = { transitions: [], initial: () => 0, step: (value) => ({ state: value, effects: [] }), awaitOf: () => 'rule', project: () => reviewMachine.project(state) };
+  const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');
+  const result = await start({ ports, runDir, runRel: 'runs/001-review', machine, handlers: fakeHandlers, runStarted: RUN_STARTED });
+  const [row] = result.frame?.data['findings'] as Record<string, unknown>[];
+  const defect = String(row?.['defect']);
+  assert.match(defect, / \[truncated\]$/);
+  assert.equal(Buffer.byteLength(defect), 511, 'cut on a code-point boundary within 512 bytes');
+  assert.ok(long.startsWith(defect.slice(0, -' [truncated]'.length)));
+  assert.equal(row?.['requiredChange'], exact, 'text at the cap is unchanged');
+  assert.deepEqual([row?.['id'], row?.['severity'], row?.['category'], row?.['locus']], ['R1-F001', 'MUST', 'correctness', 'src/a.ts:L3']);
+  const stored = JSON.parse(fs.readFileSync(path.join(runDir, 'rule.findings.json'), 'utf8')) as Record<string, unknown>[];
+  assert.equal(stored[0]?.['defect'], long);
+});
+
+test('empty fallback slot concern - a fallback slot with no findings is reported, productive and primary slots are not', () => {
+  const reserve = { slot: 'codex[0]', state: 'reserve', by: 'claude[0]', model: 'opus', record: 'reserve claude[0] for codex[0]', reason: 'quota' };
+  const native = { slot: 'codex[0]', state: 'native', sourceKey: 'codex[0]#fallback', reason: 'quota', records: [] };
+  const cases: [string, Record<string, unknown>, unknown[], string[]][] = [
+    ['empty reserve', reserve, [], ['review slot codex[0]: no findings after fallback to opus']],
+    ['empty native fallback', native, [], ['review slot codex[0]: no findings after fallback to native']],
+    ['productive reserve', reserve, [finding('R1-F001', { sources: ['claude[0]'] })], []],
+    ['productive native fallback', native, [finding('R1-F001', { sources: ['codex[0]'] })], []],
+    ['empty primary', { slot: 'codex[0]', state: 'success' }, [], []],
+  ];
+  for (const [name, slot, findings, concerns] of cases) {
+    const state = drive([started(), prepared(1), { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [slot], findings: findings as never }]);
+    assert.ok('c' in state, name);
+    assert.deepEqual(state.c.concerns ?? [], concerns, name);
+    const data = reviewMachine.project(state).data;
+    const projected = state.tag === 'settled' ? (data['completion'] as Record<string, unknown>)['concerns'] : data['concerns'];
+    assert.deepEqual(projected ?? [], concerns, name);
+  }
 });

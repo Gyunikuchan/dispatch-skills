@@ -1,6 +1,6 @@
 # Dispatch retro
 
-Name up to 3 dispatch instruction, driver or routing defects beyond measured time, tokens, failures and rounds.
+Name up to 20 dispatch instruction, driver or routing defects beyond measured time, tokens, failures and rounds.
 
 Reply `RETRO` with `observations`: `[{id,component,category,evidence,impact,proposedFix}]`; `[]` means no friction.
 

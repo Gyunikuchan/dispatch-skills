@@ -10,6 +10,7 @@ import { governedPlanText } from '../domain/plan.ts';
 import { attemptOf, restoreSessionPaths, runPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
 import { taskDeclaredTests } from '../machines/implement-tasks.ts';
+import { ruleFindingRow } from '../machines/review.ts';
 import { dryRunGuidance, faultFrame, oneLine, projectFrame, recoveryFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, LayoutUnsupported, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
@@ -563,7 +564,7 @@ function findingsFrame(ports: Ports, runDir: string, frame: Frame, dryRun = fals
     // NOTE: failed frame publication must not roll back completed effects.
     try { ports.fs.writeAtomic(file, `${JSON.stringify(findings, null, 2)}\n`); } catch { return frame; }
   }
-  const summaries = findings.map(({ id, severity, category, locus }) => ({ id, severity, category, locus }));
+  const summaries = findings.map(ruleFindingRow);
   return { ...frame, data: { ...frame.data, findings: summaries, findingsPath: runPaths(frame.run).ruleFindings().replace(/\\/g, '/') } };
 }
 

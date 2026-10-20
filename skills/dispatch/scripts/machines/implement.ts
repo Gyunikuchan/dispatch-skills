@@ -1,9 +1,11 @@
 // @ts-check
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { qualitySections } from '../domain/prompt.ts';
 import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
+import { effectDigest } from '../domain/effect-digest.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, contractCommands, criterionEvidenceRows, missingCheckRows, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
@@ -254,9 +256,15 @@ function startReview(c0: Context): S {
   return fromPlanReview(c0, result);
 }
 
+/** Carries an embedded review's non-blocking concerns (fallback slots, fix-check flakes) into the run so the concerns gate and handoff report them. */
+function withReviewConcerns(c: Context, review: ReviewState): Context {
+  const items = 'c' in review ? review.c.concerns ?? [] : [];
+  return items.some((item) => !c.concerns.includes(item)) ? { ...c, concerns: [...new Set([...c.concerns, ...items])] } : c;
+}
+
 function fromPlanReview(c0: Context, result: Step<ReviewState>): S {
   const review = result.state;
-  const c = { ...c0, counters: reviewCtxCounters(review, c0.counters), planReview: review };
+  const c = { ...withReviewConcerns(c0, review), counters: reviewCtxCounters(review, c0.counters), planReview: review };
   switch (review.tag) {
     case 'settled': case 'skipped': return parsePlan(c, 'rebind');
     case 'failed': return review.code === 'stale-design-spec' ? stay({ tag: 'stopped', c, code: review.code, summary: review.detail }) : beginFailure(c, `plan review failed: ${review.detail}`);
@@ -334,6 +342,9 @@ function gateScope(c: Context): LevelGateScope {
   };
 }
 
+/** The level answer binds this canonical digest instead of echoing the scope. */
+const gateScopeHash = (scope: LevelGateScope): string => `sha256:${effectDigest(scope)}`;
+
 function beginLevelGate(c: Context, resume: LevelGateResume): S {
   if (c.levelGatePassed) return resumeLevelGate(c, resume);
   if (!c.plan || !c.planHash) return beginFailure(c, 'Cannot classify implementation level before the governing plan is bound.');
@@ -356,7 +367,7 @@ function finishLevelGate(c0: Context, assessment: LevelClassificationAnswer, cho
   delete settled.pendingWriter;
   const c: Context = {
     ...settled, run: { ...c0.run, level: selected }, writer: writer.value, writerError: null,
-    levelGatePassed: true, gateScope: assessment.gateScope, levelAssessment: assessment, levelChoice,
+    levelGatePassed: true, gateScope: c0.gateScope, levelAssessment: assessment, levelChoice,
   };
   return resumeLevelGate(c, resume);
 }
@@ -384,10 +395,38 @@ function beginPostApproval(c0: Context): S {
 
 // SECTION: Task scheduler
 
+/** `snapshot: true` asks the checkout to keep a task draft before its reset; the ref is bound to the allocated effect id. */
 function checkout(c0: Context, step: CheckoutStep, op: Exclude<CheckoutOp, 'scope-rebase'>, input: Readonly<Record<string, unknown>>, task: string | null = null, reason: string | null = null, conflict?: Conflict): S {
   if (step === 'rebase') c0 = retainReplay(c0, input, conflict);
   const { c, id } = effectId(c0, 'checkout');
-  return { state: { tag: 'task-checkout', c, effectId: id, step, task, reason, ...(conflict ? { conflict, input } : {}) }, effects: [{ kind: 'checkout', id, op, input }] };
+  const bound = input['snapshot'] === true && task ? { ...input, snapshot: `${draftPrefix(c)}/${draftSegment(task)}-${draftSegment(id)}` } : input;
+  return { state: { tag: 'task-checkout', c, effectId: id, step, task, reason, ...(conflict ? { conflict, input } : {}) }, effects: [{ kind: 'checkout', id, op, input: bound }] };
+}
+
+const draftSegment = (value: string): string => value.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/\.{2,}/g, '.').replace(/^[^a-z0-9]+|[.-]+$/g, '') || 'x';
+
+/**
+ * Run-owned namespace for kept task drafts: a hash of the full session directory path plus the run ordinal. Linked
+ * checkouts share one ref store, so the path (not the folder name) keeps same-named sessions from replaying or deleting
+ * each other's drafts, and delivery cleanup deletes exactly its own.
+ */
+function draftPrefix(c: Context): string {
+  // NOTE: the integration worktree is `<session>/.state/runs/<run>/wt/integration`; split on both separators for Windows paths.
+  const parts = (c.integration?.path ?? '').split(/[\\/]/);
+  const override = c.run.overrides['sessionDir'];
+  const session = sessionIdentity(typeof override === 'string' && override ? override : parts.slice(0, -5).join('/')), run = parts.at(-3) ?? '';
+  return `refs/dispatch/drafts/${bindingHash(session).slice(0, 8)}-${/^\d+/.exec(run)?.[0] ?? draftSegment(run)}`;
+}
+
+/** Normalizes a session path for hashing; drive-letter and UNC paths fold case because Windows resolves them case-insensitively. */
+function sessionIdentity(dir: string): string {
+  const slashed = dir.replace(/\\/g, '/').replace(/(?<=.)\/+/g, '/').replace(/(?<=.)\/$/, '');
+  return /^(?:[a-z]:\/|\/\/)/i.test(slashed) ? slashed.toLowerCase() : slashed;
+}
+
+/** Records a draft the checkout kept before a task reset so the user can recover it. */
+function keptDraft(c: Context, id: string, result: Readonly<Record<string, unknown>>): Context {
+  return typeof result['snapshot'] === 'string' ? { ...c, concerns: [...new Set([...c.concerns, `${id}: prior draft kept at ${result['snapshot']}`])] } : c;
 }
 
 function retainReplay(c: Context, input: Readonly<Record<string, unknown>>, conflict?: Conflict): Context {
@@ -404,7 +443,7 @@ function resumeReplay(c: Context): S {
 
 function captureTaskBaseline(c0: Context, id: string, incrementAttempt: boolean): S {
   const record = c0.tasks[id] as TaskRecord;
-  if (!record.worktree) return checkout(withTask(c0, id, { worktreeNames: [...new Set([...(record.worktreeNames ?? []), worktreeName('task', id)])] }), 'task', 'task', { name: worktreeName('task', id), revision: c0.integration?.head, reset: true, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] }, id);
+  if (!record.worktree) return checkout(withTask(c0, id, { worktreeNames: [...new Set([...(record.worktreeNames ?? []), worktreeName('task', id)])] }), 'task', 'task', { name: worktreeName('task', id), revision: c0.integration?.head, reset: true, snapshot: true, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] }, id);
   const prepared = withTask(c0, id, {
     ...(incrementAttempt ? { attempt: record.attempt + 1 } : {}), status: 'pending', modelIndex: 0, handle: null,
     baseline: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false,
@@ -480,7 +519,8 @@ function schedule(c: Context): S {
     }
     if (record.preserveDraft && record.worktree) return record.input === integration.head ? captureTaskBaseline(c, next.id, true) : rebaseTaskDraft(c, next.id);
     return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false }), 'task', 'task',
-      { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links, ignored: integration.ignored }, next.id);
+      // NOTE: `draftBase` lets the checkout tell an untouched worktree from a draft when the integration head moved since creation.
+      { name: worktreeName('task', next.id), revision: integration.head, reset: true, snapshot: true, ...(record.worktree && record.input ? { draftBase: record.input } : {}), links: integration.links, ignored: integration.ignored }, next.id);
   }
   if (slotTasks(c.tasks).length) return stay({ tag: 'tasks', c });
   if (!c.reverifyQueue.length && plan.tasks.every((task) => c.tasks[task.id]?.status === 'accepted')) {
@@ -818,7 +858,7 @@ function taskReceipt(c: Context, event: TaskReceipt): S {
       if (record.removed) return schedule(retireTask(c, id, `writer failed: ${event.detail}`));
       const reason = `${event.model}: ${event.detail}`;
       if (record.modelIndex + 1 >= (c.writer?.models.length ?? 0)) return taskFailed(c, id, `Writer cascade exhausted: ${reason}`);
-      return checkout(withTask(c, id, { status: 'submitted', handle: null }), 'relaunch', 'reset', { name: taskWorktreeName(record), revision: record.input }, id, reason);
+      return checkout(withTask(c, id, { status: 'submitted', handle: null }), 'relaunch', 'reset', { name: taskWorktreeName(record), revision: record.input, snapshot: true }, id, reason);
     }
     case 'cancelled': return record.removed ? schedule(retireTask(c, id, 'cancellation attested')) : taskFailed(c, id, 'Writer cancelled.');
     default: return never(event, 'write receipt');
@@ -978,10 +1018,11 @@ function redReplay(c: Context, id: string): S {
 
 type RedRun = { command: string; mapping: CommandMapping; red: RedProbe };
 
-/** One plan-declared RED command per red criterion, with `{files}` expanded to its RED-MATRIX paths. */
+/** One plan-declared RED command per red criterion, with `{files}` expanded to its RED-MATRIX and declared test paths. */
 function redRun(c: Context, criterion: PlanCriterion, rows: readonly RedMatrixRow[]): RedRun | string {
   const own = rows.filter((row) => row.id === criterion.id);
-  const paths = [...new Set(own.map((row) => row.path))];
+  // NOTE: a RED row cites one leaf test; the declared paths make the replay cover every criterion test file the writer added.
+  const paths = [...new Set([...own.map((row) => row.path), ...criterion.tests])].sort();
   const command = expandRed(criterion.red ?? '', paths);
   if (command === null) return `${criterion.id} RED command cannot take unsafe test path ${paths.find(unsafeRedPath) ?? paths.join(', ')}.`;
   const baselineCommands = new Set(criterion.verify.map((item) => item.command));
@@ -1035,7 +1076,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       const worktree = text('path');
       const name = worktree.split(/[\\/]/).at(-1);
       const record = c.tasks[id] as TaskRecord;
-      const next = withTask(c, id, { worktree, input: text('revision'), worktreeNames: [...new Set([...(record.worktreeNames ?? []), ...(name ? [name] : [])])] });
+      const next = withTask(keptDraft(c, id, result), id, { worktree, input: text('revision'), worktreeNames: [...new Set([...(record.worktreeNames ?? []), ...(name ? [name] : [])])] });
       return captureTaskBaseline(next, id, false);
     }
     case 'relaunch': {
@@ -1043,7 +1084,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       // NOTE: a relaunched writer holds no earlier brief, so it reads the latest full brief and binds its hash.
       const { delta: _delta, ...brief } = record.brief ?? { path: '', sha256: '', envelopePath: '', checkpointPath: '' };
       const delivered = record.brief ? { brief, deliveredBase: { path: brief.path, sha256: brief.sha256, envelopePath: brief.envelopePath }, deltaSeq: 0 } : {};
-      return stay({ tag: 'tasks', c: withTask(c, id, { status: 'running', attempt: record.attempt + 1, handle: null, modelIndex: record.modelIndex + 1, ...delivered }) });
+      return stay({ tag: 'tasks', c: withTask(keptDraft(c, id, result), id, { status: 'running', attempt: record.attempt + 1, handle: null, modelIndex: record.modelIndex + 1, ...delivered }) });
     }
     case 'scope-rebase': {
       if (result['conflict'] === true || !text('path') || !text('revision')) return taskFailed(c, id, `Scope rebase preserved the original draft but could not apply it cleanly: ${list('conflicts').join(', ') || text('detail') || 'invalid transfer result'}.`);
@@ -1147,7 +1188,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       const delivered = [...list('transferred'), ...list('already')];
       const blobs = isRecord(result['blobs']) ? Object.fromEntries(Object.entries(result['blobs']).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {};
       const names = [...new Set([...[...Object.entries(c.tasks), ...(c.retiredTasks ?? []).map((record) => [record.id, record] as const)].flatMap(([task, record]) => [worktreeName('task', task), worktreeName('red', task), ...(record.worktreeNames ?? []), ...(record.worktree ? [taskWorktreeName(record)] : [])]), 'integration'])];
-      return checkout({ ...markMutation(c, delivered), phase: 'delivered', deliveredBlobs: blobs, changedPaths: [...new Set([...c.changedPaths, ...delivered])].sort() }, 'cleanup', 'cleanup', { names, links: c.integration!.links });
+      return checkout({ ...markMutation(c, delivered), phase: 'delivered', deliveredBlobs: blobs, changedPaths: [...new Set([...c.changedPaths, ...delivered])].sort() }, 'cleanup', 'cleanup', { names, links: c.integration!.links, drafts: draftPrefix(c) });
     }
     case 'cleanup': {
       const { c: next, id: snapshotId } = effectId(c, 'snapshot');
@@ -1369,7 +1410,7 @@ function startCodeReview(c0: Context): S {
 
 function fromCodeReview(c0: Context, result: Step<ReviewState>): S {
   const review = result.state;
-  const c = { ...c0, counters: reviewCtxCounters(review, c0.counters), codeReview: review };
+  const c = { ...withReviewConcerns(c0, review), counters: reviewCtxCounters(review, c0.counters), codeReview: review };
   switch (review.tag) {
     case 'settled': case 'skipped': case 'empty': return startGeneratedOrFinal(c);
     case 'failed': return beginFailure(c, `code review failed: ${review.detail}`);
@@ -1619,7 +1660,8 @@ function applyImplement(state: ImplementState, event: Event): S {
     case 'level-classification': {
       if (event.type === 'DECISION' && event.kind === 'run-stop') return stop(state.c, 'User stopped before implementation; no production writer was launched.');
       if (event.type !== 'DECISION' || event.kind !== 'level-classification' || !isRecord(event.answer)) return stay(state);
-      const assessment = event.answer as unknown as LevelClassificationAnswer;
+      // NOTE: the stored assessment binds the gate's own scope; validation already matched the answer hash.
+      const assessment: LevelClassificationAnswer = { evaluatedLevel: event.answer['evaluatedLevel'] as LevelClassificationAnswer['evaluatedLevel'], rationale: String(event.answer['rationale']), gateScopeHash: gateScopeHash(state.gateScope) };
       if (state.c.run.levelSource === 'explicit' && levelOf(assessment.evaluatedLevel) > levelOf(state.c.run.level)) {
         return stay({ tag: 'level-recommendation', c: { ...state.c, levelAssessment: assessment }, assessment, resume: state.resume });
       }
@@ -2013,8 +2055,8 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
       amended: state.c.amended.map((row) => ({ task: row.task, launchPath: launchRel(row.task) })),
     };
     case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity, choose an inline hotfix, or stop.', ['accept-known-red', 'inline-hotfix', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
-    case 'level-classification': return { ...decideData('level-classification', 'Assess the complete settled implementation scope once before the first production write. Return the evaluated level, concise evidence-based rationale and this exact gateScope.', ['low', 'medium', 'high'], [{ level: state.c.run.level, source: state.c.run.levelSource }]), gateScope: state.gateScope, settledLevel: state.c.run.level, stopAllowed: true };
-    case 'level-recommendation': return { ...decideData('level-recommendation', `The implementation assessment is ${state.assessment.evaluatedLevel}: ${state.assessment.rationale}. Choose whether to adopt it or retain the explicit ${state.c.run.level}.`, ['adopt', 'retain']), assessedLevel: state.assessment.evaluatedLevel, rationale: state.assessment.rationale, explicitLevel: state.c.run.level, gateScope: state.assessment.gateScope, stopAllowed: true };
+    case 'level-classification': return { ...decideData('level-classification', 'Assess the complete settled implementation scope once before the first production write. Return the evaluated level, concise evidence-based rationale and this exact gateScopeHash.', ['low', 'medium', 'high'], [{ level: state.c.run.level, source: state.c.run.levelSource }]), gateScope: state.gateScope, gateScopeHash: gateScopeHash(state.gateScope), settledLevel: state.c.run.level, stopAllowed: true };
+    case 'level-recommendation': return { ...decideData('level-recommendation', `The implementation assessment is ${state.assessment.evaluatedLevel}: ${state.assessment.rationale}. Choose whether to adopt it or retain the explicit ${state.c.run.level}.`, ['adopt', 'retain']), assessedLevel: state.assessment.evaluatedLevel, rationale: state.assessment.rationale, explicitLevel: state.c.run.level, gateScope: state.c.gateScope, stopAllowed: true };
     case 'integration-conflict': {
       const conflict = state.conflict;
       return {
@@ -2051,7 +2093,9 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
       summary: state.verify.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, diagnostic: row.diagnostic, status: row.status, failureId: row.failureId })),
       criteria: state.ids.map((id) => {
         const criterion = state.c.plan!.criteria.find((entry) => entry.id === id);
-        return { id, title: criterion?.title ?? id, evidenceClass: criterion?.evidence, planHash: state.c.planHash, mutationEpoch: state.c.mutationEpoch, ...(state.c.obligations?.[id] ? { obligation: state.c.obligations[id] } : {}) };
+        // The criterion's last verify command with a journaled result names the log the host inspects before judging.
+        const log = (criterion?.verify ?? []).map((item) => state.verify.findLast((row) => row.command === item.command) ?? state.c.records[item.command]).findLast((row) => !!row?.logPath);
+        return { id, title: criterion?.title ?? id, evidenceClass: criterion?.evidence, planHash: state.c.planHash, mutationEpoch: state.c.mutationEpoch, ...(log ? { logPath: log.logPath, exit: log.exit } : {}), ...(state.c.obligations?.[id] ? { obligation: state.c.obligations[id] } : {}) };
       }),
     };
     case 'complete': return { outcome: 'complete', summary: state.summary, completion: completionData(state.c) };
@@ -2080,6 +2124,10 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
 function launchAction(record: TaskRecord): 'launch' | 'running' | 'cancel' {
   return record.removed ? record.retirement === 'retain' ? 'running' : 'cancel' : record.handle ? 'running' : 'launch';
 }
+
+// NOTE: mirrors `selfCheckCommand` in dispatch.ts; machines may not import the entry point, so resolve it beside this layer.
+const DISPATCH_ENTRY = fileURLToPath(new URL('../dispatch.ts', import.meta.url));
+const selfCheckCommand = (runDir: string, eventPath: string): string => `node "${DISPATCH_ENTRY}" send --run "${runDir}" --event "@${eventPath}" --dry-run`;
 
 /** Run-relative launch record path; one directory per task keeps concurrent writers apart. */
 export function launchRel(task: string): string {
@@ -2118,6 +2166,8 @@ export function implementLaunches(state: ImplementState, runDir: string): { path
         ...(record.retirement ? { retirement: record.retirement } : {}),
         ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
         ...(notice !== undefined ? { notice } : {}),
+        // NOTE: the self-check replays the writer's receipt as its handle, so it exists only once a launch receipt bound one.
+        ...(record.handle && record.brief?.path ? { selfCheck: selfCheckCommand(runDir, path.join(path.dirname(record.brief.path), 'self-check.event.json')) } : {}),
         receipts,
       },
     };
@@ -2233,7 +2283,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     if (event.type !== 'DECISION' || event.kind !== 'level-classification' || !isRecord(event.answer)) return 'event.kind: expected level-classification or run-stop at this gate.';
     const answer = event.answer;
     if (!['low', 'medium', 'high'].includes(String(answer['evaluatedLevel'])) || !nonEmpty(answer['rationale']) || answer['rationale'].trim().length > 500) return 'event.answer: level assessment requires a low/medium/high level and rationale up to 500 characters.';
-    if (!state.c.gateScope || stableValue(answer['gateScope']) !== stableValue(state.gateScope)) return 'event.answer.gateScope: assessment must include the exact complete scope snapshot shown in the frame.';
+    if (!state.c.gateScope || answer['gateScopeHash'] !== gateScopeHash(state.gateScope)) return 'event.answer.gateScopeHash: assessment must bind the exact gateScopeHash shown in the frame.';
     return null;
   }
   if (state.tag === 'level-recommendation') {

@@ -53,8 +53,12 @@ test('review-target fix candidates are adopted only after unchanged successful v
   const settled = reviewMachine.step(checked.state, { type: 'REVIEW_TARGET_CHECKED', effectId: checked.effects[0]!.id, manifestPath: 'verified.json', result: 'unchanged' });
   assert.equal(settled.state.tag, 'settled'); if (!('c' in settled.state)) return;
   assert.equal(settled.state.c.targetManifest, 'verified.json'); assert.equal(settled.state.c.fixCandidate, undefined);
-  const red = reviewMachine.step(verify.state, { type: 'VERIFY_DONE', effectId: verify.effects[0]!.id, purpose: 'fix-verify', results: [{ exit: 1, command: 'check', logPath: 'red.log' }], fingerprint: {} });
-  const retry = reviewMachine.step(red.state, { type: 'REVIEW_TARGET_CHECKED', effectId: red.effects[0]!.id, manifestPath: 'still-candidate.json', result: 'unchanged' });
+  const results = [{ exit: 1, command: 'check', logPath: 'red.log' }];
+  const red = reviewMachine.step(verify.state, { type: 'VERIFY_DONE', effectId: verify.effects[0]!.id, purpose: 'fix-verify', results, fingerprint: {} });
+  const recheck = reviewMachine.step(red.state, { type: 'REVIEW_TARGET_CHECKED', effectId: red.effects[0]!.id, manifestPath: 'still-candidate.json', result: 'unchanged' });
+  assert.equal(recheck.state.tag, 'fix-verify'); assert.deepEqual(recheck.effects[0]?.kind === 'verify' && recheck.effects[0].commands, [{ command: 'check' }]);
+  const rerun = reviewMachine.step(recheck.state, { type: 'VERIFY_DONE', effectId: recheck.effects[0]!.id, purpose: 'fix-verify', results, fingerprint: {} });
+  const retry = reviewMachine.step(rerun.state, { type: 'REVIEW_TARGET_CHECKED', effectId: rerun.effects[0]!.id, manifestPath: 'still-candidate.json', result: 'unchanged' });
   assert.equal(retry.state.tag, 'fix'); if (!('c' in retry.state)) return;
   assert.equal(retry.state.c.fixCandidate, 'candidate.json'); assert.equal(retry.state.c.targetManifest, 'prior.json');
 });

@@ -98,6 +98,20 @@ test('settled hash mismatch re-enters plan review and does not run the baseline'
   assert.equal(result.effects[0]?.kind, 'prepare-review');
 });
 
+test('plan review concerns from an empty fallback slot reach the implement concerns', () => {
+  let result = step(initialImplement(), run({ path: 'plans/example.plan.md' }));
+  result = step(result.state, { type: 'SNAPSHOT', effectId: effectOf(result.effects, 'snapshot').id, fingerprint: FP, diff: { paths: [] } });
+  result = step(result.state, { type: 'ARTIFACT_PARSED', effectId: effectOf(result.effects, 'parse-artifact').id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
+  assert.equal(result.state.tag, 'plan-review');
+  result = step(result.state, { type: 'REVIEW_PREPARED', effectId: effectOf(result.effects, 'prepare-review').id, scope: {}, promptPaths: { 'codex[0]': 'p0' } });
+  const reserve = { slot: 'codex[0]', state: 'reserve', by: 'claude[0]', model: 'opus', record: 'reserve claude[0] for codex[0]', reason: 'quota' };
+  result = step(result.state, { type: 'WAVE_DONE', effectId: effectOf(result.effects, 'wave-start').id, round: 1, slots: [reserve], findings: [] } as never);
+  const concern = 'review slot codex[0]: no findings after fallback to opus';
+  const c = 'c' in result.state ? result.state.c as Context : null;
+  assert.equal(c?.planReview?.tag, 'settled');
+  assert.deepEqual(c?.concerns, [concern]);
+});
+
 test('implement-baseline-known-red: acceptance requires every recorded failure identity', () => {
   const { state, effect } = atBaseline();
   const decision = toDecision(state, effect.id, 2, 'node --test tests/example.test.ts::test:old failure');
@@ -127,7 +141,7 @@ test('prewrite-level: approval-by-quote resolves classification before checkout'
   const allowed = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
   assert.equal(allowed.state.tag, 'level-classification');
   if (allowed.state.tag !== 'level-classification') return;
-  const classified = step(allowed.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScope: implementData(allowed.state)['gateScope'] } });
+  const classified = step(allowed.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScopeHash: implementData(allowed.state)['gateScopeHash'] } });
   assert.equal(classified.state.tag, 'task-checkout');
 });
 
@@ -138,8 +152,8 @@ function classifyExplicitRun(choice: 'adopt' | 'retain') {
   result = step(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }).state;
   assert.equal(result.tag, 'level-classification');
   if (result.tag !== 'level-classification') throw new Error('level-classification');
-  const gateScope = implementData(result)['gateScope'];
-  result = step(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded integration has meaningful uncertainty, but failures remain observable and recoverable.', gateScope } }).state;
+  const gateScopeHash = implementData(result)['gateScopeHash'];
+  result = step(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded integration has meaningful uncertainty, but failures remain observable and recoverable.', gateScopeHash } }).state;
   assert.equal(result.tag, 'level-recommendation');
   if (result.tag !== 'level-recommendation') throw new Error('level-recommendation');
   const recommendation = implementData(result);
@@ -176,7 +190,7 @@ test('prewrite-level: classified task assessment controls writer and review rout
     phases: { 'plan-review': { rounds: { low: 1, medium: 1 }, targets: { low: 1, medium: 1 } }, 'code-review': { rounds: { low: 0, medium: 1 }, targets: { low: 1, medium: 1 } } },
   } as unknown as RunStartedEvent['config'];
   const gate = classificationGate(PLAN, { ...run(), config });
-  let result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The change crosses task boundaries but remains observable and recoverable.', gateScope: implementData(gate)['gateScope'] } });
+  let result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The change crosses task boundaries but remains observable and recoverable.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
   assert.equal(result.state.tag, 'level-recommendation');
   if (result.state.tag !== 'level-recommendation') return;
   result = step(result.state, { type: 'DECISION', kind: 'level-recommendation', answer: { choice: 'adopt', quote: 'Adopt medium.' } });
@@ -201,7 +215,7 @@ test('prewrite-level: explicit equal-or-lower assessment continues without promp
     const level: RunStartedEvent['level'] = evaluatedLevel === 'low' ? 'low' : 'high';
     const invocation = { ...run(), level };
     const gate = classificationGate(PLAN, invocation);
-    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel, rationale: 'The evidence fits within the explicit ceiling.', gateScope: implementData(gate)['gateScope'] } });
+    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel, rationale: 'The evidence fits within the explicit ceiling.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
     assert.equal(result.state.tag, 'task-checkout');
     if (result.state.tag === 'task-checkout') {
       assert.equal(result.state.c.run.level, level);
@@ -214,7 +228,7 @@ test('prewrite-level: xhigh and max stay explicit', () => {
   for (const level of ['xhigh', 'max'] as const) {
     const config = { ...run().config, 'write-subagents': { claude: { [level]: { model: `writer-${level}` } } } } as RunStartedEvent['config'];
     const gate = classificationGate(PLAN, { ...run(), level, config });
-    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'high', rationale: 'The classification is below the explicit advanced level.', gateScope: implementData(gate)['gateScope'] } });
+    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'high', rationale: 'The classification is below the explicit advanced level.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
     assert.equal(result.state.tag, 'task-checkout');
     if (result.state.tag === 'task-checkout') {
       assert.equal(result.state.c.run.level, level);
@@ -226,7 +240,7 @@ test('prewrite-level: xhigh and max stay explicit', () => {
 test('prewrite-level: lower retained level preserves configured phase skips', () => {
   const config = { ...run().config, 'write-subagents': { claude: { high: { model: 'writer-high' } } }, phases: { 'plan-review': { rounds: { high: 0 }, targets: { high: 1 } }, 'code-review': { rounds: { high: 0 }, targets: { high: 1 } } } } as RunStartedEvent['config'];
   const gate = classificationGate(PLAN, { ...run(), level: 'high', config });
-  const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded work does not require the requested ceiling.', gateScope: implementData(gate)['gateScope'] } });
+  const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded work does not require the requested ceiling.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
   assert.equal(result.state.tag, 'task-checkout');
   if (result.state.tag === 'task-checkout') {
     assert.equal(result.state.c.run.level, 'high');

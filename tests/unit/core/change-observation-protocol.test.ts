@@ -93,7 +93,7 @@ test('authority-observation: root send routes retain and refresh to the active d
     const parentRevision = await h.reply({ type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'Preserve the objective.', changeDispositions: [{ observationId: row['id'], afterHash: row['afterHash'], rationale: 'Checked SC1 relevance.', retain: ['SC1'] }] });
     assert.match(parentRevision.error ?? '', /no change observation/);
     assert.equal(parentRevision.data['kind'], 'level-classification');
-    const answer = await h.reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'Integration needs another review.', gateScope: frame.data['gateScope'] }, changeDispositions: [{ observationId: row['id'], afterHash: row['afterHash'], rationale: 'Checked SC1 relevance.', [selection]: ['SC1'] }] });
+    const answer = await h.reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'Integration needs another review.', gateScopeHash: frame.data['gateScopeHash'] }, changeDispositions: [{ observationId: row['id'], afterHash: row['afterHash'], rationale: 'Checked SC1 relevance.', [selection]: ['SC1'] }] });
     assert.equal(answer.error, undefined, JSON.stringify(answer));
     assert.equal(answer.data['kind'], 'level-recommendation');
     assert.equal(observations(answer).length, 0);

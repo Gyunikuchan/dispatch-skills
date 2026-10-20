@@ -64,10 +64,18 @@ test('review-rounds-policy: affinity assigns sources to available reviewers and 
 test('review-rounds-policy: convergence escalates regression and deadlock', () => {
   const raised = [{ locus: 'src/a.ts:L10', category: 'correctness', text: 'retry loop never terminates' }];
   const entry = { locus: 'src/a.ts:L12', category: 'correctness', text: 'the retry loop never terminates', id: 'R1-F001' };
-  assert.deepEqual(convergence(raised, [{ ...entry, status: 'applied', reraises: 0 }]), { halt: true, escalation: { kind: 'regression', ids: ['R1-F001'] } });
-  assert.deepEqual(convergence(raised, [{ ...entry, status: 'pending-rejection', reraises: 0 }]), { halt: false, reraised: ['R1-F001'] });
-  assert.deepEqual(convergence(raised, [{ ...entry, status: 'pending-rejection', reraises: 1 }]), { halt: true, escalation: { kind: 'deadlock', ids: ['R1-F001'] } });
-  assert.deepEqual(convergence([{ ...raised[0]!, category: 'perf' }], [{ ...entry, status: 'applied', reraises: 0 }]), { halt: false, reraised: [] });
+  assert.deepEqual(convergence(raised, [{ ...entry, status: 'applied', reraises: 0, reopens: 1 }]), { halt: true, escalation: { kind: 'regression', ids: ['R1-F001'] } });
+  assert.deepEqual(convergence(raised, [{ ...entry, status: 'pending-rejection', reraises: 0, reopens: 0 }]), { halt: false, reraised: ['R1-F001'], reopened: [] });
+  assert.deepEqual(convergence(raised, [{ ...entry, status: 'pending-rejection', reraises: 1, reopens: 0 }]), { halt: true, escalation: { kind: 'deadlock', ids: ['R1-F001'] } });
+  assert.deepEqual(convergence([{ ...raised[0]!, category: 'perf' }], [{ ...entry, status: 'applied', reraises: 0, reopens: 1 }]), { halt: false, reraised: [], reopened: [] });
+});
+
+test('review-rounds-policy - regression halts on second match of an applied fix, not the first', () => {
+  const raised = [{ locus: 'src/a.ts:L10', category: 'correctness', text: 'retry loop never terminates' }];
+  const fix = { locus: 'src/a.ts:L12', category: 'correctness', text: 'the retry loop never terminates', id: 'R1-F001', status: 'applied' as const, reraises: 0 };
+  const other = { ...fix, locus: 'src/b.ts:L1', id: 'R1-F002' };
+  assert.deepEqual(convergence(raised, [{ ...fix, reopens: 0 }, { ...other, reopens: 1 }]), { halt: false, reraised: [], reopened: ['R1-F001'] }, 'first match reopens');
+  assert.deepEqual(convergence(raised, [{ ...fix, reopens: 1 }, { ...other, reopens: 1 }]), { halt: true, escalation: { kind: 'regression', ids: ['R1-F001'] } }, 'second match halts');
 });
 
 // SECTION: Exit

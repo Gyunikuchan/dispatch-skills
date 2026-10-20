@@ -127,8 +127,8 @@ export function host(result: Result, event: Event, sim: Sim, trace: Trace): Resu
 
 export function classify(result: Result, sim: Sim, trace: Trace): Result {
   if (result.state.tag !== 'level-classification') return result;
-  const gateScope = implementData(result.state)['gateScope'];
-  return host(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded task with local and recoverable effects.', gateScope } }, sim, trace);
+  const gateScopeHash = implementData(result.state)['gateScopeHash'];
+  return host(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded task with local and recoverable effects.', gateScopeHash } }, sim, trace);
 }
 
 export function start(concurrency: number, sim: Sim = {}): { result: Result; trace: Trace } {

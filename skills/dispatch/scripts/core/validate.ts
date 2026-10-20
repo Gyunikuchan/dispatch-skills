@@ -123,16 +123,7 @@ const strings = arr(str);
 const nullableString: Validator<string | null> = (value, at) => value === null ? ok(null) : str(value, at);
 const nonBlank: Validator<string> = (value, at) => typeof value === 'string' && value.trim().length > 0 ? ok(value) : fail(at, 'non-empty trimmed string', value);
 const boundedText = (max: number): Validator<string> => (value, at) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max ? ok(value) : fail(at, `non-empty trimmed string of at most ${max} characters`, value);
-const criterionScope = obj({ id: str, title: nonBlank, changes: strings, verify: strings, review: nullableString, evidence: str });
-const commandScope = obj({ command: str, criteria: strings, paths: strings, final: lit(true, false) });
-const baselineScope = obj({ command: str, status: str, exit: num, inputFingerprint: str });
-const remainingIncrement = obj({ id: str, priority: num, outcome: nonBlank, dependencies: strings, paths: strings, acceptance: strings });
-const designScope = obj({ path: str, hash: str, title: nullableString, objective: nonBlank, invariants: strings, fields: rec(str), remainingIncrements: arr(remainingIncrement) });
-const levelGateScope = obj({
-  planHash: str, objective: str, invariants: strings, criteria: arr(criterionScope), approvedPaths: strings,
-  commandMappings: arr(commandScope), baselineEvidence: arr(baselineScope),
-  phaseObligations: obj({ writer: strings, review: strings }), remainingIncrements: arr(remainingIncrement), design: oneOf(designScope, (value, at) => value === null ? ok(null) : fail(at, 'design object or null', value)),
-});
+const scopeHash: Validator<string> = (value, at) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value) ? ok(value) : fail(at, 'sha256:<64 hex>', value);
 const positiveInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) > 0 ? ok(Number(value)) : fail(at, 'positive integer', value);
 const nonNegativeInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) >= 0 ? ok(Number(value)) : fail(at, 'non-negative integer', value);
 /** Optional host-attested figures (diagnostics, best effort); accepted whether or not diagnostics are enabled. */
@@ -194,7 +185,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
     obj({ type: lit('DECISION'), kind: lit('drift'), answer: obj({ by: lit('orchestrator'), noticeId: nonBlank, afterHash: nonBlank, action: lit('preserve', 'refresh', 'reconcile', 'escalate'), rationale: nonBlank, evidenceIds: strings }) }),
-    obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
+    obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScopeHash: scopeHash }) }),
     obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),
     decision('integration-conflict', ruling(['resolve', 'discard'])),
     decision('fix-verification', rec(obj({ verification: nonEmptyArr(nonBlank), by: lit('orchestrator'), rationale: nonBlank }))),
@@ -211,7 +202,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
     obj({ type: lit('DECISION'), kind: LEGACY_DECIDE_KINDS, answer: any }),
   ),
   REVISE: obj({ type: lit('REVISE'), artifact: lit('plan', 'design'), reason: str, evidence: str }),
-  // Per-item gating (≤3 items, dispatch-owned component, redaction) happens at render time, so a bad item never blocks completion.
+  // Per-item gating (item cap, dispatch-owned component, redaction) happens at render time, so a bad item never blocks completion.
   RETRO: obj({ type: lit('RETRO'), observations: arr(any) }),
   REVIEW_USE: obj({ type: lit('REVIEW_USE'), observationId: nonBlank, afterHash: nonBlank, action: lit('reuse', 'targeted', 'full'), rationale: nonBlank, paths: opt(strings) }),
 };

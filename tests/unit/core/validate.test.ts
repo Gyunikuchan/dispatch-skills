@@ -69,11 +69,7 @@ test('native slots and task write receipts accept attested tokens and durationMs
 });
 
 test('level-journal: strict schemas enforce bounded rationale, attribution, and closed decision shapes', () => {
-  const scope = {
-    planHash: 'sha256:' + 'a'.repeat(64), objective: 'ship', invariants: [], criteria: [], approvedPaths: [],
-    commandMappings: [], baselineEvidence: [], phaseObligations: { writer: [], review: [] }, remainingIncrements: [], design: null,
-  };
-  const valid = { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'bounded risk', gateScope: scope } };
+  const valid = { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'bounded risk', gateScopeHash: 'sha256:' + 'a'.repeat(64) } };
   assert.equal(validateHostEvent('decide', valid).ok, true);
   assert.equal(validateHostEvent('decide', { ...valid, answer: { ...valid.answer, rationale: `${'x'.repeat(500)}  \n` } }).ok, true);
   for (const answer of [null, {}, { ...valid.answer, extra: true }, { ...valid.answer, rationale: 'x'.repeat(501) }, { ...valid.answer, rationale: '   ' }]) {

@@ -28,7 +28,7 @@ export function host(state: ImplementState, event: Event, fingerprint = FP, path
 }
 export function classify(result: ReturnType<typeof stepImplement>) {
   if (result.state.tag !== 'level-classification') return result;
-  return host(result.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local recovery.', gateScope: implementData(result.state)['gateScope'] } });
+  return host(result.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local recovery.', gateScopeHash: implementData(result.state)['gateScopeHash'] } });
 }
 export function failure(): Extract<ImplementState, { tag: 'failure' }> { const c = approvalState().c; return { tag: 'failure', c: { ...c, phase: 'delivered', approval: { by: 'user', quote: 'Proceed' }, stalled: { purpose: 'final', rows: [failedRow] } }, reason: 'blocked-by-plan: check failed', changedPaths: [] }; }
 export function taskFailure(attempt: number, failures = attempt): Extract<ImplementState, { tag: 'failure' }> {

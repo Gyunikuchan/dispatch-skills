@@ -21,7 +21,7 @@ For changed observed inputs, verification mutation or a delivery collision, foll
 Send each decision through `DECISION` with its exact `kind` and an `answer` matching the pending frame; format user escalations per [Decision Frame](../decision-frame.md):
 
 - `DECISION kind=run-stop`: `{ by: "user", quote }` at a level or scope gate.
-- `DECISION kind=level-classification`: `{ evaluatedLevel, rationale, gateScope }`; echo the complete gate snapshot.
+- `DECISION kind=level-classification`: `{ evaluatedLevel, rationale, gateScopeHash }`; copy `gateScopeHash` from the frame after you assess its `gateScope`.
 - `DECISION kind=level-recommendation`: `{ choice: "adopt" | "retain", quote }`.
 - `DECISION kind=integration-conflict`: `{ by: "orchestrator", action: "resolve" | "discard", rationale, amendment? }`.
 - `DECISION kind=request`: `{ by: "orchestrator", action: "approve" | "decline" | "escalate", rationale }`.

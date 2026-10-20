@@ -44,7 +44,7 @@ test('level-journal: nested design replay classifies before its first writer and
   requested.config = { ...requested.config, phases: { 'design-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } };
   let result = await start({ ports, machine: rootMachine, handlers, runDir, runStarted: requested });
   result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Deliver', hash } } });
-  let capturedGateScope: unknown = null;
+  let capturedGateScopeHash: unknown = null;
   for (const increment of ['I01', 'I02']) {
     assert.equal(result.frame?.await, 'author', JSON.stringify(result.frame));
     const authorFrame = result.frame;
@@ -60,8 +60,8 @@ test('level-journal: nested design replay classifies before its first writer and
       assert.deepEqual(gate.design?.remainingIncrements.map((row) => [row.id, row.priority, row.outcome]), [
         ['I01', 1, design.details.I01.Outcome], ['I02', 2, design.details.I02.Outcome],
       ]);
-      capturedGateScope = result.frame.data['gateScope'];
-      result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded design increment with observable local checks.', gateScope: result.frame.data['gateScope'] } } });
+      capturedGateScopeHash = result.frame.data['gateScopeHash'];
+      result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded design increment with observable local checks.', gateScopeHash: result.frame.data['gateScopeHash'] } } });
     }
     assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
@@ -75,7 +75,7 @@ test('level-journal: nested design replay classifies before its first writer and
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: slot!.receipts.find((receipt) => receipt['status'] === 'submitted') });
     assert.equal(result.exitCode, 0, JSON.stringify(result.frame));
     if (increment === 'I01') {
-      assert.deepEqual((result.frame?.data['levelAssessment'] as { gateScope: unknown } | undefined)?.gateScope, capturedGateScope);
+      assert.equal((result.frame?.data['levelAssessment'] as { gateScopeHash: unknown } | undefined)?.gateScopeHash, capturedGateScopeHash);
       assert.equal(result.frame?.data['settledLevel'], 'low');
     }
   }

@@ -167,6 +167,121 @@ test('task checkout with keep rewinds HEAD to the input without discarding the d
   assert.ok(!calls.some((call) => call.startsWith('clean') || call.includes('--hard')));
 });
 
+// SECTION: Draft snapshots before a task reset (scripted Git; the e2e suite proves the same contract on real Git)
+
+const INPUT = 'a'.repeat(40), PRIOR = 'b'.repeat(40), WRITER_COMMIT = 'd'.repeat(40), ZERO = '0'.repeat(40);
+const DRAFT = 'refs/dispatch/drafts/0a1b2c3d-001/t1-implement.checkout.7';
+
+/** One task worktree's HEAD, dirtiness, and the repository refs; `commit` captures the dirty draft. */
+function draftGit(ports: Ports, start: { head: string; dirty: boolean; refs?: Record<string, string> }) {
+  const state = { head: start.head, dirty: start.dirty, refs: new Map(Object.entries(start.refs ?? {})), commits: 0 };
+  const calls: string[] = [];
+  ports.git.run = async (argv) => {
+    calls.push(argv.join(' '));
+    const args = argv.filter((arg, i) => arg !== '-c' && argv[i - 1] !== '-c');
+    switch (args[0]) {
+      case 'rev-parse': {
+        if (!args.includes('--verify')) return `${state.head}\n`;
+        const target = state.refs.get(args.at(-1)!);
+        if (!target) throw new Error('fatal: needed a single revision');
+        return `${target}\n`;
+      }
+      case 'status': return state.dirty ? ' M src/a.ts\0?? src/new.ts\0' : '';
+      case 'commit': state.commits++; state.head = String(state.commits).padStart(40, 'c'); state.dirty = false; return '';
+      case 'update-ref': {
+        if (args[1] === '-d') { state.refs.delete(args[2]!); return ''; }
+        if (args[3] !== ZERO || state.refs.has(args[1]!)) throw new Error(`fatal: cannot lock ref '${args[1]}': reference already exists`);
+        state.refs.set(args[1]!, args[2]!); return '';
+      }
+      case 'reset': state.head = args.at(-1)!; state.dirty = false; return '';
+      case 'for-each-ref': { const prefix = args.at(-1)!; return [...state.refs.keys()].filter((ref) => ref.startsWith(`${prefix}/`)).map((ref) => `${ref}\n`).join(''); }
+      default: return '';
+    }
+  };
+  return { state, calls };
+}
+
+async function draftCheckout(op: 'task' | 'reset', start: Parameters<typeof draftGit>[1], input: Record<string, unknown>, exists = true) {
+  const cwd = tempDir(), runDir = path.join(cwd, 'run'), ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  if (exists) ports.fs.mkdir(worktreePath(runDir, 'task-t1'), { recursive: true });
+  const git = draftGit(ports, start);
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const [event] = await handler({ kind: 'checkout', id: 'implement.checkout.7', op, input: { name: 'task-t1', revision: INPUT, ...(op === 'task' ? { reset: true, links: [], ignored: [] } : {}), ...input } }, ports, { runDir } as never) as ResultEvent[];
+  assert.equal(event?.type, 'CHECKOUT_DONE', JSON.stringify(event));
+  return { ...git, result: event?.type === 'CHECKOUT_DONE' ? event.result as Record<string, unknown> : {}, path: worktreePath(runDir, 'task-t1') };
+}
+
+test('draft snapshot of a dirty task or relaunch reset commits the draft and creates its ref before the hard reset', async () => {
+  for (const op of ['task', 'reset'] as const) {
+    const { state, calls, result, path: root } = await draftCheckout(op, { head: INPUT, dirty: true }, { snapshot: DRAFT });
+    assert.deepEqual(result, { path: root, revision: INPUT, snapshot: DRAFT }, op);
+    const captured = state.refs.get(DRAFT);
+    assert.ok(captured && captured !== INPUT, `${op} ref holds the draft commit`);
+    const commit = calls.find((call) => call.includes(' commit '));
+    assert.match(commit ?? '', /core\.hooksPath=\.dispatch-no-hooks.*--no-verify/, op);
+    assert.ok(calls.indexOf(`update-ref ${DRAFT} ${captured} ${ZERO}`) >= 0, `${op} creates the ref only when absent`);
+    assert.ok(calls.indexOf(`update-ref ${DRAFT} ${captured} ${ZERO}`) < calls.indexOf(`reset -q --hard ${INPUT}`), `${op} keeps the draft before discarding it`);
+    assert.ok(calls.includes('clean -q -fd'), op);
+    assert.deepEqual([state.head, state.dirty], [INPUT, false], op);
+  }
+});
+
+test('draft snapshot of a committed draft on a clean tree refs its HEAD without another commit', async () => {
+  const { state, calls, result } = await draftCheckout('reset', { head: WRITER_COMMIT, dirty: false }, { snapshot: DRAFT });
+  assert.equal(result['snapshot'], DRAFT);
+  assert.equal(state.refs.get(DRAFT), WRITER_COMMIT);
+  assert.equal(state.commits, 0);
+  assert.ok(!calls.some((call) => call.includes(' commit ')));
+});
+
+test('draft snapshot with an existing ref skips to the reset and is never overwritten', async () => {
+  const { state, calls, result } = await draftCheckout('task', { head: INPUT, dirty: true, refs: { [DRAFT]: WRITER_COMMIT } }, { snapshot: DRAFT });
+  assert.equal(result['snapshot'], DRAFT);
+  assert.equal(state.refs.get(DRAFT), WRITER_COMMIT);
+  assert.ok(!calls.some((call) => call.includes(' commit ') || call.startsWith('update-ref') || call.startsWith('add')));
+  assert.deepEqual([state.head, state.dirty], [INPUT, false]);
+});
+
+test('draft snapshot is not written without a draft', async () => {
+  const cases: [string, Parameters<typeof draftGit>[1], Record<string, unknown>, boolean][] = [
+    ['clean at the input', { head: INPUT, dirty: false }, { snapshot: DRAFT }, true],
+    ['clean at the prior input', { head: PRIOR, dirty: false }, { snapshot: DRAFT, draftBase: PRIOR }, true],
+    ['new worktree', { head: INPUT, dirty: false }, { snapshot: DRAFT }, false],
+  ];
+  for (const [name, start, input, exists] of cases) {
+    const { state, calls, result } = await draftCheckout('task', start, input, exists);
+    assert.equal(result['snapshot'], null, name);
+    assert.equal(state.refs.size, 0, name);
+    assert.ok(!calls.some((call) => call.includes(' commit ') || call.startsWith('update-ref')), name);
+  }
+});
+
+test('without a draft snapshot input the reset runs exactly as before', async () => {
+  for (const op of ['task', 'reset'] as const) {
+    const { calls, result, path: root } = await draftCheckout(op, { head: PRIOR, dirty: true }, {});
+    assert.deepEqual(calls, [`reset -q --hard ${INPUT}`, 'clean -q -fd', 'rev-parse HEAD'], op);
+    assert.deepEqual(result, { path: root, revision: INPUT }, op);
+  }
+});
+
+test('draft snapshot cleanup deletes only refs under its own run prefix', async () => {
+  const cwd = tempDir(), runDir = path.join(cwd, 'run'), ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  const own = ['refs/dispatch/drafts/0a1b2c3d-001/t1-implement.checkout.3', 'refs/dispatch/drafts/0a1b2c3d-001/t2-implement.checkout.9'];
+  const others = ['refs/dispatch/drafts/0a1b2c3d-002/t1-implement.checkout.3', 'refs/dispatch/drafts/ffffffff-001/t1-implement.checkout.3'];
+  const { state } = draftGit(ports, { head: INPUT, dirty: false, refs: Object.fromEntries([...own, ...others].map((ref) => [ref, WRITER_COMMIT])) });
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const [done] = await handler({ kind: 'checkout', id: 'implement.checkout.20', op: 'cleanup', input: { names: [], links: [], drafts: 'refs/dispatch/drafts/0a1b2c3d-001' } }, ports, { runDir } as never) as ResultEvent[];
+  assert.equal(done?.type, 'CHECKOUT_DONE', JSON.stringify(done));
+  assert.deepEqual([...state.refs.keys()].sort(), others);
+  for (const drafts of ['refs/heads', 'refs/dispatch/drafts', 'refs/dispatch/drafts/../heads']) {
+    const [refused] = await handler({ kind: 'checkout', id: 'implement.checkout.21', op: 'cleanup', input: { names: [], links: [], drafts } }, ports, { runDir } as never) as ResultEvent[];
+    assert.equal(refused?.type, 'EFFECT_FAILED', drafts);
+  }
+  assert.deepEqual([...state.refs.keys()].sort(), others);
+});
+
 // SECTION: Integration conflicts, resolutions, and trim (stateful fake Git; unit tests spawn nothing)
 
 type FakeCommit = { parent: string | null; message: string; tree: ReadonlyMap<string, string> };

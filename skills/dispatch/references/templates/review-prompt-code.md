@@ -29,6 +29,9 @@ success criteria well, not merely whether it matches the plan.
   `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
   missed or met only on paper, such as a test passing without exercising it, is `intent`.
 - With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
+- With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not
+  propose an alternative to a settled decision as a fix; report a contradiction with one only as
+  `intent`, and cite the decision in `defect`.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
 Judge quality using the selected sections of the [quality bar](quality-bar.md). The tags below classify findings; they do not add judging criteria.
@@ -41,6 +44,10 @@ Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and unt
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
+On a `Full review`, when the diff changes a shared invariant, contract, or signature, list every
+caller of it and inspect each one in this round, so later rounds do not find them one at a time.
+Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise
+search the repository.
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or journals
 when missing evidence, disputed adjudication or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.

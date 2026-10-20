@@ -74,7 +74,7 @@ test('bounded-recovery: code and artifact verification failures exhaust without 
     for (let n = 1; n <= 3; n++) {
       state = drive([applied(state)], state).state;
       assert.equal('c' in state && state.c.findings[0]?.status, 'accepted');
-      state = drive([kind === 'code' ? verified(n, 1) : { type: 'ARTIFACT_PARSED', effectId: `review.parse-artifact.${n}`, kind: 'plan', hash: 'h', parsed: {}, defects: [{ code: 'x', message: 'bad' }] }], state).state;
+      state = drive(kind === 'code' ? [verified(2 * n - 1, 1), verified(2 * n, 1)] : [{ type: 'ARTIFACT_PARSED', effectId: `review.parse-artifact.${n}`, kind: 'plan', hash: 'h', parsed: {}, defects: [{ code: 'x', message: 'bad' }] }], state).state;
     }
     assert.equal(state.tag, 'failed');
     assert.equal('c' in state && state.c.fixes.length, 0);
@@ -118,9 +118,9 @@ test('fix receipt: a withdrawn finding stays rejected through a failed verificat
   const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002')]), accept('R1-F001', 'R1-F002')]).state;
   if (fix.tag !== 'fix') return assert.fail('fix');
   const clusterId = fix.clusters[0]!.clusterId;
-  let state = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, withdrawn: [{ findingId: 'R1-F002', quote: 'Drop it' }] }] }, verified(1, 1)], fix).state;
+  let state = drive([{ type: 'FIXES_APPLIED', clusters: [{ clusterId, withdrawn: [{ findingId: 'R1-F002', quote: 'Drop it' }] }] }, verified(1, 1), verified(2, 1)], fix).state;
   assert.deepEqual(state.tag === 'fix' && state.clusters.flatMap((c) => c.members.map((m) => m.id)), ['R1-F001']);
-  state = drive([applied(state), verified(2)], state).state;
+  state = drive([applied(state), verified(3)], state).state;
   const byId = Object.fromEntries('c' in state ? state.c.findings.map((row) => [row.id, row]) : []);
   assert.equal(byId['R1-F001']?.status, 'fixed');
   assert.equal(byId['R1-F002']?.status, 'rejected');
@@ -154,7 +154,7 @@ test('bounded-recovery: verification charges applied clusters once and pending f
   const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002', { locus: 'src/R1-F001.ts:L4' })]), accept('R1-F001', 'R1-F002')]).state;
   if (fix.tag !== 'fix') return assert.fail('expected fix');
   const verify = drive([{ type: 'FIXES_APPLIED', clusters: fix.clusters.map((c, i) => ({ clusterId: c.clusterId, status: i ? 'failed' : 'applied' })) }], fix).state;
-  const retry = drive([verified(1, 1)], verify).state;
+  const retry = drive([verified(1, 1), verified(2, 1)], verify).state;
   assert.equal(retry.tag, 'fix');
   assert.deepEqual(retry.tag === 'fix' && retry.clusters.map((c) => c.attemptBudget), [2, 2]);
 });
@@ -217,7 +217,7 @@ test('code fix-verify runs the finding verification commands; a red command retu
   const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { fix: { paths: ['src/a.ts'], dependencies: [], verification: ['npm test'] } })]), accept('R1-F001')]).state;
   const verify = drive([applied(fix)], fix);
   assert.deepEqual(verify.effects.map((effect) => effect.kind === 'verify' && effect.commands), [[{ command: 'npm test' }]]);
-  const red = drive([verified(1, 1)], verify.state).state;
+  const red = drive([verified(1, 1), verified(2, 1)], verify.state).state;
   assert.equal(red.tag, 'fix');
   assert.match(String((reviewMachine.project(red).data['defects'] as string[])[0]), /npm test exited 1 \(l\.log\)/);
 });
@@ -336,7 +336,40 @@ test('unrunnable fix verification rejects an answer without an orchestrator rati
 
 test('ordinary fix verification failure charges the cluster attempt even beside an unrunnable check', () => {
   const fix = fixWithCheck();
-  const red = drive([applied(fix), verifyWith(1, [{ command: 'nope', exit: 127, logPath: 'b.log' }, { command: 'npm test', exit: 1, logPath: 'l.log' }])], fix).state;
+  const results = [{ command: 'nope', exit: 127, logPath: 'b.log' }, { command: 'npm test', exit: 1, logPath: 'l.log' }];
+  const red = drive([applied(fix), verifyWith(1, results), verifyWith(2, results)], fix).state;
   if (red.tag !== 'fix') return assert.fail(`expected fix, got ${red.tag}`);
   assert.deepEqual(red.clusters.map((cluster) => cluster.attemptBudget), [2]);
+});
+
+// SECTION: Single rerun of a failing fix check
+
+const CHECK = 'node --test missing.test.ts';
+
+test('fix verify reruns once on the same tree - a passing rerun keeps the cluster and records a flake concern', () => {
+  const fix = fixWithCheck();
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const clusterId = fix.clusters[0]!.clusterId;
+  const first = drive([applied(fix), verifyWith(1, [{ command: CHECK, exit: 1, logPath: 'a.log' }, { command: 'npm run lint', exit: 0, logPath: 'b.log' }])], fix);
+  assert.equal(first.state.tag, 'fix-verify', 'a red check does not fail the cluster yet');
+  const rerun = first.effects.at(-1);
+  assert.deepEqual(rerun?.kind === 'verify' && [rerun.id, rerun.purpose, rerun.commands], ['review.verify.2', 'fix-verify', [{ command: CHECK }]], 'only the red command reruns');
+  const passed = drive([verifyWith(2, [{ command: CHECK, exit: 0, logPath: 'c.log' }])], first.state);
+  assert.equal(passed.state.tag, 'prepare');
+  assert.ok('c' in passed.state);
+  assert.equal(passed.state.c.findings[0]?.status, 'fixed');
+  assert.deepEqual(passed.state.c.concerns, [`fix-verify flake: ${CHECK} (cluster ${clusterId})`]);
+  assert.deepEqual(reviewMachine.project(passed.state).data['concerns'], [`fix-verify flake: ${CHECK} (cluster ${clusterId})`]);
+  assert.deepEqual(JSON.parse(JSON.stringify(first.state)), first.state, 'the pending rerun survives a journal round trip');
+});
+
+test('fix verify reruns once on the same tree - a failing rerun fails the cluster and is not rerun again', () => {
+  const fix = fixWithCheck();
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const red = drive([applied(fix), verifyWith(1, [{ command: CHECK, exit: 1, logPath: 'a.log' }]), verifyWith(2, [{ command: CHECK, exit: 1, logPath: 'c.log' }])], fix);
+  if (red.state.tag !== 'fix') return assert.fail(`expected fix, got ${red.state.tag}`);
+  assert.deepEqual(red.state.clusters.map((cluster) => cluster.attemptBudget), [2]);
+  assert.match(String((reviewMachine.project(red.state).data['defects'] as string[])[0]), /node --test missing\.test\.ts exited 1 \(c\.log\)/);
+  assert.ok(!red.effects.some((effect) => effect.kind === 'verify' && effect.id === 'review.verify.3'));
+  assert.equal(red.state.c.concerns, undefined);
 });

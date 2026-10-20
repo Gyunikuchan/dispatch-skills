@@ -66,7 +66,7 @@ test('REVISE design waits for nested level gates', () => {
   };
   const classification: ImplementState = { tag: 'level-classification', c, gateScope, resume: { kind: 'tasks' } };
   const recommendation: ImplementState = {
-    tag: 'level-recommendation', c, assessment: { evaluatedLevel: 'high', rationale: 'Cross-cutting scope.', gateScope }, resume: { kind: 'tasks' },
+    tag: 'level-recommendation', c, assessment: { evaluatedLevel: 'high', rationale: 'Cross-cutting scope.', gateScopeHash: hash }, resume: { kind: 'tasks' },
   };
   for (const child of [classification, recommendation]) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /pending level gate/);
 });
@@ -489,4 +489,22 @@ test('author quality reads match the shared consumer map for initial design', ()
     read: [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }],
     governedDesign: { path: 'x.design.md', revision: null }, settledLevel: 'low', levelAssessment: null, scopeAdjustments: [], scopeNotice: null,
   });
+});
+test('design review concerns from an empty fallback slot reach approval and completion', () => {
+  const base = run();
+  let result = beginDesign({ ...base, config: { ...base.config, phases: { ...(base.config['phases'] as Record<string, unknown>), 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } } } });
+  result = stepDesign(result.state, { type: 'AUTHORED', path: 'x.design.md' });
+  result = stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [] });
+  assert.equal(result.state.tag, 'review');
+  result = stepDesign(result.state, { type: 'REVIEW_PREPARED', effectId: result.effects[0]!.id, scope: {}, promptPaths: { 'codex[0]': 'p0' } });
+  const reserve = { slot: 'codex[0]', state: 'reserve', by: 'claude[0]', model: 'opus', record: 'reserve claude[0] for codex[0]', reason: 'quota' };
+  result = stepDesign(result.state, { type: 'WAVE_DONE', effectId: result.effects[0]!.id, round: 1, slots: [reserve], findings: [] } as never);
+  assert.equal(result.state.tag, 'parse');
+  result = stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [] });
+  assert.equal(result.state.tag, 'approval');
+  const concern = 'review slot codex[0]: no findings after fallback to opus';
+  assert.deepEqual(designData(result.state)['concerns'], [concern]);
+  result = stepDesign(result.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  assert.equal(result.state.tag, 'complete');
+  assert.deepEqual((designData(result.state)['completion'] as Record<string, unknown>)['concerns'], [concern]);
 });

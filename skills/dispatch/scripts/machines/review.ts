@@ -3,7 +3,7 @@
 
 import type { ChangeNotice, ReviewManifestRef, Effect, Event, FindingId, HostEvent, Level, Machine, ReviewObservation, ReviewUse, RunStartedEvent, SpecIdentity } from '../core/types.ts';
 import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
-import { findingId } from '../domain/report.ts';
+import { findingId, matchFinding } from '../domain/report.ts';
 import { statusLabel } from '../domain/render.ts';
 import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, ReviewerView, RosterSlot } from '../domain/types.ts';
 import { resolveRoster, type PhasePolicy, type Pins, type ReadDelegate } from '../policy/roster.ts';
@@ -128,6 +128,9 @@ export function validateNativeResults(slots: readonly unknown[], descriptors: re
 
 // SECTION: State
 
+/** A finding that matched an applied fix names it in `reopens`; a second match of that fix is a regression. */
+export type LinkedFinding = ReviewFinding & { reopens?: FindingId };
+
 export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly (string | ReviewerView)[]; failed: readonly { slot: string; reason: string }[]; revision?: string };
 
 export type ReviewCtx = {
@@ -141,8 +144,10 @@ export type ReviewCtx = {
   scope: RoundScope;
   scopeOverride?: Partial<Pick<ScopeRequest, 'scope' | 'sinceHash' | 'priorTarget'>>;
   carried: readonly CarriedRejection[];
-  findings: readonly ReviewFinding[];
+  findings: readonly LinkedFinding[];
   history: readonly HistoryEntry[];
+  /** Run concerns the review surfaces without blocking: fix-check flakes and fallback slots that returned no findings. */
+  concerns?: readonly string[];
   rounds: readonly RoundRecord[];
   fixes: readonly { id: FindingId; round: number }[];
   optInAsked: boolean;
@@ -182,7 +187,7 @@ export type ReviewState =
   | { tag: 'rule'; c: ReviewCtx }
   | { tag: 'decide-needs-user'; c: ReviewCtx; ids: readonly FindingId[] }
   | { tag: 'fix'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; defects: readonly string[] }
-  | { tag: 'fix-verify'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[] }
+  | { tag: 'fix-verify'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[]; rerun?: readonly string[] }
   | { tag: 'decide-escalation'; c: ReviewCtx; escalation: Escalation }
   | { tag: 'decide-opt-in'; c: ReviewCtx; items: readonly FindingId[] }
   | { tag: 'decide-verification'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[]; failures: readonly VerificationFailure[] }
@@ -319,6 +324,21 @@ function reviewerViewOf(row: Row, roster: readonly RosterSlot[]): ReviewerView {
   };
 }
 
+const withConcerns = (c: ReviewCtx, concerns: readonly string[]): ReviewCtx => concerns.length ? { ...c, concerns: [...new Set([...(c.concerns ?? []), ...concerns])] } : c;
+
+/** A reserve or native fallback that returned no findings may be a silent failure, not a clean review. */
+function emptyFallbacks(usable: readonly Row[], drafts: readonly Finding[], roster: readonly RosterSlot[]): string[] {
+  return usable.flatMap((row) => {
+    const reserve = row['state'] === 'reserve';
+    const native = row['state'] === 'native' && String(row['sourceKey'] ?? '').endsWith('#fallback');
+    if (!reserve && !native) return [];
+    const sources = [row['slot'], row['by']].filter(isString);
+    if (drafts.some((finding) => finding.sources.some((source) => sources.includes(source)))) return [];
+    const model = typeof row['model'] === 'string' && row['model'] ? row['model'] : native ? 'native' : reviewerViewOf(row, roster).model ?? String(row['by']);
+    return [`review slot ${String(row['slot'])}: no findings after fallback to ${model}`];
+  });
+}
+
 function afterWave(c0: ReviewCtx): S {
   const round = c0.round;
   const usable = c0.rows.filter((row) => ['success', 'reserve', 'native'].includes(String(row['state'])) && row['descriptor'] === undefined);
@@ -330,11 +350,18 @@ function afterWave(c0: ReviewCtx): S {
   const revision = c0.waveRevision ?? liveRevision(c0);
   const bound = revision ? { revision } : {};
   const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate', ...bound }));
-  const c1: ReviewCtx = { ...c0, findingBindings: { ...c0.findingBindings, ...Object.fromEntries(fresh.map((row) => [row.id, revision ?? 'unbound'])) }, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed, ...bound }] };
+  const c1: ReviewCtx = withConcerns({ ...c0, findingBindings: { ...c0.findingBindings, ...Object.fromEntries(fresh.map((row) => [row.id, revision ?? 'unbound'])) }, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed, ...bound }] },
+    emptyFallbacks(usable, c0.drafts, c0.spec.roster));
   const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot || row['by'] === entry.slot));
   if (!reviewers.length || uncovered.length) return stay({ tag: 'failed', c: c1, detail: `reviewer-coverage: ${uncovered.length ? `responsible reviewer unavailable for ${uncovered.map((entry) => entry.id).join(', ')}` : 'no usable reviewer capture'}` });
   const verdict = convergence(fresh.filter((finding) => finding.status === 'open').map(matchKey), c0.history);
   if (verdict.halt) return stay({ tag: 'decide-escalation', c: { ...c1, findings: [...c1.findings, ...fresh] }, escalation: verdict.escalation });
+  // NOTE: a first match of an applied fix links the finding and counts once per wave; the next wave that matches it halts.
+  const reopenedEntries = c0.history.filter((entry) => verdict.reopened.includes(entry.id));
+  const linked = fresh.map((finding): LinkedFinding => {
+    const fix = finding.status === 'open' ? reopenedEntries.find((entry) => matchFinding(matchKey(finding), entry)) : undefined;
+    return fix ? { ...finding, reopens: fix.id } : finding;
+  });
   const reraised = new Set(verdict.reraised);
   const covered = c0.carried.filter((entry) => !uncovered.includes(entry)).map((entry) => entry.id);
   const closed = new Set(acceptByOmission(c0.carried.map((entry) => entry.id), verdict.reraised, covered).map((closure) => closure.id));
@@ -343,8 +370,9 @@ function afterWave(c0: ReviewCtx): S {
     if (reraised.has(finding.id)) return { ...finding, status: 'superseded' };
     return finding;
   });
-  const history = c1.history.map((entry) => (reraised.has(entry.id) ? { ...entry, reraises: entry.reraises + 1 } : entry));
-  const c: ReviewCtx = { ...c1, findings: [...findings, ...fresh], history };
+  const reopened = new Set(verdict.reopened);
+  const history = c1.history.map((entry) => (reraised.has(entry.id) ? { ...entry, reraises: entry.reraises + 1 } : reopened.has(entry.id) ? { ...entry, reopens: (entry.reopens ?? 0) + 1 } : entry));
+  const c: ReviewCtx = { ...c1, findings: [...findings, ...linked], history };
   if (!fresh.some((finding) => finding.status === 'open')) return decideNext(c);
   return stay({ tag: 'rule', c });
 }
@@ -496,6 +524,15 @@ function issueFixVerify(c0: ReviewCtx, recovery: FixRecovery): S {
   return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
 }
 
+/** Rerun checks that now pass: one concern per cluster that declares the check, else per verified cluster. */
+function flakeConcerns(state: Extract<ReviewState, { tag: 'fix-verify' }>, results: readonly Row[]): string[] {
+  if (!state.rerun) return [];
+  return results.filter((result) => result['exit'] === 0).map((result) => String(result['command'])).flatMap((command) => {
+    const declaring = state.clusters.filter((cluster) => cluster.verification.includes(command));
+    return (declaring.length ? declaring : state.clusters).map((cluster) => `fix-verify flake: ${command} (cluster ${cluster.clusterId})`);
+  });
+}
+
 function retryFailed(c: ReviewCtx, clusters: readonly FixCluster[]) {
   const retries = clusters.map((cluster) => ({ cluster, split: splitFailedCluster(cluster, { runId: c.path, failed: null, attemptsConsumed: 1 }) }));
   return { clusters: retries.flatMap(({ split }) => split.clusters), exhausted: retries.filter(({ split }) => !split.canProceed).flatMap(({ cluster }) => cluster.findingIds) };
@@ -539,7 +576,7 @@ function decideNext(c0: ReviewCtx): S {
   const history = [
     ...c0.history,
     ...findings.filter((finding) => finding.round === c0.round && (finding.status === 'fixed' || finding.status === 'pending-rejection'))
-      .map((finding): HistoryEntry => ({ ...matchKey(finding), id: finding.id, status: finding.status === 'fixed' ? 'applied' : 'pending-rejection', reraises: 0 })),
+      .map((finding): HistoryEntry => ({ ...matchKey(finding), id: finding.id, status: finding.status === 'fixed' ? 'applied' : 'pending-rejection', reraises: 0, reopens: 0 })),
   ];
   const c1 = { ...c0, findings, history };
   const next = nextRound({ round: c1.round, cap, findings: roundView(c1) });
@@ -716,7 +753,8 @@ export function stepReview(state: ReviewState, event: Event): S {
     if (admission && event.result === 'changed') return stay({ tag: 'failed', c: { ...observed, counters: state.c.counters }, detail: 'Fix admission failed: changed paths or comparison identity exceed the authorized applied scope; binding evidence retained.' });
     // NOTE: successful checks precede their output capture, so changed declared bytes need another bounded verification pass.
     if (before.tag === 'fix-verify' && verified && event.result === 'expected' && (event.notice?.pathCount ?? 0) > 0) {
-      const c = { ...observed, counters: state.c.counters, fixCandidate: event.manifestPath, fixCandidateRef: event.manifestRef };
+      const flakes = state.pending.type === 'VERIFY_DONE' ? flakeConcerns(before, state.pending.results) : [];
+      const c = withConcerns({ ...observed, counters: state.c.counters, fixCandidate: event.manifestPath, fixCandidateRef: event.manifestRef }, flakes);
       const retry = retryFailed(c, before.clusters);
       const exhausted = [...(before.exhausted ?? []), ...retry.exhausted];
       if (exhausted.length) return resumeFix(c, [...(before.pendingClusters ?? []), ...retry.clusters], exhausted, before.pass, ['Verification changed the admitted candidate.']);
@@ -857,13 +895,21 @@ function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }
       }
       if (event.type === 'VERIFY_DONE' && answers(event, state.c.effectId)) {
         const red = event.results.filter((result) => result['exit'] !== 0);
+        const flaked = { ...state, c: withConcerns(state.c, flakeConcerns(state, event.results)) };
         // NOTE: when no failing check could spawn, the fix is untested, so the orchestrator repairs the commands at no attempt cost; any other nonzero exit counts as a failed fix.
         if (red.length && red.every((result) => result['exit'] === 127)) {
           const failures = red.map((result) => ({ command: String(result['command']), exit: Number(result['exit']), logPath: String(result['logPath']) }));
-          const { tag: _tag, c, ...recovery } = state;
+          const { tag: _tag, c, rerun: _rerun, ...recovery } = flaked;
           return stay({ tag: 'decide-verification', c, ...recovery, failures });
         }
-        return afterFixVerify(state, red.map((result) => `${String(result['command'])} exited ${String(result['exit'])} (${String(result['logPath'])})`));
+        // NOTE: a red check reruns once on the same tree before it charges the cluster, so one flake does not reject a fix.
+        if (red.length && !state.rerun) {
+          const rerun = [...new Set(red.map((result) => String(result['command'])))];
+          const { c, effect } = withEffect(state.c, 'verify', (id) => ({ kind: 'verify', id, purpose: 'fix-verify', commands: rerun.map((command) => ({ command })) }));
+          return { state: { ...state, c, rerun }, effects: [effect] };
+        }
+        const { rerun: _rerun, ...settled } = flaked;
+        return afterFixVerify(settled, red.map((result) => `${String(result['command'])} exited ${String(result['exit'])} (${String(result['logPath'])})`));
       }
       return stay(state);
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': case 'decide-verification':
@@ -903,13 +949,38 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
 }
 
 export function reviewData(state: ReviewState): Readonly<Record<string, unknown>> {
-  const data = reviewFrameData(state);
+  const data = withFrameConcerns(state, reviewFrameData(state));
   if (!('c' in state) || !state.c.observations?.length) return data;
   const awaiting = reviewAwait(state);
   if (awaiting === 'done') return state.tag === 'settled' ? { ...data, completion: { ...(data['completion'] as object), coverage: reviewCoverage(state.c) } } : { ...data, coverage: reviewCoverage(state.c) };
   if (awaiting === null) return data;
   // NOTE: observations are advisory; a selection is optional and findings keep the revision their wave reviewed.
   return { ...data, reviewObservations: state.c.observations, reviewUse: 'Optional: REVIEW_USE { observationId, afterHash, action: reuse|targeted|full, rationale, paths? }. Observations never block progress or spend a round.', ...(state.tag === 'decide-escalation' ? { coverage: reviewCoverage(state.c) } : {}) };
+}
+
+/** Settled reviews report concerns in their completion; every other frame carries them at top level. */
+function withFrameConcerns(state: ReviewState, data: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const concerns = 'c' in state ? state.c.concerns ?? [] : [];
+  if (!concerns.length) return data;
+  return state.tag === 'settled' ? { ...data, completion: { ...(data['completion'] as object), concerns } } : { ...data, concerns };
+}
+
+const RULE_TEXT_BYTES = 512;
+const TRUNCATED = ' [truncated]';
+
+/** Caps text at `max` UTF-8 bytes, marker included, cutting on a code-point boundary. */
+export function capUtf8(text: string, max = RULE_TEXT_BYTES): string {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  if (bytes.length <= max) return text;
+  // NOTE: a streaming decode holds back a split trailing code point instead of emitting U+FFFD.
+  return new TextDecoder().decode(bytes.subarray(0, max - encoder.encode(TRUNCATED).length), { stream: true }) + TRUNCATED;
+}
+
+/** The rule-frame row: identity, capped text, and any reopened fix, so a ruling needs no findings-file read. */
+export function ruleFindingRow(row: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const { id, severity, category, locus, defect, requiredChange, reopens } = row;
+  return { id, severity, category, locus, defect: capUtf8(String(defect ?? '')), requiredChange: capUtf8(String(requiredChange ?? '')), ...(reopens === undefined ? {} : { reopens }) };
 }
 
 function reviewFrameData(state: ReviewState): Readonly<Record<string, unknown>> {
@@ -1037,6 +1108,7 @@ export const reviewTransitions = [
   { from: 'fix-verify', on: 'VERIFY_DONE', to: 'decide-opt-in' },
   { from: 'fix-verify', on: 'EFFECT_FAILED', to: 'failed' },
   { from: 'fix-verify', on: 'VERIFY_DONE', to: 'decide-verification' },
+  { from: 'fix-verify', on: 'VERIFY_DONE', to: 'fix-verify' },
   { from: 'decide-verification', on: 'DECISION', to: 'fix-verify' },
   { from: 'decide-verification', on: 'DECISION', to: 'target-check' },
   { from: 'decide-escalation', on: 'DECISION', to: 'escalated' },

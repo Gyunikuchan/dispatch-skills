@@ -134,7 +134,7 @@ async function fixedControllerDelivery() {
     assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
     frame = reply({ type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Implement candidate fixture diagnostics' } });
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
-    frame = reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Fixture-only diagnostic label, without routing changes.', gateScope: frame.data['gateScope'] } });
+    frame = reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Fixture-only diagnostic label, without routing changes.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as (ReceiptSlot & { worktree: string; briefPath: string })[];
     assert.ok(slot);
@@ -245,7 +245,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
     assert.equal(frame.await, 'decide', JSON.stringify(frame)); assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } });
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
-    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded, reversible helper change.', gateScope: frame.data['gateScope'] } });
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded, reversible helper change.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as { task: string; action: string; attempt: number; signature: string; briefPath: string; briefHash: string; envelopePath: string; worktree: string; launchPath: string }[];
     assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
@@ -338,7 +338,7 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
     let frame = await f.begin('implement', session, plan);
     const run = f.absoluteRun(frame.run);
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approve this scope.' } });
-    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScope: frame.data['gateScope'] } });
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScopeHash: frame.data['gateScopeHash'] } });
     const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as (ReceiptSlot & { worktree: string })[];
     assert.equal(slot?.task, 'T1', JSON.stringify(frame));
     const launchFrame = frame;
@@ -761,7 +761,7 @@ No reviews conducted yet.
     assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with fixture graph' } });
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
-    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'The fixture tasks are bounded and recoverable.', gateScope: frame.data['gateScope'] } });
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'The fixture tasks are bounded and recoverable.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     return { f, session, run, frame, independent };
   } catch (error) { f.cleanup(); throw error; }
@@ -968,7 +968,7 @@ async function liveRun(f: ReturnType<typeof fixture>, name: string, source: stri
   }
   assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
   frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with the fixture plan.' } });
-  frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScope: frame.data['gateScope'] } });
+  frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScopeHash: frame.data['gateScopeHash'] } });
   assert.equal(frame.await, 'write', JSON.stringify(frame));
   const launchFrame = frame;
   for (const slot of taskSlots(launchFrame, f.repo).filter((item) => item.action === 'launch')) frame = await f.reply(run, launchedReceipt(slot, `writer-${slot.task}`, launchFrame));

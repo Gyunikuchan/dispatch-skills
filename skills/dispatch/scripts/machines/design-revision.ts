@@ -4,7 +4,7 @@ import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, sharedDesignSections } from '../domain/design.ts';
 import { beginReview, reviewArtifactId, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
 import { answers, never, nextId, staleGoverning, stay, type Step } from './types.ts';
-import type { DesignContext } from './design.ts';
+import { withReviewConcerns, type DesignContext } from './design.ts';
 
 export function designDelta(before: ParsedDesign, after: ParsedDesign): { changed: string[]; invalidated: string[]; removed: string[] } {
   const contract = (d: ParsedDesign, id: string) => JSON.stringify({ graph: d.increments.find((row) => row.id === id), acceptance: d.details[id] });
@@ -105,7 +105,7 @@ function parse(state: DesignRevisionState, afterReview: boolean): S {
   return { state: { tag: 'parse', c: { ...state.c, counters: next.counters }, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence, effectId: next.id, afterReview }, effects: [{ kind: 'parse-artifact', id: next.id, path: state.workingPath, artifact: 'design', ...(state.c.governingSpec ? { governing: state.c.governingSpec.path } : {}) }] };
 }
 function reviewed(state: DesignRevisionState, result: Step<ReviewState>): S {
-  const c = { ...state.c, counters: 'c' in result.state ? result.state.c.counters : state.c.counters, revisionReviewRound: 'c' in result.state ? Math.max(state.c.revisionReviewRound, result.state.c.round) : state.c.revisionReviewRound };
+  const c = { ...withReviewConcerns(state.c, result.state), counters: 'c' in result.state ? result.state.c.counters : state.c.counters, revisionReviewRound: 'c' in result.state ? Math.max(state.c.revisionReviewRound, result.state.c.round) : state.c.revisionReviewRound };
   const base = { c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence };
   if (result.state.tag === 'settled' || result.state.tag === 'skipped') return parse({ ...state, c }, true);
   if (['failed', 'escalated', 'empty'].includes(result.state.tag)) return stay({ ...base, tag: 'refused', error: `Design revision review did not settle: ${result.state.tag}${result.state.tag === 'failed' ? `: ${reviewData(result.state)['summary']}` : ''}` });

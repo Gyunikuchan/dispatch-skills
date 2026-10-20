@@ -9,6 +9,8 @@ import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
 import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
+import { implementMachine, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { launch, start as startTasks, submit, type Sim } from '../machines/fixtures/implement-tasks.ts';
 
 test('change receipt: drift envelope preserves actor notice hash and evidence bindings through transport', () => {
   const [event] = awaitEnvelopes('decide', { kind: 'drift', notice: { id: 'n', afterHash: 'after', affectedEvidence: ['SC1'] } });
@@ -68,7 +70,7 @@ test('event path: a rejected event keeps its path, and the rewritten file is acc
 
 test('every live await emits parser-compatible envelopes with scoped ruling and mapping metadata', () => {
   const data = { path: 'plan.md', slots: [{ sourceKey: 'native[0]', outputPath: 'raw.md', model: 'configured' }], findings: [{ id: 'F1', locus: 'src/a.ts:L1' }], clusters: [{ clusterId: 'C1', affectedPaths: ['src/a.ts'] }], envelopePath: 'receipt.json', model: 'writer', criteria: [{ id: 'SC1' }], kind: 'approval', items: [] };
-  for (const current of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide'] as const) {
+  for (const current of ['author', 'native', 'rule', 'fix', 'write', 'decide'] as const) {
     const events = awaitEnvelopes(current, data); assert.ok(events.length);
     for (const event of events) assert.equal(validateHostEvent(current, event).ok, true, JSON.stringify(event));
   }
@@ -196,4 +198,103 @@ test('diagnostics amendment rule scope guidance preserves examples for code and 
     assert.equal(frame.await, 'rule');
     assert.match(frame.reply, /events\/4-rule.json$/);
   }
+});
+
+// SECTION: Decide, rule and write templates
+
+const decideMachine = (data: Record<string, unknown>, validate?: (event: import('../../../skills/dispatch/scripts/core/types.ts').HostEvent) => string | null) => ({
+  ...awaitingMachine, awaitOf: () => 'decide' as const, project: () => ({ at: 'implement › decide', data }), ...(validate ? { validate: (_state: unknown, event: import('../../../skills/dispatch/scripts/core/types.ts').HostEvent) => validate(event) } : {}),
+});
+const answers = (events: readonly import('../../../skills/dispatch/scripts/core/types.ts').HostEvent[] | undefined) => (events ?? []).map((event) => event.type === 'DECISION' ? event.answer : null);
+
+test('decide templates offer progress first for writer concerns', () => {
+  const items = ['The fixture covers only one platform.', 'A helper stays duplicated.'];
+  const state = { tag: 'concerns', c: {}, items } as unknown as ImplementState;
+  const frame = projectFrame(decideMachine({ kind: 'concerns', question: 'Resolve the writer concerns before code review.', options: ['accept', 'stop'], items }, (event) => validateImplement(state, event)), awaitingMachine.initial(), 'run');
+  const offered = answers(frame.events) as Record<string, unknown>[];
+  assert.deepEqual(offered.map((answer) => [answer['decision'], answer['by']]), [['accept', 'orchestrator'], ['stop', 'user']]);
+});
+
+test('decide templates offer progress first for baseline failures with every failure id', () => {
+  const failing = (failureId: string | null) => ({ command: 'npm test', exit: 1, failureId, diagnostic: 'failed', logPath: 'baseline.log' });
+  const rows = [failing('f-b'), failing('f-a'), failing('f-a'), failing(null)];
+  const state = { tag: 'baseline-decision', c: {}, items: rows } as unknown as ImplementState;
+  const data = { kind: 'baseline', question: 'Accept, hotfix, or stop.', options: ['accept-known-red', 'inline-hotfix', 'stop'], items: rows.map(({ exit: _exit, ...row }) => row) };
+  const frame = projectFrame(decideMachine(data, (event) => validateImplement(state, event)), awaitingMachine.initial(), 'run');
+  assert.deepEqual(answers(frame.events), [{ action: 'accept-known-red', ids: ['f-a', 'f-b'] }, 'stop']);
+  assert.deepEqual(replyEvent(frame.events), undefined, 'the host still chooses between accepting and stopping');
+});
+
+test('decide templates offer progress first for spec approval with the revision hash', () => {
+  const hash = `sha256:${'b'.repeat(64)}`;
+  const data = { kind: 'spec-approval', path: 'x.spec.md', hash, question: 'Approve this governing spec revision.', options: ['approve', 'stop'], required: { by: 'user', quote: 'non-empty', hash } };
+  const frame = projectFrame(decideMachine(data), awaitingMachine.initial(), 'run');
+  assert.deepEqual(answers(frame.events), [{ by: 'user', quote: '<actual user quote>', hash }, 'stop']);
+});
+
+test('rule and write templates name constraints for intent findings with needs-user first', () => {
+  const config = { 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } } };
+  const finding = (id: string, category: string) => ({ id, severity: 'MUST', category, locus: 'src/a.ts:L4', defect: 'gap', requiredChange: 'fill', sources: ['codex[0]'], scope: 'in' });
+  const events: Event[] = [
+    { type: 'RUN_STARTED', verb: 'review', argument: 'src/a.ts', level: 'low', levelSource: 'explicit', pins: null, orchestrator: 'claude', orchestratorModel: null, overrides: { kind: 'code' }, config, repo: {} },
+    { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0' } },
+    { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [finding('R1-F001', 'intent'), finding('R1-F002', 'correctness')] as never },
+  ];
+  const state = events.reduce((current, event) => reviewMachine.step(current, event).state, reviewMachine.initial());
+  const frame = projectFrame(reviewMachine, state, 'run');
+  assert.equal(frame.await, 'rule');
+  const rulings = (frame.events ?? []).flatMap((event) => event.type === 'RULINGS' ? [event.rulings as Record<string, { ruling: string; by?: string; reason?: string }>] : []);
+  assert.deepEqual(rulings.map((row) => [row['R1-F001']?.ruling, row['R1-F001']?.by, row['R1-F002']?.ruling]), [['needs-user', undefined, 'accept'], ['accept', 'orchestrator', 'accept']]);
+  assert.ok(rulings[1]?.['R1-F001']?.reason?.trim(), 'the orchestrator ruling carries a reason');
+});
+
+test('rule and write templates name constraints for launched receipts and plan replacement', () => {
+  const frame = projectFrame({ ...awaitingMachine, awaitOf: () => 'write' as const, project: () => ({ at: 'implement › tasks', data: WRITING }) }, awaitingMachine.initial(), 'run');
+  assert.match(String(frame.data['launchedReceipt']), /substitution/);
+  const launched = { type: 'WRITE_RECEIPT', status: 'launched', task: 'T1', attempt: 1, signature: 's', handle: 'h', model: 'm', substitution: 'configured model unavailable' };
+  assert.equal(validateHostEvent('write', launched).ok, true);
+  const replace = frame.events?.find((event) => event.type === 'REPLACE_PLAN');
+  assert.match(replace?.type === 'REPLACE_PLAN' ? replace.path : '', /new plan file path.*immutable/);
+});
+
+// SECTION: Evidence reply template
+
+const evidenceFrame = (criteria: readonly Record<string, unknown>[]) => projectFrame({ ...awaitingMachine, awaitOf: () => 'evidence' as const, project: () => ({ at: 'implement › evidence', data: { criteria } }) }, awaitingMachine.initial(), 'run');
+
+test('evidence template shows verify logs and leaves every judgment to the host', () => {
+  const frame = evidenceFrame([{ id: 'SC1', logPath: 'run/implement.verify.4/1.log', exit: 0 }, { id: 'SC2', logPath: 'run/implement.verify.4/2.log', exit: 1 }, { id: 'SC3' }]);
+  assert.equal(frame.events, undefined, 'no event template preselects an outcome');
+  assert.equal(replyEvent(frame.events), undefined, 'nothing is pre-written as the reply');
+  assert.deepEqual(frame.data['evidenceTemplate'], {
+    type: 'EVIDENCE',
+    criteria: {
+      SC1: { outcome: '<pass|waived after inspecting the log>', evidence: '<log run/implement.verify.4/1.log, exit 0: observed result>' },
+      SC2: { outcome: '<pass|waived after inspecting the log>', evidence: '<log run/implement.verify.4/2.log, exit 1: observed result>' },
+      SC3: { evidence: '<observed criterion evidence>' },
+    },
+  });
+  const template = frame.data['evidenceTemplate'] as { criteria: Record<string, Record<string, unknown>> };
+  const reply = { type: 'EVIDENCE', criteria: Object.fromEntries(Object.keys(template.criteria).map((id) => [id, { outcome: 'pass', evidence: `Read the ${id} log; every assertion passed.` }])) };
+  assert.equal(validateHostEvent('evidence', reply).ok, true);
+});
+
+test('evidence template shows verify logs journaled by the implementation run', () => {
+  const sim: Sim = {};
+  let { result, trace } = startTasks(1, sim);
+  for (const id of ['T1', 'T2', 'T3']) result = submit(launch(result, sim, trace), id, sim, trace);
+  assert.equal(result.state.tag, 'evidence');
+  const frame = projectFrame(implementMachine, result.state, 'run');
+  assert.equal(frame.events, undefined);
+  const lastLog = (command: string) => trace.events.flatMap((event) => event.type === 'VERIFY_DONE' ? event.results.filter((row) => row['command'] === command) : []).at(-1);
+  const plan = result.state.tag === 'evidence' ? result.state.c.plan! : null;
+  const ids = (frame.data['criteria'] as { id: string }[]).map((row) => row.id);
+  assert.ok(ids.length > 0);
+  const expected = Object.fromEntries(ids.map((id) => {
+    const log = lastLog(plan!.criteria.find((row) => row.id === id)!.verify.at(-1)!.command)!;
+    return [id, { outcome: '<pass|waived after inspecting the log>', evidence: `<log ${log['logPath']}, exit ${log['exit']}: observed result>` }];
+  }));
+  assert.deepEqual(frame.data['evidenceTemplate'], { type: 'EVIDENCE', criteria: expected });
+  assert.notEqual(validateImplement(result.state, frame.data['evidenceTemplate'] as never), null, 'the unedited template is not a sendable reply');
+  const reply = { type: 'EVIDENCE', criteria: Object.fromEntries(ids.map((id) => [id, { outcome: 'pass', evidence: `Read the ${id} log; every assertion passed.` }])) };
+  assert.equal(validateImplement(result.state, reply as never), null);
 });

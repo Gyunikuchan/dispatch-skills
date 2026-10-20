@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -172,4 +173,102 @@ test('recovery-git: ordered delivery replay retains conflicts, recovers resoluti
     assert.deepEqual((await op('deliver', { base: final['base'], revision: final['head'] })).result['conflicts'], []);
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2; // next caller\n');
   } finally { f.cleanup(); }
+});
+
+// SECTION: Draft snapshots before task resets (real Git index, refs, and worktrees)
+
+const RUN_ONE = 'refs/dispatch/drafts/0a1b2c3d-001', RUN_TWO = 'refs/dispatch/drafts/0a1b2c3d-002';
+
+/** Task worktrees of two runs in one repository; `crashAfter` fails the effect once, right after that Git subcommand completes. */
+function draftRepo() {
+  const f = fixture();
+  f.git('config', 'core.autocrlf', 'false');
+  const base = f.git('rev-parse', 'HEAD').trim(), real = nodePorts();
+  const handler = createCheckout({ cwd: f.repo, links: { create: (target: string, link: string) => fs.symlinkSync(target, link, 'junction'), remove: (link: string) => fs.unlinkSync(link) } });
+  const runDir = (run: string) => path.join(f.repo, '.scratch/session/.state/runs', run);
+  const op = async (run: string, id: string, name: string, input: Record<string, unknown>, crashAfter?: string) => {
+    let crashed = false;
+    const crashing = async (args: readonly string[], cwd: string, stdin?: string) => {
+      const out = await real.git.run(args, cwd, stdin);
+      const command = args.filter((arg, i) => arg !== '-c' && args[i - 1] !== '-c')[0];
+      if (crashAfter && !crashed && command === crashAfter) { crashed = true; throw new Error(`process died after git ${crashAfter}`); }
+      return out;
+    };
+    const effect = { kind: 'checkout', id, op: name, input } as Extract<Effect, { kind: 'checkout' }>;
+    return (await handler(effect, { ...real, git: { ...real.git, run: crashing } }, { runDir: runDir(run), attempt: 1 }))[0]!;
+  };
+  const done = async (...args: Parameters<typeof op>) => {
+    const event = await op(...args);
+    assert.equal(event.type, 'CHECKOUT_DONE', JSON.stringify(event));
+    return event.type === 'CHECKOUT_DONE' ? event.result as Record<string, unknown> : {};
+  };
+  const tree = (run: string, name: string) => path.join(runDir(run), 'wt', name);
+  const createTask = async (run: string, name: string) => { await done(run, `${run}.checkout.1`, 'task', { name, revision: base, links: [], ignored: [] }); return tree(run, name); };
+  const writeDraft = (root: string, label: string) => { fs.writeFileSync(path.join(root, 'src/a.ts'), `export const value = '${label}';\n`); fs.writeFileSync(path.join(root, 'src/untracked.ts'), `${label} untracked\n`); };
+  const refs = (prefix: string) => f.git('for-each-ref', '--format=%(refname)', prefix).split('\n').filter(Boolean);
+  const show = (rev: string, file: string) => f.git('show', `${rev}:${file}`);
+  const keptDraft = (ref: string, label: string) => [show(ref, 'src/a.ts'), show(ref, 'src/untracked.ts')].join('') === `export const value = '${label}';\n${label} untracked\n`;
+  const atInput = (root: string) => execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: root, encoding: 'utf8' }) === '' && execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim() === base;
+  return { f, base, op, done, createTask, writeDraft, refs, keptDraft, atInput };
+}
+
+test('draft snapshot of dirty and committed drafts keeps a ref whose tree is the draft, and the worktree returns to the input', async () => {
+  const d = draftRepo();
+  try {
+    const root = await d.createTask('001-implement', 'task-t1');
+    d.writeDraft(root, 'dirty');
+    const dirtyRef = `${RUN_ONE}/t1-implement.checkout.3`;
+    assert.equal((await d.done('001-implement', 'implement.checkout.3', 'task', { name: 'task-t1', revision: d.base, reset: true, links: [], ignored: [], snapshot: dirtyRef }))['snapshot'], dirtyRef);
+    assert.ok(d.keptDraft(dirtyRef, 'dirty'));
+    assert.ok(d.atInput(root));
+    d.writeDraft(root, 'committed');
+    execFileSync('git', ['add', '-A'], { cwd: root }); execFileSync('git', ['commit', '-qm', 'writer commit'], { cwd: root });
+    const writerCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+    const committedRef = `${RUN_ONE}/t1-implement.checkout.6`;
+    assert.equal((await d.done('001-implement', 'implement.checkout.6', 'reset', { name: 'task-t1', revision: d.base, snapshot: committedRef }))['snapshot'], committedRef);
+    assert.equal(d.f.git('rev-parse', committedRef).trim(), writerCommit, 'a clean committed draft is kept as is');
+    assert.ok(d.atInput(root));
+    assert.equal((await d.done('001-implement', 'implement.checkout.7', 'reset', { name: 'task-t1', revision: d.base, snapshot: `${RUN_ONE}/t1-implement.checkout.7` }))['snapshot'], null, 'no draft, no ref');
+    assert.deepEqual(d.refs(RUN_ONE).sort(), [dirtyRef, committedRef].sort());
+  } finally { d.f.cleanup(); }
+});
+
+test('draft snapshot replay after a crash after the commit, after the ref, or between reset and clean keeps one ref holding the draft', async () => {
+  const d = draftRepo();
+  try {
+    for (const [index, crashAfter] of ['commit', 'update-ref', 'reset'].entries()) {
+      const name = `task-t${index + 1}`, root = await d.createTask('001-implement', name);
+      d.writeDraft(root, crashAfter);
+      const ref = `${RUN_ONE}/t${index + 1}-implement.checkout.4`;
+      const input = { name, revision: d.base, reset: true, links: [], ignored: [], snapshot: ref };
+      const crashed = await d.op('001-implement', 'implement.checkout.4', 'task', input, crashAfter);
+      assert.equal(crashed.type, 'EFFECT_FAILED', crashAfter);
+      assert.equal((await d.done('001-implement', 'implement.checkout.4', 'task', input))['snapshot'], ref, crashAfter);
+      assert.deepEqual(d.refs(`${RUN_ONE}`).filter((item) => item.startsWith(`${RUN_ONE}/t${index + 1}-`)), [ref], crashAfter);
+      assert.ok(d.keptDraft(ref, crashAfter), crashAfter);
+      assert.equal(d.f.git('rev-list', '--count', `${d.base}..${ref}`).trim(), '1', `${crashAfter}: replay adds no second commit`);
+      assert.ok(d.atInput(root), crashAfter);
+      assert.equal(fs.existsSync(path.join(root, 'src/untracked.ts')), false, crashAfter);
+    }
+  } finally { d.f.cleanup(); }
+});
+
+test('draft snapshot refs of two runs stay separate, one attempt keeps a retry and a relaunch draft, and cleanup leaves other runs', async () => {
+  const d = draftRepo();
+  try {
+    const one = await d.createTask('001-implement', 'task-t1'), two = await d.createTask('002-implement', 'task-t1');
+    d.writeDraft(one, 'run one retry'); d.writeDraft(two, 'run two retry');
+    const reset = (run: string, ref: string) => d.done(run, 'implement.checkout.3', 'task', { name: 'task-t1', revision: d.base, reset: true, links: [], ignored: [], snapshot: ref });
+    await reset('001-implement', `${RUN_ONE}/t1-implement.checkout.3`);
+    await reset('002-implement', `${RUN_TWO}/t1-implement.checkout.3`);
+    d.writeDraft(one, 'run one relaunch');
+    await d.done('001-implement', 'implement.checkout.8', 'reset', { name: 'task-t1', revision: d.base, snapshot: `${RUN_ONE}/t1-implement.checkout.8` });
+    assert.ok(d.keptDraft(`${RUN_ONE}/t1-implement.checkout.3`, 'run one retry'));
+    assert.ok(d.keptDraft(`${RUN_ONE}/t1-implement.checkout.8`, 'run one relaunch'));
+    assert.ok(d.keptDraft(`${RUN_TWO}/t1-implement.checkout.3`, 'run two retry'));
+    await d.done('001-implement', 'implement.checkout.20', 'cleanup', { names: ['task-t1'], links: [], drafts: RUN_ONE });
+    assert.deepEqual(d.refs(RUN_ONE), []);
+    assert.deepEqual(d.refs(RUN_TWO), [`${RUN_TWO}/t1-implement.checkout.3`]);
+    assert.ok(d.keptDraft(`${RUN_TWO}/t1-implement.checkout.3`, 'run two retry'));
+  } finally { d.f.cleanup(); }
 });

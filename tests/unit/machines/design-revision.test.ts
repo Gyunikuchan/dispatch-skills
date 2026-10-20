@@ -416,3 +416,20 @@ test('author quality reads match the shared consumer map after an integration co
   assert.ok(revision.tag === 'revision' && revision.child.tag === 'author');
   assert.deepEqual(designData(revision)['read'], [{ path: 'references/templates/quality-bar.md', sections: qualitySections.design }]);
 });
+test('design revision review concerns from an empty fallback slot reach the design parent', () => {
+  const state = approval('implement');
+  const c = { ...state.c, run: { ...state.c.run, config: { ...state.c.run.config, phases: { ...(state.c.run.config['phases'] as Record<string, unknown>), 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } } } } };
+  let result = stepDesign({ ...state, c }, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'Preserve the objective.' });
+  assert.ok(result.state.tag === 'revision' && result.state.child.tag === 'author');
+  result = stepDesign(result.state, { type: 'AUTHORED', path: result.state.child.workingPath });
+  const revised = `sha256:${'1'.repeat(64)}`;
+  result = stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash: revised, parsed: design, defects: [] });
+  assert.ok(result.state.tag === 'revision' && result.state.child.tag === 'review');
+  result = stepDesign(result.state, { type: 'REVIEW_PREPARED', effectId: result.effects[0]!.id, scope: {}, promptPaths: { 'codex[0]': 'p0' } });
+  const reserve = { slot: 'codex[0]', state: 'reserve', by: 'claude[0]', model: 'opus', record: 'reserve claude[0] for codex[0]', reason: 'quota' };
+  result = stepDesign(result.state, { type: 'WAVE_DONE', effectId: result.effects[0]!.id, round: 1, slots: [reserve], findings: [] } as never);
+  assert.ok(result.state.tag === 'revision' && result.state.child.tag === 'parse');
+  result = stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash: revised, parsed: design, defects: [] });
+  assert.equal(result.state.tag, 'approval');
+  assert.deepEqual(designData(result.state)['concerns'], ['review slot codex[0]: no findings after fallback to opus']);
+});

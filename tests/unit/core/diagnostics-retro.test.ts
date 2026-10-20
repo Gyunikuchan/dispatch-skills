@@ -204,3 +204,17 @@ test('completion frame references diagnostics report only when findings exist', 
   const done = await flagged.reply({ type: 'RETRO', observations: [OBSERVATION] });
   assert.deepEqual(done.frame?.data['diagnostics'], { path: path.join(flagged.session, 'diagnostics.md').replaceAll('\\', '/'), findings: 1 });
 });
+
+// SECTION: Observation cap
+
+test('retro keeps twenty observations and rejects the twenty-first', async () => {
+  const run = reviewRun({ on: true });
+  await run.begin();
+  const observations = Array.from({ length: 21 }, (_, i) => ({ ...OBSERVATION, id: `obs-${i + 1}` }));
+  const done = await run.reply({ type: 'RETRO', observations });
+  assert.equal(done.frame?.await, 'done');
+  const report = readReport(run);
+  assert.match(report, /- Host retro: 20 accepted · 1 rejected/);
+  assert.match(report, /host retro `obs-20`/);
+  assert.doesNotMatch(report, /host retro `obs-21`/);
+});

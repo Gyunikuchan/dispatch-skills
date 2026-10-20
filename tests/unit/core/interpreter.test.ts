@@ -143,7 +143,7 @@ const transportMachine: import('../../../skills/dispatch/scripts/core/types.ts')
   awaitOf: () => 'rule',
   project: (state) => ({ at: 'review', data: { findings: transportFindings(state) } }),
 };
-const summaries = (round: number) => transportFindings(round).map(({ id, severity, category, locus }) => ({ id, severity, category, locus }));
+const summaries = (round: number) => transportFindings(round).map(({ id, severity, category, locus, defect, requiredChange }) => ({ id, severity, category, locus, defect, requiredChange }));
 
 test('diagnostics amendment findings transport writes current full findings, overwrites and repairs on replay', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), 'runs', '001-review');

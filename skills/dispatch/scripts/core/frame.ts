@@ -28,12 +28,21 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   if (events.length) frame.events = events;
   // NOTE: intent examples default to `needs-user`; alternative rulings require actual authority evidence.
   if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: 'needs-user; { ruling: accept|reject, quote: <user words> }; { ruling: accept|reject, by: orchestrator, reason: <settled decision> }' };
+  if (frame.await === 'write' && rows(data['tasks']).length) frame.data = { ...frame.data, launchedReceipt: 'Optional on a launched WRITE_RECEIPT: substitution: <reason when the launched model differs>.' };
+  if (frame.await === 'evidence') frame.data = { ...frame.data, evidenceTemplate: evidenceTemplate(data) };
   if (frame.await === 'rule') frame.data = { ...frame.data, fixScope: 'Example locus paths are suggestions. Declare every production, test, fixture, helper edit and verification-generated output before sending RULINGS.' };
   // NOTE: observations are advisory; the hint shows the optional metadata a normal reply may carry.
   if (frame.await !== 'done' && rows(data['observations']).length) frame.data = { ...frame.data, changeDispositions: 'Optional on this reply: [{ observationId, afterHash, rationale, retain?: [criterion ids], refresh?: [criterion ids] }]. Observations never block progress.' };
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };
   if (error !== undefined) frame.error = error;
   return frame;
+}
+
+/** Unsendable `EVIDENCE` skeleton: every judgment is a placeholder naming the criterion's last verify log and exit code. */
+function evidenceTemplate(data: Row): Row {
+  return { type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), typeof criterion['logPath'] === 'string' && criterion['logPath']
+    ? { outcome: '<pass|waived after inspecting the log>', evidence: `<log ${criterion['logPath']}, exit ${String(criterion['exit'])}: observed result>` }
+    : { evidence: '<observed criterion evidence>' }])) };
 }
 
 /** Read-only guidance uses the same validated examples and boundary path as live rejection. */
@@ -69,7 +78,7 @@ const amendExample = (task: string): HostEvent => ({
 
 // NOTE: a whole-file revision names the bound plan hash and every task's reconciliation, so the driver never infers intent.
 const replaceExample = (task: string): HostEvent => ({
-  type: 'REPLACE_PLAN', path: '<new plan file in the session folder>', expectedHash: '<bound plan hash>', rationale: '<why the plan changes>',
+  type: 'REPLACE_PLAN', path: '<new plan file path; revisions are immutable>', expectedHash: '<bound plan hash>', rationale: '<why the plan changes>',
   notify: [{ task, notice: '<what changed for this writer>' }],
   reconciliation: { retained: ['<unchanged task>'], changed: [task], added: [], retired: [], intentChanged: false, dependencyChanged: false },
 });
@@ -93,7 +102,12 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
     case 'rule': {
       // NOTE: artifact loci are section headings, so artifact reviews name the reviewed file instead.
       const fixTarget = typeof data['fixTarget'] === 'string' && data['fixTarget'] ? data['fixTarget'] : null;
-      return [{ type: 'RULINGS', rulings: Object.fromEntries(rows(data['findings']).map((finding) => [String(finding['id']), { ruling: finding['category'] === 'intent' ? 'needs-user' : 'accept', fix: { affectedPaths: [fixTarget ?? String(finding['locus']).replace(/:L\d+.*$/, '')], dependsOn: [], verification: [] } }])) }];
+      const findings = rows(data['findings']);
+      // NOTE: intent stays user-gated by default; the orchestrator alternative needs a settled-decision reason.
+      const rulings = (intent: Readonly<Record<string, unknown>>): HostEvent => ({ type: 'RULINGS', rulings: Object.fromEntries(findings.map((finding) => [String(finding['id']), { ...(finding['category'] === 'intent' ? intent : { ruling: 'accept' }), fix: { affectedPaths: [fixTarget ?? String(finding['locus']).replace(/:L\d+.*$/, '')], dependsOn: [], verification: [] } }])) });
+      const events = [rulings({ ruling: 'needs-user' })];
+      if (findings.some((finding) => finding['category'] === 'intent')) events.push(rulings({ ruling: 'accept', by: 'orchestrator', reason: '<settled decision>' }));
+      return events;
     }
     case 'fix': return [{ type: 'FIXES_APPLIED', clusters: rows(data['clusters']).map((cluster) => ({ clusterId: cluster['clusterId'], status: 'applied', affectedPaths: cluster['affectedPaths'] })) }];
     case 'write': {
@@ -106,7 +120,8 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       if (live.length) events.push(amendExample(String(live[0]!['task'])), replaceExample(String(live[0]!['task'])));
       return events;
     }
-    case 'evidence': return [{ type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), { outcome: 'pass', evidence: '<observed criterion evidence>' }])) }];
+    // NOTE: no evidence event is suggested; a preselected `pass` invited replies sent without reading the logs (see `evidenceTemplate`).
+    case 'evidence': return [];
     case 'decide': {
       const kind = data['kind'] as Extract<HostEvent, { type: 'DECISION' }>['kind'];
       const items = Array.isArray(data['items']) ? data['items'] : [];
@@ -114,8 +129,9 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       const answer = kind === 'opt-in' ? [] : kind === 'drift' ? { by: 'orchestrator', noticeId: notice?.['id'] ?? '<current notice id>', afterHash: notice?.['afterHash'] ?? '<current after hash>', action: '<preserve|refresh|reconcile|escalate>', rationale: '<observed intent and dependency evidence>', evidenceIds: notice?.['affectedEvidence'] ?? [] }
         : kind === 'needs-user' ? typeof items[0] === 'string' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' } : Object.fromEntries(rows(items).map((item) => [String(item['id']), { ruling: 'accept', quote: '<actual user quote>' }]))
         : kind === 'fix-verification' ? Object.fromEntries(rows(items).map((item) => [String(item['clusterId']), { verification: ['<corrected command>'], by: 'orchestrator', rationale: '<why the original command could not run>' }]))
-        : kind === 'concerns' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' }
-        : kind === 'level-classification' ? { evaluatedLevel: 'medium', rationale: '<concrete scope and risk evidence>', gateScope: data['gateScope'] }
+        : kind === 'concerns' ? { decision: 'accept', by: 'orchestrator', quote: '<concern resolution evidence>' }
+        : kind === 'baseline' ? { action: 'accept-known-red', ids: [...new Set(rows(items).flatMap((item) => typeof item['failureId'] === 'string' ? [item['failureId']] : []))].sort() }
+        : kind === 'level-classification' ? { evaluatedLevel: 'medium', rationale: '<concrete scope and risk evidence>', gateScopeHash: data['gateScopeHash'] }
         : kind === 'level-recommendation' ? { choice: 'adopt', quote: '<actual user quote>' }
         : kind === 'integration-conflict' ? { by: 'orchestrator', action: 'resolve', rationale: '<resolution against the intent and criteria of both tasks>' }
         : kind === 'request' ? { by: 'orchestrator', action: 'approve', rationale: '<ruling against task intent and invariants>' }
@@ -124,10 +140,13 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
         : kind === 'run-stop' ? { by: 'user', quote: '<actual user quote>' } : 'stop';
       const examples: HostEvent[] = [];
       if (typeof kind === 'string') examples.push({ type: 'DECISION', kind, answer } as HostEvent);
+      // NOTE: the progress answer leads; the user stop follows as the alternative.
+      if (kind === 'concerns') examples.push({ type: 'DECISION', kind, answer: { decision: 'stop', by: 'user', quote: '<actual user quote>' } });
+      if (kind === 'baseline') examples.push({ type: 'DECISION', kind, answer: 'stop' });
       // An approved request usually lands as a plan amendment; the target writer is the requester.
       if (kind === 'request') examples.push(amendExample(String(rows([data['request']])[0]?.['task'] ?? '<requesting task>')));
       if (data['stopAllowed'] === true && kind !== 'run-stop') examples.push({ type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: '<actual user quote>' } });
-      return kind === 'approval' ? [{ type: 'DECISION', kind, answer: { by: 'user', quote: '<actual user quote>', ...(typeof data['hash'] === 'string' ? { hash: data['hash'] } : {}) } }, { type: 'DECISION', kind, answer: 'stop' }] : examples;
+      return kind === 'approval' || kind === 'spec-approval' ? [{ type: 'DECISION', kind, answer: { by: 'user', quote: '<actual user quote>', ...(typeof data['hash'] === 'string' ? { hash: data['hash'] } : {}) } }, { type: 'DECISION', kind, answer: 'stop' }] : examples;
     }
     case 'retro': return [{ type: 'RETRO', observations: [] }];
     case 'done': return [];

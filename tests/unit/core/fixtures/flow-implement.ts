@@ -123,7 +123,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   assert.deepEqual([approval.frame?.await, approval.frame?.at], ['decide', 'implement › approval'], JSON.stringify(approval.frame));
   const classification = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } } });
   assert.deepEqual([classification.frame?.await, classification.frame?.data['kind']], ['decide', 'level-classification']);
-  const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded and recoverable behavior change.', gateScope: classification.frame?.data['gateScope'] } } });
+  const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded and recoverable behavior change.', gateScopeHash: classification.frame?.data['gateScopeHash'] } } });
   assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › tasks']);
   const [slot] = withLaunch(write.frame?.data['tasks'] as { task: string; launchPath: string }[], runDir, ports.fs.readText);
   assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);

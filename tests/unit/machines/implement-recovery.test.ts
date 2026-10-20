@@ -50,7 +50,7 @@ test('prewrite-level: baseline hotfix assesses before inline write', () => {
   assert.equal(proposal.state.tag, 'level-classification');
   assert.equal(proposal.effects.some((effect) => effect.kind === 'write-brief'), false);
   if (proposal.state.tag !== 'level-classification') return;
-  const assessed = host(proposal.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'A small environment correction with immediate verification.', gateScope: implementData(proposal.state)['gateScope'] } });
+  const assessed = host(proposal.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'A small environment correction with immediate verification.', gateScopeHash: implementData(proposal.state)['gateScopeHash'] } });
   assert.equal(assessed.state.tag, 'hotfix-snapshot');
 });
 test('writer hotfix single-shot uses configured first writer and never cascades', () => {

@@ -352,3 +352,27 @@ test('pin check missing design fails with stale-design-spec', () => {
  assert.equal(failed.state.code, detail === 'permission denied' ? undefined : 'stale-design-spec'); assert.deepEqual(failed.effects, []);
  }
 });
+
+test('regression halts on second match of an applied fix after the review resumes from its journal state', () => {
+  const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 3 }, targets: { low: 2 } } } };
+  const steps = (from: ReviewState, events: readonly Event[]) => events.reduce((state, event) => stepReview(state, event).state, from);
+  const apply = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) : [] });
+  const verified = (n: number): Event => ({ type: 'VERIFY_DONE', effectId: `review.verify.${n}`, purpose: 'fix-verify', results: [], fingerprint: {} });
+  const accept = (id: string): Event => ({ type: 'RULINGS', rulings: { [id]: { ruling: 'accept' } } });
+  const same = (id: string) => finding(id, { defect: 'retry loop never terminates' });
+  const fix1 = drive([started({ config }), prepared(1), waveDone(1, [same('R1-F001')]), accept('R1-F001')]).state;
+  const round2 = steps(fix1, [apply(fix1), verified(1), prepared(2), waveDone(2, [same('R2-F001')])]);
+  assert.equal(round2.tag, 'rule', 'the first match links the finding and the round continues');
+  const rows = reviewMachine.project(round2).data['findings'] as Record<string, unknown>[];
+  assert.deepEqual(rows.map((row) => [row['id'], row['reopens']]), [['R2-F001', 'R1-F001']]);
+  const resumed = JSON.parse(JSON.stringify(round2)) as ReviewState;
+  assert.ok('c' in resumed);
+  assert.deepEqual(resumed.c.history.map((entry) => [entry.id, entry.status, entry.reopens]), [['R1-F001', 'applied', 1]]);
+  const fix2 = steps(resumed, [accept('R2-F001')]);
+  assert.equal(fix2.tag, 'fix');
+  const halted = steps(fix2, [apply(fix2), verified(2), prepared(3), waveDone(3, [same('R3-F001')])]);
+  assert.equal(halted.tag, 'decide-escalation');
+  assert.deepEqual(halted.tag === 'decide-escalation' && halted.escalation, { kind: 'regression', ids: ['R1-F001'] });
+  assert.match(reviewMachine.validate?.(halted, { type: 'DECISION', kind: 'escalation', answer: 'continue' }) ?? '', /only "stop"/);
+  assert.equal(steps(halted, [{ type: 'DECISION', kind: 'escalation', answer: 'stop' }]).tag, 'escalated');
+});

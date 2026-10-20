@@ -70,7 +70,8 @@ export type LevelGateScope = {
   design: LevelDesignScope | null;
 };
 
-export type LevelClassificationAnswer = { evaluatedLevel: ClassifiedLevel; rationale: string; gateScope: LevelGateScope };
+/** `gateScopeHash` is `sha256:` of the canonical gate scope, so the answer binds the scope without echoing it. */
+export type LevelClassificationAnswer = { evaluatedLevel: ClassifiedLevel; rationale: string; gateScopeHash: string };
 export type LevelRecommendationAnswer = { choice: 'adopt' | 'retain'; quote: string };
 /** Writer-proposed plan change on BLOCKED/NEEDS_CONTEXT; the orchestrator adjudicates and owns plan edits. */
 export type PlanAmendment = {

@@ -23,6 +23,8 @@ export type DesignContext = {
   designReview: ReviewState | null; integrationReview: ReviewState | null;
   /** Settled governing spec; `specEpoch` counts its revisions so later design reviews use fresh paths. */
   governingSpec?: SpecIdentity | null; specEpoch?: number; revisionReviewEpoch?: number; restartIncrements?: readonly string[];
+  /** Non-blocking concerns from embedded design, revision, and integration reviews (fallback slots, fix-check flakes). */
+  concerns?: readonly string[];
 };
 export type DesignState =
   | { tag: 'author'; c: DesignContext; defects: readonly Readonly<Record<string, unknown>>[] }
@@ -40,6 +42,12 @@ export type DesignState =
 type S = Step<DesignState>;
 const sharedContractMarker = '[shared-contract]';
 const failed = (c: DesignContext, summary: string): S => stay({ tag: 'failed', c, summary });
+/** Carries an embedded review's concerns into the design context so projections and completion report them. */
+export function withReviewConcerns<C extends DesignContext>(c: C, review: ReviewState): C {
+  const items = 'c' in review ? review.c.concerns ?? [] : [];
+  const prior = c.concerns ?? [];
+  return items.some((item) => !prior.includes(item)) ? { ...c, concerns: [...new Set([...prior, ...items])] } : c;
+}
 export function beginDesign(run: RunStartedEvent, counters: Counters = {}, governingSpec: SpecIdentity | null = null): S {
   const sessionDir = typeof run.overrides['sessionDir'] === 'string' ? run.overrides['sessionDir'].replace(/[\\/]+$/, '') : null;
   const path = typeof run.overrides['path'] === 'string'
@@ -58,7 +66,7 @@ function parse(c: DesignContext, afterReview: boolean): S {
 }
 function reviewed(c0: DesignContext, result: Step<ReviewState>, integration = false): S {
   const review = result.state;
-  const c = { ...c0, counters: 'c' in review ? { ...c0.counters, ...review.c.counters } : c0.counters, integrationRound: integration && 'c' in review ? Math.max(c0.integrationRound, review.c.round) : c0.integrationRound, designReview: integration ? c0.designReview : review, integrationReview: integration ? review : c0.integrationReview };
+  const c = { ...withReviewConcerns(c0, review), counters: 'c' in review ? { ...c0.counters, ...review.c.counters } : c0.counters, integrationRound: integration && 'c' in review ? Math.max(c0.integrationRound, review.c.round) : c0.integrationRound, designReview: integration ? c0.designReview : review, integrationReview: integration ? review : c0.integrationReview };
   if (review.tag === 'settled' || review.tag === 'skipped') return integration ? stay({ tag: 'complete', c, summary: 'Every increment and bounded integration completed.' }) : parse(c, true);
   if (['failed', 'escalated', 'empty'].includes(review.tag)) return failed(c, `${integration ? 'Integration' : 'Design'} review did not settle: ${review.tag}${review.tag === 'failed' ? `: ${reviewData(review)['summary']}` : ''}`);
   return { state: { tag: integration ? 'integration' : 'review', c, review }, effects: result.effects };
@@ -252,7 +260,7 @@ export function stepDesign(state: DesignState, event: Event): S {
       if (result.state.tag === 'settled') {
         const accepted = result.state.c.findings.filter((row) => row.status === 'accepted' || row.status === 'downgraded');
         if (accepted.length) {
-          const c = { ...state.c, counters: result.state.c.counters, integrationRound: Math.max(state.c.integrationRound, result.state.c.round), integrationReview: result.state };
+          const c = { ...withReviewConcerns(state.c, result.state), counters: result.state.c.counters, integrationRound: Math.max(state.c.integrationRound, result.state.c.round), integrationReview: result.state };
           const repairs: Record<string, string[]> = {};
           const shared: string[] = [];
           for (const finding of accepted) {
@@ -283,7 +291,7 @@ export function stepDesign(state: DesignState, event: Event): S {
         const r = result.state;
         return stay({ ...state, c: { ...state.c, counters: r.c.counters, revisionReviewRound: r.c.revisionReviewRound }, child: { tag: 'author', c: r.c, workingPath: r.workingPath, reason: r.reason, evidence: r.evidence, defects: [{ code: 'revision-refused', message: r.error }] } });
       }
-      if (result.state.tag === 'refused') return state.parent && state.parent.tag !== 'integration' && objectiveRefused ? stay({ ...state.parent, c: { ...state.parent.c, counters: result.state.c.counters, revisionReviewRound: result.state.c.revisionReviewRound } }) : failed(result.state.c, result.state.error);
+      if (result.state.tag === 'refused') return state.parent && state.parent.tag !== 'integration' && objectiveRefused ? stay({ ...state.parent, c: { ...state.parent.c, counters: result.state.c.counters, revisionReviewRound: result.state.c.revisionReviewRound, ...(result.state.c.concerns ? { concerns: result.state.c.concerns } : {}) } }) : failed(result.state.c, result.state.error);
       if (result.state.tag === 'resume') {
         const r = result.state;
         const original = r.c.approval;
@@ -353,10 +361,15 @@ function projectDesignData(state: DesignState): Readonly<Record<string, unknown>
   if (state.tag === 'increment') return { ...implementData(state.child), increment: state.increment, revision: state.c.hash };
   if (state.tag === 'revision') return designRevisionData(state.child);
   if (state.tag === 'review' || state.tag === 'integration') return { ...reviewData(state.review), baseline: state.c.baseline, ownership: state.c.ownership, ...(state.tag === 'integration' && reviewAwait(state.review) === 'rule' ? { sharedContract: { rulingField: 'rulings[id].reason', marker: sharedContractMarker, instruction: 'Accepted, fixable in-scope findings receive scoped fixes. Put the marker in the ruling reason for a one-owner shared-contract finding that should route to design revision if it remains accepted when review settles.' } } : {}) };
-  if (state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed') return { outcome: state.tag, summary: state.summary, completion: { governedDesign: { path: state.c.path, revision: state.c.hash }, hash: state.c.hash, approval: state.c.approval, completed: state.c.completed, ownership: state.c.ownership, level: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments } };
+  if (state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed') return { outcome: state.tag, summary: state.summary, completion: { governedDesign: { path: state.c.path, revision: state.c.hash }, hash: state.c.hash, approval: state.c.approval, completed: state.c.completed, ownership: state.c.ownership, level: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments, ...(state.c.concerns?.length ? { concerns: state.c.concerns } : {}) } };
   return {};
 }
-export function designData(state: DesignState): Readonly<Record<string, unknown>> { return { ...projectDesignData(state), governedDesign: { path: state.c.path, revision: state.c.hash }, settledLevel: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice }; }
+export function designData(state: DesignState): Readonly<Record<string, unknown>> {
+  const data = projectDesignData(state);
+  // NOTE: nested review and implement frames may already carry concerns; merge so neither source is lost.
+  const concerns = [...new Set([...(Array.isArray(data['concerns']) ? data['concerns'] as string[] : []), ...state.c.concerns ?? []])];
+  return { ...data, governedDesign: { path: state.c.path, revision: state.c.hash }, settledLevel: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice, ...(concerns.length ? { concerns } : {}) };
+}
 /** Live writers of the increment this state suspends, through nested revision and approval parents; decide frames keep writers live too. */
 export function designLiveWriters(state: DesignState | undefined): string[] { return liveWriters(state); }
 function liveWriters(state: DesignState | undefined): string[] {

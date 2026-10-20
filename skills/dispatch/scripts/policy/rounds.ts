@@ -94,23 +94,26 @@ export function assignAffinity(
 
 // SECTION: Convergence
 
-export type HistoryEntry = MatchKey & { id: FindingId; status: 'applied' | 'pending-rejection'; reraises: number };
+/** `reopens` counts waves whose findings matched an applied fix; it persists with review state across resume. */
+export type HistoryEntry = MatchKey & { id: FindingId; status: 'applied' | 'pending-rejection'; reraises: number; reopens: number };
 export type Convergence =
-  | { halt: false; reraised: readonly FindingId[] }
+  | { halt: false; reraised: readonly FindingId[]; reopened: readonly FindingId[] }
   | { halt: true; escalation: { kind: 'regression' | 'deadlock'; ids: readonly FindingId[] } };
 
 /**
- * Halts on a re-raised applied fix (regression) or a second re-raise of a pending rejection (deadlock), matched by
- * location + category with loose text similarity; otherwise lists pending rejections re-raised for the first time.
+ * Halts on an applied fix matched again after it was already reopened (regression) or a second re-raise of a pending
+ * rejection (deadlock), matched by location + category with loose text similarity. Otherwise lists pending rejections
+ * re-raised and applied fixes reopened for the first time; a first match is often a related finding, not a regression.
  */
 export function convergence(findings: readonly MatchKey[], history: readonly HistoryEntry[], caseInsensitive = false): Convergence {
   const matched = history.filter((entry) => findings.some((finding) => matchFinding(finding, entry, caseInsensitive)));
-  const regressed = matched.filter((entry) => entry.status === 'applied');
+  const applied = matched.filter((entry) => entry.status === 'applied');
+  const regressed = applied.filter((entry) => entry.reopens >= 1);
   if (regressed.length) return { halt: true, escalation: { kind: 'regression', ids: regressed.map((entry) => entry.id) } };
   const pending = matched.filter((entry) => entry.status === 'pending-rejection');
   const deadlocked = pending.filter((entry) => entry.reraises >= 1);
   if (deadlocked.length) return { halt: true, escalation: { kind: 'deadlock', ids: deadlocked.map((entry) => entry.id) } };
-  return { halt: false, reraised: pending.map((entry) => entry.id) };
+  return { halt: false, reraised: pending.map((entry) => entry.id), reopened: applied.map((entry) => entry.id) };
 }
 
 // SECTION: Exit

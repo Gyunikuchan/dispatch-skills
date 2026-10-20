@@ -279,6 +279,7 @@ stateDiagram-v2
   S9 --> S7: VERIFY_DONE
   S9 --> S8: ARTIFACT_PARSED
   S9 --> S8: VERIFY_DONE
+  S9 --> S9: VERIFY_DONE
 ```
 
 ## implement

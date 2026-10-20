@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
@@ -183,6 +184,94 @@ test('tasks: writer failure resets the worktree and advances the model and attem
   result = host(result, { type: 'WRITE_RECEIPT', status: 'failed', task: 'T1', attempt: fallback.attempt, signature: fallback.signature, handle: fallback.handle!, model: 'writer-b', detail: 'quota: no capacity' }, sim, trace);
   assert.equal(record(result, 'T1')?.status, 'failed');
   assert.deepEqual(slots(result).map((slot) => slot.task), ['T2']);
+});
+
+// SECTION: Draft snapshots — the simulated checkout reports a kept draft for every snapshot ref it is given.
+
+const DRAFT_REF = /^refs\/dispatch\/drafts\/([0-9a-f]{8}-[a-z0-9.-]+)\/(t\d)-([a-z0-9.-]+)$/;
+type Drafts = { sim: Sim; trace: Trace; draft: boolean };
+const inputOf = (effect: Effect): Readonly<Record<string, unknown>> => effect.kind === 'checkout' ? effect.input as Readonly<Record<string, unknown>> : {};
+const draftPump = (result: Result, run: Drafts): Result => {
+  for (let guard = 0; result.effects.length; guard++) {
+    assert.ok(guard < 200, 'driver loop did not settle');
+    const effect = result.effects[0]!;
+    const event = answer(result.state, effect, run.sim);
+    if (!event) return result;
+    const ref = inputOf(effect)['snapshot'];
+    const answered = typeof ref === 'string' && event.type === 'CHECKOUT_DONE' ? { ...event, result: { ...event.result, snapshot: run.draft ? ref : null } } : event;
+    run.trace.effects.push(effect); run.trace.events.push(answered);
+    result = stepImplement(result.state, answered);
+  }
+  return result;
+};
+const draftHost = (result: Result, event: Event, run: Drafts): Result => {
+  assert.equal(validateImplement(result.state, event as never), null);
+  run.trace.events.push(event);
+  return draftPump(stepImplement(result.state, event), run);
+};
+const draftStart = (sessionDir: string, draft: boolean): { result: Result; run: Drafts } => {
+  const drafts: Drafts = { sim: {}, trace: { effects: [], events: [] }, draft };
+  const started = run(1);
+  started.overrides = { ...started.overrides, sessionDir };
+  let result = draftPump(stepImplement(initialImplement(), started), drafts);
+  result = draftHost(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, drafts);
+  if (result.state.tag === 'level-classification') result = draftHost(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded task with local and recoverable effects.', gateScopeHash: implementData(result.state)['gateScopeHash'] } }, drafts);
+  return { result, run: drafts };
+};
+const draftLaunch = (result: Result, run: Drafts): Result => {
+  for (const slot of slots(result).filter((item) => item.action === 'launch')) result = draftHost(result, { type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}`, model: slot.model }, run);
+  return result;
+};
+const snapshotEffects = (trace: Trace) => trace.effects.flatMap((effect) => effect.kind === 'checkout' && typeof inputOf(effect)['snapshot'] === 'string' ? [{ id: effect.id, op: effect.op, name: String(inputOf(effect)['name']), ref: inputOf(effect)['snapshot'] as string }] : []);
+const concernsOf = (result: Result) => 'c' in result.state && result.state.c ? result.state.c.concerns : [];
+
+test('draft snapshot keeps a task reset and a cascade relaunch reset under two run-owned refs named in the concerns', () => {
+  let { result, run: drafts } = draftStart('session', true);
+  result = draftLaunch(result, drafts);
+  const t1 = slots(result).find((slot) => slot.task === 'T1')!;
+  result = draftHost(result, { type: 'WRITE_RECEIPT', status: 'failed', task: 'T1', attempt: t1.attempt, signature: t1.signature, handle: t1.handle!, model: 'writer-a', detail: 'quota: no capacity' }, drafts);
+  const t1Resets = snapshotEffects(drafts.trace).filter((effect) => effect.name === 'task-t1');
+  assert.deepEqual(t1Resets.map((effect) => effect.op), ['task', 'reset']);
+  const [retry, relaunch] = t1Resets.map((effect) => ({ ...effect, match: DRAFT_REF.exec(effect.ref) }));
+  assert.ok(retry!.match && relaunch!.match, JSON.stringify(t1Resets));
+  assert.equal(retry!.match[1], relaunch!.match[1], 'both refs belong to one run');
+  assert.deepEqual([retry!.match[2], retry!.match[3], relaunch!.match[2], relaunch!.match[3]], ['t1', retry!.id, 't1', relaunch!.id]);
+  assert.notEqual(retry!.ref, relaunch!.ref);
+  for (const ref of [retry!.ref, relaunch!.ref]) assert.ok(concernsOf(result).includes(`T1: prior draft kept at ${ref}`), ref);
+  assert.ok(snapshotEffects(drafts.trace).every((effect) => effect.name.startsWith('task-')), 'only task worktrees take snapshots');
+});
+
+test('draft snapshot refs differ between runs, and a reset without a draft adds no concern', () => {
+  const first = draftStart('sessions/one', true), second = draftStart('sessions/two', true);
+  const [a] = snapshotEffects(first.run.trace), [b] = snapshotEffects(second.run.trace);
+  assert.equal(a!.id, b!.id, 'the same task and effect in two runs');
+  assert.notEqual(DRAFT_REF.exec(a!.ref)?.[1], DRAFT_REF.exec(b!.ref)?.[1]);
+  const clean = draftStart('session', false);
+  assert.ok(snapshotEffects(clean.run.trace).length > 0);
+  assert.deepEqual(concernsOf(clean.result).filter((concern) => concern.includes('prior draft')), []);
+});
+
+test('draft prefix hashes the full session path, so same-named sessions in linked checkouts never share refs', () => {
+  const prefixOf = (sessionDir: string) => DRAFT_REF.exec(snapshotEffects(draftStart(sessionDir, true).run.trace)[0]!.ref)?.[1];
+  const [a, b] = [prefixOf('C:/checkouts/one/.scratch/session'), prefixOf('C:/checkouts/two/.scratch/session')];
+  assert.ok(a && b);
+  assert.equal(a.split('-')[1], b.split('-')[1], 'the same run ordinal');
+  assert.notEqual(a, b);
+  assert.equal(prefixOf('C:/checkouts/one/.scratch/session'), a, 'the same session keeps a stable prefix');
+  assert.equal(prefixOf('c:\\Checkouts\\one\\.scratch\\session\\'), a, 'Windows separators, case, and a trailing separator normalize');
+});
+
+test('draft snapshot cleanup after delivery names only the draft refs of its own run', () => {
+  let { result, run: drafts } = draftStart('session', true);
+  for (const id of ['T1', 'T2', 'T3']) {
+    result = draftLaunch(result, drafts);
+    const slot = slots(result).find((item) => item.task === id)!;
+    result = draftHost(result, { type: 'WRITE_RECEIPT', status: 'submitted', task: id, attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, model: slot.model, envelopePath: slot.envelopePath, briefHash: slot.briefHash }, drafts);
+  }
+  const cleanup = drafts.trace.effects.findLast((effect) => effect.kind === 'checkout' && effect.op === 'cleanup');
+  const runId = DRAFT_REF.exec(snapshotEffects(drafts.trace)[0]!.ref)?.[1];
+  assert.ok(runId);
+  assert.equal(cleanup && inputOf(cleanup)['drafts'], `refs/dispatch/drafts/${runId}`);
 });
 
 // SECTION: Admission
@@ -439,6 +528,33 @@ test('tasks: declared RED command without {files} runs unchanged beside a test p
   assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
+/** SC1 declares a second test file beside the one its RED-MATRIX row names; T1 owns both. */
+const withSecondRedTest = (second: string): ParsedPlan => {
+  const base = withRed({ red: 'npx jest --ci {files}' });
+  return {
+    ...base,
+    criteria: base.criteria.map((row) => row.id === 'SC1' ? { ...row, changes: [...row.changes, second], tests: [...row.tests, second] } : row),
+    changes: [...base.changes, { action: 'NEW', path: second, note: 'tests', command: null, line: 5 }],
+    tasks: base.tasks.map((row) => row.id === 'T1' ? { ...row, paths: [...row.paths, second] } : row),
+  };
+};
+
+test('red replay expands every criterion test across files, sorted and without duplicates', () => {
+  const sim: Sim = { plan: withSecondRedTest('tests/rules.test.ts') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.deepEqual(redCommand(trace), ['npx jest --ci "tests/rules.test.ts" "tests/validation.test.ts"']);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+});
+
+test('red replay expands every criterion test and refuses an unsafe declared path the RED row omits', () => {
+  const sim: Sim = { plan: withSecondRedTest('tests/"rules".test.ts') };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.deepEqual(redCommand(trace), []);
+  assert.match(record(result, 'T1')?.reason ?? '', /unsafe test path tests\/"rules"\.test\.ts/);
+});
+
 const isRecordLike = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 test('tasks: RED envelope tests and the RED checkpoint carry a fixture only when Tests declares it', () => {
@@ -659,6 +775,24 @@ test('launch record: a running writer offers submitted and failed receipts that 
   assert.equal(t2.receipts[0]!['briefHash'], t2.briefHash);
   result = host(result, t2.receipts[0] as unknown as Event, sim, trace);
   assert.equal(record(result, 'T2')?.status, 'accepted');
+});
+
+test('launch record carries self-check handle and the complete self-check command once the writer is launched', () => {
+  const sim: Sim = {};
+  let { result, trace } = start(1, sim);
+  const [before] = launchesOf(result);
+  assert.equal(before!.record.handle, null);
+  assert.equal('selfCheck' in before!.record, false, 'a writer without a handle cannot self-check yet');
+  result = launch(result, sim, trace);
+  const [after] = launchesOf(result) as unknown as { record: Launch & { selfCheck?: string } }[];
+  assert.equal(after!.record.handle, 'agent-T1-1');
+  const command = /^node "(.+)" send --run "(.+)" --event "@(.+)" --dry-run$/.exec(after!.record.selfCheck ?? '');
+  assert.ok(command, after!.record.selfCheck);
+  const [, entry, runDir, eventPath] = command;
+  assert.equal(path.basename(entry!), 'dispatch.ts');
+  assert.ok(fs.existsSync(entry!), `${entry} names the dispatch entry point`);
+  assert.equal(runDir, RUN_DIR);
+  assert.equal(eventPath, path.join(path.dirname(after!.record.briefPath), 'self-check.event.json'));
 });
 
 test('launch record: concurrent tasks whose briefs share one directory get distinct paths inside the run dir', () => {

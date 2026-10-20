@@ -57,7 +57,7 @@ export type Finding = { source: string; run?: number; id?: string; category: Cat
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
 export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, hostGapMs: 600_000 } as const;
-export const DIAGNOSTIC_LIMITS = { observations: 3, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
+export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
 /** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
@@ -128,7 +128,7 @@ export const REJECTION_CLASSES = ['malformed-json', 'effect-pending', 'unknown-t
 // Host-event schema field names (core/validate.ts and machine checks); a name missing here only truncates a rendered path.
 const EVENT_FIELDS: ReadonlySet<string> = new Set((
   'type path slots rulings clusters tasks task attempt signature handle model effort substitution envelopePath kind reason tokens durationMs '
-  + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScope '
+  + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScopeHash '
   + 'choice request ruling requestId source baseArtifactHash writerRationale delta proposedArtifactHash affectedTasks affectedIncrements paths '
   + 'obligations commands finalCommands phaseDuties increments id prerequisites acceptance title changes verify command final '
   + 'tests red preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
@@ -223,7 +223,7 @@ function totals(usages: readonly ModelUsage[]): Totals | undefined {
 
 // SECTION: Gates
 
-/** Gates host retro items: ≤3, valid id, dispatch-owned component, known category, bounded locator-free text. */
+/** Gates host retro items: at most `DIAGNOSTIC_LIMITS.observations`, valid id, dispatch-owned component, known category, bounded locator-free text. */
 export function retroObservations(value: unknown): { values: RetroObservation[]; rejected: number } {
   const items = list(value);
   const values: RetroObservation[] = [];

@@ -68,6 +68,34 @@ async function worktree(deps: CheckoutDeps, ports: Ports, root: string, revision
   await ports.git.run(['worktree', 'add', '-q', '--detach', root, revision], deps.cwd);
 }
 
+// NOTE: segments start alphanumeric and never hold `..`, so a ref is a valid Git ref name confined to the drafts namespace.
+const DRAFT_SEGMENT = '[a-z0-9][a-z0-9.-]*';
+const DRAFT_RUN = new RegExp(`^refs/dispatch/drafts/${DRAFT_SEGMENT}$`), DRAFT_REF = new RegExp(`^refs/dispatch/drafts/${DRAFT_SEGMENT}/${DRAFT_SEGMENT}$`);
+const draftName = (ref: string, pattern: RegExp): boolean => pattern.test(ref) && !ref.includes('..') && !/(?:\.|\.lock)(?:\/|$)/.test(ref);
+
+/**
+ * Keeps a task draft under its run-owned ref before a hard reset discards it. An existing ref proves an earlier attempt of
+ * this effect kept the draft, so a replay goes straight to the reset and never overwrites it. Without `snapshot` it is a no-op.
+ */
+async function snapshotDraft(ports: Ports, root: string, input: Row, resets: boolean): Promise<Row> {
+  if (input['snapshot'] === undefined) return {};
+  const ref = text(input['snapshot']);
+  if (!draftName(ref, DRAFT_REF)) throw new Error(`Invalid draft snapshot ref: ${ref || '(none)'}`);
+  if (!resets || ports.fs.inspectPath(root)?.kind !== 'directory') return { snapshot: null };
+  if ((await ports.git.run(['rev-parse', '-q', '--verify', ref], root).catch(() => '')).trim()) return { snapshot: ref };
+  const dirty = !await clean(ports, root), current = await head(ports, root);
+  // A clean tree at the input (or the prior input the worktree was created at) holds no draft.
+  if (!dirty && [text(input['revision']), text(input['draftBase'])].includes(current)) return { snapshot: null };
+  if (dirty) {
+    await ports.git.run(['add', '-A'], root);
+    await ports.git.run([...COMMIT, 'commit', '-q', '--no-verify', '-m', `dispatch draft ${ref}`], root);
+  }
+  const revision = await head(ports, root);
+  // NOTE: the zero old value makes Git refuse to move an existing ref, so a concurrent or replayed write cannot replace a kept draft.
+  await ports.git.run(['update-ref', ref, revision, '0'.repeat(revision.length)], root);
+  return { snapshot: ref };
+}
+
 /** Copies content and permission bits so executable files survive baseline capture and delivery. */
 function copy(ports: Ports, from: string, to: string): void {
   ports.fs.mkdir(path.dirname(to), { recursive: true });
@@ -501,6 +529,8 @@ async function scopeRebase(deps: CheckoutDeps, ports: Ports, runDir: string, inp
 }
 
 async function cleanup(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row): Promise<Row> {
+  const drafts = input['drafts'] === undefined ? null : text(input['drafts']);
+  if (drafts !== null && !draftName(drafts, DRAFT_RUN)) throw new Error(`Invalid draft ref prefix: ${drafts || '(none)'}`);
   const removed: string[] = [];
   for (const name of strings(input['names'])) {
     const root = worktreePath(runDir, name);
@@ -511,7 +541,11 @@ async function cleanup(deps: CheckoutDeps, ports: Ports, runDir: string, input: 
     removed.push(name);
   }
   await ports.git.run(['worktree', 'prune'], deps.cwd);
-  return { removed };
+  if (drafts === null) return { removed };
+  // NOTE: only refs below `<prefix>/` belong to this run; `for-each-ref` also matches a sibling run whose id extends the prefix.
+  const refs = (await ports.git.run(['for-each-ref', '--format=%(refname)', drafts], deps.cwd)).split(/\r?\n/).map((ref) => ref.trim()).filter((ref) => ref.startsWith(`${drafts}/`));
+  for (const ref of refs) await ports.git.run(['update-ref', '-d', ref], deps.cwd);
+  return { removed, drafts: refs.sort() };
 }
 
 export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
@@ -523,9 +557,10 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         case 'init': return done('init', await init(deps, ports, ctx.runDir, input));
         case 'task': {
           const root = worktreePath(ctx.runDir, text(input['name']));
+          const snapshot = await snapshotDraft(ports, root, input, input['reset'] === true && input['keep'] !== true);
           await worktree(deps, ports, root, text(input['revision']), input['reset'] === true, input['keep'] === true);
           prepare(deps, ports, root, input);
-          return done('task', { path: root, revision: await head(ports, root) });
+          return done('task', { path: root, revision: await head(ports, root), ...snapshot });
         }
         case 'scope-rebase': return done('scope-rebase', await scopeRebase(deps, ports, ctx.runDir, effect.input));
         case 'commit': return done('commit', await submit(ports, worktreePath(ctx.runDir, text(input['name'])), text(input['base']), text(input['message']) || 'dispatch task'));
@@ -536,8 +571,9 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         case 'reset': {
           // NOTE: the hard reset also aborts a kept integration conflict (it removes CHERRY_PICK_HEAD and unmerged entries).
           const root = worktreePath(ctx.runDir, text(input['name']));
+          const snapshot = await snapshotDraft(ports, root, input, true);
           await worktree(deps, ports, root, text(input['revision']), true);
-          return done('reset', { path: root, revision: await head(ports, root) });
+          return done('reset', { path: root, revision: await head(ports, root), ...snapshot });
         }
         case 'deliver': return done('deliver', await deliver(deps, ports, worktreePath(ctx.runDir, 'integration'), input));
         case 'cleanup': return done('cleanup', await cleanup(deps, ports, ctx.runDir, input));
