@@ -11,6 +11,7 @@ import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.
 import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { implementMachine, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { launch, start as startTasks, submit, type Sim } from '../machines/fixtures/implement-tasks.ts';
+import { failure, taskFailure } from '../machines/fixtures/implement-recovery.ts';
 
 test('change receipt: drift envelope preserves actor notice hash and evidence bindings through transport', () => {
   const [event] = awaitEnvelopes('decide', { kind: 'drift', notice: { id: 'n', afterHash: 'after', affectedEvidence: ['SC1'] } });
@@ -223,6 +224,41 @@ test('decide templates offer progress first for baseline failures with every fai
   const frame = projectFrame(decideMachine(data, (event) => validateImplement(state, event)), awaitingMachine.initial(), 'run');
   assert.deepEqual(answers(frame.events), [{ action: 'accept-known-red', ids: ['f-a', 'f-b'] }, 'stop']);
   assert.deepEqual(replyEvent(frame.events), undefined, 'the host still chooses between accepting and stopping');
+});
+
+test('failure decide templates give a valid reply for every offered recovery action after delivery', () => {
+  const state = failure();
+  const frame = projectFrame(implementMachine, state, 'run');
+  const offered = (frame.events ?? []).filter((event) => event.type === 'DECISION' && event.kind === 'failure');
+  assert.deepEqual(offered.map((event) => event.type === 'DECISION' && (event.answer as Record<string, unknown>)['action']), ['retry', 'hotfix', 'stop'], 'retry leads; manual completion is user-gated');
+  for (const event of offered) {
+    assert.equal(validateHostEvent('decide', event).ok, true, JSON.stringify(event));
+    assert.equal(validateImplement(state, event), null, JSON.stringify(event));
+  }
+  const hint = String(frame.data['manualComplete']);
+  for (const field of ['"user"', '"manual-complete"', 'quote', 'criteria', 'every plan criterion']) assert.ok(hint.includes(field), `hint names ${field}`);
+  const filled = { type: 'DECISION', kind: 'failure', answer: { by: 'user', action: 'manual-complete', quote: 'I verified the delivered behavior', criteria: Object.fromEntries(state.c.plan!.criteria.map((row) => [row.id, { outcome: 'pass', evidence: `Observed ${row.id} pass` }])) } } as const;
+  assert.equal(validateHostEvent('decide', filled).ok, true);
+  assert.equal(validateImplement(state, filled as never), null);
+});
+
+test('failure decide templates after a withdrawn delivered hotfix omit hotfix and reject an explicit hotfix answer', () => {
+  // A no-change hotfix attempt records the stage in withdrawnHotfix; the next failure frame must not offer it again.
+  const delivered = failure();
+  const state = { ...delivered, c: { ...delivered.c, withdrawnHotfix: ['delivered'] } };
+  const frame = projectFrame(implementMachine, state, 'run');
+  assert.deepEqual(frame.data['options'], ['retry', 'manual-complete', 'stop']);
+  assert.deepEqual(answers(frame.events?.filter((event) => event.type === 'DECISION' && event.kind === 'failure')).map((answer) => (answer as Record<string, unknown>)['action']), ['retry', 'stop']);
+  const hotfix = { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'Bounded fix', external: [] } } as const;
+  const error = validateImplement(state, hotfix as never);
+  assert.ok(error?.includes('hotfix is unavailable') && error.includes('retry, manual-complete, stop'), String(error));
+});
+
+test('failure decide templates in the task phase offer retry and stop without a manual completion hint', () => {
+  const state = taskFailure(1);
+  const frame = projectFrame(implementMachine, state, 'run');
+  assert.deepEqual(answers(frame.events?.filter((event) => event.type === 'DECISION' && event.kind === 'failure')).map((answer) => (answer as Record<string, unknown>)['action']), ['retry', 'stop']);
+  assert.equal(frame.data['manualComplete'], undefined);
 });
 
 test('decide templates offer progress first for spec approval with the revision hash', () => {

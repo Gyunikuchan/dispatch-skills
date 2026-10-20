@@ -36,7 +36,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'criterion-review': case 'criterion-critical-review': case 'missing-section': case 'missing-increment-details':
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
-    case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'task-map': case 'generated-inputs':
+    case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'criterion-task-changes': case 'task-map': case 'generated-inputs':
     case 'task-overlap': case 'transient-coverage': case 'section-order': case 'criterion-retain-required': case 'transient-test-path':
     case 'unknown-requirement': case 'plan-id-in-test-name': case 'retired-section': case 'missing-satisfies': case 'missing-requirement-ref':
       return 'defect';
@@ -1118,6 +1118,8 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
       if (prior) { out.push(lint('task-criteria', line, `Criterion ${id} is mapped to both ${prior} and ${task.id}; use - Integration: <reason> for a cross-task criterion.`)); continue; }
       owner.set(id, task.id);
       if (criterion.integration !== null) out.push(lint('task-criteria', criterion.line, `Criterion ${id} is mapped to ${task.id} and marked Integration; choose one.`));
+      // Admission requires each evidence row path in Changes, so a task-owned criterion without Changes can never pass.
+      else if (!criterion.changes.length) out.push(lint('criterion-task-changes', criterion.line, `Criterion ${id} is task-owned but has no Changes; list the task paths it proves in Changes, or mark it Integration: <reason> with Verify.`));
       const foreign = criterion.changes.filter((path) => !task.paths.includes(path));
       if (foreign.length) out.push(lint('task-criteria', criterion.line, `Criterion ${id} of ${task.id} changes ${foreign.join(', ')} outside the task; move the path or mark the criterion Integration.`));
     }

@@ -31,8 +31,8 @@ when the convention itself is defective, report it once and name the other insta
 <<slot:inspection>>
 Findings apply to the captured revision and Scope. Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it; those interfaces or call sites may be outside Scope only as needed to substantiate the defect. Spend no extra turns hunting for adjacent findings. Apply this discovery rule to every review kind. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 On re-review, verify prior resolutions in the review log that `## Review Findings & Resolutions` links, and treat
-earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
-contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
+earlier settled findings as closed. The governing spec's Decisions and Non-goals, and decisions recorded in the governing design or plan, are settled:
+contest one only by naming it and citing evidence it did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 <<slot:quality>>
 

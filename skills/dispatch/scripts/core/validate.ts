@@ -233,6 +233,7 @@ function isHostEventType(value: unknown): value is HostEventType {
 export function validateHostEvent(current: Await, raw: unknown, check?: (event: HostEvent) => string | null): Result<HostEvent> {
   if (!isRecord(raw)) return fail('event', 'object', raw);
   const type = raw['type'];
+  if (type === undefined && 'events' in raw) return { ok: false, error: 'event: send one event object from the frame events array, not the frame or an events wrapper.' };
   if (!isHostEventType(type)) return fail('event.type', `one of ${Object.keys(HOST_EVENT_SHAPES).join('|')}`, type);
   const accepted = AWAIT_ACCEPTS[current];
   if (!accepted.includes(type)) {

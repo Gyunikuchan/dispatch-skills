@@ -28,6 +28,14 @@ test('unknown event types and non-objects are rejected', () => {
   assert.deepEqual(validateHostEvent('author', 'text'), { ok: false, error: 'event: expected object, got "text"' });
 });
 
+test('an events wrapper reply is rejected with guidance to send one element of the events array', () => {
+  const decision = { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'flaky fixture fixed' } };
+  for (const wrapped of [{ events: [decision] }, { v: 1, await: 'decide', events: [decision] }]) {
+    assert.deepEqual(validateHostEvent('decide', wrapped), { ok: false, error: 'event: send one event object from the frame events array, not the frame or an events wrapper.' }, JSON.stringify(wrapped));
+  }
+  assert.equal(validateHostEvent('decide', decision).ok, true, 'the unwrapped element is accepted');
+});
+
 test('shape guards cover every accepted host event', () => {
   const samples = [
     ['author', { type: 'AUTHORED', path: 'plan.md' }],

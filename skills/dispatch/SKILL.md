@@ -15,7 +15,7 @@ Use `design` for increments, `plan` for one unit, `implement` for delivery; clar
 
 1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain `sessionDir`/`sessionId`; fallback: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
 2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] -- <argument>`. Retain `run`.
-3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as background tasks; act on completion notices. Correct rejected payloads; supply evidence/quotes. Send one frame `events` object per `await` until `done`; eventless send resumes automation. [Change handling](references/change-handling.md) governs observations and optional dispositions.
+3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as background tasks; act on completion notices. Correct rejected payloads; supply evidence/quotes. Send one unwrapped `events` element per `await` until `done`; eventless send resumes automation. [Change handling](references/change-handling.md) governs observations and optional dispositions.
 
 When any step creates a worktree, follow [worktree cleanup](references/worktree-cleanup.md).
 

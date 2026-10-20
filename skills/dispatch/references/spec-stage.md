@@ -16,6 +16,10 @@ At `medium` and above, design or plan authoring waits for approval of the settle
 
 At the emitted `decide` frame with `data.kind: spec-approval`, present the [Decision Frame](decision-frame.md#spec-approval-spec-approval) with `data.path`, `data.hash`, distilled intent, key requirements, and settled decisions. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Design approval and production-write approval remain separate authorizations.
 
+### Spec-only output
+
+When the user wants only a spec, start `plan` and author the spec. At `medium`+, send the user's `spec-approval` answer; `answer: "stop"` there ends the run without recording approval. At `low`, no approval frame appears: after `AUTHORED` the run goes straight to `plan › author`. Send nothing at that `plan › author` frame: the run stays parked there and writes no plan file. Report the settled spec path and hash from that frame's `data.governingSpec` as the deliverable.
+
 ## Readers and document layers
 
 The spec owns why/what, REQ acceptance and intent/user decisions (DEC). Design owns strategy, architecture and architectural decisions (AD). Plan owns tactics, task ownership, criteria and checks. Keep each meaning in its owning layer; cite upstream IDs. Ordinary design/plan authoring never rewrites the spec.

@@ -870,7 +870,7 @@ type RevisionEvent = AmendEvent | ReplacePlanEvent;
 
 /** Structural checks shared by `AMEND` and `REPLACE_PLAN`; summary checks run in `reconcilePlan`. */
 function revisionFieldsError(c: Context, event: RevisionEvent): string | null {
-  if (c.phase !== 'tasks' || !c.plan || !c.planHash || !c.integration) return `event.type: ${event.type} applies only during the task phase.`;
+  if (c.phase !== 'tasks' || !c.plan || !c.planHash || !c.integration) return `event.type: ${event.type} applies only during the task phase; at a final-verification failure answer DECISION failure (hotfix, retry, manual-complete, stop); at the baseline gate answer DECISION baseline (accept-known-red, inline-hotfix, stop).`;
   if (!nonEmpty(event.rationale)) return 'event.rationale: explain the revision.';
   if (!Array.isArray(event.notify) || event.notify.some((row) => !isRecord(row) || !nonEmpty(row.task) || !nonEmpty(row.notice)) || new Set(event.notify.map((row) => row.task)).size !== event.notify.length) return 'event.notify: name each notified writer once with a non-empty notice.';
   if (event.retire !== undefined && (!Array.isArray(event.retire) || new Set(event.retire.map((row) => row.task)).size !== event.retire.length)) return 'event.retire: name each retired writer once.';
@@ -1993,6 +1993,21 @@ function reviewPaths(event: Extract<Event, { type: 'FIXES_APPLIED' }>): string[]
   return event.clusters.flatMap((cluster) => Array.isArray(cluster['affectedPaths']) ? cluster['affectedPaths'].filter((file): file is string => typeof file === 'string') : []);
 }
 
+/** A task-phase retry is refused once every failed task reached the attempt limit; the frame and validation share this rule. */
+function retriesExhausted(c: Context): boolean {
+  const failed = Object.values(c.tasks).filter((task) => task.status === 'failed');
+  return failed.length > 0 && failed.every((task) => task.failures >= MAX_WRITE_ATTEMPTS);
+}
+
+// NOTE: mirrors the `beginHotfix` guard so frames never offer a hotfix that would park silently.
+function hotfixAvailable(c: Context): boolean {
+  return c.phase === 'delivered' && !c.withdrawnHotfix.includes('delivered');
+}
+
+function failureOptions(c: Context): readonly string[] {
+  return hotfixAvailable(c) ? ['hotfix', 'retry', 'manual-complete', 'stop'] : ['retry', 'manual-complete', 'stop'];
+}
+
 function decideData(kind: string, question: string, options: readonly string[], items?: readonly unknown[]): Readonly<Record<string, unknown>> {
   return { kind, question, options, ...(items ? { items } : {}) };
 }
@@ -2077,8 +2092,8 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
     case 'needs-user': return decideData('needs-user', `Rule on RED exceptions for ${state.ids.join(', ')} before production work.`, ['accept', 'stop'], state.ids);
     case 'concerns': return decideData('concerns', 'Resolve the writer concerns before code review.', ['accept', 'stop'], state.items);
     case 'failure': return state.c.phase === 'tasks'
-      ? { ...decideData('failure', state.reason, ['retry', 'stop'], [{ tasks: state.c.plan ? failureItems(state.c.plan!, state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }]), amend: 'AMEND may change the plan first; changed failed tasks re-pend.' }
-      : decideData('failure', state.reason, ['hotfix', 'retry', 'manual-complete', 'stop'], [{ changedPaths: state.changedPaths, workPreserved: true, hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.phase === 'delivered' ? 'delivered' : 'baseline') }]);
+      ? { ...decideData('failure', state.reason, retriesExhausted(state.c) ? ['stop'] : ['retry', 'stop'], [{ tasks: state.c.plan ? failureItems(state.c.plan!, state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }]), amend: 'AMEND may change the plan first; changed failed tasks re-pend.' }
+      : decideData('failure', state.reason, failureOptions(state.c), [{ changedPaths: state.changedPaths, workPreserved: true, hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.phase === 'delivered' ? 'delivered' : 'baseline') }]);
     case 'drift': return { ...decideData('drift', 'Resolve the recorded change before applying the parked event.', ['preserve', 'refresh', 'reconcile', 'escalate']), notice: state.notice };
     case 'hotfix-write': {
       return {
@@ -2312,7 +2327,8 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     const answer = failureAnswer(event.answer);
     if (!answer) return 'event.answer: failure requires { by: "orchestrator", action: stop|retry, rationale }, hotfix with mode inline|writer and rationale, or user manual-complete with quote and criteria; unknown fields such as rootCause are rejected.';
     if (state.c.phase === 'tasks' && (answer.action === 'hotfix' || answer.action === 'manual-complete')) return 'event.answer: task-phase failures accept retry or stop; hotfix and manual completion apply after delivery.';
-    if (state.c.phase === 'tasks' && answer.action === 'retry' && Object.values(state.c.tasks).some((task) => task.status === 'failed') && !Object.values(state.c.tasks).some((task) => task.status === 'failed' && task.failures < MAX_WRITE_ATTEMPTS)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-failure limit; send AMEND or stop.`;
+    if (answer.action === 'hotfix' && !hotfixAvailable(state.c)) return `event.answer: hotfix is unavailable here (withdrawn after a no-change attempt, or not yet delivered); send ${failureOptions(state.c).join(', ')}.`;
+    if (state.c.phase === 'tasks' && answer.action === 'retry' && retriesExhausted(state.c)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-failure limit; send AMEND or stop.`;
     if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan!.criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
   }
   if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria, event.waiver)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}; outcome "waived" needs event.waiver { by: "user", quote }.`;

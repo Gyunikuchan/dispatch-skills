@@ -30,6 +30,7 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   if (frame.await === 'rule' && rows(data['findings']).some((finding) => finding['category'] === 'intent')) frame.data = { ...frame.data, intentRuling: 'needs-user; { ruling: accept|reject, quote: <user words> }; { ruling: accept|reject, by: orchestrator, reason: <settled decision> }' };
   if (frame.await === 'write' && rows(data['tasks']).length) frame.data = { ...frame.data, launchedReceipt: 'Optional on a launched WRITE_RECEIPT: substitution: <reason when the launched model differs>.' };
   if (frame.await === 'evidence') frame.data = { ...frame.data, evidenceTemplate: evidenceTemplate(data) };
+  if (frame.await === 'decide' && data['kind'] === 'failure' && Array.isArray(data['options']) && data['options'].includes('manual-complete')) frame.data = { ...frame.data, manualComplete: MANUAL_COMPLETE_HINT };
   if (frame.await === 'rule') frame.data = { ...frame.data, fixScope: 'Example locus paths are suggestions. Declare every production, test, fixture, helper edit and verification-generated output before sending RULINGS.' };
   // NOTE: observations are advisory; the hint shows the optional metadata a normal reply may carry.
   if (frame.await !== 'done' && rows(data['observations']).length) frame.data = { ...frame.data, changeDispositions: 'Optional on this reply: [{ observationId, afterHash, rationale, retain?: [criterion ids], refresh?: [criterion ids] }]. Observations never block progress.' };
@@ -82,6 +83,21 @@ const replaceExample = (task: string): HostEvent => ({
   notify: [{ task, notice: '<what changed for this writer>' }],
   reconciliation: { retained: ['<unchanged task>'], changed: [task], added: [], retired: [], intentChanged: false, dependencyChanged: false },
 });
+
+// NOTE: fixed-size placeholders keep failure frames independent of plan size; manual completion is a hint because it needs evidence for every criterion.
+const FAILURE_ANSWERS = {
+  retry: { by: 'orchestrator', action: 'retry', rationale: '<observed root cause and the change that addresses it>' },
+  hotfix: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: '<observed root cause and the bounded fix>', external: [] },
+  stop: { by: 'orchestrator', action: 'stop', rationale: '<why recovery cannot proceed>' },
+} as const;
+const MANUAL_COMPLETE_HINT = 'User-gated: { by: "user", action: "manual-complete", quote: <user words>, criteria: { <criterion id>: <evidence> } } covering every plan criterion; see references/verbs/implement.md.';
+
+/** Offered orchestrator failure actions with retry first; frames without options keep the retry example. */
+function failureActions(options: unknown): (keyof typeof FAILURE_ANSWERS)[] {
+  if (!Array.isArray(options)) return ['retry'];
+  const offered = options.filter((action): action is keyof typeof FAILURE_ANSWERS => typeof action === 'string' && Object.hasOwn(FAILURE_ANSWERS, action));
+  return [...offered.filter((action) => action === 'retry'), ...offered.filter((action) => action !== 'retry')];
+}
 
 /** Optional applicability selection for the first unassessed review observation; the host supplies the rationale. */
 function reviewUseExamples(data: Row): HostEvent[] {
@@ -136,10 +152,9 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
         : kind === 'integration-conflict' ? { by: 'orchestrator', action: 'resolve', rationale: '<resolution against the intent and criteria of both tasks>' }
         : kind === 'request' ? { by: 'orchestrator', action: 'approve', rationale: '<ruling against task intent and invariants>' }
         : kind === 'request-user' ? { by: 'user', requestId: data['requestId'] ?? rows([data['request']])[0]?.['requestId'], choice: 'accept', quote: '<actual user quote>' }
-        : kind === 'failure' ? { by: 'orchestrator', action: 'retry', rationale: '<observed root cause and the change that addresses it>' }
         : kind === 'run-stop' ? { by: 'user', quote: '<actual user quote>' } : 'stop';
-      const examples: HostEvent[] = [];
-      if (typeof kind === 'string') examples.push({ type: 'DECISION', kind, answer } as HostEvent);
+      const examples: HostEvent[] = kind === 'failure' ? failureActions(data['options']).map((action) => ({ type: 'DECISION', kind, answer: FAILURE_ANSWERS[action] }))
+        : typeof kind === 'string' ? [{ type: 'DECISION', kind, answer } as HostEvent] : [];
       // NOTE: the progress answer leads; the user stop follows as the alternative.
       if (kind === 'concerns') examples.push({ type: 'DECISION', kind, answer: { decision: 'stop', by: 'user', quote: '<actual user quote>' } });
       if (kind === 'baseline') examples.push({ type: 'DECISION', kind, answer: 'stop' });

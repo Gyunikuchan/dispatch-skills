@@ -46,7 +46,7 @@ export type LintDefectCode =
   | 'criterion-review' | 'criterion-critical-review'
   | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
-  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
+  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'

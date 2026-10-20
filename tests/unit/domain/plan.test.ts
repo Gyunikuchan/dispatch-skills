@@ -51,6 +51,7 @@ const PLAN = `# Add retry budget
   - Retain: durable
 - [SC2] Whole suite stays green
   - Satisfies: REQ-1
+  - Changes: src/fetch.ts
   - Verify: \`npm test\` [FINAL]
   - Evidence: verify
   - Test rationale: aggregate regression gate over every package.
@@ -113,7 +114,8 @@ test('readable plan syntax: owned briefs carry Outcome, Constraints and every la
     .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n- Constraints: Keep the public API.')
     .replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only.')
     .replace('#### [GENERATED] docs/api.md', '#### [GENERATED] docs/api.md')
-    .replace('## Success Criteria', '### T2 — Check the companion\n- Constraints: Preserve companion shape.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria');
+    .replace('## Success Criteria', '### T2 — Check the companion\n- Constraints: Preserve companion shape.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria')
+    .replace('  - Changes: src/fetch.ts\n  - Verify: `npm test`', '  - Changes: src/companion.ts\n  - Verify: `npm test`');
   const plan = parsed(source);
   const first = selectTaskBrief(plan, 'T1'), second = selectTaskBrief(plan, 'T2');
   assert.ok(first); assert.ok(second);
@@ -340,6 +342,21 @@ test('task-plan: rejects mapping defects', () => {
   assert.ok(defects(TASKS.replace('| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |', '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3, SC4 |')).includes('task-criteria'), 'task-mapped integration criterion');
 });
 
+test('a task-owned criterion without changes fails lint with a fix hint unless it is Integration', () => {
+  const taskChanges = (source: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === 'criterion-task-changes'); };
+  const verifyOnly = TASKS.replace('  - Changes: src/reader.ts\n', '');
+  const found = taskChanges(verifyOnly);
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.severity, 'defect');
+  assert.equal(found[0]?.line, verifyOnly.split('\n').indexOf('- [SC2] Reader consumes the contract') + 1);
+  assert.match(found[0]?.message ?? '', /SC2.*Changes.*Integration/);
+  const integration = verifyOnly.replace('  - Evidence: verify\n  - Test rationale: covers the reader path', '  - Evidence: verify\n  - Integration: spans the reader.\n  - Test rationale: covers the reader path');
+  assert.notDeepEqual(defects(integration), [], 'the mapped Integration variant still fails on its task mapping');
+  assert.deepEqual(taskChanges(integration), []);
+  const clean = parsePlan(TASKS);
+  assert.ok(clean.ok && clean.plan.criteria.some((criterion) => criterion.id === 'SC4' && !criterion.changes.length), 'unmapped Integration criterion without Changes stays clean');
+});
+
 test('task-plan: generated inputs require Inputs and cover producers through prerequisites', () => {
   assert.ok(defects(TASKS.replace('- Inputs: src/contract.ts, src/writer.ts, README.md\n', '')).includes('generated-inputs'), 'missing inputs');
   assert.ok(defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, ../outside.md')).includes('generated-inputs'), 'invalid input');
@@ -553,7 +570,7 @@ test('seam advisory permits explicit none and populated declarations', () => {
 });
 
 test('seam advisory ignores review-only criteria', () => {
-  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: src/fetch.ts\n').replace(/  - Evidence: (red|verify)/g,
+  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace(/  - Evidence: (red|verify)/g,
     '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.deepEqual(seamWarnings(source), []);
 });
@@ -639,7 +656,7 @@ test('isolates transient test files: rejects a basename without transient', () =
 });
 
 test('isolates transient test files: rejects a path a durable criterion also lists', () => {
-  const source = isolated.replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: tests/fetch.transient.test.ts\n  - Retain: durable\n');
+  const source = isolated.replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: src/fetch.ts\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: tests/fetch.transient.test.ts\n  - Retain: durable\n');
   assert.equal(transientPathDefects(source).length, 1);
 });
 
