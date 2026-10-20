@@ -47,7 +47,7 @@ Before design/plan drafting, read the whole spec and every `data.read` path/sect
 
 ## Await write
 
-Each `tasks` row links a `launch.json` at `launchPath` (run-relative). Launch a native writer per `launch` row from its record fields. Send each `WRITE_RECEIPT` by copying the record's matching `receipts` entry; `launched` adds handle and attested `model`/`effort`; `submitted` echoes the writer's reported `briefHash` and envelope. Taskless hotfix receipts omit identity fields. Relay live writers' out-of-scope `REQUEST`s. `AMEND`/`REPLACE_PLAN` reconcile plan; per `amended` row, relay the record's `notice` and `deltaPath` (else `briefPath`). Never dump whole frames or briefs; read a brief section only for a named gap. See [implement](references/verbs/implement.md).
+`tasks` rows link a `launch.json` at `launchPath` (run-relative). Launch a native writer per `launch` row from its record fields. Send each `WRITE_RECEIPT` by copying the record's matching `receipts` entry; `launched` adds handle and attested `model`/`effort`; `submitted` echoes the writer's reported `briefHash` and envelope. Taskless hotfix receipts omit identity fields. Relay live writers' out-of-scope `REQUEST`s. `AMEND`/`REPLACE_PLAN` reconcile plan; per `amended` row, relay the record's `notice`, `deltaPath` and `deltaHash` (else `briefPath`). Never dump whole frames or briefs; read a brief section only for a named gap. See [implement](references/verbs/implement.md).
 
 ## Await evidence
 

@@ -459,12 +459,17 @@ test('rejected sole multi-path heading emits only change-heading', () => {
 
 test('duplicate delete notes hint grouping', () => {
   const source = PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`);
-  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." is filler; say what changes in this file; group these [DELETE] paths under one heading.'));
+  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." repeats a sibling note; say what changes in this file; group these [DELETE] paths under one heading.'));
 });
 
-test('duplicate modify notes keep filler message', () => {
+test('duplicate sibling notes report repeat message', () => {
   const source = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n');
-  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." is filler; say what changes in this file.'));
+  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." repeats a sibling note; say what changes in this file.'));
+});
+
+test('intrinsic filler note keeps filler message', () => {
+  const source = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: same\n');
+  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), ['Change note "same" is filler; say what changes in this file.']);
 });
 
 // SECTION: Cross-task overlap

@@ -430,7 +430,10 @@ function renderImplementation(ports: Ports, implementation: ImplementState, walk
     if (!ports.fs.exists(amendment.path)) ports.fs.writeAtomic(amendment.path, amendment.text);
   }
   // Compact write frames link each running writer to this record, so it is rewritten whenever its binding changes.
-  for (const entry of implementLaunches(implementation, runDir)) writeIfChanged(ports, entry.path, JSON.stringify(entry.record));
+  for (const entry of implementLaunches(implementation, runDir)) {
+    writeIfChanged(ports, entry.path, JSON.stringify(entry.record));
+    if (entry.selfCheckEvent) writeIfChanged(ports, entry.selfCheckEvent.path, JSON.stringify(entry.selfCheckEvent.record));
+  }
   if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
   if (walkthrough) writeReviewHistory(ports, walkthroughPath, walkthrough, resolutionSectionOf(walkthrough)!, reviewKeyOf(runDir, 'implementation'));

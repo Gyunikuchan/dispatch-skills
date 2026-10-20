@@ -2150,7 +2150,7 @@ export function launchRel(task: string): string {
 }
 
 /** Launch record per running writer: the full brief binding plus the receipts the host copies, so write frames stay fixed-size. */
-export function implementLaunches(state: ImplementState, runDir: string): { path: string; record: Readonly<Record<string, unknown>> }[] {
+export function implementLaunches(state: ImplementState, runDir: string): { path: string; record: Readonly<Record<string, unknown>>; selfCheckEvent?: { path: string; record: Readonly<Record<string, unknown>> } }[] {
   const c = 'c' in state ? state.c : null;
   if (!c) return [];
   const effort = c.writer?.effort ? { effort: c.writer.effort } : {};
@@ -2170,9 +2170,16 @@ export function implementLaunches(state: ImplementState, runDir: string): { path
       ? [{ type: 'WRITE_RECEIPT', status: 'launched', ...identity, handle: '<host-assigned handle>', model: c.writer?.models[record.modelIndex], ...effort }]
       : action === 'cancel' ? [cancelled]
         : record.retirement === 'retain' ? [...finished, cancelled] : finished;
+    const selfCheckPath = record.handle && record.brief?.path
+      ? path.join(path.dirname(record.brief.path), 'self-check.event.json')
+      : undefined;
+    const selfCheckEvent = action === 'running' && selfCheckPath
+      ? { path: selfCheckPath, record: finished[0]! }
+      : undefined;
     const notice = c.amended.findLast((row) => row.task === record.id)?.notice;
     return {
       path: path.join(runDir, launchRel(record.id)),
+      ...(selfCheckEvent ? { selfCheckEvent } : {}),
       record: {
         task: record.id, attempt: record.attempt, signature: record.signature, action, handle: record.handle, model, ...effort,
         briefPath: record.brief?.path, briefHash: record.brief?.sha256, envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath,
@@ -2182,7 +2189,7 @@ export function implementLaunches(state: ImplementState, runDir: string): { path
         ...(record.retainedSubmission ? { retainedSubmission: record.retainedSubmission } : {}),
         ...(notice !== undefined ? { notice } : {}),
         // NOTE: the self-check replays the writer's receipt as its handle, so it exists only once a launch receipt bound one.
-        ...(record.handle && record.brief?.path ? { selfCheck: selfCheckCommand(runDir, path.join(path.dirname(record.brief.path), 'self-check.event.json')) } : {}),
+        ...(selfCheckPath ? { selfCheck: selfCheckCommand(runDir, selfCheckPath) } : {}),
         receipts,
       },
     };

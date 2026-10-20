@@ -795,6 +795,51 @@ test('launch record carries self-check handle and the complete self-check comman
   assert.equal(eventPath, path.join(path.dirname(after!.record.briefPath), 'self-check.event.json'));
 });
 
+test('self-check event follows the launched identity and current amendment hash', () => {
+  const sim: Sim = { plan: AMEND_PLAN };
+  let { result, trace } = start(1, sim);
+  assert.equal(result.state.tag, 'tasks');
+  if (result.state.tag !== 'tasks') return;
+  result = { ...result, state: { ...result.state, c: { ...result.state.c, writer: { ...result.state.c.writer!, effort: 'max' } } } };
+
+  const ports = fakePorts(), session = process.cwd(), runDir = path.join(session, '.state', 'runs', '001-implement');
+  memoryRunFs(ports, session);
+  const active = started();
+  const render = (state: ImplementState) => rootMachine.render!({
+    tag: 'design', run: { verb: 'implement', argument: 'x.design.md', slug: 'feature' }, child: { ...active, child: state },
+  } as unknown as RootState, ports, runDir);
+  const before = launchOf(result.state, 'T1');
+  const eventPath = path.join(path.dirname(before.briefPath), 'self-check.event.json');
+  ports.fs.writeAtomic(eventPath, JSON.stringify({
+    type: 'WRITE_RECEIPT', status: 'submitted', task: before.task, attempt: before.attempt, signature: before.signature,
+    handle: '<host-assigned handle>', envelopePath: before.envelopePath, briefHash: before.briefHash, model: '<host-attested model>',
+  }));
+
+  for (const slot of slots(result).filter((item) => item.action === 'launch')) {
+    result = host(result, {
+      type: 'WRITE_RECEIPT', status: 'launched', task: slot.task, attempt: slot.attempt, signature: slot.signature,
+      handle: `agent-${slot.task}-${slot.attempt}`, model: slot.model, effort: 'max',
+    }, sim, trace);
+  }
+  render(result.state);
+  const launched = launchOf(result.state, 'T1');
+  const launchedReceipt = launched.receipts.find((receipt) => receipt['status'] === 'submitted')!;
+  assert.deepEqual(JSON.parse(ports.fs.readText(eventPath)!), launchedReceipt);
+  assert.deepEqual(
+    [launchedReceipt['handle'], launchedReceipt['model'], launchedReceipt['effort'], launchedReceipt['briefHash']],
+    [launched.handle, launched.model, 'max', launched.briefHash],
+  );
+
+  result = host(result, amendEvent([SC1_FAST], [{ task: 'T1', notice: 'SC1 now requires speed.' }]), sim, trace);
+  render(result.state);
+  const amended = launchOf(result.state, 'T1');
+  const amendedReceipt = amended.receipts.find((receipt) => receipt['status'] === 'submitted')!;
+  assert.deepEqual(JSON.parse(ports.fs.readText(eventPath)!), amendedReceipt);
+  const amendedBrief = trace.events.findLast((event) => event.type === 'BRIEF_READY');
+  assert.ok(amendedBrief?.type === 'BRIEF_READY' && amendedBrief.delta);
+  assert.equal(amendedReceipt['briefHash'], amendedBrief.delta.sha256);
+});
+
 test('launch record: concurrent tasks whose briefs share one directory get distinct paths inside the run dir', () => {
   const { result } = start(2, {});
   const launches = launchesOf(result);

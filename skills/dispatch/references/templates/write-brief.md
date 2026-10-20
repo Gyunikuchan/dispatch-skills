@@ -14,7 +14,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 ````markdown
 ### Outcome handoff
 - Write the complete implementation-outcome JSON to `<Expected Envelope Path>`.
-- After launch, copy the task's exact attempt, signature, and assigned handle from the `Await write` frame into its generated self-check event, then run `<Self Check Command>`; correct every listed defect before returning.
+- After launch, the driver fills the self-check event. Run `<Self Check Command>` and correct every listed defect before returning. Preserve the event contents; report any event-identity defect as a concern.
 - List each changed file in `files` with one short clause on what changed there.
 - In chat, return only the status, one-line summary, concerns, and envelope path. Keep evidence rows in the JSON file.
 

@@ -188,6 +188,70 @@ test('bounded-recovery: exhaustion names pending work as well as exhausted findi
 
 // SECTION: Verification and optional fixes
 
+test('deferred to opt-in fix frame filters accepted non-fixable findings', () => {
+  const state = drive([started(), prepared(1), waveDone(1, [
+    finding('R1-F001'),
+    finding('R1-F002', { severity: 'CONSIDER' }),
+    finding('R1-F003', { scope: 'adjacent', severity: 'SHOULD' }),
+    finding('R1-F004', { severity: 'CONSIDER' }),
+  ]), { type: 'RULINGS', rulings: {
+    'R1-F001': { ruling: 'accept' },
+    'R1-F002': { ruling: 'accept', fix: { affectedPaths: ['src/consider.ts'], dependsOn: [], verification: [] } },
+    'R1-F003': { ruling: 'accept' },
+    'R1-F004': { ruling: 'accept' },
+  } } as Event]).state;
+  if (state.tag !== 'fix') return assert.fail('expected fix');
+  const needsUser = { ...finding('R1-F005', { severity: 'CONSIDER' }), round: 1, status: 'needs-user' } as typeof state.c.findings[number];
+  const projected = reviewMachine.project({ ...state, c: { ...state.c, findings: [...state.c.findings, needsUser] } }).data;
+  assert.deepEqual([...new Set(state.clusters.flatMap((cluster) => cluster.findingIds))].sort(), ['R1-F001', 'R1-F002']);
+  assert.deepEqual(projected['deferred'], [
+    { id: 'R1-F003', reason: 'opt-in' },
+    { id: 'R1-F004', reason: 'opt-in' },
+  ]);
+});
+
+test('deferred to opt-in unanswered prompt shows accepted deferred ids and clears after the ruling', () => {
+  const offered = drive([started(), prepared(1), waveDone(1, [
+    finding('R1-F001', { scope: 'adjacent', severity: 'SHOULD' }),
+    finding('R1-F002', { severity: 'CONSIDER' }),
+  ]), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } } as Event]).state;
+  if (offered.tag !== 'decide-opt-in') return assert.fail('expected opt-in prompt');
+  const needsUser = { ...finding('R1-F003', { severity: 'CONSIDER' }), round: 1, status: 'needs-user' } as typeof offered.c.findings[number];
+  const prompt = reviewMachine.project({
+    ...offered,
+    c: { ...offered.c, findings: [...offered.c.findings, needsUser] },
+    items: [...offered.items, 'R1-F003'],
+  }).data;
+  assert.deepEqual(prompt['deferred'], [
+    { id: 'R1-F001', reason: 'opt-in' },
+    { id: 'R1-F002', reason: 'opt-in' },
+  ]);
+  assert.ok((prompt['items'] as { id: string }[]).some((item) => item.id === 'R1-F003'));
+  assert.ok(!(prompt['deferred'] as { id: string }[]).some((item) => item.id === 'R1-F003'));
+
+  const chosen = drive([{ type: 'DECISION', kind: 'opt-in', answer: ['R1-F002'] }], offered).state;
+  assert.equal(chosen.tag, 'fix');
+  assert.ok(!Object.hasOwn(reviewMachine.project(chosen).data, 'deferred'));
+  const done = drive([applied(chosen), verified(1)], chosen).state;
+  assert.equal(done.tag, 'settled');
+  assert.ok(!Object.hasOwn(reviewMachine.project(done).data, 'deferred'));
+  assert.ok(!Object.hasOwn(reviewMachine.project(freshFix()).data, 'deferred'));
+});
+
+test('deferred to opt-in accepted findings survive a disputes round before the prompt', () => {
+  const first = drive([started(), prepared(1), waveDone(1, [
+    finding('R1-F001', { severity: 'SHOULD' }),
+    finding('R1-F002', { scope: 'adjacent', severity: 'SHOULD' }),
+  ]), { type: 'RULINGS', rulings: {
+    'R1-F001': { ruling: 'reject', reason: 'retain current behavior' },
+    'R1-F002': { ruling: 'accept' },
+  } } as Event]);
+  assert.equal(first.state.tag, 'prepare');
+  const later = drive([prepared(2), waveDone(2, [finding('R2-F001')])], first.state).state;
+  assert.equal(later.tag, 'rule');
+  assert.deepEqual((reviewMachine.project(later).data['deferred']), [{ id: 'R1-F002', reason: 'opt-in' }]);
+});
+
 test('only accepted adjacent findings become follow-ups on completion', () => {
   const findings = [finding('R1-F001', { scope: 'adjacent' }), finding('R1-F002', { scope: 'adjacent' })];
   let { state } = drive([started(), prepared(1), waveDone(1, findings),

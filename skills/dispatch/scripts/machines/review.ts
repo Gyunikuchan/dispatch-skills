@@ -603,6 +603,12 @@ const optInItems = (c: ReviewCtx): FindingId[] => c.findings
     || (finding.status === 'needs-user' && finding.severity === 'CONSIDER'))
   .map((finding) => finding.id);
 
+function deferredFindings(c: ReviewCtx): { id: FindingId; reason: 'opt-in' }[] {
+  const optIn = new Set(optInItems(c));
+  return c.findings.filter((finding) => optIn.has(finding.id) && isAccepted(finding) && !fixable(finding))
+    .map((finding) => ({ id: finding.id, reason: 'opt-in' }));
+}
+
 function settleOrOptIn(c: ReviewCtx): S {
   if (!c.optInAsked) {
     const items = optInItems(c);
@@ -949,9 +955,13 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
 }
 
 export function reviewData(state: ReviewState): Readonly<Record<string, unknown>> {
-  const data = withFrameConcerns(state, reviewFrameData(state));
-  if (!('c' in state) || !state.c.observations?.length) return data;
   const awaiting = reviewAwait(state);
+  const base = withFrameConcerns(state, reviewFrameData(state));
+  const pendingOptIn = 'c' in state && awaiting !== null && awaiting !== 'done'
+    && (!state.c.optInAsked || state.tag === 'decide-opt-in');
+  const deferred = pendingOptIn ? deferredFindings(state.c) : [];
+  const data = deferred.length ? { ...base, deferred } : base;
+  if (!('c' in state) || !state.c.observations?.length) return data;
   if (awaiting === 'done') return state.tag === 'settled' ? { ...data, completion: { ...(data['completion'] as object), coverage: reviewCoverage(state.c) } } : { ...data, coverage: reviewCoverage(state.c) };
   if (awaiting === null) return data;
   // NOTE: observations are advisory; a selection is optional and findings keep the revision their wave reviewed.

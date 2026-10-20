@@ -1207,10 +1207,12 @@ function lintNotes(lines: readonly StructuralLine[], out: LintDefect[]): void {
   });
   notes.forEach(({ note, line, action }, index) => {
     const siblings = notes.filter((_item, other) => other !== index);
-    if (!isFillerNote(note, siblings.map((item) => item.note))) return;
+    const intrinsic = isFillerNote(note);
+    if (!intrinsic && !isFillerNote(note, siblings.map((item) => item.note))) return;
     // A note shared by separate [DELETE] entries belongs on one grouped heading.
-    const grouping = action === 'DELETE' && !isFillerNote(note) && isFillerNote(note, siblings.filter((item) => item.action === 'DELETE').map((item) => item.note));
-    out.push(lint('filler-note', line, `Change note "${note}" is filler; say what changes in this file${grouping ? '; group these [DELETE] paths under one heading' : ''}.`));
+    const grouping = action === 'DELETE' && !intrinsic && isFillerNote(note, siblings.filter((item) => item.action === 'DELETE').map((item) => item.note));
+    const reason = intrinsic ? 'is filler' : 'repeats a sibling note';
+    out.push(lint('filler-note', line, `Change note "${note}" ${reason}; say what changes in this file${grouping ? '; group these [DELETE] paths under one heading' : ''}.`));
   });
 }
 export function incrementPathMatches(file: string, scope: string): boolean {

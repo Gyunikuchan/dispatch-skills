@@ -132,7 +132,7 @@ Explain non-obvious rationale (why, CLI/subprocess quirks, cross-platform nuance
 - Keep logical unit fixtures in memory (`memoryRunFs`); use physical storage only when the claim depends on bytes or filesystem behavior. Physical I/O breaks per-file timing budgets under aggregate load.
 - Apply the [quality bar's code section](skills/dispatch/references/templates/quality-bar.md#code) to test behavior, naming, and retention.
 - When a change alters a shared machine or effect contract, list its callers with CodeGraph and cover every parent machine family, including failure after each durable boundary.
-- For intended changes to hash-tracked skill files, run `npm run hashes`, then rerun `npm test`.
+- For a plan that changes hash-tracked skill files, its `[GENERATED] skills/dispatch/skill-hashes.json` entry lists every changed hash-tracked skill file, including scripts, as Inputs; run `npm run hashes`, then rerun `npm test`.
 
 ## Long-Running Work and Handoff
 
