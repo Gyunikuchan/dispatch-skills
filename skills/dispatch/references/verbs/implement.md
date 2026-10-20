@@ -30,6 +30,16 @@ Send each decision through `DECISION` with its exact `kind` and an `answer` matc
 - `DECISION kind=baseline`: `accept-known-red` as `{ action: "accept-known-red", ids }` naming every listed `failureId`; `inline-hotfix` as `{ by: "orchestrator", action: "hotfix", mode: "inline", rationale, external }`; or `"stop"`.
 - `DECISION kind=failure`: `retry` or `stop` as `{ by: "orchestrator", action, rationale }`. A task-phase frame offers `retry` only while a failed task has attempts left. After delivery, a final-verification failure also accepts `hotfix` as `{ by: "orchestrator", action: "hotfix", mode: "inline" | "writer", rationale, external: [{ path, reason }] }`, where `external` lists each needed path outside plan scope (`[]` when none), and the user-gated `manual-complete` as `{ by: "user", action: "manual-complete", quote, criteria: { <id>: <evidence> } }` with pass or user-waived evidence for every plan criterion.
 
+### Hotfix order
+
+Before a hotfix, inspect the failing check, identify its root cause and bounded paths, and complete applicable level, production and user gates. Use the [baseline guidance](../decision-frame.md#baseline-failures-baseline) or [failure guidance](../decision-frame.md#implementation-failure-failure), plus the existing [scope rules](../change-handling.md#concrete-write-boundaries) and [user gate](../decision-frame.md#user-gate-boundaries). List every needed path outside plan scope in `external` with its reason; this supports hotfix admission and does not satisfy an applicable user gate.
+
+For inline mode, complete the bounded repair in the caller checkout before sending the matching `DECISION kind=baseline` or `DECISION kind=failure`, with the root cause in `rationale` and required `external` entries. The decision snapshots and admits those existing edits, then verifies them, with no write frame between the decision and that check.
+
+For writer mode, when the delivered final-verification frame offers it, send `DECISION kind=failure` first, then launch the emitted hotfix writer. Use its taskless `submitted` or `failed` receipt as described under [Writer receipts](#writer-receipts).
+
+Use only modes offered by the current frame. Hotfixes remain single-shot and within their existing size limits; follow the [hotfix write rules](../templates/write-brief-hotfix.md). If the targeted failure remains unchanged, the hotfix is withdrawn for that stage; a retry does not add write scope or restore it.
+
 ### Writer receipts
 
 Report each writer through `WRITE_RECEIPT` with `status`:
