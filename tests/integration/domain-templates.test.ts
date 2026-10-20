@@ -187,7 +187,7 @@ test('quality selection keeps judging rules single-sourced', () => {
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
   const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
   const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
-  assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'code', 'plan', 'design']);
+  assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'plan', 'design']);
   const adjacentRule = 'Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it';
   assert.equal(frame.split(adjacentRule).length - 1, 1);
   assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);

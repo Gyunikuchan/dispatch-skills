@@ -56,6 +56,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
 - Reuse: for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding it.
 - Spec alignment: meet every applicable requirement in the governing spec, preserve its decisions and constraints, and identify flawed premises or gaps.
+- Layer placement: judge content against the [document layers](../spec-stage.md#readers-and-document-layers); report content in the wrong layer, upstream content restated instead of cited by ID, and a design or plan that changes intent.
 
 - Correctness and domain invariants: check domain-valid formulas and algorithms, type-valid but domain-invalid states, sign conventions (debit/credit), unit conventions and scales (monthly/annual, fraction/percent), off-by-one errors, invariants across multi-step changes, valid transitions and reachable states, runtime behavior, and type validity.
 - Robustness and compatibility: handle empty, zero, and boundary inputs; unhandled branches, unguarded indexing, partial failures, floating promises, partial updates, races, and unbounded designs. Check affected callers, persisted schemas, and serialized formats. Verify migrations. Handle version skew with graceful degradation and rollback.

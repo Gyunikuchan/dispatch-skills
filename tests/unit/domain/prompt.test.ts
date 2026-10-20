@@ -25,7 +25,7 @@ test('prompt: declared variables and body are extracted from the Markdown templa
   assert.equal(fillTemplate(template, variables, { Name: 'Ada' }), 'Hi Ada');
 });
 
-test('prompt: assembled frame + kind block filled with fixed inputs equals the golden per review kind', () => {
+test('prompt assembly equals the golden per review kind', () => {
   const frame = read(templates, 'review-prompt.md');
   for (const kind of ['code', 'design', 'plan'] as const) {
     const { variables, template } = assembleTemplate(frame, read(templates, `review-prompt-${kind}.md`), undefined, shared(kind));
@@ -127,7 +127,7 @@ test('quality selection: every review contains each selected rule once and exclu
     const prompt = assembled(kind);
     const quality = qualityBar(bar, kind).split('## quality\n\n')[1]!;
     assert.equal(prompt.split(quality).length, 2, kind);
-    for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+    for (const [section, marker] of [['shared', '- Spec alignment:'], ['spec', '- Verifiability:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
       assert.equal(prompt.split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
     }
     for (const rule of codeRules) assert.equal(prompt.includes(rule), kind !== 'design', `${kind}: ${rule}`);
@@ -135,9 +135,9 @@ test('quality selection: every review contains each selected rule once and exclu
 });
 
 test('quality selection rejects missing, empty, duplicate sections and invalid consumers', () => {
-  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'plan', 'code'], design: ['shared', 'design'] };
+  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'spec', 'plan', 'code'], design: ['shared', 'spec', 'design'] };
   assert.deepEqual(qualitySections, expected);
-  const sections = ['shared', 'code', 'plan', 'design'];
+  const sections = ['shared', 'spec', 'code', 'plan', 'design'];
   const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
   for (const [consumer, selected] of Object.entries(expected)) {
     assert.equal(qualityBar(bar, consumer as QualityConsumer), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);

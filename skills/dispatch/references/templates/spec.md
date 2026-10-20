@@ -1,5 +1,7 @@
 # Spec template
 
+The spec is the governing requirements and intent document. Put selected architecture in the design and execution detail in the plan, as described in [document layers](../spec-stage.md#readers-and-document-layers).
+
 Separate summary fields with blank `>` lines so each field renders as its own paragraph.
 
 ````markdown
@@ -48,3 +50,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 - IDs: headings under Requirements are `### REQ-<n> — <title>`; under Decisions, `### DEC-<n> — <title>`. Numbering starts at 1 with no gaps or duplicates. Plan, criterion, increment, and finding IDs (`T<n>`, `SC<n>`, `I<nn>`, `R<n>`, `R<n>-F<n>`) are forbidden as headings there; prose may cite them.
 - Each REQ has at least one `- Acceptance:` bullet.
 - Summarizing drops no decision or constraint: keep every settled decision and constraint when you shorten the spec.
+- Before `AUTHORED`, assess behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Include only applicable content in existing sections; do not add headings or applicability tables.
+- Record spec-level assumptions under Constraints with the `(assumption)` tag. List a material unconfirmed assumption under Open Questions.
+- Acceptance bullets may use EARS form (`WHEN <trigger>, the system SHALL <response>`) where it improves verifiability. EARS is optional and unlinted.
+- Judge the draft with the [quality bar's spec section](quality-bar.md#spec).

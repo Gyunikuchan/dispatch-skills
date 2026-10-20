@@ -14,6 +14,8 @@ Keep one resolved canonical spec. New/session-authored specs use `<session>/<slu
 
 At `medium` and above, design or plan authoring waits for approval of the settled spec hash. This includes plans authored inside implementation and nested increment plans. At `low`, proceed and show the spec in the handoff. Spec settlement also applies to standalone review, but settlement alone does not add an approval gate to standalone code review.
 
+Before presenting spec approval, resolve with the user any open question that could change scope, behavior, or risk; record other questions as nonblocking.
+
 At the emitted `decide` frame with `data.kind: spec-approval`, present the [Decision Frame](decision-frame.md#spec-approval-spec-approval) with `data.path`, `data.hash`, distilled intent, key requirements, and settled decisions. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Design approval and production-write approval remain separate authorizations.
 
 ### Spec-only output
@@ -22,7 +24,7 @@ When the user wants only a spec, start `plan` and author the spec. At `medium`+,
 
 ## Readers and document layers
 
-The spec owns why/what, REQ acceptance and intent/user decisions (DEC). Design owns strategy, architecture and architectural decisions (AD). Plan owns tactics, task ownership, criteria and checks. Keep each meaning in its owning layer; cite upstream IDs. Ordinary design/plan authoring never rewrites the spec.
+Dispatch's spec is the governing requirements and intent document. It records purpose, required outcomes, constraints, and settled user decisions. The spec owns why/what, REQ acceptance and intent/user decisions (DEC). Design owns strategy, architecture and architectural decisions (AD). Plan owns tactics, task ownership, criteria and checks. Imposed design constraints may stay in the spec; selected architecture belongs in design and execution detail belongs in plan. Keep each meaning in its owning layer; cite upstream IDs. Ordinary design/plan authoring never rewrites the spec. This is practical alignment with ISO/IEC/IEEE 29148, not a claim of conformance.
 
 Every downstream author and reviewer reads the whole governing spec. Native writers read it in full plus the plan's shared range through Task Map and their own task, assigned criteria and Verification Plan rows. Honor emitted paths and hashes. Before drafting a design or plan, follow every emitted `data.read` path and section; those entries are the authoritative required input for standalone and nested authoring.
 

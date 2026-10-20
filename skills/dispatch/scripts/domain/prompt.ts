@@ -76,8 +76,8 @@ export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer';
 export const qualitySections = {
   code: ['shared', 'code'],
   writer: ['shared', 'code'],
-  plan: ['shared', 'plan', 'code'],
-  design: ['shared', 'design'],
+  plan: ['shared', 'spec', 'plan', 'code'],
+  design: ['shared', 'spec', 'design'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
 
 /** Selects the consumer's criteria as the frame's single quality block. */

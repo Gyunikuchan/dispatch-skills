@@ -182,7 +182,7 @@ test('quality selection assembles every review and writer kind and reports selec
   const assertQuality = (text: string, consumer: QualityConsumer) => {
     const quality = qualityBar(bar, consumer).split('## quality\n\n')[1]!;
     assert.equal(text.split(quality).length, 2, consumer);
-    for (const [section, marker] of [['shared', '- Spec alignment:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+    for (const [section, marker] of [['shared', '- Spec alignment:'], ['spec', '- Verifiability:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
       assert.equal(text.split(marker).length - 1, (qualitySections[consumer] as readonly string[]).includes(section) ? 1 : 0, `${consumer}: ${section}`);
     }
     if (consumer === 'code' || consumer === 'plan' || consumer === 'writer') {
@@ -210,7 +210,7 @@ test('quality selection assembles every review and writer kind and reports selec
     assert.equal(event.type, 'BRIEF_READY');
     if (event.type === 'BRIEF_READY') assertQuality(ports.fs.readText(event.path), 'writer');
   }
-  const valid = ['shared', 'code', 'plan', 'design'].map((section) => `## ${section}\n${section} rule`).join('\n');
+  const valid = ['shared', 'spec', 'code', 'plan', 'design'].map((section) => `## ${section}\n${section} rule`).join('\n');
   const consumers = [
     ...(['code', 'plan', 'design'] as const).map((kind) => ({ consumer: kind, invoke: () => review(kind) })),
     ...(['task', 'hotfix'] as const).map((stage) => ({ consumer: 'writer' as const, invoke: () => writer(stage) })),

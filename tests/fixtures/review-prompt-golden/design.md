@@ -39,6 +39,13 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
 - Reuse: for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding it.
 - Spec alignment: meet every applicable requirement in the governing spec, preserve its decisions and constraints, and identify flawed premises or gaps.
+- Layer placement: judge content against the [document layers](../spec-stage.md#readers-and-document-layers); report content in the wrong layer, upstream content restated instead of cited by ID, and a design or plan that changes intent.
+
+- Clarity: one interpretation per requirement.
+- Consistency: no conflicting REQs, constraints, or decisions.
+- Verifiability: each REQ has observable Acceptance.
+- Material completeness: applicable behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies are covered; an open question that could change scope, behavior, or risk is a material gap and blocks approval; other questions are recorded, not blocking; never invent intent — route gaps through user gates.
+- Placement: selected architecture and execution detail belong downstream; imposed design constraints may stay.
 
 - Traceability: trace every goal to a requirement, and state non-goals explicitly.
 - Acceptance and verification: make every criterion observable and together sufficient for the goals, including each increment's acceptance criteria.
