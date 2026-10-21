@@ -33,9 +33,15 @@ function revisedText(id: string): string {
 async function harness() {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
   memoryRunFs(ports, session);
+  const writeAtomic = ports.fs.writeAtomic;
+  ports.fs.writeAtomic = (file, text) => {
+    const relative = path.relative(session, path.resolve(file));
+    assert.ok(relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative), `Test write escaped session: ${file}`);
+    writeAtomic(file, text);
+  };
   const planPath = path.join(session, 'x.plan.md').replaceAll('\\', '/'), replacementPath = path.join(session, 'replacement.plan.md').replaceAll('\\', '/');
   ports.fs.writeAtomic(planPath, AMEND_TEXT);
-  const sim: Sim = { plan: AMEND_PLAN, planHash: governedHash(AMEND_PLAN) };
+  const sim: Sim = { plan: AMEND_PLAN, planHash: governedHash(AMEND_PLAN), briefRoot: runDir };
   const initial = start(3, sim), launched = launch(initial.result, sim, initial.trace);
   const defaults = { ...run(3), protocolRevision: JOURNAL_PROTOCOL_REVISION, argument: planPath, overrides: { ...run(3).overrides, sessionDir: session, settledPlan: { path: planPath, hash: governedHash(AMEND_PLAN), outcome: 'settled' } } };
   if (!('c' in launched.state) || !launched.state.c) throw new Error('context');
@@ -57,11 +63,25 @@ async function harness() {
     return [result];
   }])) as Handlers;
   const options = { machine, handlers, ports, runDir, runRel: 'session/runs/001-implement' };
-  await startRun({ ...options, runStarted: defaults });
+  assert.equal((await startRun({ ...options, runStarted: defaults })).exitCode, 0);
   return { sim, options, session, replacementPath, state: () => current, reply: (rawEvent: unknown) => send({ ...options, rawEvent }) };
 }
 
 // SECTION: Admission and replacement
+
+test('criterion-admission: writer self-check receipts stay in the in-memory session', async () => {
+  const h = await harness();
+  for (const task of ['T1', 'T2', 'T3']) {
+    const slot = launchOf(h.state(), task);
+    const receiptPath = path.join(path.dirname(slot.briefPath), 'self-check.event.json');
+    assert.ok(path.isAbsolute(receiptPath));
+    const receipt = JSON.parse(h.options.ports.fs.readText(receiptPath));
+    assert.equal(receipt.type, 'WRITE_RECEIPT');
+    assert.equal(receipt.status, 'submitted');
+    assert.equal(receipt.task, task);
+    assert.equal(receipt.handle, slot.handle);
+  }
+});
 
 for (const method of ['replacement', 'AMEND']) test(`criterion-admission: ${method} admits a new numeric criterion and matching writer evidence`, async () => {
   const h = await harness(), parsed = parsePlan(revisedText('SC14'));

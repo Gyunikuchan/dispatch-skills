@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { Effect, Event, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../../skills/dispatch/scripts/machines/implement-types.ts';
@@ -36,6 +37,7 @@ export const RED_ROW = 'RED-MATRIX SC1 | tests/validation.test.ts:rejects bad in
 
 export type Outcome = { exit: number; failedTests?: string[]; baselineHits?: string[]; scanUnreadable?: string[] };
 export type Sim = {
+  briefRoot?: string;
   plan?: ParsedPlan;
   planHash?: string;
   reviewRounds?: number;
@@ -73,10 +75,13 @@ export function answer(state: ImplementState, effect: Effect, sim: Sim): Event |
       if (replacement) return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: replacement.hash, parsed: replacement.plan, defects: (replacement.defects ?? []) as never };
       return { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: sim.planHash ?? HASH, parsed: sim.plan ?? PLAN, defects: [] };
     }
-    case 'write-brief': return {
-      type: 'BRIEF_READY', effectId: effect.id, stage: 'task', path: `run/${id}.brief.md`, sha256: briefSha(effect.id), envelopePath: `run/${id}-${effect.id}.outcome.json`,
-      ...(effect.input['deltaBase'] ? { delta: { path: `run/${id}.delta.md`, sha256: briefSha(`${effect.id}.delta`) } } : {}),
-    };
+    case 'write-brief': {
+      const root = sim.briefRoot ? path.posix.join(sim.briefRoot.replaceAll('\\', '/'), effect.id) : 'run';
+      return {
+        type: 'BRIEF_READY', effectId: effect.id, stage: 'task', path: path.posix.join(root, `${id}.brief.md`), sha256: briefSha(effect.id), envelopePath: path.posix.join(root, `${id}-${effect.id}.outcome.json`),
+        ...(effect.input['deltaBase'] ? { delta: { path: path.posix.join(root, `${id}.delta.md`), sha256: briefSha(`${effect.id}.delta`) } } : {}),
+      };
+    }
     case 'check-envelope': return { type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: sim.envelope ? sim.envelope(id!) : defaultEnvelope(id!, plan), defects: [], diff: { paths: sim.diff ? sim.diff(id!) : pathsOf(id!, plan) } };
     case 'verify': return {
       type: 'VERIFY_DONE', effectId: effect.id, purpose: effect.purpose, fingerprint: FP,
