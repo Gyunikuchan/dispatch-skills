@@ -14,13 +14,14 @@ code has been written yet.
 
 ### Review against
 - Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to this project's conventions: read `AGENTS.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+Adhere to this project's conventions: read `AGENTS.md`, including nested ones on reviewed paths.
+Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
+A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
 Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
 For a spec finding, use § Spec: <heading>.
@@ -36,36 +37,40 @@ contest one only by naming it and citing evidence it did not weigh. When Scope n
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 - Precedence: Applicable host rule files govern first. For nested `AGENTS.md` files, the nearest file wins over its parent. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
 - Host rules override only this bar. Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed. Writers report a conflict between host rules and the brief under concerns; reviewers do not report such a conflict as a finding.
-- Simplicity: prefer, in order, delete, reuse, stdlib, then new code.
-- Reuse: for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent; reuse a match instead of adding it.
-- Spec alignment: meet every applicable requirement in the governing spec, preserve its decisions and constraints, and identify flawed premises or gaps.
-- Layer placement: judge content against the [document layers](../spec-stage.md#readers-and-document-layers); report content in the wrong layer, upstream content restated instead of cited by ID, and a design or plan that changes intent.
+- **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, or XY problem; add nothing beyond the ask. Route a design or plan that changes intent through the user gate.
+- **maintainability** — Prefer delete, reuse, stdlib, then new code. Keep one source of truth; search the repository by name and behaviour for an existing equivalent before adding a new exported or shared symbol, helper, module, or type. Apply the rule of three: extract on third use; duplication beats the wrong abstraction. Use YAGNI and KISS; prefer deep modules, clear seams, low coupling and high cohesion; avoid pass-through modules, speculative seams (one adapter is hypothetical), excess coupling, and abstractions without a concrete need. Remove unnecessary branches and fix root causes once. Preserve Chesterton's fence, and make names, docs, and comments explain why and change with behavior. Judge content against the [document layers](../spec-stage.md#readers-and-document-layers), and cite upstream IDs instead of restating an earlier layer.
 
-- Clarity: one interpretation per requirement.
-- Consistency: no conflicting REQs, constraints, or decisions.
-- Verifiability: each REQ has observable Acceptance.
-- Material completeness: applicable behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies are covered; an open question that could change scope, behavior, or risk is a material gap and blocks approval; other questions are recorded, not blocking; never invent intent — route gaps through user gates.
-- Placement: selected architecture and execution detail belong downstream; imposed design constraints may stay.
+- **spec** — Apply IEEE 29148 quality: requirements are unambiguous (one interpretation), consistent, verifiable, complete, feasible, and singular (one requirement per statement; identify non-singular requirements). Check completeness across behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Identify misplaced architecture or execution detail while retaining imposed design constraints. An open question that could change scope, behavior, or risk blocks approval; never invent intent, and route a gap through the user gate.
 
-- Traceability: trace every goal to a requirement, and state non-goals explicitly.
-- Acceptance and verification: make every criterion observable and together sufficient for the goals, including each increment's acceptance criteria.
-- Architecture: define component ownership, contracts between components, and data crossing boundaries.
-- Decisions: weigh real alternatives; apply the shared simplicity order when choosing.
-- Invariants: state system-wide rules that hold within and across increments.
-- Risk and operations: check trust boundaries, deployment and runtime operation, risk concentrated in one increment, and a reversal path per change.
-- Decomposition: choose independently deliverable, correctly ordered increments with collision-free parallel increments and covered final integration.
+- **intent** — Trace every goal to a requirement and state non-goals. Check that the design serves the requested users and does not add work beyond the ask.
+- **architecture** — Define separation of concerns, component ownership, contracts, data flow, and boundaries. Weigh alternatives and trade-offs, apply the shared simplicity order, and check internal consistency and step order.
+- **correctness** — State system-wide invariants that hold within and across increments, including preconditions, postconditions, valid transitions, and reachable states.
+- **reliability** — Cover edge, boundary, and empty inputs; partial failure and update; atomicity and crash consistency; idempotency; races and TOCTOU; floating promises; fail-closed behavior; data loss; and destructive-operation guards.
+- **security** — Map trust boundaries and least privilege; use STRIDE to check spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege; check isolation, authorization, validation, ownership, and sensitive-data handling.
+- **performance** — Check Big-O on hot paths, N+1 work, unpaginated reads, missing indexes, backpressure, bounded queues, concurrency and memory, resource closure, and event-loop blocking.
+- **compatibility** — Check Hyrum's law and semver, breaking changes, expand/contract migration, rollback, version skew with graceful degradation, affected callers, persisted schemas and serialized formats, and OS/shell/path/encoding portability.
+- **operability** — Check deployment and runtime operation, observability through logs, metrics, and traces, actionable diagnostics, configuration, and a kill switch.
+- **testing** — Make every criterion observable and together sufficient for the goals, including each increment's acceptance criteria. Check testability and an exact verification path.
+- **usability** — Check WCAG accessibility, POLA, CLI/API ergonomics, and actionable error messages.
+- **decomposition** — Choose independently deliverable, correctly ordered increments with safe parallel work, vertical slices, INVEST sizing, final integration, and no concentration of risk in one increment.
 
 ### Tags
-- intent gap: `intent-gap`
-- intent: `intent`, `scope`
-- architecture: `architecture`, `boundaries`, `interfaces`, `data-flow`
-- decisions: `alternatives`, `simplicity`
-- invariants: `correctness`, `invariant`
-- risk and operations: `security`, `operations`, `risk`, `migration`, `rollback`
-- decomposition: `dependency-graph`, `parallel-safety`, `integration`
-- verification: `testability`
-- standards: `standards`
-- out of scope: `adjacent`
+Tag each finding with one family; the quality bar's bold family bullets define each family and its hints.
+- `intent`
+- `spec`
+- `correctness`
+- `reliability`
+- `security`
+- `performance`
+- `compatibility`
+- `maintainability`
+- `architecture`
+- `decomposition`
+- `operability`
+- `testing`
+- `usability`
+- `standards`
+- `adjacent`
 
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced

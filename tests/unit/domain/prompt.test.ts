@@ -27,17 +27,27 @@ test('prompt: declared variables and body are extracted from the Markdown templa
 
 test('prompt assembly equals the golden per review kind', () => {
   const frame = read(templates, 'review-prompt.md');
+  const standardsRule = 'Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.';
+  const specRouting = 'Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.';
+  const reuseCitation = 'Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`';
+  const codeSpecCitation = 'Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`';
   for (const kind of ['code', 'design', 'plan'] as const) {
     const { variables, template } = assembleTemplate(frame, read(templates, `review-prompt-${kind}.md`), undefined, shared(kind));
     assert.equal(`${fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind])}\n`, read(golden, `${kind}.md`), kind);
     const prompt = fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind]);
     assert.match(prompt, /Read the whole spec/);
     assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
-    if (kind !== 'code') {
-      assert.ok(prompt.indexOf('`intent-gap`') < prompt.indexOf('- intent:'));
+    assert.doesNotMatch(prompt, /`intent-gap`|`spec-gap`/, kind);
+    assert.equal(prompt.split(standardsRule).length - 1, 1, `${kind}: standards rule`);
+    if (kind === 'code') {
+      const against = read(templates, 'review-prompt-code.md').split(/^## against$/m)[1]!.split(/^## inspection$/m)[0]!;
+      assert.ok(against.includes(reuseCitation));
+      assert.ok(against.includes(codeSpecCitation));
+      assert.ok(prompt.includes(reuseCitation));
+      assert.ok(prompt.includes(codeSpecCitation));
+    } else {
+      assert.ok(prompt.includes(specRouting), kind);
       assert.match(prompt, /§ Spec: <heading>/);
-      if (kind === 'plan') assert.match(prompt, /`spec-gap` remains a test-spec gap/);
-      else assert.doesNotMatch(prompt, /`spec-gap`/);
     }
   }
 });
@@ -100,7 +110,7 @@ test('quality selection: reuse applies to every consumer and code tooling applie
   for (const kind of ['code', 'plan', 'design'] as const) {
     assert.ok(flat(kind).includes('search the repository by name and behaviour for an existing equivalent'));
     assert.equal(flat(kind).includes('skip issues that configured linters, formatters, or type checkers enforce.'), kind !== 'design');
-    assert.equal(flat(kind).includes('anchored on the new symbol, with the existing `path:L<line>` in `defect`'), kind === 'code');
+    assert.equal(flat(kind).includes('Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`'), kind === 'code');
     assert.equal(flat(kind).includes('Reuse searches do not count toward the target.'), kind === 'code');
   }
 });
@@ -117,20 +127,20 @@ test('quality selection: code and plan reviews name data-access and exposure ris
 
 test('quality selection: every review contains each selected rule once and excludes other sections', () => {
   const bar = read(templates, 'quality-bar.md');
-  const codeRules = [
-    '- Correctness and domain invariants:',
-    '- Robustness and compatibility:',
-    '- Interface quality:',
-    '- Naming and structure:',
-  ];
+  const sectionMarkers = [
+    ['shared', 'gold-plating'],
+    ['spec', 'IEEE 29148 quality'],
+    ['code', 'OWASP/CWE'],
+    ['plan', 'INVEST task sizing'],
+    ['design', 'Weigh alternatives'],
+  ] as const;
   for (const kind of ['code', 'plan', 'design'] as const) {
     const prompt = assembled(kind);
     const quality = qualityBar(bar, kind).split('## quality\n\n')[1]!;
     assert.equal(prompt.split(quality).length, 2, kind);
-    for (const [section, marker] of [['shared', '- Spec alignment:'], ['spec', '- Verifiability:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+    for (const [section, marker] of sectionMarkers) {
       assert.equal(prompt.split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
     }
-    for (const rule of codeRules) assert.equal(prompt.includes(rule), kind !== 'design', `${kind}: ${rule}`);
   }
 });
 
@@ -182,7 +192,7 @@ test('quality selection: reviews hold retained tests to the durable bar', () => 
 
 test('review prompts: prompts keep plan IDs out of tests', () => {
   const text = flat('code');
-  for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'criterion, task, or finding IDs; plan or session paths']) assert.ok(text.includes(term), term);
+  for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'never reference plan artifacts such as criterion, task, or finding IDs, plan paths, or session paths']) assert.ok(text.includes(term), term);
 });
 
 test('quality selection keeps artifact finding loci in review kind blocks', () => {

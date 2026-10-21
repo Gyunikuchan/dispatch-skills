@@ -114,20 +114,25 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
 test('quality selection: plan review checks task dependencies, ownership, and independence', () => {
   const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8');
-  assert.match(bar, /^- Task graph: check prerequisites and ownership boundaries; check claimed independence against producer\/consumer interfaces\./m);
+  assert.match(bar, /^- \*\*decomposition\*\* — .*A task that consumes another's output without a prerequisite is a defect\. Treat contention on a shared write path as a defect only when neither a `Requires` ordering nor a justified `Overlap:` line covers it\. Shared port, cache, or output contention needs a prerequisite\./m);
   assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
   assert.match(prompt, /The plan summary, success criteria and task graph/);
-  assert.match(prompt, /`dependency-graph`, `parallel-safety`/);
 });
 
-test('templates: every tag a review prompt offers is accepted by the validator and its schema', async () => {
+test('review prompts offer shared family tags each defined by a quality-bar bullet', async () => {
   const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/domain/report.ts');
-  // Prompt vocabulary is intentionally narrower than the accepted report vocabulary.
-  const advertisedTags = {
-    code: ['intent', 'scope-creep', 'correctness', 'domain-logic', 'invariant', 'runtime', 'type', 'edge-case', 'partial-failure', 'race', 'security', 'auth', 'resource-leak', 'perf', 'compatibility', 'breaking', 'migration', 'shallow', 'seam', 'coupling', 'yagni', 'reuse', 'root-cause', 'test-gap', 'test-leak', 'ui', 'a11y', 'standards', 'adjacent'],
-    plan: ['intent-gap', 'intent', 'user-gap', 'scope-creep', 'correctness', 'domain-logic', 'invariant', 'state-machine', 'dependency-graph', 'parallel-safety', 'architecture', 'coherence', 'approach', 'standards', 'security', 'auth', 'validation', 'compatibility', 'blast-radius', 'migration', 'rollback', 'edge-case', 'partial-failure', 'race', 'perf', 'verification', 'testability', 'spec-gap', 'test-leak', 'simplicity', 'yagni', 'adjacent'],
-    design: ['intent-gap', 'intent', 'scope', 'architecture', 'boundaries', 'interfaces', 'data-flow', 'alternatives', 'simplicity', 'correctness', 'invariant', 'security', 'operations', 'risk', 'migration', 'rollback', 'dependency-graph', 'parallel-safety', 'integration', 'testability', 'standards', 'adjacent'],
-  } as const;
+  const families = [
+    'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility',
+    'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
+  ] as const;
+  const expectedByKind: Record<'code' | 'plan' | 'design', readonly string[]> = {
+    code: families.filter((family) => family !== 'architecture' && family !== 'decomposition'),
+    plan: families,
+    design: families,
+  };
+  const sorted = (tags: readonly string[]) => [...tags].sort();
+  assert.deepEqual(sorted([...REVIEW_TAGS]), sorted(families), 'validator vocabulary');
+  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
   const enumOf = (node: unknown): string[] | null => {
     if (!node || typeof node !== 'object') return null;
     const record = node as Record<string, unknown>;
@@ -138,13 +143,17 @@ test('templates: every tag a review prompt offers is accepted by the validator a
   };
   for (const kind of ['code', 'plan', 'design'] as const) {
     const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
-    const offered = [...block.matchAll(/^- [^:\n]+: (.*?)(?: \u2014 .*)?$/gm)].flatMap((line) => [...line[1]!.matchAll(/`([^`]+)`/g)].map((tag) => tag[1]!));
-    assert.ok(offered.length, `${kind} prompt lists tags`);
+    const offered = [...block.matchAll(/^- `([^`]+)`$/gm)].map((tag) => tag[1]!);
+    assert.deepEqual(sorted(offered), sorted(expectedByKind[kind]), `${kind} prompt families`);
+    const selectedQuality = qualityBar(quality, kind);
+    for (const family of offered.filter((tag) => tag !== 'standards' && tag !== 'adjacent')) {
+      assert.ok(selectedQuality.split('\n').some((line) => line.startsWith(`- **${family}** —`)), `${kind}: missing ${family} quality bullet`);
+    }
+  }
+  for (const kind of ['code', 'plan'] as const) {
     const schema = enumOf(JSON.parse(readFileSync(new URL(`schemas/report-${kind}.json`, root), 'utf8')));
-    assert.equal(new Set(offered).size, offered.length, `${kind} prompt repeats a tag`);
-    assert.deepEqual(new Set(offered), new Set(advertisedTags[kind]), `${kind} prompt vocabulary changed`);
-    assert.ok(offered.every((tag) => REVIEW_TAGS[kind].has(tag)), `${kind} prompt offers a tag rejected by the validator`);
-    if (schema) assert.ok(offered.every((tag) => schema.includes(tag)), `${kind} prompt offers a tag rejected by its schema`);
+    assert.ok(schema, `${kind} schema tag enum`);
+    assert.deepEqual(sorted(schema), sorted(families), `${kind} schema families`);
   }
 });
 
@@ -155,9 +164,10 @@ test('quality selection: plans name searched equivalents and plan review checks 
   assert.ok(reuseRule);
   assert.match(reuseRule, /\bnone found\b/);
   assert.match(reuseRule, /\[quality bar's shared reuse criterion\]\(quality-bar\.md#shared\)/);
-  const prompt = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(prompt.includes('for each new exported or shared symbol, helper, module, or type, search the repository by name and behaviour for an existing equivalent'));
-  assert.ok(prompt.includes('Verify each plan reuse claim by repository search'));
+  const shared = readFileSync(new URL('quality-bar.md', root), 'utf8').split(/^## shared$/m)[1]!.split(/^## /m)[0]!;
+  const maintainability = shared.split('\n').find((line) => line.startsWith('- **maintainability** —'));
+  assert.ok(maintainability);
+  assert.ok(maintainability.includes('search the repository by name and behaviour for an existing equivalent'));
 });
 
 test('templates: task brief cleanup applies the quality bar without a new step', () => {
@@ -204,10 +214,10 @@ test('quality selection keeps judging rules single-sourced', () => {
     assert.doesNotMatch(prompt, /^## quality$/m);
     assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
     const tags = prompt.split('## tags')[1]!.split('## severity')[0]!;
-    assert.match(tags, /`dependency-graph`, `parallel-safety`/);
+    assert.ok(tags.includes('- `decomposition`'));
     assert.doesNotMatch(tags, /\u2014|findings/);
-    for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- [^:]+: `[^`]+`(?:, `[^`]+`)*$/);
+    for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- `[^`]+`$/);
     for (const rule of ['check claimed independence against', 'for each new exported or shared symbol, helper, module, or type, search the repository', 'weigh real alternatives', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
   }
-  for (const rule of ['Spec alignment:', 'check claimed independence against', 'for each new exported or shared symbol, helper, module, or type, search the repository', 'weigh real alternatives', 'collision-free parallel increments']) assert.equal(bar.split(rule).length, 2, rule);
+  for (const rule of ['Trace the ask to applicable REQs and DECs', 'search the repository by name and behaviour for an existing equivalent', "A task that consumes another's output without a prerequisite", 'Weigh alternatives and trade-offs']) assert.equal(bar.split(rule).length, 2, rule);
 });

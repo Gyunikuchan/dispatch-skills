@@ -24,7 +24,7 @@ code has been written yet.
 ## against
 
 - Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 
 ## inspection
 
@@ -38,16 +38,21 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 
 ## tags
 
-- intent gap: `intent-gap`
-- intent: `intent`, `scope`
-- architecture: `architecture`, `boundaries`, `interfaces`, `data-flow`
-- decisions: `alternatives`, `simplicity`
-- invariants: `correctness`, `invariant`
-- risk and operations: `security`, `operations`, `risk`, `migration`, `rollback`
-- decomposition: `dependency-graph`, `parallel-safety`, `integration`
-- verification: `testability`
-- standards: `standards`
-- out of scope: `adjacent`
+- `intent`
+- `spec`
+- `correctness`
+- `reliability`
+- `security`
+- `performance`
+- `compatibility`
+- `maintainability`
+- `architecture`
+- `decomposition`
+- `operability`
+- `testing`
+- `usability`
+- `standards`
+- `adjacent`
 
 ## severity
 

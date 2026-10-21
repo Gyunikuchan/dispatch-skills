@@ -24,7 +24,7 @@ executing the plan as written delivers the requirement.
 ## against
 
 - Governing targets: every spec REQ and DEC for a standalone plan; inherited acceptance criteria and applicable REQs for an increment plan, using the approved design's increment mapping to check remaining coverage.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet intent, spec ambiguity, contradiction, or a missing constraint as `intent-gap` before other tags. `spec-gap` remains a test-spec gap, distinct from `intent-gap`.
+- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 - The plan summary, success criteria and task graph.
 - Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
 
@@ -40,17 +40,21 @@ when missing evidence, an adjudication dispute or recovery requires it; follow
 
 ## tags
 
-- intent gap: `intent-gap`
-- intent: `intent`, `user-gap`, `scope-creep`
-- domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine`
-- decomposition: `dependency-graph`, `parallel-safety`
-- architecture: `architecture`, `coherence`, `approach`, `standards`
-- trust boundaries: `security`, `auth`, `validation`
-- compatibility: `compatibility`, `blast-radius`, `migration`, `rollback`
-- robustness: `edge-case`, `partial-failure`, `race`, `perf`
-- verification: `verification`, `testability`, `spec-gap`, `test-leak`
-- simpler path: `simplicity`, `yagni`
-- out of scope: `adjacent`
+- `intent`
+- `spec`
+- `correctness`
+- `reliability`
+- `security`
+- `performance`
+- `compatibility`
+- `maintainability`
+- `architecture`
+- `decomposition`
+- `operability`
+- `testing`
+- `usability`
+- `standards`
+- `adjacent`
 
 ## severity
 

@@ -9,16 +9,29 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
-test('intent-gap normalizes plan and design intent while spec-gap stays separate', () => {
-  for (const kind of ['plan', 'design'] as const) {
-    const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag: 'intent-gap', locus: '§ Spec: Requirements' })]) });
-    assert.ok(result.ok); assert.equal(result.findings[0]?.category, 'intent');
-    assert.equal(result.findings[0]?.originalTag, undefined);
+const familyTags = [
+  'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
+  'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
+] as const;
+const retiredTags = ['intent-gap', 'spec-gap', 'scope-creep', 'domain-logic', 'reuse', 'graph-correctness'] as const;
+
+test('family tags are shared across review kinds and retired tags fall back to uncategorized', () => {
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const locus = kind === 'code' ? 'src/fetch.ts:L12' : '§ Spec: Requirements';
+    for (const tag of familyTags) {
+      const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag, locus })]) });
+      assert.ok(result.ok, `${kind} accepts ${tag}`);
+      assert.equal(result.findings[0]?.category, tag === 'spec' ? 'intent' : tag, `${kind}: ${tag}`);
+      assert.equal(result.findings[0]?.scope, tag === 'adjacent' ? 'adjacent' : 'in', `${kind}: ${tag}`);
+      assert.equal(result.findings[0]?.originalTag, undefined, `${kind}: ${tag}`);
+    }
+    for (const tag of retiredTags) {
+      const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag, locus })]) });
+      assert.ok(result.ok, `${kind} recovers ${tag}`);
+      assert.equal(result.findings[0]?.category, 'uncategorized', `${kind}: ${tag}`);
+      assert.equal(result.findings[0]?.originalTag, tag, `${kind}: ${tag}`);
+    }
   }
-  const result = parseReport({ kind: 'plan', source: 'codex[0]', text: report([finding({ tag: 'spec-gap', locus: '§ Verification' })]) });
-  assert.ok(result.ok); assert.equal(result.findings[0]?.category, 'spec-gap');
-  const code = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ tag: 'intent-gap' })]) });
-  assert.ok(code.ok); assert.equal(code.findings[0]?.category, 'uncategorized'); assert.equal(code.findings[0]?.originalTag, 'intent-gap');
 });
 const failure = (text: string, truncated = false) => {
   const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
@@ -50,7 +63,7 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
 test('review-dedup: duplicates keep their own id with dupOf; the first cites every reporting source', () => {
   const first = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding()]) });
   const second = parseReport({ kind: 'code', source: 'claude[0]', text: report([finding({ locus: 'src/fetch.ts:L14', defect: 'the retry loop never terminates when failure persists' })]) });
-  const other = parseReport({ kind: 'code', source: 'agy[0]', text: report([finding({ locus: 'src/other.ts:L3', tag: 'perf', defect: 'quadratic scan', requiredChange: 'index lookups' })]) });
+  const other = parseReport({ kind: 'code', source: 'agy[0]', text: report([finding({ locus: 'src/other.ts:L3', tag: 'performance', defect: 'quadratic scan', requiredChange: 'index lookups' })]) });
   assert.ok(first.ok && second.ok && other.ok);
   const findings = collectFindings(1, [...first.findings, ...second.findings, ...other.findings]);
   assert.deepEqual(findings.map((item) => [item.id, item.dupOf ?? null]), [['R1-F001', null], ['R1-F002', 'R1-F001'], ['R1-F003', null]]);
@@ -85,15 +98,15 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
 test('unknown plan tag recovers as uncategorized with original tag', () => {
   const text = `\`\`\`json\n${report([
     planFinding('robustness', 'Proposed Changes', 'retry path has no bound'),
-    planFinding('verification', 'Verification Plan', 'focused command omits a test file'),
-    planFinding('verification', 'Success Criteria', 'criterion lacks a verify command'),
+    planFinding('testing', 'Verification Plan', 'focused command omits a test file'),
+    planFinding('testing', 'Success Criteria', 'criterion lacks a verify command'),
     planFinding('compatibility', 'Rollback & Blast Radius', 'old journals lose a field'),
   ])}\n\`\`\``;
   const findings = parsedFindings('plan', text);
   assert.deepEqual(findings.map((item) => [item.locus, item.category, item.originalTag ?? null, item.scope]), [
     ['§ Proposed Changes', 'uncategorized', 'robustness', 'in'],
-    ['§ Verification Plan', 'verification', null, 'in'],
-    ['§ Success Criteria', 'verification', null, 'in'],
+    ['§ Verification Plan', 'testing', null, 'in'],
+    ['§ Success Criteria', 'testing', null, 'in'],
     ['§ Rollback & Blast Radius', 'compatibility', null, 'in'],
   ]);
 });
@@ -118,11 +131,11 @@ test('findings report: preserves distinct findings with unknown tags differing, 
 });
 
 test('collected findings preserve unknown tags and known categories', () => {
-  const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'perf', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
+  const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'performance', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
   const findings = collectFindings(1, drafts);
   assert.equal(findings.length, 2);
   assert.equal(findings[0]?.originalTag, 'robustness');
-  assert.equal(findings[1]?.category, 'perf');
+  assert.equal(findings[1]?.category, 'performance');
   assert.ok(!('originalTag' in (findings[1] ?? {})));
 });
 

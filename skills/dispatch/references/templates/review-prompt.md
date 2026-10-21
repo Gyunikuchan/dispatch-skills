@@ -25,8 +25,9 @@ Populate the template variables (kind blocks declare the rest):
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to this project's conventions: read `AGENTS.md`, including nested ones on
-reviewed paths, and flag violations as `standards`. A pattern that matches established local convention is not a finding;
+Adhere to this project's conventions: read `AGENTS.md`, including nested ones on reviewed paths.
+Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
+A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
 <<slot:inspection>>
 Findings apply to the captured revision and Scope. Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it; those interfaces or call sites may be outside Scope only as needed to substantiate the defect. Spend no extra turns hunting for adjacent findings. Apply this discovery rule to every review kind. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
@@ -37,6 +38,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 <<slot:quality>>
 
 ### Tags
+Tag each finding with one family; the quality bar's bold family bullets define each family and its hints.
 <<slot:tags>>
 
 ### Budget

@@ -53,8 +53,8 @@ function drive(events: readonly Event[], from: ReviewState = reviewMachine.initi
   return events.reduce((state, event) => reviewMachine.step(state, event).state, from);
 }
 
-for (const kind of ['plan', 'design'] as const) test(`intent-gap ${kind} requires authority and spec revision retains history`, () => {
-  const parsed = parseReport({ kind, source: 'codex[0]', text: JSON.stringify({ status: 'FINDINGS', findings: [{ severity: 'MUST', locus: '§ Spec: Requirements', tag: 'intent-gap', defect: 'Requirement missing', requiredChange: 'Settle the requirement' }] }) });
+for (const kind of ['plan', 'design'] as const) test(`spec ${kind} finding requires intent authority and spec revision retains history`, () => {
+  const parsed = parseReport({ kind, source: 'codex[0]', text: JSON.stringify({ status: 'FINDINGS', findings: [{ severity: 'MUST', locus: '§ Spec: Requirements', tag: 'spec', defect: 'Requirement missing', requiredChange: 'Settle the requirement' }] }) });
   assert.ok(parsed.ok);
   const state = drive([started({ argument: `target.${kind}.md`, overrides: { kind } }), prepared(1), waveDone(1, [{ ...parsed.findings[0], id: 'R1-F001' }])]);
   assert.match(reviewMachine.validate?.(state, rulings({ 'R1-F001': { ruling: 'accept' } })) ?? '', /intent finding/);

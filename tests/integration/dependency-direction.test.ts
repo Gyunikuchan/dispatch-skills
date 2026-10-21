@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { test } from 'node:test';
-import { extractImports, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
+import { LanguageVariant, SyntaxKind } from 'typescript/unstable/ast';
+import { createScanner } from 'typescript/unstable/ast/scanner';
+import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
 
 const SCRIPTS = 'skills/dispatch/scripts/';
 type Layer = 'dispatch' | 'core' | 'machines' | 'policy' | 'domain' | 'effects' | 'providers' | 'lib';
@@ -22,6 +25,18 @@ const IMPURE_MODULES = ['fs', 'child_process', 'os'];
 const IMPURE_TOKENS: readonly [RegExp, string][] = [
   [/\bDate\b/, 'Date'], [/\bMath\.random\b/, 'Math.random'], [/\bprocess\.env\b/, 'process.env'], [/\bperformance\b/, 'performance'],
 ];
+const REGEX_PREFIXES = new Set(['(', '[', '{', ',', ';', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '&&', '||', '??', '=>', 'return', 'throw', 'case', 'delete', 'void', 'typeof', 'new', 'yield', 'await', 'else', 'do', 'instanceof', 'in', 'of']);
+
+function hasIdentifier(text: string, name: string): boolean {
+  const scanner = createScanner(true, LanguageVariant.Standard, text);
+  let previous = '';
+  for (let token = scanner.scan(); token !== SyntaxKind.EndOfFile; token = scanner.scan()) {
+    if (token === SyntaxKind.SlashToken && REGEX_PREFIXES.has(previous)) token = scanner.reScanSlashToken();
+    if (token === SyntaxKind.Identifier && scanner.getTokenText() === name) return true;
+    previous = scanner.getTokenText();
+  }
+  return false;
+}
 
 function layerOf(file: string): Layer | null {
   if (!file.startsWith(SCRIPTS)) return null;
@@ -56,7 +71,7 @@ export function checkDependencies(files: FileTable): string[] {
     }
     if (PURE.includes(layer)) {
       for (const [pattern, token] of IMPURE_TOKENS) {
-        if (pattern.test(text)) errors.push(`purity rule: ${file} (${layer}) uses ${token}; pure layers read time and randomness only from events, so pass it in`);
+        if (pattern.test(text) && (token !== 'performance' || hasIdentifier(text, token))) errors.push(`purity rule: ${file} (${layer}) uses ${token}; pure layers read time and randomness only from events, so pass it in`);
       }
     }
   }
@@ -64,11 +79,31 @@ export function checkDependencies(files: FileTable): string[] {
 }
 
 test('the overlay obeys the dependency matrix and purity rules', () => {
-  assert.deepEqual(checkDependencies(scanOverlay()), []);
+  const scriptsRoot = path.join(OVERLAY_ROOT, 'skills/dispatch/scripts');
+  const files = scanOverlay(scriptsRoot).map((entry) => ({ ...entry, path: `${SCRIPTS}${entry.path}` }));
+  assert.deepEqual(checkDependencies(files), []);
 });
 
 const IMPORT = 'imp' + 'ort';
 const file = (path: string, ...lines: string[]) => ({ path, text: lines.join('\n') });
+
+test('purity checks ignore performance in strings and comments', () => {
+  assert.deepEqual(checkDependencies([file(`${SCRIPTS}domain/report.ts`,
+    `const family = 'performance';`,
+    '// ' + 'performance' + '.now() is an example only',
+    `/* performance['now']() is example text */`,
+  )]), []);
+});
+
+test('purity checks reject direct, computed, and captured performance identifiers', () => {
+  const errors = checkDependencies([
+    file(`${SCRIPTS}domain/direct.ts`, 'performance' + '.now();'),
+    file(`${SCRIPTS}domain/computed.ts`, "performance['now']();"),
+    file(`${SCRIPTS}domain/captured.ts`, 'const clock = performance;'),
+  ]);
+  assert.equal(errors.length, 3);
+  assert.ok(errors.every((error) => error.includes('uses performance')));
+});
 
 test('dependency and purity violations identify the broken layer rule and corrective action', () => {
   const errors = checkDependencies([

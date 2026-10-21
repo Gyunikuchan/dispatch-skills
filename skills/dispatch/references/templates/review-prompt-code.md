@@ -28,7 +28,7 @@ success criteria well, not merely whether it matches the plan.
 - The governing spec's REQs and DECs, the plan's `## Success Criteria`, and the walkthrough's
   `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
   missed or met only on paper, such as a test passing without exercising it, is `intent`.
-- With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
+- With a plan, an absent or unfilled table is a `testing` finding; a plan-less walkthrough carries only its `Final gate:` line.
 - When the walkthrough reads `Final gate: pending`, the final gate runs after this
   review. Judge criteria from the diff and tests, and raise no finding for pending
   Verification rows or finding-status sections.
@@ -37,7 +37,9 @@ success criteria well, not merely whether it matches the plan.
   `intent`, and cite the decision in `defect`.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
-Judge quality using the selected sections of the [quality bar](quality-bar.md). The tags below classify findings; they do not add judging criteria.
+Judge quality using the selected sections of the [quality bar](quality-bar.md).
+Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`.
+Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`.
 
 ## inspection
 
@@ -57,15 +59,19 @@ when missing evidence, disputed adjudication or recovery requires it; follow
 
 ## tags
 
-- intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
-- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type`
-- robustness: `edge-case`, `partial-failure`, `race`
-- security/resources: `security`, `auth`, `resource-leak`, `perf`
-- compatibility: `compatibility`, `breaking`, `migration`
-- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — for `reuse`, cite an existing equivalent anchored on the new symbol, with the existing `path:L<line>` in `defect`
-- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — `test-gap`: missing seam or failure-mode coverage; `test-leak`: a retained test that fails the quality bar, with its remedy in `requiredChange` (tests owned only by `Retain: transient` criteria are trimmed after review and are not `test-leak`)
-- standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
-- out of scope: `adjacent` — follow the shared Inspection rule; cite code at its real `path:L<line>` locus
+- `intent`
+- `spec`
+- `correctness`
+- `reliability`
+- `security`
+- `performance`
+- `compatibility`
+- `maintainability`
+- `operability`
+- `testing`
+- `usability`
+- `standards`
+- `adjacent`
 
 ## severity
 
@@ -82,3 +88,4 @@ round only. Reuse searches do not count toward the target.
 
 Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
 is `adjacent`.
+For an `adjacent` finding, cite code at its real `path:L<line>` locus.

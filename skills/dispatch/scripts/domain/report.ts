@@ -10,24 +10,10 @@ import type { DraftFinding, Finding, ReviewKind, Severity } from './types.ts';
 const SECTION_LOCUS = /^§\s+\S.*$/;
 const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[1-9]\d*$/;
 
-export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
-  plan: new Set([
-    'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'dependency-graph',
-    'domain-logic', 'edge-case', 'intent', 'intent-gap', 'invariant', 'migration', 'parallel-safety', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
-    'simplicity', 'spec-gap', 'standards', 'state-machine', 'test-leak', 'testability', 'user-gap', 'validation', 'verification', 'yagni',
-  ]),
-  code: new Set([
-    'a11y', 'adjacent', 'auth', 'breaking', 'compatibility', 'correctness', 'coupling', 'domain-logic', 'edge-case', 'intent',
-    'invariant', 'migration', 'partial-failure', 'perf', 'race', 'resource-leak', 'reuse', 'root-cause', 'runtime', 'scope-creep',
-    'seam', 'security', 'shallow', 'standards', 'test-gap', 'test-leak', 'type', 'ui', 'yagni',
-  ]),
-  // NOTE: Supported review tags plus those the design prompt block lists (scope, dependency-graph, invariant, testability, standards).
-  design: new Set([
-    'adjacent', 'alternatives', 'architecture', 'boundaries', 'compatibility', 'correctness', 'data-flow', 'dependency-graph',
-    'graph-correctness', 'integration', 'intent', 'intent-gap', 'interfaces', 'invariant', 'migration', 'operations', 'parallel-safety', 'risk',
-    'rollback', 'scope', 'scope-creep', 'security', 'simplicity', 'standards', 'testability', 'verification',
-  ]),
-};
+export const REVIEW_TAGS: ReadonlySet<string> = new Set([
+  'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
+  'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
+]);
 
 const LOCUS: Readonly<Record<ReviewKind, { pattern: RegExp; description: string }>> = {
   code: { pattern: CODE_LOCUS, description: '"<relative-file>:L<line>"' },
@@ -115,7 +101,7 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
  * uncovered scope (no structured `{status, findings}` review of the requested scope); loose locus (a finding
  * whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted. A nonempty
- * tag outside the kind's vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
+ * tag outside the shared vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
  * sanitized `originalTag`.
  */
 export function parseReport(input: ReportInput): ReportResult {
@@ -147,10 +133,12 @@ export function parseReport(input: ReportInput): ReportResult {
     const { severity, locus, tag, defect, requiredChange } = finding;
     if (typeof severity !== 'string' || !SEVERITIES.has(severity)) return fail('uncovered-scope', `finding ${index} severity must be MUST, SHOULD, or CONSIDER`);
     if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
-    const known = REVIEW_TAGS[kind].has(tag.trim());
-    const category = known ? tag.trim() === 'intent-gap' ? 'intent' : tag.trim() : 'uncategorized';
+    const normalizedTag = tag.trim();
+    const known = REVIEW_TAGS.has(normalizedTag);
+    // `spec` shares the intent gate.
+    const category = known ? normalizedTag === 'spec' ? 'intent' : normalizedTag : 'uncategorized';
     // Markup-inert by construction; the raw spelling stays only in the provider log.
-    const originalTag = known ? undefined : tag.trim().replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
+    const originalTag = known ? undefined : normalizedTag.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
     if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
     if (!nonEmpty(locus) || !pattern.test(normalizeLocus(kind, locus))) return fail('loose-locus', `finding ${index} locus must match ${description}`);
     // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
@@ -166,7 +154,7 @@ export function parseReport(input: ReportInput): ReportResult {
       ...(originalTag === undefined ? {} : { originalTag }),
     };
     // Raw tag, not the lossy sanitized one, so distinct unknown tags never collide.
-    const key = JSON.stringify([draft.severity, draft.locus, draft.category, draft.defect, draft.requiredChange, known ? null : tag.trim()]);
+    const key = JSON.stringify([draft.severity, draft.locus, draft.category, draft.defect, draft.requiredChange, known ? null : normalizedTag]);
     if (seen.has(key)) continue;
     seen.add(key);
     findings.push(draft);

@@ -162,41 +162,44 @@ test('quality selection assembles every review and writer kind and reports selec
   const review = (kind: string) => prepare({ kind: 'prepare-review', id: `review.${++id}`, round: 1, review: { kind, target: kind === 'code' ? 'HEAD' : target, roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 });
   const writer = (stage: 'task' | 'hotfix') => brief({ kind: 'write-brief', id: `write-brief.${++id}`, stage, input: {} }, ports, { runDir, attempt: 1 });
   const codeRules = [
-    '- Correctness and domain invariants:',
-    '- Robustness and compatibility:',
-    '- Interface quality:',
-    '- Naming and structure:',
-    'runtime behavior, and type validity',
-    'empty, zero, and boundary inputs',
-    'unhandled branches, unguarded indexing',
-    'floating promises',
-    'partial failures, floating promises, partial updates, races, and unbounded designs',
-    'affected callers, persisted schemas, and serialized formats',
-    'version skew with graceful degradation and rollback',
-    'accessible UI and ergonomic CLI/API behavior',
-    'clear names',
-    'unnecessary branches',
-    'pass-through modules, speculative seams (one adapter is hypothetical), excess coupling',
-    'shared root causes',
+    '- **intent** —',
+    '- **maintainability** —',
+    '- **spec** —',
+    '- **correctness** —',
+    '- **reliability** —',
+    '- **security** —',
+    '- **performance** —',
+    '- **compatibility** —',
+    '- **operability** —',
+    '- **testing** —',
+    '- **usability** —',
+    'search the repository by name and behaviour for an existing equivalent',
+    'Big-O on hot paths',
+    'OWASP/CWE',
+    'Imagine two edits:',
   ];
+  const codeOnlyRules = ['OWASP/CWE', 'Imagine two edits:'];
   const assertQuality = (text: string, consumer: QualityConsumer) => {
     const quality = qualityBar(bar, consumer).split('## quality\n\n')[1]!;
     assert.equal(text.split(quality).length, 2, consumer);
-    for (const [section, marker] of [['shared', '- Spec alignment:'], ['spec', '- Verifiability:'], ['code', '- Security and resources:'], ['plan', '- Task graph:'], ['design', '- Decisions:']] as const) {
+    for (const [section, marker] of [['shared', 'gold-plating'], ['spec', 'IEEE 29148 quality'], ['code', 'OWASP/CWE'], ['plan', 'INVEST task sizing'], ['design', 'Weigh alternatives']] as const) {
       assert.equal(text.split(marker).length - 1, (qualitySections[consumer] as readonly string[]).includes(section) ? 1 : 0, `${consumer}: ${section}`);
     }
     if (consumer === 'code' || consumer === 'plan' || consumer === 'writer') {
       for (const rule of codeRules) assert.ok(text.includes(rule), `${consumer}: ${rule}`);
     } else {
-      for (const rule of codeRules.slice(0, 4)) assert.ok(!text.includes(rule), `${consumer}: ${rule}`);
+      for (const rule of codeOnlyRules) assert.ok(!text.includes(rule), `${consumer}: ${rule}`);
     }
     assert.ok(text.includes('Plan scope, write boundaries, the outcome envelope and verification protocol, and safety rules stay fixed.'));
     assert.ok(text.includes('Applicable host rule files govern first.'), consumer);
     if (consumer === 'writer') {
-      assert.doesNotMatch(text, /Report an adjacent finding only when|nearest plan or design heading|path:L<line>/);
+      assert.doesNotMatch(text, /Report an adjacent finding only when|nearest plan or design heading|path:L<line>|§ Spec: <heading>|anchor reuse findings on the new symbol|cite the existing equivalent.*in `defect`/);
     } else {
       assert.ok(text.includes('Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it; those interfaces or call sites may be outside Scope only as needed to substantiate the defect.'), consumer);
-      if (consumer === 'code') assert.ok(text.includes('path:L<line>'), consumer);
+      if (consumer === 'code') {
+        assert.ok(text.includes('Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`'));
+        assert.ok(text.includes('Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`'));
+      }
       else assert.match(text, new RegExp(`nearest ${consumer} heading as locus`));
     }
   };
@@ -237,7 +240,7 @@ test('quality selection assembles every review and writer kind and reports selec
   selectedBar = '';
   const ask = only(await review('ask'));
   assert.equal(ask.type, 'REVIEW_PREPARED');
-  if (ask.type === 'REVIEW_PREPARED') assert.doesNotMatch(ports.fs.readText(ask.promptPaths['codex[0]']!), /Spec alignment:|Security and resources:/);
+  if (ask.type === 'REVIEW_PREPARED') assert.doesNotMatch(ports.fs.readText(ask.promptPaths['codex[0]']!), /\*\*intent\*\*|\*\*security\*\*|misread user ask|OWASP\/CWE/);
 });
 
 test('governing spec defaults ignore context and Git log and unreadable supplied specs fail', async () => {

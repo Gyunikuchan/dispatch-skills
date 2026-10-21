@@ -32,7 +32,7 @@ New specs live at the session root. An existing spec resolved through a Parent o
 
 Every downstream author and reviewer reads the whole spec; native writers also read their bounded plan range. This spends context to preserve shared intent rather than filtering away material decisions. Standalone review reuses governing intent or authors it from chat and diff, labels inferred requirements `(inferred)`, and records user decisions only with evidence. Commit logs and a short context flag cannot carry the complete discussion.
 
-Reviewers check unmet REQs, contradicted DECs and flawed premises first. `intent-gap` identifies governing intent gaps; `spec-gap` still identifies test-spec coverage. The orchestrator accepts or rejects intent findings when the spec or a retained DEC settles them, with a cited reason; otherwise the ruling is `needs-user`. The [review rules](../../skills/dispatch/references/review-rules.md#intent-and-findings) own this protocol. [ADR 0007](0007-review-context-and-intent.md) records its context-channel supersession.
+Reviewers check unmet REQs, contradicted DECs and flawed premises first. `intent` and `spec` findings route through the intent gate; `spec` is for defects in governing spec text, and `testing` identifies test-spec coverage gaps. The orchestrator accepts or rejects intent findings when the spec or a retained DEC settles them, with a cited reason; otherwise the ruling is `needs-user`. The [review rules](../../skills/dispatch/references/review-rules.md#intent-and-findings) own this protocol. [ADR 0007](0007-review-context-and-intent.md) records its context-channel supersession.
 
 ### Revision and recovery
 
