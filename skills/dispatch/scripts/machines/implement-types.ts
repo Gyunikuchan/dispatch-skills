@@ -330,6 +330,31 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
   return { rows, defects: [...new Set(defects)] };
 }
 
+/** Shared semantic gate for task previews and live admission. Callers select the contract checks issued by the matching brief. */
+function validateTaskSubmissionEvidence(evidence: readonly string[], criteria: readonly PlanCriterion[], requiredChecks: readonly string[], planIds: readonly string[]): {
+  missingCriteria: string[]; missingChecks: string[]; redRows: RedMatrixRow[]; redDefects: string[];
+} {
+  const missingCriteria = criterionEvidenceRows(evidence, criteria);
+  const missingChecks = missingCheckRows(evidence, requiredChecks);
+  const activeRed = criteria.filter((criterion) => effectiveEvidence(criterion) === 'red' && !criterion.redException);
+  const downgraded = criteria.filter((criterion) => criterion.evidence === 'red' && effectiveEvidence(criterion) !== 'red').map((criterion) => criterion.id);
+  const red = activeRed.length ? parseRedMatrix(evidence, activeRed, planIds, downgraded) : { rows: [], defects: [] };
+  return { missingCriteria, missingChecks, redRows: red.rows, redDefects: red.defects };
+}
+
+/** Shares issued-check selection, plan IDs, and the first rejection across task preflight and live admission. */
+export function taskSubmissionValidation(evidence: readonly string[], plan: ParsedPlan, criteria: readonly PlanCriterion[], issuedChecks?: readonly string[]): {
+  rejection: string | null; redRows: RedMatrixRow[];
+} {
+  const requiredChecks = contractCommands(plan).filter((command) => !issuedChecks || issuedChecks.includes(command));
+  const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
+  const checked = validateTaskSubmissionEvidence(evidence, criteria, requiredChecks, planIds);
+  if (checked.missingCriteria.length) return { rejection: `Evidence is missing criterion rows for ${checked.missingCriteria.join(', ')}.`, redRows: checked.redRows };
+  if (checked.missingChecks.length) return { rejection: `Evidence is missing CHECK rows for ${checked.missingChecks.join(', ')}.`, redRows: checked.redRows };
+  if (checked.redDefects.length) return { rejection: `RED matrix rejected: ${checked.redDefects.join('; ')}`, redRows: checked.redRows };
+  return { rejection: null, redRows: checked.redRows };
+}
+
 export function redactOneLine(value: string): string { return value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
 /** `red` carries the expected RED names and the baseline logs to scan for them; other verify purposes omit it. */

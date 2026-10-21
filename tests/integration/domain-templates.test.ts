@@ -181,8 +181,8 @@ test('templates: task brief cleanup applies the quality bar without a new step',
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(plan.includes('- Retain: <transient|durable>'));
-  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'canonical behavioral policy in [quality-bar.md](quality-bar.md#code)', 'lasting contract', 'plausible defect', 'distinct contribution', 'are trimmed after final review', 'test files listed solely by transient criteria are trimmed', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
-  assert.equal(plan.match(/canonical behavioral policy in \[quality-bar\.md\]\(quality-bar\.md#code\)/g)?.length, 1);
+  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'are trimmed after final review', 'test files listed solely by transient criteria are trimmed', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
+  assert.equal(plan.match(/\[quality bar's code test policy\]\(quality-bar\.md#code\)/g)?.length, 1);
 });
 
 test('templates: task brief applies the durable bar and isolates transient tests', () => {

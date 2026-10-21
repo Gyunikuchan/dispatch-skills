@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -595,6 +596,32 @@ test('trim refuses invalid or modified paths', async () => {
   const redirected = await f3.trim(f3.files, f3.allowed);
   assert.deepEqual(redirected['refused'], [{ path: 'tests/a.test.ts', reason: 'redirected' }, { path: 'tests/b.test.ts', reason: 'redirected' }]);
   assert.deepEqual([f3.exists('tests/a.test.ts'), f3.exists('tests/b.test.ts')], [true, true]);
+});
+
+test('submission preflight preserves live RED admission by checking committed candidate bytes after preview', async () => {
+  const cwd = tempDir(), runDir = path.join(cwd, 'run'), root = worktreePath(runDir, 'red-t1'), ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  ports.fs.mkdir(root, { recursive: true });
+  const git = fakeGit(root, ports), testPath = 'tests/check.test.ts';
+  const base = git.commit(null, { [testPath]: 'checkpointed test\n' });
+  const candidate = git.commit(base, { [testPath]: 'changed after preview\n' }, 'dispatch task T1');
+  git.checkout(base);
+  const gitBlob = (bytes: Buffer) => crypto.createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex');
+  ports.git.run = async (argv, at) => {
+    if (argv[0] === 'hash-object' && at === root) return `${gitBlob(Buffer.from(ports.fs.readBase64(path.join(root, argv.at(-1)!)), 'base64'))}\n`;
+    if (argv[0] === 'ls-tree' && at === root) {
+      const file = argv.at(-1)!;
+      const value = git.commits.get(argv[2]!)?.tree.get(file);
+      return value === undefined ? '' : `100644 blob ${gitBlob(Buffer.from(value))}\t${file}\0`;
+    }
+    return git.run(argv);
+  };
+  const checkpointPath = path.join(runDir, 'T1.red.json');
+  ports.fs.writeAtomic(checkpointPath, JSON.stringify({ schemaVersion: 1, files: { [testPath]: Buffer.from('checkpointed test\n').toString('base64') } }));
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const [event] = await handler({ kind: 'checkout', id: 'implement.checkout.red.1', op: 'red', input: { name: 'red-t1', base, candidate, checkpointPath, permitted: [testPath], links: [], ignored: [] } }, ports, { runDir, attempt: 1 });
+  assert.ok(event?.type === 'CHECKOUT_DONE');
+  if (event?.type === 'CHECKOUT_DONE') assert.deepEqual(event.result['defects'], [`Submitted test differs from its RED checkpoint: ${testPath}`]);
 });
 
 test('trim treats absent file as done', async () => {

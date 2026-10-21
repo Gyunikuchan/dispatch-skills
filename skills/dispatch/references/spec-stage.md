@@ -16,7 +16,9 @@ At `medium` and above, design or plan authoring waits for approval of the settle
 
 Before presenting spec approval, resolve with the user any open question that could change scope, behavior, or risk; record other questions as nonblocking.
 
-At the emitted `decide` frame with `data.kind: spec-approval`, present the [Decision Frame](decision-frame.md#spec-approval-spec-approval) with `data.path`, `data.hash`, distilled intent, key requirements, and settled decisions. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Design approval and production-write approval remain separate authorizations.
+At the emitted `decide` frame with `data.kind: spec-approval`, present the [Decision Frame](decision-frame.md#spec-approval-spec-approval) with `data.path`, `data.hash`, distilled intent, key requirements, and settled decisions. Send `DECISION` with `kind: spec-approval` and `answer: { by: "user", quote: <non-empty user words>, hash: <data.hash> }`, or `answer: "stop"`. Approval binds that content hash, not the filename. Existing approval of the same hash can be reused by the driver. Spec, design, and later writer-launch approvals authorize separate steps.
+
+When brainstorming is combined with Dispatch, resolve its discussion in the canonical spec before presenting this frame. Request one approval for that settled spec; do not request a separate brainstorming approval for the same intent. Reuse approval for an unchanged hash and apply the revision protocol below for material changes.
 
 ### Spec-only output
 

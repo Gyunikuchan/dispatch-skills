@@ -319,7 +319,7 @@ export type Effect =
   | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[]; cwd?: string }
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
-  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; tests?: PathSet; since?: TreeFingerprint; cwd?: string }
+  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; tests?: PathSet; checkpointPath?: string; checkpointTests?: PathSet; since?: TreeFingerprint; cwd?: string }
   | { kind: 'snapshot'; id: string; since: TreeFingerprint | null; cwd?: string }
   | { kind: 'assess-recovery'; id: string; purpose: 'drift' | 'hotfix'; before: TreeFingerprint; after: TreeFingerprint; phase: string; pendingId: string; input: Payload }
   | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }

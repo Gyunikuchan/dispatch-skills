@@ -6,6 +6,7 @@ import type { Effect, Handler, WriteEnvelope, PlanAmendment, Ports } from '../co
 import type { Git } from './git.ts';
 import { loadRecovery } from './recovery-manifest.ts';
 import { runOwnedPaths } from './snapshot.ts';
+import { validateRedCheckpoint } from './checkout.ts';
 
 type CheckEffect = Extract<Effect, { kind: 'check-envelope' }>;
 export type CheckEnvelopeDeps = { cwd: string; git: Git };
@@ -208,6 +209,47 @@ function cleanRepoPath(value: string): string | null {
   return normalized || null;
 }
 
+function currentTaskFile(ports: Ports, cwd: string, file: string): { bytes: string | null; defect?: string } {
+  const rootInfo = ports.fs.inspectPath(cwd);
+  if (!rootInfo || rootInfo.kind !== 'directory') return { bytes: null, defect: `Task worktree is not a directory: ${cwd}` };
+  const root = rootInfo.realPath ?? path.resolve(cwd);
+  const parts = file.split('/');
+  let current = cwd;
+  for (let index = 0; index < parts.length; index++) {
+    current = path.join(current, parts[index]!);
+    const info = ports.fs.inspectPath(current);
+    if (!info) return { bytes: null };
+    if (info.kind === 'symlink') return { bytes: null, defect: `RED checkpoint path is redirected: ${file}` };
+    if (info.realPath) {
+      const relative = path.relative(root, info.realPath);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return { bytes: null, defect: `RED checkpoint path leaves the task worktree: ${file}` };
+    }
+    const final = index === parts.length - 1;
+    if (final && info.kind !== 'file' || !final && info.kind !== 'directory') return { bytes: null, defect: `RED checkpoint path is not a regular task file: ${file}` };
+    if (final) return { bytes: ports.fs.readBase64(current) };
+  }
+  return { bytes: null };
+}
+
+function checkpointDefects(effect: CheckEffect, envelope: ParsedEnvelope | null, ports: Ports, cwd: string): string[] {
+  if (!effect.checkpointTests?.length || envelope?.stage !== 'COMPLETE' || !['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) return [];
+  const checkpoint = effect.checkpointPath;
+  if (!checkpoint || !ports.fs.exists(checkpoint)) return [`RED checkpoint is missing: ${checkpoint || '(none)'}`];
+  let checked: ReturnType<typeof validateRedCheckpoint>;
+  try { checked = validateRedCheckpoint(JSON.parse(ports.fs.readText(checkpoint)) as unknown, effect.checkpointTests); }
+  catch (error) { return [`RED checkpoint is invalid JSON: ${error instanceof Error ? error.message : String(error)}`]; }
+  const defects = [...checked.defects];
+  // Preview and live admission apply this raw-byte guard before replay, preserving immutable test bytes; replay then checks the committed Git blob.
+  for (const [file, expected] of Object.entries(checked.files)) {
+    const current = currentTaskFile(ports, cwd, file);
+    if (current.defect) defects.push(current.defect);
+    else if (expected === null ? current.bytes !== null : current.bytes === null || !Buffer.from(expected, 'base64').equals(Buffer.from(current.bytes, 'base64'))) {
+      defects.push(`RED checkpoint bytes differ from current task file: ${file}`);
+    }
+  }
+  return defects;
+}
+
 export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffect> {
   return async (effect, ports, ctx) => {
     const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
@@ -249,6 +291,7 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
       if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
       if (normalized !== null && envelope.stage === 'RED_READY' && !tests.has(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
     }
+    defects.push(...checkpointDefects(effect, envelope, ports, deps.cwd));
     return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };
 }

@@ -4,10 +4,13 @@ import crypto from 'node:crypto';
 import { createHandlers } from '../../../skills/dispatch/scripts/effects/index.ts';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, Handlers, HostEvent, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { Git } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { createCheckEnvelope } from '../../../skills/dispatch/scripts/effects/check-envelope.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { previewReceipt as previewTaskReceipt } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import type { RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 
 function resultOf(events: readonly ResultEvent[]) { assert.equal(events.length, 1); return events[0] as ResultEvent; }
 function setup(changed: string[]) {
@@ -105,6 +108,84 @@ test('writer scope ignores caller dirt and still detects changes to that same di
   }
 });
 
+function submissionPreviewFixture(issuedChecks: string[] = ['npm run lint'], baselinePaths: Record<string, string> = {}) {
+  const cwd = tempDir(), worktree = path.join(cwd, 'worktree'), runDir = path.join(cwd, 'run');
+  fs.mkdirSync(path.join(worktree, 'tests'), { recursive: true }); fs.mkdirSync(runDir);
+  const testPath = 'tests/check.test.ts', envelopePath = path.join(runDir, 'outcome.json'), checkpointPath = path.join(runDir, 'red.json');
+  fs.writeFileSync(path.join(worktree, testPath), 'submitted test bytes');
+  const criterion = {
+    id: 'SC1', changes: ['src/a.ts', testPath], tests: [testPath], evidence: 'red', red: 'node --test {files}', redException: null,
+    verify: [{ command: `node --test ${testPath}`, final: false }],
+  } as unknown as PlanCriterion;
+  const task = { id: 'T1', paths: ['src/a.ts', testPath], criteria: ['SC1'] } as unknown as PlanTask;
+  const plan = {
+    planIds: ['SC1', 'SC2'], criteria: [criterion], tasks: [task],
+    verification: { automated: ['npm run lint'], none: null, manual: [] }, finalCommands: [],
+  } as unknown as ParsedPlan;
+  const brief = { path: 'brief.md', sha256: 'sha256:brief', envelopePath, checkpointPath };
+  const record = {
+    attempt: 1, signature: 'sig', handle: 'handle', worktree, baseline: { head: 'h', index: 'i', worktree: 'w', pathHashes: baselinePaths },
+    brief, briefs: [{ ...brief, scope: JSON.stringify({ paths: task.paths }), contractChecks: issuedChecks }],
+  };
+  const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: record } } } } as unknown as RootState;
+  const event = { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: 1, signature: 'sig', handle: 'handle', envelopePath, briefHash: 'sha256:brief', model: 'writer' } as HostEvent;
+  const git: Git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], log: async () => '' };
+  const ports = fakePorts(); let writes = 0, gitRuns = 0;
+  ports.fs.writeAtomic = () => { writes++; throw new Error('preview must not write'); };
+  ports.fs.writeBase64Atomic = () => { writes++; throw new Error('preview must not write'); };
+  ports.fs.appendDurable = () => { writes++; throw new Error('preview must not write'); };
+  ports.git.run = async () => { gitRuns++; throw new Error('preview must not invoke Git mutations'); };
+  const handler = createCheckEnvelope({ cwd, git });
+  const handlers: Handlers = { 'check-envelope': handler };
+  const writeEnvelope = (evidence: string[]) => fs.writeFileSync(envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered.', evidence }));
+  const writeCheckpoint = (files: Record<string, string | null>) => fs.writeFileSync(checkpointPath, JSON.stringify({ schemaVersion: 1, files }));
+  const preview = () => previewTaskReceipt(state, event, handlers, ports, runDir);
+  return { cwd, worktree, runDir, testPath, envelopePath, checkpointPath, state, record, ports, preview, writeEnvelope, writeCheckpoint, counters: () => ({ writes, gitRuns }) };
+}
+
+test('submission preflight preserves live RED admission for evidence, checkpoint bytes, and amended checks without writes', async () => {
+  const fixture = submissionPreviewFixture();
+  const { testPath } = fixture;
+  const validRed = `RED-MATRIX SC1 | ${testPath}:rejects invalid input | exit 1 test:rejects invalid input`;
+  const invalidRed = `RED-MATRIX SC1 | ${testPath}:rejects invalid input | exit 1 error:cannot observe this row`;
+  const checkRow = 'CHECK npm run lint | exit 0';
+  const submitted = Buffer.from('submitted test bytes').toString('base64');
+  const other = Buffer.from('older test bytes').toString('base64');
+  fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, validRed, checkRow, `RED-MATRIX SC2 | ${testPath}:extra case | exit 1 test:extra case`]);
+  fixture.writeCheckpoint({ [testPath]: submitted });
+  const before = fs.readdirSync(fixture.runDir).sort();
+  assert.match((await fixture.preview()) ?? '', /RED matrix rejected:.*SC2/);
+
+  fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, 'RED-MATRIX SC1 | malformed', checkRow]);
+  assert.match((await fixture.preview()) ?? '', /RED matrix rejected:.*Malformed RED-MATRIX/);
+
+  fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, validRed, checkRow]);
+  fs.rmSync(fixture.checkpointPath);
+  assert.match((await fixture.preview()) ?? '', /RED checkpoint is missing/);
+  fs.writeFileSync(fixture.checkpointPath, '{');
+  assert.match((await fixture.preview()) ?? '', /RED checkpoint is invalid JSON/);
+
+  fixture.writeCheckpoint({ [testPath]: other });
+  assert.match((await fixture.preview()) ?? '', /RED checkpoint.*bytes|checkpoint.*differs/i);
+
+  fixture.writeCheckpoint({ 'src/a.ts': submitted });
+  assert.match((await fixture.preview()) ?? '', /RED checkpoint path is not an approved task test path/);
+
+  fixture.writeCheckpoint({ [testPath]: submitted });
+  assert.equal(await fixture.preview(), null);
+
+  const outOfScope = submissionPreviewFixture(['npm run lint'], { 'README.md': 'before' });
+  outOfScope.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, invalidRed, checkRow]);
+  outOfScope.writeCheckpoint({ [testPath]: submitted });
+  assert.equal(await outOfScope.preview(), null, 'out-of-scope paths defer invalid evidence to live scope admission');
+
+  fixture.record.briefs[0]!.contractChecks = [];
+  fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, validRed]);
+  assert.equal(await fixture.preview(), null, 'a brief that issued no current contract checks does not gain amended checks');
+  assert.deepEqual(fs.readdirSync(fixture.runDir).sort(), before);
+  assert.deepEqual(fixture.counters(), { writes: 0, gitRuns: 0 });
+});
+
 
 test('path snapshot augmentation returns EFFECT_FAILED on a path hash read failure', async () => {
   const cwd = tempDir();
@@ -181,7 +262,7 @@ test('amendment with missing or invalid fields is rejected', async () => {
   }
 });
 
-test('self-check preview admits a RED_READY receipt that changes the task declared tests', async () => {
+test('self-check preview rejects a RED_READY receipt submitted as final delivery', async () => {
   const { previewReceipt: preview } = await import('../../../skills/dispatch/scripts/core/interpreter.ts');
   const { cwd, runDir, handler, ports } = setup(['tests/a.test.ts']);
   fs.mkdirSync(path.join(cwd, 'tests'));
@@ -193,7 +274,7 @@ test('self-check preview admits a RED_READY receipt that changes the task declar
   const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: { worktree: cwd, baseline: { head: 'h', index: 'i', worktree: 'w' }, attempt: 1, signature: 'sig', handle: 'h1' } } } } };
   const event = { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: 1, signature: 'sig', handle: 'h1', envelopePath };
   const verdict = await preview(state as never, event as never, { 'check-envelope': handler } as never, ports, runDir);
-  assert.equal(verdict, null);
+  assert.equal(verdict, 'Envelope stage must be COMPLETE; got RED_READY.');
 });
 
 test('amendment delta self check binds the latest delta envelope and hash and passes for a writer holding only the base brief and that delta', async () => {
@@ -222,7 +303,7 @@ test('amendment delta self check binds the latest delta envelope and hash and pa
   const receipt = JSON.parse(fs.readFileSync(eventPath('implement.write-brief.3'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual([receipt['envelopePath'], receipt['briefHash']], [latest.envelopePath, latest.delta!.sha256]);
   fs.writeFileSync(latest.envelopePath, JSON.stringify(complete));
-  const plan = { tasks: [{ id: 'T1', paths: ['src/a.ts'], criteria: ['SC1'] }], criteria: [{ id: 'SC1', tests: [] }] };
+  const plan = { tasks: [{ id: 'T1', paths: ['src/a.ts'], criteria: ['SC1'] }], criteria: [{ id: 'SC1', tests: [], changes: ['src/a.ts'], verify: [], evidence: 'verify' }], verification: { automated: [] }, finalCommands: [], planIds: ['SC1'] };
   const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: { worktree: cwd, baseline: { head: 'h', index: 'i', worktree: 'w' }, attempt: 1, signature: 'sig', handle: 'h1' } } } } };
   ports.git = { run: async (argv) => argv.slice(2).map(() => 'a'.repeat(40)).join('\n') };
   assert.equal(await preview(state as never, { ...receipt, handle: 'h1' } as never, handlers, ports, runDir), null);

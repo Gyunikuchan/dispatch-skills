@@ -7,9 +7,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { governedDesignText } from '../domain/design.ts';
 import { governedPlanText } from '../domain/plan.ts';
+import type { ParsedPlan, PlanTask } from '../domain/types.ts';
 import { attemptOf, restoreSessionPaths, runPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
-import { taskDeclaredTests } from '../machines/implement-tasks.ts';
+import { taskCriteria, taskEnvelopeCheckInputs, taskRecordForEnvelope, type TaskRecord } from '../machines/implement-tasks.ts';
+import { isWriterEnvelope, taskSubmissionValidation } from '../machines/implement-types.ts';
 import { ruleFindingRow } from '../machines/review.ts';
 import { dryRunGuidance, faultFrame, oneLine, projectFrame, recoveryFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, LayoutUnsupported, journalPath, readJournal, type JournalRead } from './journal.ts';
@@ -43,11 +45,14 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
   if (event.type !== 'WRITE_RECEIPT' || event.status !== 'submitted' || state.tag !== 'implement') return null;
   const child = state.child;
   let effect: Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
+  let taskContext: { plan: ParsedPlan; task: PlanTask; record: TaskRecord } | null = null;
   if (child.tag === 'tasks') {
     const record = event.task ? child.c.tasks[event.task] : undefined;
     const task = child.c.plan!.tasks.find((item) => item.id === event.task);
     if (!record?.worktree || !task || !record.baseline || event.task === undefined || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], tests: taskDeclaredTests(child.c.plan!, task), since: record.baseline, cwd: record.worktree };
+    const selected = taskRecordForEnvelope(record, event.envelopePath);
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, ...taskEnvelopeCheckInputs(child.c.plan!, task, selected, event.envelopePath) };
+    taskContext = { plan: child.c.plan!, task, record: selected };
   } else if (child.tag === 'hotfix-write') {
     effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...child.c.plan!.changes.map((change) => change.path)])], since: child.before };
   } else return null;
@@ -56,7 +61,17 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
   const result = results[0];
   if (result?.type === 'EFFECT_FAILED') return result.detail;
   if (result?.type !== 'ENVELOPE_CHECKED') return 'Receipt checker returned no result';
-  return result.defects.length ? result.defects.map((defect) => typeof defect === 'string' ? defect : JSON.stringify(defect)).join('; ') : null;
+  if (result.defects.length) return result.defects.map((defect) => typeof defect === 'string' ? defect : JSON.stringify(defect)).join('; ');
+  if (!taskContext) return null;
+  const envelope = result.envelope;
+  if (!isWriterEnvelope(envelope)) return 'Envelope rejected: malformed envelope.';
+  const permitted = new Set(effect.permitted);
+  const paths = result.diff['paths'];
+  if (Array.isArray(paths) && paths.some((file) => typeof file === 'string' && !permitted.has(file))) return null;
+  if (envelope.stage !== 'COMPLETE') return `Envelope stage must be COMPLETE; got ${envelope.stage}.`;
+  if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return null;
+  const issued = taskContext.record.briefs?.find((row) => row.envelopePath === taskContext.record.brief?.envelopePath)?.contractChecks;
+  return taskSubmissionValidation(envelope.evidence, taskContext.plan, taskCriteria(taskContext.plan, taskContext.task), issued).rejection;
 }
 
 /** Guards a reducer bug from looping forever; exceeding it is an engine fault. */

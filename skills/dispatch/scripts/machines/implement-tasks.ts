@@ -167,6 +167,35 @@ export function taskTestPaths(plan: ParsedPlan, task: PlanTask): string[] {
   return red ? taskDeclaredTests(plan, task) : [];
 }
 
+/** Selects the issued brief named by a receipt before preview and live checks read its scope or checkpoint. */
+export function taskRecordForEnvelope(record: TaskRecord, envelopePath: string): TaskRecord {
+  const entry = record.briefs?.find((row) => row.envelopePath === envelopePath);
+  return entry ? { ...record, brief: { path: entry.path, sha256: entry.sha256, envelopePath: entry.envelopePath, checkpointPath: entry.checkpointPath } } : record;
+}
+
+/** Scope paths come from the issued brief because an amendment may have narrowed the current scope since. */
+export function briefScopePaths(record: TaskRecord): string[] {
+  const entry = record.briefs?.find((row) => row.envelopePath === record.brief?.envelopePath);
+  if (!entry) return [];
+  const scope = JSON.parse(entry.scope) as { paths?: unknown };
+  return Array.isArray(scope.paths) ? scope.paths.filter((file): file is string => typeof file === 'string') : [];
+}
+
+/** Shared task checker inputs keep the preview and live admission bound to the same task and issued brief. */
+export function taskEnvelopeCheckInputs(plan: ParsedPlan, task: PlanTask, record: TaskRecord, envelopePath?: string): {
+  permitted: string[]; tests: string[]; since?: TreeFingerprint; cwd?: string; checkpointPath?: string; checkpointTests?: string[];
+} {
+  const checkpointTests = taskTestPaths(plan, task);
+  const checkpointPath = record.brief?.checkpointPath ?? checkpointPathOf(record.brief?.envelopePath ?? envelopePath ?? '');
+  return {
+    permitted: [...new Set([...task.paths, ...briefScopePaths(record), ...(record.admittedPaths ?? [])])].sort(),
+    tests: taskDeclaredTests(plan, task),
+    ...(record.baseline ? { since: record.baseline } : {}),
+    ...(record.worktree ? { cwd: record.worktree } : {}),
+    ...(checkpointTests.length ? { checkpointPath, checkpointTests } : {}),
+  };
+}
+
 export function checkpointPathOf(envelopePath: string): string {
   return envelopePath.replace(/outcome\.json$/, 'red.json');
 }

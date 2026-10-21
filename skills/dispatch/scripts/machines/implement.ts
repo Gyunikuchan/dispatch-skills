@@ -8,7 +8,7 @@ import { stableValue } from '../domain/stable-value.ts';
 import { effectDigest } from '../domain/effect-digest.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
-import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, contractCommands, criterionEvidenceRows, missingCheckRows, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
+import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, contractCommands, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, sameFingerprint, settledPlanInput, taskSubmissionValidation, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, reviewArtifactId, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
@@ -16,7 +16,7 @@ import { applyDispositions, bindingHash, evidenceAssessment, observe, openObserv
 import type { EvidenceObligation } from './implement-types.ts';
 import { HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, taskMapRows, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskDeclaredTests, taskScope, taskTestPaths, worktreeName, writeConcurrency, type ContractFailure, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { activeTasks, slotTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskEnvelopeCheckInputs, taskScope, taskTestPaths, briefScopePaths, taskRecordForEnvelope, worktreeName, writeConcurrency, type ContractFailure, type TaskAmendment, type TaskBriefHistory, type RetiredTask, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { amendPlan, replacementPlan, type RevisedPlan } from './revision.ts';
 import { reconcilePlan } from './plan-reconciliation.ts';
 import { slugOf } from './plan.ts';
@@ -729,21 +729,12 @@ function replayOwnership(c: Context, candidate: string, candidatePaths: readonly
   return primary ? [primary.owner, ...owners.filter((owner) => owner !== primary.owner)] : owners;
 }
 
-/** Paths of the brief the writer worked from; an amendment may have narrowed the current scope since. */
-function briefScopePaths(record: TaskRecord): string[] {
-  const entry = record.briefs?.find((row) => row.envelopePath === record.brief?.envelopePath);
-  if (!entry) return [];
-  const scope = JSON.parse(entry.scope) as { paths?: unknown };
-  return Array.isArray(scope.paths) ? scope.paths.filter((file): file is string => typeof file === 'string') : [];
-}
-
 function checkEnvelope(c0: Context, id: string, envelopePath: string): S {
   const record = c0.tasks[id] as TaskRecord;
-  const permitted = [...new Set([...(planTask(c0, id)?.paths ?? []), ...briefScopePaths(record), ...(record.admittedPaths ?? [])])].sort();
   const task = planTask(c0, id);
-  const tests = task ? taskDeclaredTests(c0.plan!, task) : [];
+  const input = task ? taskEnvelopeCheckInputs(c0.plan!, task, record, envelopePath) : { permitted: [...(record.admittedPaths ?? [])], tests: [] };
   const { c, id: effect } = effectId(withTask(c0, id, { status: 'submitted' }), 'check-envelope');
-  return { state: { tag: 'task-envelope', c, effectId: effect, task: id }, effects: [{ kind: 'check-envelope', id: effect, envelopePath, permitted, tests, ...(record.baseline ? { since: record.baseline } : {}), cwd: record.worktree as string }] };
+  return { state: { tag: 'task-envelope', c, effectId: effect, task: id }, effects: [{ kind: 'check-envelope', id: effect, envelopePath, ...input, ...(record.worktree ? { cwd: record.worktree } : {}) }] };
 }
 
 function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'ENVELOPE_CHECKED' }>): S {
@@ -751,28 +742,19 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   if (!task) return taskFailed(c, id, 'Task is no longer in the governed plan.');
   const envelope = event.envelope;
   if (event.defects.length || !isWriterEnvelope(envelope)) return taskFailed(c, id, `Envelope rejected: ${event.defects.join('; ') || 'malformed envelope.'}`);
-  const allowed = new Set([...task.paths, ...briefScopePaths(record), ...(record.admittedPaths ?? [])]);
+  const checkerInput = taskEnvelopeCheckInputs(plan, task, record);
+  const allowed = new Set(checkerInput.permitted);
   const outside = diffPaths(event).filter((file) => !allowed.has(file));
   // NOTE: hosts produce incidental files (caches, generated output), so the orchestrator judges extra paths instead of a hard failure.
   if (outside.length) return requestDecision(c, { task: id, attempt: record.attempt, need: `Admit writer paths outside the task scope: ${outside.join(', ')}.`, paths: outside, rationale: 'The writer diff changed paths outside the approved task scope.', source: 'scope' });
   if (envelope.stage !== 'COMPLETE') return taskFailed(c, id, `Envelope stage must be COMPLETE; got ${envelope.stage}.`);
   if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return taskFailed(c, id, `Writer returned ${envelope.status}: ${envelope.summary}`, envelope.amendment ? resolveAmendment(plan, envelope.amendment) : null);
-  const missing = criterionEvidenceRows(envelope.evidence, taskCriteria(plan, task));
-  if (missing.length) return taskFailed(c, id, `Evidence is missing criterion rows for ${missing.join(', ')}.`);
   // NOTE: any exit is admitted; the row proves the writer ran the check, and the integration gate judges the result.
-  // NOTE: an amendment may change contract commands after the brief this submission binds, so require only commands that brief issued.
   const issued = record.briefs?.find((row) => row.envelopePath === record.brief?.envelopePath)?.contractChecks;
-  const unchecked = missingCheckRows(envelope.evidence, contractCommands(plan).filter((command) => !issued || issued.includes(command)));
-  if (unchecked.length) return taskFailed(c, id, `Evidence is missing CHECK rows for ${unchecked.join(', ')}.`);
-  const redCriteriaOfTask = taskRedCriteria(plan, task);
-  // Amendment overlays add criteria after parse, so their IDs join the recorded plan IDs.
-  const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
-  // NOTE: the plan text still shows `Evidence: red` for a downgraded criterion, so a writer may report its row; skip it instead of stalling the run.
-  const downgraded = taskCriteria(plan, task).filter((criterion) => criterion.evidence === 'red' && effectiveEvidence(criterion) !== 'red').map((criterion) => criterion.id);
-  const red = redCriteriaOfTask.length ? parseRedMatrix(envelope.evidence, redCriteriaOfTask, planIds, downgraded) : { rows: [], defects: [] };
-  if (red.defects.length) return taskFailed(c, id, `RED matrix rejected: ${red.defects.join('; ')}`);
+  const evidence = taskSubmissionValidation(envelope.evidence, plan, taskCriteria(plan, task), issued);
+  if (evidence.rejection) return taskFailed(c, id, evidence.rejection);
   const concerns = envelope.status === 'DONE_WITH_CONCERNS' ? (envelope.concerns ?? []).map((item) => `${id}: ${item}`) : [];
-  const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: red.rows });
+  const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: evidence.redRows });
   return checkout(next, 'commit', 'commit', { name: taskWorktreeName(record), base: record.input, message: `dispatch task ${id} attempt ${record.attempt}` }, id);
 }
 
@@ -847,9 +829,8 @@ function taskReceipt(c: Context, event: TaskReceipt): S {
       // NOTE: a retired writer's submission is kept as evidence and never admitted; `retain` ends here, `stop` waits for cancellation.
       if (record.removed && record.retirement === 'retain') return schedule(retireTask(withTask(c, id, { retainedSubmission: event.envelopePath }), id, `retained submission ${event.envelopePath}`));
       if (record.removed) return stay({ tag: 'tasks', c: { ...withTask(c, id, { retainedSubmission: event.envelopePath }), concerns: [...new Set([...c.concerns, `${id}: retired writer submitted ${event.envelopePath} before cancellation; the submission is retained, not admitted.`])] } });
-      const entry = record.briefs?.find((row) => row.envelopePath === event.envelopePath);
-      const brief = entry ? { path: entry.path, sha256: entry.sha256, envelopePath: entry.envelopePath, checkpointPath: entry.checkpointPath } : record.brief;
-      const next = withTask(c, id, { status: 'submitted', brief });
+      const selected = taskRecordForEnvelope(record, event.envelopePath);
+      const next = withTask(c, id, { status: 'submitted', brief: selected.brief });
       // NOTE: an amendment-added prerequisite parks the submission; schedule admits it once the producer is accepted.
       if ((planTask(c, id)?.prerequisites ?? []).some((other) => c.tasks[other]?.status !== 'accepted')) return schedule(withTask(next, id, { parked: { envelopePath: event.envelopePath } }));
       return checkEnvelope(next, id, event.envelopePath);
@@ -1967,7 +1948,7 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       const changedPaths = event.notice.paths;
       const c0 = markMutation({ ...state.c, lastFingerprint: state.fingerprint, stalled, finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, event.notice.pathCount > changedPaths.length ? [] : changedPaths);
       const { c, id } = effectId(c0, 'verify');
-      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: state.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(c.plan!).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
+      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: state.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => ({ ...commandEffect(row.command, commandMappings(c.plan!).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c)), planHash: c.planHash })) }] };
     }
     case 'hotfix-verify': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));

@@ -184,7 +184,7 @@ test('implement-plan-lint: [FINAL] inside the code span is a defect naming the f
 
 test('implement-plan-lint: missing criterion fields, unknown markers, and GENERATED without Command fail', () => {
   assert.ok(defects(PLAN.replace('  - Evidence: verify\n', '')).includes('criterion-evidence'));
-  assert.ok(defects(PLAN.replace('  - Test rationale: aggregate regression gate over every package.\n', '')).includes('criterion-test-rationale'));
+  assert.ok(defects(PLAN.replace('  - Test rationale: fails today because the loop never stops retrying.\n', '')).includes('criterion-test-rationale'));
   assert.ok(defects(PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [ADD] tests/fetch.test.ts')).includes('unknown-change-marker'));
   assert.ok(defects(PLAN.replace('- Command: `npm run docs`\n', '')).includes('generated-command'));
   assert.ok(defects(PLAN.replace('> **Risk:** low — isolated helper\n', '')).includes('summary-label'));
@@ -640,6 +640,33 @@ test('declared test paths: Retain is required only when Tests names a path', () 
   const productionOnly = PLAN.replace('  - Retain: durable\n', '').replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts').replace(TESTS_LINE, '')
     .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.equal(parsed(productionOnly).criteria[0]?.retain, 'durable');
+});
+
+test('test rationale follows durable test retention', () => {
+  const missingDurableRationale = defectsOf(PLAN.replace(SC1_RATIONALE, ''), 'criterion-test-rationale');
+  assert.equal(missingDurableRationale.length, 1);
+  assert.match(missingDurableRationale[0]?.message ?? '', /Test rationale/);
+
+  const withoutTests = (evidence: 'verify' | 'review') => PLAN.replace(SC1_RATIONALE, '')
+    .replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts')
+    .replace(TESTS_LINE, '')
+    .replace('  - Evidence: red\n', evidence === 'review'
+      ? '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: plan inspection; pass: rationale scope follows durable tests\n'
+      : '  - Evidence: verify\n')
+    .replace('  - RED: `node --test {files}`\n', '');
+  assert.deepEqual(defectsOf(withoutTests('verify'), 'criterion-test-rationale'), []);
+  assert.deepEqual(defectsOf(withoutTests('review'), 'criterion-test-rationale'), []);
+
+  const transientWithoutRationale = transient('  - Retain: transient\n  - Covered by: SC2\n').replace(SC1_RATIONALE, '');
+  assert.deepEqual(defectsOf(transientWithoutRationale, 'criterion-test-rationale'), []);
+  assert.equal(defectsOf(transient('  - Retain: transient\n'), 'transient-coverage').length, 1);
+
+  const malformed = defectsOf(PLAN.replace(SC1_RATIONALE, '  - Test rationale: short\n'), 'criterion-test-rationale');
+  assert.equal(malformed.length, 1);
+  assert.match(malformed[0]?.message ?? '', /concretely explain/);
+  const duplicate = defectsOf(PLAN.replace(SC1_RATIONALE, `${SC1_RATIONALE}  - Test rationale: a second concrete rationale for retaining the tests\n`), 'criterion-test-rationale');
+  assert.equal(duplicate.length, 1);
+  assert.match(duplicate[0]?.message ?? '', /exactly one Test rationale/);
 });
 
 const isolated = transient('  - Retain: transient\n  - Covered by: SC2\n');

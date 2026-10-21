@@ -32,6 +32,24 @@ const split = (output: string): string[] => output.split('\0').filter(Boolean);
 const safe = (file: string): boolean => !!file && !file.includes('\\') && !file.startsWith('/') && !/^[A-Za-z]:/.test(file)
   && !/[\x00-\x1f]/.test(file) && !file.split('/').some((part) => !part || part === '.' || part === '..' || part.includes(':') || part.endsWith('.') || part.endsWith(' ')) && !/^\.git(?:\/|$)/i.test(file);
 
+/** Shared shape, path and content validation for the RED replay and read-only submission preview. */
+export function validateRedCheckpoint(value: unknown, permittedPaths: readonly string[]): { files: Record<string, string | null>; defects: string[] } {
+  const defects: string[] = [];
+  const object = typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Row : null;
+  let inputFiles: Record<string, unknown> = {};
+  if (!object || object['schemaVersion'] !== 1 || typeof object['files'] !== 'object' || object['files'] === null || Array.isArray(object['files'])) defects.push('RED checkpoint must be { schemaVersion: 1, files }.');
+  else inputFiles = object['files'] as Record<string, unknown>;
+  const entries = Object.entries(inputFiles);
+  if (!defects.length && !entries.length) defects.push('RED checkpoint lists no test files.');
+  const permitted = new Set(permittedPaths);
+  const files = Object.fromEntries(entries.flatMap(([file, content]) => {
+    if (!safe(file) || !permitted.has(file)) { defects.push(`RED checkpoint path is not an approved task test path: ${file}`); return []; }
+    if (content !== null && typeof content !== 'string') { defects.push(`RED checkpoint content must be base64 or null: ${file}`); return []; }
+    return [[file, content as string | null]];
+  }));
+  return { files, defects };
+}
+
 export function worktreePath(runDir: string, name: string): string {
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(name)) throw new Error(`Invalid worktree name: ${name}`);
   return path.join(runDir, 'wt', name);
@@ -232,17 +250,12 @@ async function red(deps: CheckoutDeps, ports: Ports, root: string, input: Row): 
   if (!checkpoint || !ports.fs.exists(checkpoint)) defects.push(`RED checkpoint is missing: ${checkpoint || '(none)'}`);
   else {
     try {
-      const parsed = JSON.parse(ports.fs.readText(checkpoint)) as Row;
-      if (parsed['schemaVersion'] !== 1 || typeof parsed['files'] !== 'object' || parsed['files'] === null || Array.isArray(parsed['files'])) defects.push('RED checkpoint must be { schemaVersion: 1, files }.');
-      else files = parsed['files'] as Record<string, unknown>;
+      const checked = validateRedCheckpoint(JSON.parse(ports.fs.readText(checkpoint)), [...permitted]);
+      files = checked.files;
+      defects.push(...checked.defects);
     } catch (error) { defects.push(`RED checkpoint is invalid JSON: ${error instanceof Error ? error.message : String(error)}`); }
   }
   const entries = Object.entries(files);
-  if (!defects.length && !entries.length) defects.push('RED checkpoint lists no test files.');
-  for (const [file, value] of entries) {
-    if (!safe(file) || !permitted.has(file)) defects.push(`RED checkpoint path is not an approved task test path: ${file}`);
-    else if (value !== null && typeof value !== 'string') defects.push(`RED checkpoint content must be base64 or null: ${file}`);
-  }
   if (defects.length) return { path: root, defects };
   await worktree(deps, ports, root, text(input['base']), true);
   prepare(deps, ports, root, input);

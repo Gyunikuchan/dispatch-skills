@@ -39,11 +39,11 @@ export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, e
   return frame;
 }
 
-/** Unsendable `EVIDENCE` skeleton: every judgment is a placeholder naming the criterion's last verify log and exit code. */
+/** Unsendable EVIDENCE skeleton: judgments stay placeholders; verify rows name their last log and exit code. */
 function evidenceTemplate(data: Row): Row {
   return { type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), typeof criterion['logPath'] === 'string' && criterion['logPath']
     ? { outcome: '<pass|waived after inspecting the log>', evidence: `<log ${criterion['logPath']}, exit ${String(criterion['exit'])}: observed result>` }
-    : { evidence: '<observed criterion evidence>' }])) };
+    : { outcome: '<pass|waived with user waiver>', evidence: '<observed criterion evidence>' }])) };
 }
 
 /** Read-only guidance uses the same validated examples and boundary path as live rejection. */

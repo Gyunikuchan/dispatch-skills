@@ -986,7 +986,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   if (!current.mapped) out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
   if (current.evidenceRaw === null) out.push(lint('criterion-evidence', current.line, `Criterion ${name} requires exactly one Evidence mapping: red, verify, or review.`));
   else if (!current.evidence) out.push(lint('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidenceRaw}"; accepted classes are red, verify, review.`));
-  if (current.testRationale === null) out.push(lint('criterion-test-rationale', current.line, 'Criterion requires a concrete Test rationale describing retained RED signal or why a new retained test is low-signal.'));
+  if (current.tests.length > 0 && current.retain === 'durable' && current.testRationale === null) out.push(lint('criterion-test-rationale', current.line, 'Criterion with durable declared tests requires a Test rationale.'));
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(lint('criterion-red-exception', current.redLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   }

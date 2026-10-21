@@ -295,23 +295,40 @@ test('rule and write templates name constraints for launched receipts and plan r
 
 // SECTION: Evidence reply template
 
-const evidenceFrame = (criteria: readonly Record<string, unknown>[]) => projectFrame({ ...awaitingMachine, awaitOf: () => 'evidence' as const, project: () => ({ at: 'implement › evidence', data: { criteria } }) }, awaitingMachine.initial(), 'run');
+test('evidence template completes mixed verify and review criteria', () => {
+  const sim: Sim = {};
+  let { result, trace } = startTasks(1, sim);
+  for (const id of ['T1', 'T2', 'T3']) result = submit(launch(result, sim, trace), id, sim, trace);
+  assert.equal(result.state.tag, 'evidence');
+  if (result.state.tag !== 'evidence') return;
 
-test('evidence template shows verify logs and leaves every judgment to the host', () => {
-  const frame = evidenceFrame([{ id: 'SC1', logPath: 'run/implement.verify.4/1.log', exit: 0 }, { id: 'SC2', logPath: 'run/implement.verify.4/2.log', exit: 1 }, { id: 'SC3' }]);
-  assert.equal(frame.events, undefined, 'no event template preselects an outcome');
-  assert.equal(replyEvent(frame.events), undefined, 'nothing is pre-written as the reply');
-  assert.deepEqual(frame.data['evidenceTemplate'], {
-    type: 'EVIDENCE',
-    criteria: {
-      SC1: { outcome: '<pass|waived after inspecting the log>', evidence: '<log run/implement.verify.4/1.log, exit 0: observed result>' },
-      SC2: { outcome: '<pass|waived after inspecting the log>', evidence: '<log run/implement.verify.4/2.log, exit 1: observed result>' },
-      SC3: { evidence: '<observed criterion evidence>' },
-    },
-  });
-  const template = frame.data['evidenceTemplate'] as { criteria: Record<string, Record<string, unknown>> };
-  const reply = { type: 'EVIDENCE', criteria: Object.fromEntries(Object.keys(template.criteria).map((id) => [id, { outcome: 'pass', evidence: `Read the ${id} log; every assertion passed.` }])) };
-  assert.equal(validateHostEvent('evidence', reply).ok, true);
+  const verifyCriterion = result.state.c.plan!.criteria.find((criterion) => criterion.evidence === 'verify')!;
+  const reviewCriterion = result.state.c.plan!.criteria.find((criterion) => criterion.evidence === 'verify' && criterion.id !== verifyCriterion.id)!;
+  const plan = {
+    ...result.state.c.plan!,
+    criteria: result.state.c.plan!.criteria.map((criterion) => criterion.id === reviewCriterion.id
+      ? { ...criterion, evidence: 'review' as const, verify: [] }
+      : criterion),
+  };
+  const state = { ...result.state, c: { ...result.state.c, plan } };
+  const frame = projectFrame(implementMachine, state, 'run');
+  assert.equal(frame.events, undefined, 'the template leaves judgment to the host');
+
+  const criteria = frame.data['criteria'] as { id: string; evidenceClass: string; logPath?: string }[];
+  const verify = criteria.find((criterion) => criterion.id === verifyCriterion.id)!;
+  const review = criteria.find((criterion) => criterion.id === reviewCriterion.id)!;
+  assert.equal(verify.evidenceClass, 'verify');
+  assert.ok(verify.logPath);
+  assert.equal(review.evidenceClass, 'review');
+  assert.equal(review.logPath, undefined);
+
+  const template = frame.data['evidenceTemplate'] as { type: 'EVIDENCE'; criteria: Record<string, Record<string, unknown>> };
+  assert.equal(template.criteria[review.id]?.['outcome'], '<pass|waived with user waiver>');
+  assert.equal(template.criteria[review.id]?.['evidence'], '<observed criterion evidence>');
+  const reply = { ...template, criteria: Object.fromEntries(Object.entries(template.criteria).map(([id, row]) => [id, { ...row, outcome: 'pass', evidence: `Observed ${id}.` }])) };
+  assert.equal(validateImplement(state, reply as never), null, 'filling the emitted skeleton produces an accepted reply');
+  assert.notEqual(validateImplement(state, { ...reply, criteria: { ...reply.criteria, [review.id]: { evidence: 'Reviewed the artifact.' } } } as never), null);
+  assert.notEqual(validateImplement(state, { ...reply, criteria: { ...reply.criteria, [review.id]: { outcome: 'accepted', evidence: 'Reviewed the artifact.' } } } as never), null);
 });
 
 test('evidence template shows verify logs journaled by the implementation run', () => {

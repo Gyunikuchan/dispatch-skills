@@ -240,6 +240,58 @@ test('reused result reports no expected names in log and reads no scan logs', as
   }
 });
 
+test('hotfix verification reuses only matching final inputs in the verification effect', async () => {
+  const cwd = tempDir();
+  fs.mkdirSync(path.join(cwd, 'src'));
+  const source = path.join(cwd, 'src', 'a.ts');
+  fs.writeFileSync(source, 'const value = 1;');
+  const runDir = tempDir();
+  const ports = fakePorts();
+  let spawns = 0;
+  ports.spawn = { run: async () => { spawns++; return { exit: 0, stdout: 'ok', stderr: '' }; } };
+  const handler = createVerify({ os: 'linux', cwd, git });
+  const hotfix = { command: 'node --test tests/a.test.ts', inputPaths: ['src/a.ts'], environment: 'execution-a', planHash: 'plan-a' };
+  const run = (id: string, purpose: 'hotfix' | 'final', command: Record<string, unknown>) =>
+    handler({ kind: 'verify', id, purpose, commands: [command as { command: string }] }, ports, { runDir, attempt: 1 });
+  const first = only(await run('implement.verify.1', 'hotfix', hotfix));
+  assert.ok(first.type === 'VERIFY_DONE');
+  if (first.type !== 'VERIFY_DONE') return;
+  const successful = first.results[0];
+  assert.ok(successful);
+  if (!successful) return;
+
+  const exact = only(await run('implement.verify.2', 'final', { ...hotfix, reuse: successful }));
+  assert.ok(exact.type === 'VERIFY_DONE');
+  if (exact.type !== 'VERIFY_DONE') return;
+  assert.equal(exact.results[0]?.['reused'], true);
+  assert.equal(spawns, 1);
+
+  const changedIdentity = [
+    { ...hotfix, command: 'node --test tests/other.test.ts', reuse: successful },
+    { ...hotfix, environment: 'execution-b', reuse: successful },
+    { ...hotfix, planHash: 'plan-b', reuse: successful },
+  ];
+  for (const [index, command] of changedIdentity.entries()) {
+    const changed = only(await run(`implement.verify.${index + 3}`, 'final', command));
+    assert.ok(changed.type === 'VERIFY_DONE');
+    if (changed.type === 'VERIFY_DONE') assert.notEqual(changed.results[0]?.['reused'], true);
+  }
+  fs.writeFileSync(source, 'const value = 2;');
+  const changedInput = only(await run('implement.verify.6', 'final', { ...hotfix, reuse: successful }));
+  assert.ok(changedInput.type === 'VERIFY_DONE');
+  if (changedInput.type === 'VERIFY_DONE') assert.notEqual(changedInput.results[0]?.['reused'], true);
+
+  ports.spawn = { run: async () => { spawns++; return { exit: 1, stdout: 'failed', stderr: '' }; } };
+  const failedCommand = { ...hotfix, command: 'node --test tests/failing.test.ts' };
+  const failed = only(await run('implement.verify.7', 'hotfix', failedCommand));
+  assert.ok(failed.type === 'VERIFY_DONE');
+  if (failed.type !== 'VERIFY_DONE') return;
+  const retry = only(await run('implement.verify.8', 'final', { ...failedCommand, reuse: failed.results[0] }));
+  assert.ok(retry.type === 'VERIFY_DONE');
+  if (retry.type === 'VERIFY_DONE') assert.notEqual(retry.results[0]?.['reused'], true);
+  assert.equal(spawns, 7);
+});
+
 test('snapshot: fingerprint and changed paths since a prior fingerprint', async () => {
   const handler = createSnapshot({ cwd: '/repo', git });
   const first = only(await handler({ kind: 'snapshot', id: 's.1', since: null }, fakePorts(), { runDir: '/run', attempt: 1 }));

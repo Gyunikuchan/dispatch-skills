@@ -61,6 +61,58 @@ test('tasks: schedule with cap one runs the same pipeline one task at a time', (
   assert.deepEqual(launchedTasks(trace), ['task-t1', 'task-t2', 'task-t3']);
 });
 
+test('submission preflight preserves live RED admission after receipt edits and amended or downgraded criteria', () => {
+  const invalid: Sim = {
+    envelope: (id) => {
+      const envelope = defaultEnvelope(id);
+      return { ...envelope, evidence: (envelope['evidence'] as string[]).map((row) => row.startsWith('RED-MATRIX SC1') ? 'RED-MATRIX SC1 | tests/validation.test.ts:rejects invalid input | exit 1 error:cannot observe this row' : row) };
+    },
+  };
+  let runState = start(1, invalid), result = launch(runState.result, invalid, runState.trace);
+  result = submit(result, 'T1', invalid, runState.trace);
+  assert.equal(record(result, 'T1')?.status, 'failed');
+  assert.match(record(result, 'T1')?.reason ?? '', /RED matrix rejected/);
+
+  const invalidOutsideScope: Sim = {
+    ...extraPaths,
+    envelope: (id) => {
+      const envelope = defaultEnvelope(id);
+      return { ...envelope, evidence: (envelope['evidence'] as string[]).map((row) => row.startsWith('RED-MATRIX SC1') ? 'RED-MATRIX SC1 | tests/validation.test.ts:rejects invalid input | exit 1 error:cannot observe this row' : row) };
+    },
+  };
+  runState = start(1, invalidOutsideScope);
+  result = submit(launch(runState.result, invalidOutsideScope, runState.trace), 'T1', invalidOutsideScope, runState.trace);
+  assert.equal(result.state.tag, 'request-decision');
+  const scopeRequest = result.state.tag === 'request-decision' ? result.state.request : null;
+  assert.deepEqual([scopeRequest?.source, scopeRequest?.paths], ['scope', ['README.md']]);
+  result = host(result, scopeAnswer('approve'), invalidOutsideScope, runState.trace);
+  assert.equal(record(result, 'T1')?.status, 'failed');
+  assert.match(record(result, 'T1')?.reason ?? '', /RED matrix rejected/);
+
+  const amended: Sim = { plan: PLAN };
+  runState = start(1, amended);
+  result = launch(runState.result, amended, runState.trace);
+  assert.equal(result.state.tag, 'tasks');
+  if (result.state.tag === 'tasks') result = { ...result, state: { ...result.state, c: { ...result.state.c, plan: CONTRACT_PLAN } } };
+  const amendedReceipt: Sim = {
+    plan: CONTRACT_PLAN,
+    envelope: (id) => {
+      const envelope = defaultEnvelope(id, CONTRACT_PLAN);
+      return { ...envelope, evidence: (envelope['evidence'] as string[]).filter((row) => !row.startsWith('CHECK ')) };
+    },
+  };
+  result = submit(result, 'T1', amendedReceipt, runState.trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted', 'an amended contract check absent from the issued brief stays optional');
+
+  const downgradedPlan = { ...PLAN, criteria: PLAN.criteria.map((criterion) => criterion.id === 'SC1' ? { ...criterion, red: null } : criterion) };
+  const downgraded: Sim = { plan: downgradedPlan };
+  runState = start(1, downgraded);
+  result = launch(runState.result, downgraded, runState.trace);
+  result = submit(result, 'T1', downgraded, runState.trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted', 'a criterion with no RED command remains downgraded to verify');
+  assert.equal(runState.trace.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'red'), false);
+});
+
 test('level-journal: task admission supplies its mixed production/test paths to the envelope check', () => {
   const sim: Sim = {};
   let { result, trace } = start(1, sim);
