@@ -1,0 +1,24 @@
+{
+  "tasks": [
+    {
+      "id": "word-frequency",
+      "sizeClass": "small",
+      "seed": "textstats",
+      "acceptance": "acceptance/word-frequency.test.js",
+      "model": "claude-opus-5-5",
+      "permissionMode": "auto",
+      "timeoutMinutes": 240,
+      "prompt": "/dispatch implement medium Add a wordFrequency(text, { top }) export to src/text.js. Return an array of { word, count } objects ordered by count descending and then word ascending, limited to top. Throw RangeError when top is below 1 or is not an integer, and return an empty array when the text has no words.\nI approve the spec, the plan and production writes for this task; proceed without asking me."
+    },
+    {
+      "id": "stats-cli",
+      "sizeClass": "multi-module",
+      "seed": "textstats",
+      "acceptance": "acceptance/stats-cli.test.js",
+      "model": "claude-opus-5-5",
+      "permissionMode": "auto",
+      "timeoutMinutes": 240,
+      "prompt": "/dispatch implement medium Add summarize(text, { top }) in src/summary.js and a bin/textstats.js CLI that accepts a file path and optional --top N. Print JSON with words, unique, lines, and top word counts; count newline-delimited lines and order top words by descending count then ascending word. A missing file exits 2 with an error that names its path; an invalid --top exits 1. Add or update tests for the library and CLI.\nI approve the spec, the plan and production writes for this task; proceed without asking me."
+    }
+  ]
+}
