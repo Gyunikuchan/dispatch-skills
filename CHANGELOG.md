@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-21
+
+- Plans, designs, reviews, and implementation share a governing mission brief, keeping delivery tied to your requirements and decisions.
+- Writers check their submissions against the approved contract and receive focused updates when plans change.
+- Dispatch can update itself with a stable controller and recover more reliably from quota limits, interruptions, and verification failures.
+- Reviews and plans use clearer quality standards while respecting your repository's rules.
+
 ## [0.7.2] - 2026-10-15
 
 - **Breaking:** Standalone reviews always apply and verify accepted fixes; the `--fix` option is removed.
