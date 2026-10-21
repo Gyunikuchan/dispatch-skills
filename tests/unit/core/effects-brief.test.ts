@@ -285,6 +285,29 @@ const deltaInput = {
 };
 const deltaBase = { path: 'run/base/brief.md', sha256: `sha256:${'b'.repeat(64)}`, seq: 2 };
 
+test('writer briefs preserve execution context without serialized task signatures', async () => {
+  const runDir = tempDir(), ports = fakePorts();
+  memoryRunFs(ports, runDir);
+  const input = structuredClone(deltaInput), before = structuredClone(input);
+  const handler = createWriteBrief({ skillRoot: SKILL_ROOT });
+  const event = only(await handler({ kind: 'write-brief', id: 'implement.write-brief.12', stage: 'task', input }, ports, { runDir, attempt: 1 }));
+  assert.equal(event.type, 'BRIEF_READY'); if (event.type !== 'BRIEF_READY') return;
+  const text = ports.fs.readText(event.path);
+  const task = /## Task, graph, and worktree\n\n```json\n([\s\S]*?)\n```/.exec(text);
+  assert.ok(task, 'task context is rendered as structured data');
+  assert.doesNotMatch(task[1]!, /SIGNATURE-MARKER/);
+  assert.deepEqual(JSON.parse(task[1]!), {
+    id: 'T1', title: 'Feature', summary: 'TASK-SUMMARY-MARKER', dependents: ['T3'], attempt: 1,
+    worktree: 'run/wt/task-t1', inputRevision: 'b0', constraints: ['Keep the public API stable.'],
+    prerequisites: [{ id: 'T0', integrated: 'i-T0' }], checkpoint: { root: 'run/wt/task-t1', paths: ['tests/a.test.ts'] },
+    amendmentNotice: 'SC1 now requires speed.',
+  });
+  const criteria = /## Criteria\n\n([\s\S]*?)(?=\n\n## |$)/.exec(text)?.[1] ?? '';
+  assert.match(criteria, /^- \{"id":"SC1","title":"works fast"/);
+  assert.equal(criteria.match(/works fast/g)?.length, 1);
+  assert.deepEqual(input, before);
+});
+
 test('amendment delta carries the base binding and current task sections, and leaves the full brief bytes unchanged', async () => {
   const runDir = tempDir(), ports = fakePorts();
   memoryRunFs(ports, runDir);

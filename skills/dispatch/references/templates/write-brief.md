@@ -28,8 +28,9 @@ When Governing spec is present, read the whole spec it names before the bounded 
 
 ### Verification and editing
 - Put agent-created helpers, captured logs, intermediate data, and backups in `<run>/scratch/<envelope-dir-name>/`. Derive `<run>` from `<Expected Envelope Path>` (`<run>/<envelope-dir-name>/outcome.json`); copy its parent directory name exactly, without reconstructing an effect id. Create working directories only when needed. Classify backups by purpose even when named like deliverables. Keep the outcome envelope and driver-owned evidence at supplied paths and production edits within the brief's scoped repository paths.
-- Verify with your mapped `commands` only; after each change, rerun just the commands it affects. Never run the repository's aggregate test suite: the driver runs every gate after you return.
+- Use mapped commands for fast RED/GREEN feedback. After the last edit, run every test in each modified logical test file and known impacted consumer checks before aggregate, using plan-declared or host commands; broaden when impact is uncertain. If a required check is infeasible, return `BLOCKED` with the exact conflict; never report a pass. For work outside scope, task writers report needed paths and rationale to the orchestrator for a `REQUEST`, or return `BLOCKED`; hotfix writers return `BLOCKED` and keep the root cause and listed paths. Never run the repository’s aggregate suite; the driver runs it after you return. Record results and claim only observed passes.
 - Edit with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.
+- Keep a compact continuation note in native context or permitted scratch with governing spec/plan and current brief/delta identities, relevant symbols and file ranges, scope, completed work, pending checks, next action and evidence pointers. After truncation, read omitted ranges; after compaction, restore only missing or changed material. Restore missing authority before editing; use existing `LOST_CONTEXT`/full-brief recovery if the brief is lost.
 
 <<slot:kind-rules>>
 

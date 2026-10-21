@@ -128,6 +128,14 @@ Explain non-obvious rationale (why, CLI/subprocess quirks, cross-platform nuance
   ```
 
   Add `--test-name-pattern="PATTERN"` when narrowing a test run. With multiple files, require a name-pattern match in each.
+- Before the aggregate gate, run every test in each modified logical test file and known impacted consumer file without `--test-name-pattern`:
+
+  ```text
+  node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts TEST_FILE
+  ```
+
+  Keep narrow selectors for RED/GREEN feedback; declare affected-file checks as fast `Automated Tests` commands in plans.
+- Use `node scripts/brief-size.ts <brief-file> [<brief-file> ...]` to report total and section UTF-8 bytes for valid UTF-8 inputs; it does not estimate tokens. Keep output under run scratch and link it in the handoff.
 - Protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Put real Git/subprocess flows in `tests/e2e/`.
 - Keep logical unit fixtures in memory (`memoryRunFs`); use physical storage only when the claim depends on bytes or filesystem behavior. Physical I/O breaks per-file timing budgets under aggregate load.
 - Apply the [quality bar's code section](skills/dispatch/references/templates/quality-bar.md#code) to test behavior, naming, and retention.

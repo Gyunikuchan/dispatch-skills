@@ -63,10 +63,14 @@ function deltaBaseOf(input: Readonly<Record<string, unknown>>): DeltaBase | null
   return base && typeof base.path === 'string' && typeof base.sha256 === 'string' && Number.isSafeInteger(base.seq) ? base as DeltaBase : null;
 }
 
+/** Writer-facing task data omits its serialized criteria signature; the Criteria section is authoritative. */
+function taskContext(input: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const { signature: _signature, ...task } = (input['task'] ?? {}) as Readonly<Record<string, unknown>>;
+  return task;
+}
+
 /** Amendment delta: the current task sections a live writer applies on top of the base brief it already holds. */
 function deltaText(input: Readonly<Record<string, unknown>>, base: DeltaBase, values: Readonly<Record<string, string>>): string {
-  // NOTE: the signature repeats every criterion definition; the Criteria section already carries them.
-  const { signature: _signature, ...task } = (input['task'] ?? {}) as Readonly<Record<string, unknown>>;
   const header = [
     '# Amendment delta', '',
     `Base: ${base.path} · ${base.sha256}`,
@@ -78,7 +82,7 @@ function deltaText(input: Readonly<Record<string, unknown>>, base: DeltaBase, va
     ['Expected Envelope Path', values['Expected Envelope Path']!],
     ['Self Check Command', values['Self Check Command']!],
     ['Checkpoint Command', values['Checkpoint Command']!],
-    ['Task, graph, and worktree', render(task)],
+    ['Task, graph, and worktree', render(taskContext(input))],
     ['Settled scope', render(input['settledScope'])],
     ['Criteria', render(input['criteria'])],
     ...contractSections(input),
@@ -94,7 +98,7 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   }
   rows.push(['Governing outcome', render(input['governingOutcome'])]);
   if (typeof input['sharedContext'] === 'string' && input['sharedContext'].trim()) rows.push(['Shared plan context', fenced(input['sharedContext'])]);
-  if (input['task']) rows.push(['Task, graph, and worktree', render(input['task'])]);
+  if (input['task']) rows.push(['Task, graph, and worktree', render(taskContext(input))]);
   if (Array.isArray(input['siblingTasks'])) rows.push(['Sibling tasks', input['siblingTasks'].length ? input['siblingTasks'].map(siblingRow).join('\n') : '(none)']);
   // NOTE: a regenerated brief names what changed and the brief it supersedes, so a live writer can reconcile its draft.
   if (input['revisionNotice']) rows.push(['Plan revision notices', render(input['revisionNotice'])]);

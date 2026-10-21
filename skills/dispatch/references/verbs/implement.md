@@ -44,9 +44,11 @@ Use only modes offered by the current frame. Hotfixes remain single-shot and wit
 
 Report each writer through `WRITE_RECEIPT` with `status`:
 
-- `launched`: `task`, `attempt`, `signature`, host-assigned `handle`, attested `model`/`effort`, and `substitution` when they differ.
+- `launched`: `task`, `attempt`, `signature`, host-assigned `handle`, attested `model`/`effort`, and `substitution` when the actual launch differs.
 - `submitted`: identity, `envelopePath`, and `briefHash` of the brief the writer finished under.
 - `failed`: identity and `detail`. `cancelled`: identity, after the writer confirms it stopped.
+
+For task writers, bind a `failed` receipt to the actual launched handle. Follow [providers](../providers.md#providers) for configured model and effort, prelaunch capability blockers, and mismatch handling.
 
 Copy each receipt from the row's launch record `receipts`: `launched` for `launch` rows, `submitted` or `failed` for `running` rows, `cancelled` for `cancel` rows and retained retirements. A retained retirement also offers `submitted` and `failed`: it may finish once, archived and never admitted. Copied `submitted` binds the latest issued brief; when the writer finished under an earlier brief, echo the `briefHash` and `envelopePath` it reports, so validation rejects a stale submission.
 
