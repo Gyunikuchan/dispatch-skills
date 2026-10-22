@@ -1,18 +1,18 @@
 # Implement
 
-For an objective, [spec operation](../spec-stage.md) precedes plan authoring. A supplied plan or design resolves its governing spec through Parent pins; an increment plan resolves transitively through its design. Apply spec approval at the authoring gate, then retain the existing design and production approvals. Every writer reads the full spec at its bound path/hash plus the plan's shared range through Task Map, its task, assigned criteria and Verification Plan rows.
+For an objective, [spec operation](../spec-stage.md) precedes plan authoring. A supplied plan or design resolves its governing spec through Parent pins; an increment plan resolves transitively through its design. Apply spec approval at the authoring gate, then apply required design approval. Every writer reads the full spec at its bound path/hash plus the plan's shared range through Task Map, its task, assigned criteria and Verification Plan rows.
 
 When intent changes, revise the spec before amending the plan. Follow the [revision protocol and recovery owners](../spec-stage.md#revision-protocol): reconcile immutable pending results and already-authorized writer receipts at quiescence before admitted `SPEC_REVISED`. Root re-settles new bytes, obtains applicable new-hash approval and internally synthesizes `SPEC_SETTLED`; the host never sends it. Preserve work and follow the owner-specific halt or pre-task authoring transition. Neither blind effect replay nor unauthorized writer stopping is a recovery step.
 
-Use `start implement --session-dir <dir> --orchestrator <platform> -- <objective-or-plan-or-design-path>`. The driver reuses settled plan evidence when available, verifies baseline, records production approval, then emits bounded writer briefs and verification summaries. For design delivery it reuses matching unfinished same-chat journals and binds derived approvals to the governed revision.
+Use `start implement --session-dir <dir> --orchestrator <platform> -- <objective-or-plan-or-design-path>`. The driver reuses settled plan evidence when available, verifies baseline, then emits bounded writer briefs and verification summaries. For design delivery it reuses matching unfinished same-chat journals and binds derived approvals to the governed revision.
 
 At `write`, launch the configured native writer for each `tasks` row marked `launch`, using the worktree and verified brief hash from its launch record. Retain each handle and report launch/completion through [the contract](../..). Apply the configured cap and available native capacity; capability failures require a named failure rather than shared-checkout execution.
 
 On model fallback per [providers](../providers.md#providers), the driver can retain the brief while advancing the launch attempt. Read the task's current launch record: pass the replacement writer its `task`, `attempt`, `signature`, `model`, and `effort`, and copy its `launched` receipt. Its `briefPath`, `briefHash`, `envelopePath`, and `checkpointPath` name the retained brief; the replacement writer reads `briefPath` only, never a delta. The brief's embedded attempt identifies brief creation; the launch record governs the launch.
 
-Before the first production write, assess the complete settled implementation scope once: after plan, baseline, and applicable authorization are concrete. This applies to ordinary tasks, inline baseline hotfixes, and the first child of a design. A classified run uses the assessment; an explicit level remains unless the assessment recommends higher and the user adopts it. Retries, later phases, amendments, and later design increments inherit that settled level.
+Before the first production write, assess the complete settled implementation scope once: after plan and baseline are concrete. This applies to ordinary tasks, inline baseline hotfixes, and the first child of a design. A classified run uses the assessment; an explicit level stays, and a higher assessment is reported. Retries, later phases, amendments, and later design increments inherit that settled level.
 
-Each task uses one continuous writer invocation from inspection through envelope submission; the [task brief](../templates/write-brief-task.md) owns the development sequence, including the RED checkpoint before production edits; full-plan access grants context while task paths govern writes. The driver independently admits scope and submitted GREEN, plus checkpoint/test identity and behavioral RED for unwaived RED criteria, then integrates only the candidate delta and checks the accumulated result. Acceptance releases prerequisites; submission alone does not. Amended criteria, commands, and paths become enforceable plan content.
+Each task uses one continuous writer invocation from inspection through envelope submission; the [task brief](../templates/write-brief-task.md) owns the development sequence, including the RED checkpoint before production edits; full-plan access grants context while task paths govern writes. The driver enforces scope, criterion evidence, submitted GREEN, path containment and immutable checkpoint test bytes. Missing or invalid checkpoint evidence, RED-matrix defects, unbuildable RED commands and RED replay failures become concerns; valid RED rows are replayed before GREEN verification. It integrates only the candidate delta and checks the accumulated result. Acceptance releases prerequisites; submission alone does not. Amended criteria, commands, and paths become enforceable plan content.
 
 ## Decision and receipt contract
 
@@ -22,7 +22,6 @@ Send each decision through `DECISION` with its exact `kind` and an `answer` matc
 
 - `DECISION kind=run-stop`: `{ by: "user", quote }` at a level or scope gate.
 - `DECISION kind=level-classification`: `{ evaluatedLevel, rationale, gateScopeHash }`; copy `gateScopeHash` from the frame after you assess its `gateScope`.
-- `DECISION kind=level-recommendation`: `{ choice: "adopt" | "retain", quote }`.
 - `DECISION kind=integration-conflict`: `{ by: "orchestrator", action: "resolve" | "discard", rationale, amendment? }`.
 - `DECISION kind=request`: `{ by: "orchestrator", action: "approve" | "decline" | "escalate", rationale }`.
 - `DECISION kind=request-user`: `{ by: "user", requestId, choice: "accept" | "decline", quote }`; only after `escalate`.
@@ -32,7 +31,7 @@ Send each decision through `DECISION` with its exact `kind` and an `answer` matc
 
 ### Hotfix order
 
-Before a hotfix, inspect the failing check, identify its root cause and bounded paths, and complete applicable level, production and user gates. Use the [baseline guidance](../decision-frame.md#baseline-failures-baseline) or [failure guidance](../decision-frame.md#implementation-failure-failure), plus the existing [scope rules](../change-handling.md#concrete-write-boundaries) and [user gate](../decision-frame.md#user-gate-boundaries). List every needed path outside plan scope in `external` with its reason; this supports hotfix admission and does not satisfy an applicable user gate.
+Before a hotfix, inspect the failing check, identify its root cause and bounded paths, and complete applicable level assessment and user gates. Use the [baseline guidance](../decision-frame.md#baseline-failures-baseline) or [failure guidance](../decision-frame.md#implementation-failure-failure), plus the existing [scope rules](../change-handling.md#concrete-write-boundaries) and [user gate](../decision-frame.md#user-gate-boundaries). List every needed path outside plan scope in `external` with its reason; this supports hotfix admission and does not satisfy an applicable user gate.
 
 For inline mode, complete the bounded repair in the caller checkout before sending the matching `DECISION kind=baseline` or `DECISION kind=failure`, with the root cause in `rationale` and required `external` entries. The decision snapshots and admits those existing edits, then verifies them, with no write frame between the decision and that check.
 
@@ -87,7 +86,7 @@ Attach a user quote for actual changed intent, a new external dependency/runtime
 
 ### Integration contract gate
 
-Automated Tests commands that no criterion lists are contract commands. Each task writer runs them before it submits and records one `CHECK <command> | exit <code>` row per command its latest brief issued; an envelope without one of those rows fails, and any exit is admitted. Hotfix briefs carry no contract commands: every later integration and the final verification run each contract command, and a hotfix writer has no live route for a failure.
+Automated Tests commands that no criterion lists are contract commands. Each task writer runs them before it submits and records one `CHECK <command> | exit <code>` row per command its latest brief issued; missing rows become concerns, and any exit is admitted. Hotfix briefs carry no contract commands: every later integration and the final verification run each contract command, and a hotfix writer has no live route for a failure.
 
 After each integration the driver runs every contract command. A failure is attributed to the task only when the command passed on the head the task integrated onto, even when its failure identity is an accepted baseline failure:
 

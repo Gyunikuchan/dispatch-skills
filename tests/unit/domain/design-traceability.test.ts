@@ -54,7 +54,7 @@ const tracedPlan = (ids: string[]) => ({ criteria: [{ id: 'SC1', line: 12, satis
 test('spec traceability: validates requirement coverage against spec requirements', () => {
   assert.deepEqual(validateSpecTraceability(tracedPlan(requirements), requirements), []);
   const unknown = validateSpecTraceability(tracedPlan(['REQ-9']), requirements);
-  assert.deepEqual(unknown.filter(item => item.severity === 'defect').map(item => item.code), ['unknown-requirement']);
+  assert.deepEqual(unknown.filter(item => item.code === 'unknown-requirement').map(item => item.severity), ['warning']);
   assert.match(unknown[0]!.message, /REQ-9/);
   const uncited = validateSpecTraceability(tracedPlan(['REQ-1']), requirements);
   assert.deepEqual(uncited.map(item => [item.code, item.severity]), [['unsatisfied-requirement', 'warning'], ['unsatisfied-requirement', 'warning']]);
@@ -63,6 +63,6 @@ test('spec traceability: validates requirement coverage against spec requirement
 
 test('approach requirements reject unknown requirement', () => {
   const defects = validateApproachRequirements({ approachRequirements: ['REQ-1', 'REQ-9'] } as never, requirements);
-  assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unknown-requirement', 'defect']]);
+  assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unknown-requirement', 'warning']]);
   assert.match(defects[0]!.message, /REQ-9/);
 });

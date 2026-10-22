@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { HASH, FP, assessed, approvalState, classify, failedRow, failure, host } from './fixtures/implement-recovery.ts';
+import { HASH, FP, assessed, classificationState, classify, failedRow, failure, host } from './fixtures/implement-recovery.ts';
 
 test('governing spec reaches hotfix writer before out-of-scope envelope returns to origin', () => {
   const state = failure(), governingSpec = { path: 'intent.spec.md', hash: HASH };
@@ -70,7 +70,7 @@ test('hotfix verification reuses only matching final inputs across the final gat
 });
 
 test('hotfix verification reuses only matching final inputs during baseline recovery', () => {
-  const c = { ...approvalState().c, approval: null, baseline: [failedRow], records: {} };
+  const c = { ...classificationState().c, approval: null, baseline: [failedRow], records: {} };
   const origin = { tag: 'baseline-decision' as const, c, items: [failedRow] };
   let r = classify(host(origin, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'repair baseline' } }));
   assert.equal(r.state.tag, 'hotfix-snapshot');
@@ -86,6 +86,6 @@ test('hotfix verification reuses only matching final inputs during baseline reco
   if (r.state.tag !== 'hotfix-verify') throw new Error('expected hotfix verification state');
   const verification = r.state;
   r = stepImplement(verification, { type: 'VERIFY_DONE', effectId: verification.effectId, purpose: 'hotfix', results: [{ command: 'check', exit: 0, logPath: 'baseline-hotfix.log', inputFingerprint: 'same-input' }], fingerprint: hotfixed });
-  assert.equal(r.state.tag, 'approval');
-  assert.equal(r.state.tag === 'approval' && r.state.c.baseline.find((row) => row.command === 'check')?.exit, 0);
+  assert.equal(r.state.tag, 'task-checkout');
+  assert.equal(r.state.tag === 'task-checkout' && r.state.c.baseline.find((row) => row.command === 'check')?.exit, 0);
 });

@@ -10,7 +10,7 @@ import { beginReview, resolutionRounds, type ReviewState } from '../../../skills
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { approval as designApproval } from '../machines/fixtures/design.ts';
 import { integration } from '../machines/fixtures/design-integration.ts';
-import { approvalState } from '../machines/fixtures/implement-recovery.ts';
+import { classificationState } from '../machines/fixtures/implement-recovery.ts';
 
 // SECTION: Harness — each review family parked on an in-flight wave result whose target changes before receipt.
 
@@ -38,7 +38,7 @@ function seed(family: Family, check: ReviewState): RootState {
     if (!('c' in plan) || !plan.c) throw new Error('plan context');
     return { tag: 'plan', run: { ...run, verb: 'plan' }, child: { tag: 'review', c: plan.c, review: check } };
   }
-  if (family === 'implementation-plan' || family === 'implementation-code') return { tag: 'implement', run, child: { tag: family === 'implementation-plan' ? 'plan-review' : 'code-review', c: approvalState().c, review: check } };
+  if (family === 'implementation-plan' || family === 'implementation-code') return { tag: 'implement', run, child: { tag: family === 'implementation-plan' ? 'plan-review' : 'code-review', c: classificationState().c, review: check } };
   const design = designApproval('implement');
   if (family === 'design-revision') {
     const revision = beginDesignRevision(design.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
@@ -76,7 +76,7 @@ test('review-reuse: target change retains in-flight revision-bound findings acro
 });
 
 test('review-reuse: non-review frames reject an applicability selection', () => {
-  const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature', slug: 'feature' }, child: approvalState() };
+  const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature', slug: 'feature' }, child: classificationState() };
   const event = { type: 'REVIEW_USE', observationId: 'change-1', afterHash: 'live-rev', action: 'reuse', rationale: 'Unchanged behavior.' };
   assert.equal(validateHostEvent('decide', event, (item) => rootMachine.validate!(state, item)).ok, false);
 });

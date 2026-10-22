@@ -25,20 +25,23 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'placeholder': case 'ambiguous-command': case 'automated-tests-unavailable': case 'missing-success-criteria':
     case 'unsatisfied-requirement': case 'criterion-red-test-path': case 'overlap': case 'missing-seams':
     case 'red-downgraded': case 'undeclared-test-path':
+    case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note':
+    case 'section-order': case 'retired-section': case 'missing-satisfies': case 'missing-requirement-ref':
+    case 'unknown-requirement': case 'plan-id-in-test-name': case 'task-summary': case 'task-overlap':
+    case 'automated-test-duplicates-verify': case 'criterion-test-rationale': case 'criterion-critical-review':
       return 'warning';
-    case 'missing-summary-box': case 'summary-label': case 'leftover-placeholder': case 'filler-note': case 'proposed-changes':
+    case 'proposed-changes':
     case 'change-heading': case 'unknown-change-marker': case 'invalid-change-path': case 'duplicate-change-path':
     case 'change-path-excluded': case 'generated-command': case 'verification-plan': case 'automated-tests':
-    case 'automated-tests-owner': case 'automated-command': case 'automated-test-duplicates-verify': case 'success-criteria':
+    case 'automated-tests-owner': case 'automated-command': case 'success-criteria':
     case 'criterion-format': case 'criterion-id': case 'criterion-mapping': case 'criterion-change-path': case 'criterion-verify':
-    case 'final-in-code-span': case 'criterion-evidence': case 'criterion-test-rationale': case 'criterion-red-exception':
+    case 'final-in-code-span': case 'criterion-evidence': case 'criterion-red-exception':
     case 'criterion-tests-path': case 'criterion-red-command':
-    case 'criterion-review': case 'criterion-critical-review': case 'missing-section': case 'missing-increment-details':
+    case 'criterion-review': case 'missing-section': case 'missing-increment-details':
     case 'missing-increment-field': case 'invalid-priority': case 'duplicate-id': case 'missing-increments':
     case 'invalid-id-sequence': case 'invalid-priority-order': case 'missing-prerequisite': case 'cycle': case 'execution-status':
-    case 'task-heading': case 'task-summary': case 'task-ownership': case 'task-criteria': case 'criterion-task-changes': case 'task-map': case 'generated-inputs':
-    case 'task-overlap': case 'transient-coverage': case 'section-order': case 'criterion-retain-required': case 'transient-test-path':
-    case 'unknown-requirement': case 'plan-id-in-test-name': case 'retired-section': case 'missing-satisfies': case 'missing-requirement-ref':
+    case 'task-heading': case 'task-ownership': case 'task-criteria': case 'criterion-task-changes': case 'task-map': case 'generated-inputs':
+    case 'transient-coverage': case 'criterion-retain-required': case 'transient-test-path':
       return 'defect';
     default:
       return unreachable(code);

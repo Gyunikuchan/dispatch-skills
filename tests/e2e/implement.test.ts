@@ -25,6 +25,7 @@ const transfer = ({ blobs: _blobs, ...rest }: Record<string, unknown>) => rest;
 
 async function fixedControllerDelivery() {
   const f = fixture();
+  const diagnostic: { inventory?: string; run?: string; calls: { entry: string; args: string[]; startedAt: string; durationMs: number }[] } = { calls: [] };
   try {
     f.git('config', 'core.autocrlf', 'false');
     const candidate = path.join(f.repo, 'skills/dispatch');
@@ -38,9 +39,15 @@ async function fixedControllerDelivery() {
     const entry = path.join(f.dir, 'materialize.mjs');
     fs.writeFileSync(entry, [...section.matchAll(/^```javascript\r?\n([\s\S]*?)^```\s*$/gm)][0]![1]!);
     const dest = path.join(scratch, 'controller/skills/dispatch'), inventory = path.join(scratch, 'controller-inventory.json');
+    diagnostic.inventory = inventory;
     const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${path.join(f.dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' };
     for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete env[key];
-    const invoke = (entry: string, args: string[]) => execFileSync(process.execPath, [entry, ...args], { cwd: f.repo, env, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const invoke = (entry: string, args: string[]) => {
+      const started = Date.now(), call = { entry, args, startedAt: new Date(started).toISOString(), durationMs: 0 };
+      diagnostic.calls.push(call);
+      try { return execFileSync(process.execPath, [entry, ...args], { cwd: f.repo, env, encoding: 'utf8', windowsHide: true, timeout: 25000 }); }
+      finally { call.durationMs = Date.now() - started; }
+    };
     const materialize = (heading: string) => invoke(entry, [fileURLToPath(new URL('../../skills/dispatch/references/self-build.md', import.meta.url)), f.repo, session, heading]).trim();
     const captureHelper = materialize('Capture controller');
     const verifyHelper = materialize('Verify controller');
@@ -118,6 +125,7 @@ async function fixedControllerDelivery() {
     f.git('add', 'self-build.plan.md'); f.git('commit', '-qm', 'self-build plan');
     let frame = cli(controllerEntry, ['start', 'implement', '--session-dir', session, '--orchestrator', 'codex', '--level', 'low', '--level-source', 'explicit', '--', plan]);
     const run = f.absoluteRun(frame.run);
+    diagnostic.run = run;
     const reply = (event: unknown) => {
       const resolved = latest.reply.replaceAll('<skills-dir>', path.dirname(dest));
       assert.ok(resolved.replaceAll('\\', '/').includes(controllerEntry.replaceAll('\\', '/')), resolved);
@@ -131,8 +139,6 @@ async function fixedControllerDelivery() {
     assert.equal(baselineFailures.length, 1);
     assert.match(baselineFailures[0]!.diagnostic, /candidate diagnostic marker missing/);
     frame = reply({ type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids: baselineFailures.map((item) => item.failureId) } });
-    assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
-    frame = reply({ type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Implement candidate fixture diagnostics' } });
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     frame = reply({ type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Fixture-only diagnostic label, without routing changes.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
@@ -184,17 +190,31 @@ async function fixedControllerDelivery() {
     assert.equal(deliveries(journalBefore).length, 1, 'exactly one successful candidate delivery before suspension');
     assert.equal(deliveries(journal).length, 1, 'continuation preserves exactly one successful candidate delivery');
     assert.deepEqual(deliveries(journal)[0]!.data.result!.transferred, [runtimePath, manifestPath]);
-    const evidenceDir = process.env['TEST_SELF_BUILD_EVIDENCE_DIR'];
+    const evidenceRoot = process.env['TEST_SELF_BUILD_EVIDENCE_DIR'];
+    const evidenceDir = evidenceRoot ? path.join(evidenceRoot, 'successes', `${Date.now()}-${process.pid}`) : undefined;
     if (evidenceDir) {
       fs.mkdirSync(evidenceDir, { recursive: true });
       fs.copyFileSync(inventory, path.join(evidenceDir, 'controller-inventory.json'));
       fs.writeFileSync(path.join(evidenceDir, 'proof.json'), JSON.stringify({ controllerEntry, controllerIdentity: captured.identity, candidateHead: f.git('rev-parse', 'HEAD').trim(), candidateFiles: captured.files.map((file) => ({ path: file.path, sha256: digest(path.join(candidate, file.path)) })), submittedRuntime, submittedManifest, candidateResult, controllerResult, workerLaunches: launchesBefore, deliveryCount: deliveries(journal).length, candidateVerifyCommand: candidateCheck, continuation: 'status at evidence then send to complete without rebind' }, null, 2));
       fs.writeFileSync(path.join(evidenceDir, 'events.jsonl'), journal);
     }
+  } catch (error) {
+    const evidenceRoot = process.env['TEST_SELF_BUILD_EVIDENCE_DIR'];
+    if (evidenceRoot) {
+      try {
+        const evidenceDir = path.join(evidenceRoot, 'failures', `${Date.now()}-${process.pid}`);
+        fs.mkdirSync(evidenceDir, { recursive: true });
+        const failure = error as Error & { code?: string; status?: number; signal?: string; stdout?: string; stderr?: string };
+        fs.writeFileSync(path.join(evidenceDir, 'failure.json'), JSON.stringify({ ...diagnostic, error: { message: failure.message, stack: failure.stack, code: failure.code, status: failure.status, signal: failure.signal, stdout: failure.stdout, stderr: failure.stderr } }, null, 2));
+        if (diagnostic.inventory && fs.existsSync(diagnostic.inventory)) fs.copyFileSync(diagnostic.inventory, path.join(evidenceDir, 'controller-inventory.json'));
+        if (diagnostic.run && fs.existsSync(diagnostic.run)) for (const name of fs.readdirSync(diagnostic.run).filter((name) => name === 'events.jsonl' || name === 'checkpoints' || name.startsWith('implement.verify.'))) fs.cpSync(path.join(diagnostic.run, name), path.join(evidenceDir, name), { recursive: true });
+      } catch (captureError) { console.error(`Failed to retain self-build diagnostics: ${String(captureError)}`); }
+    }
+    throw error;
   } finally { f.cleanup(); }
 }
 
-test('prewrite-level: CLI approval reaches classification before writer receipt, verification and handoff', async () => {
+test('prewrite-level: standalone CLI reaches classification before writer receipt, verification and handoff', async () => {
   const f = fixture();
   try {
     const session = await f.initialize();
@@ -242,8 +262,7 @@ test('prewrite-level: CLI approval reaches classification before writer receipt,
 `);
     f.git('add', 'fixture.plan.md'); f.git('commit', '-qm', 'plan');
     let frame = await f.begin('implement', session, plan); const run = f.absoluteRun(frame.run);
-    assert.equal(frame.await, 'decide', JSON.stringify(frame)); assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
-    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } });
+    assert.equal(frame.await, 'decide', JSON.stringify(frame)); assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded, reversible helper change.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
@@ -337,7 +356,6 @@ test('level-journal: taskless hotfix receipt has public dry-run and send parity'
     f.git('add', 'hotfix.plan.md'); f.git('commit', '-qm', 'hotfix plan');
     let frame = await f.begin('implement', session, plan);
     const run = f.absoluteRun(frame.run);
-    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approve this scope.' } });
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScopeHash: frame.data['gateScopeHash'] } });
     const [slot] = withLaunch(frame.data['tasks'] as { launchPath: string }[], run, (file) => fs.readFileSync(file, 'utf8')) as unknown as (ReceiptSlot & { worktree: string })[];
     assert.equal(slot?.task, 'T1', JSON.stringify(frame));
@@ -434,7 +452,7 @@ test('reuses settled plan from session journal and rejects stale or failed candi
     const reuseFrame = await f.begin('implement', session, plan);
     const reuseJournal = fs.readFileSync(path.join(f.absoluteRun(reuseFrame.run), 'events.jsonl'), 'utf8');
     assert.equal(reuseFrame.await, 'decide');
-    assert.equal(reuseFrame.data['kind'], 'approval');
+    assert.equal(reuseFrame.data['kind'], 'level-classification');
     assert.doesNotMatch(reuseJournal, /"effectId":"implement\.plan-review/);
     session = path.resolve(f.absoluteRun(reuseFrame.run), '../../..');
 
@@ -444,7 +462,7 @@ test('reuses settled plan from session journal and rejects stale or failed candi
       const casedReuseFrame = await f.begin('implement', session, casedPlan);
       const casedReuseJournal = fs.readFileSync(path.join(f.absoluteRun(casedReuseFrame.run), 'events.jsonl'), 'utf8');
       assert.equal(casedReuseFrame.await, 'decide');
-      assert.equal(casedReuseFrame.data['kind'], 'approval');
+      assert.equal(casedReuseFrame.data['kind'], 'level-classification');
       assert.doesNotMatch(casedReuseJournal, /"effectId":"implement\.plan-review/);
     }
 
@@ -758,8 +776,6 @@ No reviews conducted yet.
       const ids = [...new Set((frame.data['items'] as { failureId: string }[]).map((row) => row.failureId))];
       frame = await f.reply(run, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } });
     }
-    assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
-    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with fixture graph' } });
     assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'The fixture tasks are bounded and recoverable.', gateScopeHash: frame.data['gateScopeHash'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
@@ -773,7 +789,7 @@ async function launchTasks(g: TaskGraph, frame: CliFrame) {
   for (const slot of taskSlots(frame, g.f.repo).filter((item) => item.action === 'launch')) next = await g.f.reply(g.run, launchedReceipt(slot, `writer-${slot.task}`, frame));
   return next;
 }
-async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' = 'valid') {
+async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' | 'omitted' | 'invalid' = 'valid') {
   const slot = taskSlots(frame, g.f.repo).find((item) => item.task === id)!;
   assert.ok(slot, JSON.stringify(frame));
   const file = { T1: 'a', T2: 'b', T3: 'c' }[id]!;
@@ -788,11 +804,12 @@ test('${name}', () => { assert.equal(value, 2);${dependent ? ' assert.equal(shar
 `;
   fs.writeFileSync(path.join(slot.worktree, `tests/${file}.test.js`), red === 'setup' && id === 'T1' ? `import '../missing.ts';\n${testSource}` : testSource);
   if (id === 'T1' && red !== 'missing') await g.f.cli(['checkpoint', '--root', slot.worktree, '--out', slot.checkpointPath, '--', 'tests/a.test.js']);
+  if (id === 'T1' && red === 'invalid') fs.writeFileSync(slot.checkpointPath, '{');
   fs.writeFileSync(path.join(slot.worktree, `src/${file}.ts`), 'export const value = 2;\n');
   fs.writeFileSync(slot.envelopePath, JSON.stringify({
     schemaVersion: 1, stage: 'COMPLETE', status: 'DONE', summary: `Delivered ${id}`,
     evidence: [`CRITERION SC${file.charCodeAt(0) - 96} | src/${file}.ts | exports the checked value`,
-      ...(id === 'T1' ? [`RED-MATRIX SC1 | tests/a.test.js:${name} | exit 1 test:${name}`] : [])],
+      ...(id === 'T1' && red !== 'omitted' ? [`RED-MATRIX SC1 | tests/a.test.js:${name} | exit 1 test:${name}`] : [])],
     files: [{ path: `src/${file}.ts`, note: 'Exports value two.' }, { path: `tests/${file}.test.js`, note: 'Checks the interface.' }],
   }));
   return g.f.reply(g.run, submittedReceipt(slot, slot.handle!, frame));
@@ -864,18 +881,42 @@ test('task graph: failed branch leaves an independent writer running and blocks 
   } finally { g.f.cleanup(); }
 });
 
-for (const red of ['missing', 'setup'] as const) {
-  test(`task graph: ${red === 'missing' ? 'missing RED checkpoint' : 'setup-only RED'} prevents acceptance`, async () => {
+test('task graph: missing RED rows admit the candidate through GREEN and integration verification', async () => {
+  const g = await taskGraph(1);
+  try {
+    const frame = await finishTask(g, await launchTasks(g, g.frame), 'T1', 'omitted');
+    assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => slot.task), ['T2']);
+    const events = fs.readFileSync(path.join(g.run, 'events.jsonl'), 'utf8');
+    assert.ok((events.match(/"purpose":"scoped"/g) ?? []).length >= 2);
+    assert.match(events, /"op":"integrate"/);
+    assert.doesNotMatch(events, /"purpose":"red"/);
+  } finally { g.f.cleanup(); }
+});
+
+for (const red of ['missing', 'invalid'] as const) {
+  test(`task graph: ${red} RED checkpoint becomes a concern and GREEN still admits the candidate`, async () => {
     const g = await taskGraph(2);
     try {
       const frame = await finishTask(g, await launchTasks(g, g.frame), 'T1', red);
-      assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));
-      assert.match(JSON.stringify(frame.data), red === 'missing' ? /checkpoint|ENOENT/i : /RED replay rejected|load\/setup error/i);
-      assert.equal(fs.readFileSync(path.join(g.f.repo, 'src/b.ts'), 'utf8'), 'export const value = 1;\n');
-      assert.ok(fs.existsSync(taskSlots(g.frame, g.f.repo)[0]!.worktree), 'failed artifact remains available');
+      assert.deepEqual(taskSlots(frame, g.f.repo).map((slot) => slot.task), ['T2', 'T3']);
+      const events = fs.readFileSync(path.join(g.run, 'events.jsonl'), 'utf8');
+      assert.match(events, /"checkpointConcerns":\["RED checkpoint is/);
+      assert.match(events, /"op":"integrate"/);
+      assert.match(events, /"purpose":"scoped"/);
     } finally { g.f.cleanup(); }
   });
 }
+
+test('task graph: setup-only RED becomes a concern but failing GREEN prevents acceptance', async () => {
+  const g = await taskGraph(2);
+  try {
+    const frame = await finishTask(g, await launchTasks(g, g.frame), 'T1', 'setup');
+    assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));
+    assert.match(JSON.stringify(frame.data), /Task verification failed/i);
+    assert.equal(fs.readFileSync(path.join(g.f.repo, 'src/b.ts'), 'utf8'), 'export const value = 1;\n');
+    assert.ok(fs.existsSync(taskSlots(g.frame, g.f.repo)[0]!.worktree), 'failed artifact remains available');
+  } finally { g.f.cleanup(); }
+});
 
 test('checkout: older independent baseline integrates only the task delta', async () => {
   const c = await checkoutRepo(), base = String((await c.op('init'))['base']);
@@ -966,8 +1007,7 @@ async function liveRun(f: ReturnType<typeof fixture>, name: string, source: stri
     const ids = [...new Set((frame.data['items'] as { failureId: string }[]).map((row) => row.failureId))];
     frame = await f.reply(run, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } });
   }
-  assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
-  frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with the fixture plan.' } });
+  assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
   frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScopeHash: frame.data['gateScopeHash'] } });
   assert.equal(frame.await, 'write', JSON.stringify(frame));
   const launchFrame = frame;

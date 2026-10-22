@@ -71,7 +71,10 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
   if (envelope.stage !== 'COMPLETE') return `Envelope stage must be COMPLETE; got ${envelope.stage}.`;
   if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return null;
   const issued = taskContext.record.briefs?.find((row) => row.envelopePath === taskContext.record.brief?.envelopePath)?.contractChecks;
-  return taskSubmissionValidation(envelope.evidence, taskContext.plan, taskCriteria(taskContext.plan, taskContext.task), issued).rejection;
+  const validation = taskSubmissionValidation(envelope.evidence, taskContext.plan, taskCriteria(taskContext.plan, taskContext.task), issued);
+  const checkpointConcerns = result.checkpointConcerns ?? [];
+  if (!validation.rejection) for (const concern of [...validation.concerns, ...checkpointConcerns]) ports.proc.stderr(`note: ${taskContext.task.id}: ${concern}\n`);
+  return validation.rejection;
 }
 
 /** Guards a reducer bug from looping forever; exceeding it is an engine fault. */

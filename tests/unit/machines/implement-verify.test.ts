@@ -4,12 +4,12 @@ import type { Effect, Event } from '../../../skills/dispatch/scripts/core/types.
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { initialImplement, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { approvalState, host } from './fixtures/implement-recovery.ts';
+import { classificationState, host } from './fixtures/implement-recovery.ts';
 import { launch, pump, start, submit } from './fixtures/implement-tasks.ts';
 
 test('ordinary evidence completes only when every required criterion passes', () => {
   for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) {
-    const c = approvalState().c;
+    const c = classificationState().c;
     const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
     const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome, evidence: 'observed behavior' } } });
     assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence', outcome || 'empty');
@@ -17,7 +17,7 @@ test('ordinary evidence completes only when every required criterion passes', ()
 });
 
 test('user-waived evidence completes and reports the waiver as a limitation', () => {
-  const c = approvalState().c;
+  const c = classificationState().c;
   const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
   const waived = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'waived', evidence: 'deferred to post-delivery smoke run' } } } as const;
   assert.equal(host(state, waived).state.tag, 'evidence');
@@ -268,9 +268,9 @@ test('trim binds review-fixed transient test', () => {
 // SECTION: Orchestrator evidence authority
 
 const OBSERVATION = { id: 'obs-1', afterHash: 'after-1', beforeHash: 'before-1', phase: 'approval', pendingId: 'DECISION', rawDeltaRef: { version: 1 as const, sha256: 'c'.repeat(64), bytes: 20, path: 'recovery-deltas/c.json' }, paths: ['README.md'], pathCount: 1, suggestedRelevance: 'unknown' as const, reason: 'Dependency coverage is incomplete.', suggestedEvidence: ['SC1'] };
-const passed = (c: ReturnType<typeof approvalState>['c']) => ({ id: 'SC1', outcome: 'pass' as const, evidence: 'checked earlier', planHash: c.planHash!, mutationEpoch: 0, source: 'verify', redProvenance: 'not-required' as const });
+const passed = (c: ReturnType<typeof classificationState>['c']) => ({ id: 'SC1', outcome: 'pass' as const, evidence: 'checked earlier', planHash: c.planHash!, mutationEpoch: 0, source: 'verify', redProvenance: 'not-required' as const });
 function accepted() {
-  const c0 = approvalState().c;
+  const c0 = classificationState().c;
   const T1 = { ...c0.tasks['T1'] ?? { id: 'T1', signature: '', input: null, worktree: null, handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, redRows: [], reason: null, failures: 0 }, status: 'accepted' as const, attempt: 2, candidate: 'candidate-1', integrated: 'integrated-1' };
   return { ...c0, phase: 'tasks' as const, tasks: { T1 } as typeof c0.tasks, integration: { path: 'integration', base: 'base', head: 'integrated-1', links: [], ignored: [] }, evidence: { SC1: passed(c0) },
     records: { check: { command: 'check', exit: 0, logPath: 'check.log', failureId: null, failedTests: [], diagnostic: '', baselineHits: [], scanUnreadable: [], inputFingerprint: 'input', mutationEpoch: 0, status: 'pass' as const } }, observations: [OBSERVATION] };
@@ -313,7 +313,7 @@ test('authority-evidence: a pending obligation clears only with fresh evidence',
 });
 
 test('authority-evidence: reuse cannot pass a failed required gate', () => {
-  const base = approvalState().c;
+  const base = classificationState().c;
   const failing = { ...base.records, check: { command: 'check', exit: 1, logPath: 'check.log', failureId: 'f', failedTests: ['test:a'], diagnostic: 'failed', baselineHits: [], scanUnreadable: [], inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' as const } };
   const state = { tag: 'failure' as const, c: { ...base, phase: 'delivered' as const, records: failing, evidence: { SC1: passed(base) }, observations: [OBSERVATION] }, reason: 'Final verification failed: check', changedPaths: [] };
   const event = { type: 'DECISION' as const, kind: 'failure' as const, answer: { by: 'orchestrator', action: 'retry', rationale: 'retry' }, changeDispositions: [{ ...bind, retain: ['SC1'] }] };

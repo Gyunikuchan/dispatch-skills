@@ -3,7 +3,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
-import { approvalState } from '../machines/fixtures/implement-recovery.ts';
+import { classificationState } from '../machines/fixtures/implement-recovery.ts';
 import { started } from '../machines/fixtures/design-delivery.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
@@ -29,7 +29,7 @@ test('readable artifact ownership: standalone, active and completed design child
   const begun = beginReview({ kind: 'plan', target: planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'plan.review', {}).state;
   if (!('c' in begun)) throw new Error('review');
   const planReview = stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check. Complete explanation.', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Added check\nKeep API' } } }).state;
-  const implementation = { ...approvalState(), c: { ...approvalState().c, planPath, planReview } };
+  const implementation = { ...classificationState(), c: { ...classificationState().c, planPath, planReview } };
   const active = started();
   if (active.tag !== 'increment') throw new Error('design');
   const run = { verb: 'implement' as const, argument: 'x.design.md', slug: 'feature' };
@@ -100,7 +100,7 @@ test('readable artifact ownership: code review records findings in its governing
 test('readable artifact ownership: walkthrough regeneration retains later standalone review history without duplicating implementation rounds', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
   memoryRunFs(ports, session);
-  const implementation = { tag: 'complete' as const, c: approvalState().c, summary: 'Done' };
+  const implementation = { tag: 'complete' as const, c: classificationState().c, summary: 'Done' };
   const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature.plan.md', slug: 'feature' }, child: implementation };
   rootMachine.render!(state, ports, session);
   const logPath = path.join(session, 'feature.walkthrough.review-log.md');

@@ -148,7 +148,6 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
         : kind === 'concerns' ? { decision: 'accept', by: 'orchestrator', quote: '<concern resolution evidence>' }
         : kind === 'baseline' ? { action: 'accept-known-red', ids: [...new Set(rows(items).flatMap((item) => typeof item['failureId'] === 'string' ? [item['failureId']] : []))].sort() }
         : kind === 'level-classification' ? { evaluatedLevel: 'medium', rationale: '<concrete scope and risk evidence>', gateScopeHash: data['gateScopeHash'] }
-        : kind === 'level-recommendation' ? { choice: 'adopt', quote: '<actual user quote>' }
         : kind === 'integration-conflict' ? { by: 'orchestrator', action: 'resolve', rationale: '<resolution against the intent and criteria of both tasks>' }
         : kind === 'request' ? { by: 'orchestrator', action: 'approve', rationale: '<ruling against task intent and invariants>' }
         : kind === 'request-user' ? { by: 'user', requestId: data['requestId'] ?? rows([data['request']])[0]?.['requestId'], choice: 'accept', quote: '<actual user quote>' }

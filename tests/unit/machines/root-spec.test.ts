@@ -9,7 +9,7 @@ import { PLAN as IMPLEMENT_PLAN } from './fixtures/implement-recovery.ts';
 import { stepDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { beginDesignRevision, stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { started as deliveryStarted } from './fixtures/design-delivery.ts';
-import { approvalState } from './fixtures/implement-recovery.ts';
+import { classificationState } from './fixtures/implement-recovery.ts';
 import { beginReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { DESIGN_REVISION_CONTEXT_PREFIX } from '../../../skills/dispatch/scripts/domain/prompt.ts';
 
@@ -244,7 +244,7 @@ const AMEND: HostEvent = { type: 'AMEND', delta: [], notify: [], rationale: 'Adj
 const REPLACE_PLAN: HostEvent = { type: 'REPLACE_PLAN', path: 'x.plan.md', expectedHash: `sha256:${'b'.repeat(64)}`, rationale: 'Replace', notify: [], reconciliation: {} as never };
 
 test('spec stage guard: a spec-approval decision outside the spec approval await is rejected', () => {
-  const implement: RootState = { tag: 'implement', run: runInfo('implement', 'low', started('implement')), child: approvalState() };
+  const implement: RootState = { tag: 'implement', run: runInfo('implement', 'low', started('implement')), child: classificationState() };
   assert.equal(rootMachine.awaitOf(implement), 'decide');
   assert.match(rootMachine.validate!(implement, specApproval() as HostEvent) ?? '', /spec-approval is accepted at the spec approval await only/);
   const authoring = settledAt('plan').state;
@@ -332,7 +332,7 @@ test('changed settled bytes intercept each parent parse and review boundary', ()
   const plan = { ...planned, c: { ...planned.c, designPin: 'x.design.md' } };
   const dc = { ...designApproval().c, governingSpec: identity };
   const revision = beginDesignRevision(dc, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
-  const impl = approvalState();
+  const impl = classificationState();
   assert.ok('c' in impl && impl.c);
   const ic = { ...impl.c, governingSpec: identity, designPin: 'x.design.md' };
   const begun = beginReview({ kind: 'plan', target: 'x.plan.md', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: identity }, 'review', {});

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { refreshEvidence } from '../../skills/dispatch/scripts/machines/change-resolution.ts';
-import { stepImplement } from '../../skills/dispatch/scripts/machines/implement.ts';
-import { approvalState, FP } from '../unit/machines/fixtures/implement-recovery.ts';
+import { implementData, stepImplement } from '../../skills/dispatch/scripts/machines/implement.ts';
+import { classificationState, FP } from '../unit/machines/fixtures/implement-recovery.ts';
 import { fakePorts, tempDir } from '../helpers/fake-ports.ts';
 import { publishRecovery } from '../../skills/dispatch/scripts/effects/recovery-manifest.ts';
 import { createAssessRecovery } from '../../skills/dispatch/scripts/effects/assess-recovery.ts';
@@ -13,10 +13,10 @@ test('phase adapter: real assessment suggests affected evidence and an advisory 
   const ports = fakePorts(), runDir = tempDir();
   const manifest: RecoveryManifest = { repoRoot: '/repo', contentStore: 'recovery-contents', contents: { 'src/a.ts': null }, entries: { 'src/a.ts': { kind: 'symlink', mode: 0o777, linkTarget: 'b25l' } }, taskStartFiles: [], callerDirty: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
   const before = { ...FP, recovery: publishRecovery(ports, runDir, manifest) }, after = { ...FP, worktree: 'new', recovery: publishRecovery(ports, runDir, { ...manifest, entries: { 'src/a.ts': { kind: 'symlink', mode: 0o777, linkTarget: 'dHdv' } } }) };
-  const original = approvalState(), criterion = original.c.plan!.criteria[0]!;
+  const original = classificationState(), criterion = original.c.plan!.criteria[0]!;
   const row = (id: string, inputs: string[]) => ({ id, planHash: original.c.planHash!, mutationEpoch: 0, source: 'verify', dependencies: { inputs, complete: true, rationale: 'All transitive command/tool/config inputs inspected.' } });
   const c = { ...original.c, lastFingerprint: before, plan: { ...original.c.plan!, criteria: [{ ...criterion, id: 'SC1' }, { ...criterion, id: 'SC2' }] }, evidence: { SC1: row('SC1', ['src/a.ts']), SC2: row('SC2', ['src/b.ts']) } };
-  const parked = stepImplement({ ...original, c }, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
+  const parked = stepImplement({ ...original, c }, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local work.', gateScopeHash: implementData(original)['gateScopeHash'] } });
   const assessing = stepImplement(parked.state, { type: 'SNAPSHOT', effectId: parked.effects[0]!.id, fingerprint: after, diff: { paths: ['src/a.ts'] } });
   const effect = assessing.effects[0]!; assert.equal(effect.kind, 'assess-recovery'); if (effect.kind !== 'assess-recovery') return;
   const receipt = (await createAssessRecovery()(effect, ports, { runDir, attempt: 1 }))[0]!;

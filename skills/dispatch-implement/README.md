@@ -4,4 +4,4 @@ Compatibility alias for dispatch implementation. Requires sibling [dispatch](../
 
 Invoke `/dispatch-implement [level] [(pins)] argument`. It maps to `start implement`; see [dispatch usage](../dispatch/README.md) for Node prerequisites, configuration, and recovery. The branch contract is [SKILL.md](.).
 
-Uses the same governing spec, applicable spec/design approvals and production-write approval workflow as Dispatch. See [implementation](../dispatch/references/readme/implement.md).
+Uses the same governing spec and applicable spec/design approval workflow as Dispatch. See [implementation](../dispatch/references/readme/implement.md).

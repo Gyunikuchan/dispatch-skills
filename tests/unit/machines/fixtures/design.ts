@@ -7,7 +7,7 @@ import type { ImplementState } from '../../../../skills/dispatch/scripts/machine
 import { stepDesignRevision } from '../../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { asParsedDesign, designScopeGrew } from '../../../../skills/dispatch/scripts/domain/design.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../../skills/dispatch/scripts/machines/root.ts';
-import { approvalState, FP } from './implement-recovery.ts';
+import { classificationState, FP } from './implement-recovery.ts';
 
 export const hash = `sha256:${crypto.createHash('sha256').update('# Delivery').digest('hex')}`;
 export const design = { title: 'Delivery', box: { 'TL;DR': 'Deliver feature' }, governedText: '# Delivery', executionStatus: null, increments: [{ id: 'I01', priority: 1, summary: 'First', prerequisites: [], paths: ['src/a.ts'] }, { id: 'I02', priority: 2, summary: 'Second', prerequisites: ['I01'], paths: ['src/b.ts'] }], details: { I01: { Outcome: 'First behavior' }, I02: { Outcome: 'Second behavior' } } };

@@ -28,8 +28,7 @@ flowchart TD
     SpecGate --> Design["🗺️ Tech design + review"]
     Design --> DesignGate{"Approve design"}
     DesignGate --> Plan["📝 Increment plan + plan review"]
-    Plan --> Gate{"🛑 Approve production work"}
-    Gate --> Tasks["🧩 Tasks in isolated worktrees"]
+    Plan --> Tasks["🧩 Tasks in isolated worktrees"]
     Tasks --> Red["🔴 Failing tests first"]
     Red --> Green["💻 Writer makes them pass"]
     Green --> CodeReview["⚡ Code review + fixes"]
@@ -60,7 +59,7 @@ All work verbs first settle one governing spec for the outcome, constraints and 
 
 | What dispatch does | Why it matters |
 |---|---|
-| **🛡️ Keeps read delegates read-only** | Ambient credential variables are stripped; sensitive attachments are rejected. Native authenticated state remains available, and prompt guardrails guide file reads. Supported platforms add an OS sandbox for another layer of protection. After plan approval, a writer on the host platform makes production changes. |
+| **🛡️ Keeps read delegates read-only** | Ambient credential variables are stripped; sensitive attachments are rejected. Native authenticated state remains available, and prompt guardrails guide file reads. Supported platforms add an OS sandbox for another layer of protection. After the plan settles, a writer on the host platform makes production changes. |
 | **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in session files, while structured handoffs preserve cited findings and progress for the next phase. |
 | **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
 | **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |

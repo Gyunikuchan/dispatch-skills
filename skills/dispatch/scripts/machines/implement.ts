@@ -3,12 +3,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { qualitySections } from '../domain/prompt.ts';
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, ScopeAdjustment, PlanAmendment, PlanEdit, ChangeNotice, ChangeObservation, DriftResolution, AmendEvent, ReplacePlanEvent, PlanReconciliation, WriterRetirement, WriteReceiptEvent, ConflictDecision, RequestDecision, RequestUserDecision, SpecIdentity } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { effectDigest } from '../domain/effect-digest.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
-import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, contractCommands, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, sameFingerprint, settledPlanInput, taskSubmissionValidation, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
+import { generatedCommands, approvedPaths, asParsedPlan, commandEffect, commandMappings, contractCommands, declaredTestPaths, downgradeReason, effectiveEvidence, isFingerprint, isWriterEnvelope, sameFingerprint, settledPlanInput, taskSubmissionValidation, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type RedProbe, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, reviewArtifactId, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, launchDrift, launchMismatch, never, nextId, staleGoverning, stay, type Counters, type Step } from './types.ts';
 import { recoveryRef, failureAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
@@ -63,7 +63,7 @@ export type Context = {
   approvedRedExceptions: readonly string[];
   redExceptionRulings: Readonly<Record<string, { decision: 'accept'; by: string; quote: string }>>;
   concernRulings: Readonly<Record<string, { decision: 'accept'; by: string; quote: string }>>;
-  /** `tasks` from approval until verified delivery; caller checkout effects and drift checks apply outside it. */
+  /** `tasks` from task scheduling until verified delivery; caller checkout effects and drift checks apply outside it. */
   phase: 'setup' | 'tasks' | 'delivered';
   tasks: Tasks;
   integration: { path: string; base: string; head: string; links: readonly string[]; ignored: readonly string[] } | null;
@@ -83,7 +83,6 @@ export type Context = {
   levelGatePassed: boolean;
   gateScope: LevelGateScope | null;
   levelAssessment: LevelClassificationAnswer | null;
-  levelChoice: LevelRecommendationAnswer | null;
   scopeAdjustments: readonly ScopeAdjustment[];
   scopeNotice: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
   amendments: readonly AmendmentRecord[];
@@ -142,10 +141,8 @@ export type ImplementState =
   | { tag: 'baseline-snapshot'; c: Context; effectId: string; results: readonly VerifyRecord[] }
   | { tag: 'baseline-decision'; c: Context; items: readonly VerifyRecord[] }
   | { tag: 'level-classification'; c: Context; gateScope: LevelGateScope; resume: LevelGateResume }
-  | { tag: 'level-recommendation'; c: Context; assessment: LevelClassificationAnswer; resume: LevelGateResume }
   | { tag: 'integration-conflict'; c: Context; conflict: Conflict }
   | { tag: 'request-decision'; c: Context; request: WriterRequest; stage: 'orchestrator' | 'user'; orchestratorRationale: string | null }
-  | { tag: 'approval'; c: Context }
   | { tag: 'needs-user'; c: Context; ids: readonly string[] }
   | { tag: 'task-checkout'; c: Context; effectId: string; step: CheckoutStep; task: string | null; reason: string | null; conflict?: Conflict; input?: Readonly<Record<string, unknown>>; observe?: { durable: readonly string[]; rebind: readonly string[] }; gate?: { notice: string } }
   | { tag: 'task-brief'; c: Context; effectId: string; task: string; notice?: string }
@@ -204,7 +201,7 @@ function baseContext(run: RunStartedEvent): Context {
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, phase: 'setup', tasks: {}, integration: null,
     approval: null, changedPaths: [], finalGate: 'pending', failureReason: null,
     finalFocus: [], withdrawnHotfix: [], retryContext: null, stalled: null, revisions: [], revisionReviewRound: 0,
-    levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null,
+    levelGatePassed: false, gateScope: null, levelAssessment: null, scopeAdjustments: [], scopeNotice: null,
     amendments: [], amended: [], rebriefQueue: [], reverifyQueue: [], amendResume: null, requestCount: 0, deliveredBlobs: {}, trimmed: null,
   };
 }
@@ -323,7 +320,7 @@ function afterBaseline(c: Context, results: readonly VerifyRecord[]): S {
 }
 
 export function beginApproval(c: Context): S {
-  return c.designBinding ? beginPostApproval({ ...c, approval: { by: 'design', quote: `${c.designBinding.approval.quote} (${c.designBinding.revision}, ${c.designBinding.increment})` } }) : stay({ tag: 'approval', c });
+  return c.designBinding ? beginPostApproval({ ...c, approval: { by: 'design', quote: `${c.designBinding.approval.quote} (${c.designBinding.revision}, ${c.designBinding.increment})` } }) : beginPostApproval({ ...c, approval: { by: 'plan', quote: `settled plan ${c.planHash}` } });
 }
 
 function gateScope(c: Context): LevelGateScope {
@@ -357,22 +354,19 @@ function resumeLevelGate(c: Context, resume: LevelGateResume): S {
   return beginHotfix({ ...resume.origin, c }, resume.answer);
 }
 
-function finishLevelGate(c0: Context, assessment: LevelClassificationAnswer, choice: LevelRecommendationAnswer | null, resume: LevelGateResume): S {
+function finishLevelGate(c0: Context, assessment: LevelClassificationAnswer, resume: LevelGateResume): S {
   const explicit = c0.run.levelSource === 'explicit';
-  const selected = explicit ? choice?.choice === 'adopt' ? assessment.evaluatedLevel : c0.run.level : assessment.evaluatedLevel;
+  const selected = explicit ? c0.run.level : assessment.evaluatedLevel;
   const writer = writerConfig(c0.run.config, c0.run.orchestrator, selected);
   if (!writer.ok) return beginFailure(c0, writer.error);
-  const levelChoice = choice;
   const settled = { ...c0 };
   delete settled.pendingWriter;
   const c: Context = {
     ...settled, run: { ...c0.run, level: selected }, writer: writer.value, writerError: null,
-    levelGatePassed: true, gateScope: c0.gateScope, levelAssessment: assessment, levelChoice,
+    levelGatePassed: true, gateScope: c0.gateScope, levelAssessment: assessment,
   };
   return resumeLevelGate(c, resume);
 }
-
-function levelOf(value: string): number { return value === 'low' ? 0 : value === 'medium' ? 1 : value === 'high' ? 2 : 3; }
 
 function redCriteria(c: Context): PlanCriterion[] {
   return c.plan!.criteria.filter((criterion) => criterion.evidence === 'red');
@@ -753,8 +747,9 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   const issued = record.briefs?.find((row) => row.envelopePath === record.brief?.envelopePath)?.contractChecks;
   const evidence = taskSubmissionValidation(envelope.evidence, plan, taskCriteria(plan, task), issued);
   if (evidence.rejection) return taskFailed(c, id, evidence.rejection);
-  const concerns = envelope.status === 'DONE_WITH_CONCERNS' ? (envelope.concerns ?? []).map((item) => `${id}: ${item}`) : [];
-  const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: evidence.redRows });
+  const checkpointConcerns = event.checkpointConcerns ?? [];
+  const concerns = [...(envelope.status === 'DONE_WITH_CONCERNS' ? envelope.concerns ?? [] : []), ...checkpointConcerns].map((item) => `${id}: ${item}`);
+  const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns, ...evidence.concerns.map((item) => `${id}: ${item}`)])] }, id, { redRows: checkpointConcerns.length ? [] : evidence.redRows });
   return checkout(next, 'commit', 'commit', { name: taskWorktreeName(record), base: record.input, message: `dispatch task ${id} attempt ${record.attempt}` }, id);
 }
 
@@ -1015,7 +1010,7 @@ function redRun(c: Context, criterion: PlanCriterion, rows: readonly RedMatrixRo
 function redCommands(c: Context, id: string): RedRun[] | string {
   const plan = c.plan!, rows = (c.tasks[id] as TaskRecord).redRows;
   const commands = new Map<string, RedRun>();
-  for (const criterion of taskRedCriteria(plan, planTask(c, id)!)) {
+  for (const criterion of taskRedCriteria(plan, planTask(c, id)!).filter((criterion) => rows.some((row) => row.id === criterion.id))) {
     const run = redRun(c, criterion, rows);
     if (typeof run === 'string') return run;
     const prior = commands.get(run.command);
@@ -1073,9 +1068,10 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
     }
     case 'commit': return admitCandidate(withTask(c, id, { candidate: text('revision'), candidatePaths: list('paths') }), id);
     case 'red': {
-      if (list('defects').length) return taskFailed(c, id, `RED checkpoint rejected: ${list('defects').join('; ')}`);
+      if (list('defects').length) return taskFailed(c, id, `RED checkpoint: ${list('defects').join('; ')}`);
+      if (list('concerns').length) return greenVerify({ ...c, concerns: [...new Set([...c.concerns, ...list('concerns').map((concern) => `${id}: RED checkpoint: ${concern}`)])] }, id);
       const commands = redCommands(c, id);
-      return typeof commands === 'string' ? taskFailed(c, id, commands) : taskVerify(c, id, 'red', text('path'), commands);
+      return typeof commands === 'string' ? greenVerify({ ...c, concerns: [...new Set([...c.concerns, `${id}: ${commands}`])] }, id) : taskVerify(c, id, 'red', text('path'), commands);
     }
     case 'integrate': {
       if (result['conflict'] === true) {
@@ -1241,9 +1237,9 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'plan-replace
         return failVerify(state, failing.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; '));
       }
       if (state.purpose === 'red') {
+        const task = state.task;
         const { defects, concerns } = actualRedDefects(state.c, (state.c.tasks[state.task] as TaskRecord).redRows, rows);
-        if (defects.length) return taskFailed(state.c, state.task, `RED replay rejected: ${defects.join('; ')}`);
-        return greenVerify(concerns.length ? { ...state.c, concerns: [...new Set([...state.c.concerns, ...concerns])] } : state.c, state.task);
+        return greenVerify({ ...state.c, concerns: [...new Set([...state.c.concerns, ...defects.map((defect) => `${task}: RED replay: ${defect}`), ...concerns.map((concern) => `${task}: ${concern}`)])] }, state.task);
       }
       const regression = rows.filter((row) => row.status === 'regression');
       if (state.purpose === 'integration') {
@@ -1545,7 +1541,7 @@ export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding
   const c = {
     ...baseContext(run), governingSpec, specEpoch, counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
     levelGatePassed: binding.levelGatePassed ?? false, gateScope: binding.gateScope ?? null,
-    levelAssessment: binding.levelAssessment ?? null, levelChoice: binding.levelChoice ?? null,
+    levelAssessment: binding.levelAssessment ?? null,
     scopeAdjustments: binding.scopeAdjustments ?? [],
     scopeNotice: binding.scopeNotice ?? null,
   };
@@ -1632,26 +1628,12 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (ids.length !== available.length || new Set(ids).size !== ids.length || available.some((id) => !ids.includes(id))) return stay(state);
       return beginApproval({ ...state.c, acceptedBaseline: available });
     }
-    case 'approval': {
-      if (event.type !== 'DECISION' || event.kind !== 'approval') return stay(state);
-      if (event.answer === 'stop') return stop(state.c, 'User declined implementation approval; repository work is preserved.');
-      const approval = approvalAnswer(event.answer);
-      return approval ? beginPostApproval({ ...state.c, approval }) : stay(state);
-    }
     case 'level-classification': {
       if (event.type === 'DECISION' && event.kind === 'run-stop') return stop(state.c, 'User stopped before implementation; no production writer was launched.');
       if (event.type !== 'DECISION' || event.kind !== 'level-classification' || !isRecord(event.answer)) return stay(state);
       // NOTE: the stored assessment binds the gate's own scope; validation already matched the answer hash.
       const assessment: LevelClassificationAnswer = { evaluatedLevel: event.answer['evaluatedLevel'] as LevelClassificationAnswer['evaluatedLevel'], rationale: String(event.answer['rationale']), gateScopeHash: gateScopeHash(state.gateScope) };
-      if (state.c.run.levelSource === 'explicit' && levelOf(assessment.evaluatedLevel) > levelOf(state.c.run.level)) {
-        return stay({ tag: 'level-recommendation', c: { ...state.c, levelAssessment: assessment }, assessment, resume: state.resume });
-      }
-      return finishLevelGate(state.c, assessment, null, state.resume);
-    }
-    case 'level-recommendation': {
-      if (event.type === 'DECISION' && event.kind === 'run-stop') return stop(state.c, 'User stopped before implementation; no production writer was launched.');
-      if (event.type !== 'DECISION' || event.kind !== 'level-recommendation' || !isRecord(event.answer)) return stay(state);
-      return finishLevelGate(state.c, state.assessment, event.answer as unknown as LevelRecommendationAnswer, state.resume);
+      return finishLevelGate(state.c, assessment, state.resume);
     }
     case 'integration-conflict': {
       if (event.type === 'AMEND') return applyAmend(state, event);
@@ -1998,7 +1980,7 @@ export function implementAwait(state: ImplementState): Await | null {
     case 'author': return 'author';
     case 'plan-review': case 'code-review': return reviewAwait(state.review);
     case 'tasks': case 'hotfix-write': return 'write';
-    case 'baseline-decision': case 'approval': case 'level-classification': case 'level-recommendation': case 'integration-conflict': case 'request-decision':
+    case 'baseline-decision': case 'level-classification': case 'integration-conflict': case 'request-decision':
     case 'needs-user': case 'concerns': case 'failure': case 'drift': return 'decide';
     case 'evidence': return 'evidence';
     case 'complete': case 'stopped': case 'failed': return 'done';
@@ -2043,7 +2025,7 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
       planPath: state.c.planPath, planHash: state.c.planHash,
       // NOTE: gateScope stays in context, completion data and level decide frames; this frame needs only the verdict.
       levelAssessment: state.c.levelAssessment ? { evaluatedLevel: state.c.levelAssessment.evaluatedLevel, rationale: state.c.levelAssessment.rationale } : null,
-      levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
+      scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
       // Rows stay fixed-size; launch fields, receipts and amendment notices live in each row's launch record.
       tasks: activeTasks(state.c.tasks).filter((record) => record.status === 'running').map((record) => ({
         task: record.id, action: launchAction(record), attempt: record.attempt, handle: record.handle, launchPath: launchRel(record.id),
@@ -2052,7 +2034,6 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
     };
     case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity, choose an inline hotfix, or stop.', ['accept-known-red', 'inline-hotfix', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
     case 'level-classification': return { ...decideData('level-classification', 'Assess the complete settled implementation scope once before the first production write. Return the evaluated level, concise evidence-based rationale and this exact gateScopeHash.', ['low', 'medium', 'high'], [{ level: state.c.run.level, source: state.c.run.levelSource }]), gateScope: state.gateScope, gateScopeHash: gateScopeHash(state.gateScope), settledLevel: state.c.run.level, stopAllowed: true };
-    case 'level-recommendation': return { ...decideData('level-recommendation', `The implementation assessment is ${state.assessment.evaluatedLevel}: ${state.assessment.rationale}. Choose whether to adopt it or retain the explicit ${state.c.run.level}.`, ['adopt', 'retain']), assessedLevel: state.assessment.evaluatedLevel, rationale: state.assessment.rationale, explicitLevel: state.c.run.level, gateScope: state.c.gateScope, stopAllowed: true };
     case 'integration-conflict': {
       const conflict = state.conflict;
       return {
@@ -2069,7 +2050,6 @@ function frameData(state: ImplementState): Readonly<Record<string, unknown>> {
         ? { ...decideData('request', state.request.source === 'admission' ? `Candidate ${state.request.task} changed paths an amendment removed from its scope. Approve admission, decline it, or escalate to the user.` : state.request.source === 'scope' ? `Submitted task ${state.request.task} changed paths outside its scope: ${state.request.paths.join(', ')}. Inspect them; approve to admit exactly these paths (no AMEND), decline incidental output to fail the task with work preserved, or escalate to the user.` : `Writer ${state.request.task} needs: ${state.request.need}. Approve once the paths are in scope (send AMEND to widen it), decline, or escalate to the user.`, ['approve', 'decline', 'escalate']), request: state.request, requestId: state.request.requestId, scope }
         : { ...decideData('request-user', 'The orchestrator escalated this request. Show the request and rationale, then record the user choice and quote.', ['accept', 'decline']), request: state.request, requestId: state.request.requestId, orchestratorRationale: state.orchestratorRationale, scope };
     }
-    case 'approval': return decideData('approval', 'Approve these plan paths and verification commands before any writer stage.', ['approve', 'stop'], [{ by: 'required', quote: 'required', paths: state.c.plan ? approvedPaths(state.c.plan) : [], commands: state.c.plan ? commandMappings(state.c.plan).map((row) => row.command) : [] }]);
     case 'needs-user': return decideData('needs-user', `Rule on RED exceptions for ${state.ids.join(', ')} before production work.`, ['accept', 'stop'], state.ids);
     case 'concerns': return decideData('concerns', 'Resolve the writer concerns before code review.', ['accept', 'stop'], state.items);
     case 'failure': return state.c.phase === 'tasks'
@@ -2105,7 +2085,7 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
   const review = c.codeReview ? reviewData(c.codeReview) : {};
   return {
     planPath: c.planPath, planHash: c.planHash, mutationEpoch: c.mutationEpoch, acceptedBaseline: c.acceptedBaseline,
-    settledLevel: c.run.level, levelSource: c.run.levelSource, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice, gateScope: c.gateScope, scopeAdjustments: c.scopeAdjustments,
+    settledLevel: c.run.level, levelSource: c.run.levelSource, levelAssessment: c.levelAssessment, gateScope: c.gateScope, scopeAdjustments: c.scopeAdjustments,
     finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
     criteria: (c.plan ? c.plan!.criteria : []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0, ...(c.obligations?.[criterion.id] ? { obligation: c.obligations[criterion.id] } : {}) })),
@@ -2241,7 +2221,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
   }
   if (event.type === 'REQUEST' && state.tag !== 'tasks') return 'event.type: REQUEST is accepted only at the task write frame.';
   if (event.type === 'WRITE_RECEIPT' && state.tag !== 'tasks' && state.tag !== 'hotfix-write') return 'event.type: write receipts are accepted only at a write frame.';
-  if (event.type === 'DECISION' && event.kind === 'run-stop' && !['level-classification', 'level-recommendation'].includes(state.tag)) return 'event.kind: run-stop is valid only at a level decision gate.';
+  if (event.type === 'DECISION' && event.kind === 'run-stop' && state.tag !== 'level-classification') return 'event.kind: run-stop is valid only at a level decision gate.';
   if (state.tag === 'hotfix-write' && event.type === 'WRITE_RECEIPT') {
     if (typeof event.task === 'string') return 'event.task: the hotfix writer sends a taskless receipt.';
     if (event.status !== 'submitted' && event.status !== 'failed') return 'event.status: the hotfix writer reports submitted or failed.';
@@ -2289,11 +2269,6 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     if (!state.c.gateScope || answer['gateScopeHash'] !== gateScopeHash(state.gateScope)) return 'event.answer.gateScopeHash: assessment must bind the exact gateScopeHash shown in the frame.';
     return null;
   }
-  if (state.tag === 'level-recommendation') {
-    if (event.type === 'DECISION' && event.kind === 'run-stop') return nonEmpty((event.answer as Record<string, unknown>)['quote']) ? null : 'event.answer.quote: run stop requires the user quote.';
-    if (event.type !== 'DECISION' || event.kind !== 'level-recommendation' || !isRecord(event.answer) || !['adopt', 'retain'].includes(String(event.answer['choice'])) || !nonEmpty(event.answer['quote'])) return 'event.answer: choose adopt or retain with a non-empty user quote.';
-    return null;
-  }
   if (state.tag === 'code-review' && event.type === 'FIXES_APPLIED') {
     const durable = new Set(state.c.plan!.criteria.filter((row) => row.retain !== 'transient').flatMap((row) => row.changes));
     const deleted = event.clusters.flatMap((cluster) => Array.isArray(cluster['deletedPaths']) ? cluster['deletedPaths'].filter((file): file is string => typeof file === 'string') : []);
@@ -2301,7 +2276,6 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     if (durableDeleted.length) return `event.clusters: a fix may not delete files of durable criteria: ${durableDeleted.join(', ')}.`;
   }
   if (state.tag === 'plan-review' || state.tag === 'code-review') return validateReview(state.review, event);
-  if (state.tag === 'approval' && event.type === 'DECISION' && event.kind === 'approval' && event.answer !== 'stop' && !approvalAnswer(event.answer)) return 'event.answer: approval requires non-empty user-attributed by and quote.';
   if (state.tag === 'baseline-decision' && event.type === 'DECISION' && event.kind === 'baseline' && event.answer !== 'stop') {
     const recovery = failureAnswer(event.answer);
     if (recovery?.action === 'hotfix') return recovery.mode === 'inline' ? null : 'event.answer: baseline hotfix is inline-only.';
@@ -2331,21 +2305,22 @@ export const implementTransitions = [
   { from: 'parsing', on: 'SPEC_SETTLED', to: 'stopped' },
   { from: 'parsing', on: 'EFFECT_FAILED', to: 'stopped' },
   { from: 'plan-review', on: 'EFFECT_FAILED', to: 'stopped' },
-  ...['author', 'plan-review', 'code-review', 'evidence', 'baseline-decision', 'approval', 'level-classification', 'level-recommendation', 'integration-conflict', 'request-decision', 'needs-user', 'concerns', 'failure', 'drift'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'stopped' })),
+  ...['author', 'plan-review', 'code-review', 'evidence', 'baseline-decision', 'level-classification', 'integration-conflict', 'request-decision', 'needs-user', 'concerns', 'failure', 'drift'].map((from) => ({ from, on: 'SPEC_SETTLED', to: 'stopped' })),
   { from: 'checking-host-event', on: 'SNAPSHOT', to: 'assessing-host-event' },
-  ...['baseline', 'final-verify', 'hotfix-verify', 'task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot', 'trim-snapshot', 'level-classification', 'level-recommendation', 'drift', 'stopped', 'failure-snapshot'].map((to) => ({ from: 'assessing-host-event', on: 'RECOVERY_ASSESSED', to })),
+  ...['baseline', 'final-verify', 'hotfix-verify', 'task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'failure', 'post-review-snapshot', 'trim-snapshot', 'level-classification', 'drift', 'stopped', 'failure-snapshot'].map((to) => ({ from: 'assessing-host-event', on: 'RECOVERY_ASSESSED', to })),
   { from: 'assessing-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   { from: 'drift', on: 'DECISION', to: 'checking-host-event' },
   { from: 'hotfix-snapshot', on: 'SNAPSHOT', to: 'hotfix-assessment' },
   ...['hotfix-verify', 'failure', 'baseline-decision', 'failure-snapshot'].map((to) => ({ from: 'hotfix-assessment', on: 'RECOVERY_ASSESSED', to })),
   { from: 'hotfix-assessment', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
-  ...['author', 'plan-review', 'code-review', 'tasks', 'hotfix-write', 'baseline-decision', 'approval', 'needs-user', 'concerns', 'failure', 'evidence', 'level-classification', 'level-recommendation', 'integration-conflict', 'request-decision'].flatMap((from) => HOST_EVENTS.map((on) => ({ from, on, to: 'checking-host-event' }))),
-  ...['parsing', 'plan-review', 'code-review', 'task-checkout', 'tasks', 'needs-user', 'approval', 'baseline-decision', 'level-classification', 'level-recommendation', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'post-review-snapshot', 'trim-snapshot', 'final-verify'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
+  ...['author', 'plan-review', 'code-review', 'tasks', 'hotfix-write', 'baseline-decision', 'needs-user', 'concerns', 'failure', 'evidence', 'level-classification', 'integration-conflict', 'request-decision'].flatMap((from) => HOST_EVENTS.map((on) => ({ from, on, to: 'checking-host-event' }))),
+  ...['parsing', 'plan-review', 'code-review', 'task-checkout', 'tasks', 'needs-user', 'baseline-decision', 'level-classification', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'post-review-snapshot', 'trim-snapshot', 'final-verify'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
   { from: 'checking-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
-  ...['task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot'].map((to) => ({ from: 'drift', on: 'DECISION', to })),
+  ...['task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'failure', 'post-review-snapshot'].map((to) => ({ from: 'drift', on: 'DECISION', to })),
   { from: 'drift', on: 'DECISION', to: 'stopped' },
-  { from: 'baseline-decision', on: 'DECISION', to: 'approval' }, { from: 'baseline-decision', on: 'DECISION', to: 'level-classification' }, { from: 'baseline-decision', on: 'DECISION', to: 'stopped' }, { from: 'approval', on: 'DECISION', to: 'needs-user' }, { from: 'approval', on: 'DECISION', to: 'level-classification' }, { from: 'approval', on: 'DECISION', to: 'stopped' }, { from: 'needs-user', on: 'DECISION', to: 'level-classification' }, { from: 'needs-user', on: 'DECISION', to: 'stopped' },
-  { from: 'approval', on: 'DECISION', to: 'task-checkout' }, { from: 'needs-user', on: 'DECISION', to: 'task-checkout' }, { from: 'failure', on: 'DECISION', to: 'task-checkout' },
+  { from: 'baseline-decision', on: 'DECISION', to: 'level-classification' }, { from: 'baseline-decision', on: 'DECISION', to: 'stopped' }, { from: 'needs-user', on: 'DECISION', to: 'level-classification' }, { from: 'needs-user', on: 'DECISION', to: 'stopped' },
+  ...['task-checkout', 'failure-snapshot', 'stopped'].map((to) => ({ from: 'level-classification', on: 'DECISION', to })),
+  { from: 'needs-user', on: 'DECISION', to: 'task-checkout' }, { from: 'failure', on: 'DECISION', to: 'task-checkout' },
   { from: 'failure', on: 'DECISION', to: 'tasks' }, { from: 'failure', on: 'DECISION', to: 'post-review-snapshot' }, { from: 'failure', on: 'DECISION', to: 'failure-snapshot' },
   ...TASK_EXITS.map((to) => ({ from: 'failure', on: 'AMEND', to })),
   ...['tasks', 'request-decision', 'integration-conflict', 'failure'].flatMap((from) => [{ from, on: 'REPLACE_PLAN', to: 'plan-replacement' }]),
@@ -2368,7 +2343,7 @@ export const implementTransitions = [
   ...['hotfix-verify', 'failure', 'baseline-decision', 'failure-snapshot'].map((to) => ({ from: 'hotfix-snapshot', on: 'SNAPSHOT', to })),
   { from: 'hotfix-snapshot', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   { from: 'hotfix-verify', on: 'EFFECT_FAILED', to: 'failure' }, { from: 'hotfix-verify', on: 'EFFECT_FAILED', to: 'baseline-decision' },
-  ...['post-review-snapshot', 'final-verify', 'approval', 'checking-host-event'].map((to) => ({ from: 'hotfix-verify', on: 'VERIFY_DONE', to })),
+  ...['post-review-snapshot', 'final-verify', 'level-classification', 'needs-user', 'task-checkout', 'checking-host-event'].map((to) => ({ from: 'hotfix-verify', on: 'VERIFY_DONE', to })),
   { from: 'code-review', on: 'REVIEW_PREPARED', to: 'post-review-snapshot' },
   { from: 'code-review', on: 'VERIFY_DONE', to: 'post-review-snapshot' },
   { from: 'code-review', on: 'DECISION', to: 'post-review-snapshot' },
@@ -2385,7 +2360,7 @@ export const implementTransitions = [
   { from: 'plan-review', on: 'RULINGS', to: 'parsing' }, { from: 'plan-review', on: 'FIXES_APPLIED', to: 'plan-review' }, { from: 'plan-review', on: 'WAVE_DONE', to: 'parsing' }, { from: 'plan-review', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   { from: 'baseline-preflight', on: 'SNAPSHOT', to: 'baseline' }, { from: 'baseline-preflight', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   { from: 'baseline', on: 'VERIFY_DONE', to: 'baseline-snapshot' }, { from: 'baseline', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
-  { from: 'baseline-snapshot', on: 'SNAPSHOT', to: 'baseline-decision' }, { from: 'baseline-snapshot', on: 'SNAPSHOT', to: 'approval' }, { from: 'baseline-snapshot', on: 'EFFECT_FAILED', to: 'failed' },
+  { from: 'baseline-snapshot', on: 'SNAPSHOT', to: 'baseline-decision' }, { from: 'baseline-snapshot', on: 'SNAPSHOT', to: 'level-classification' }, { from: 'baseline-snapshot', on: 'SNAPSHOT', to: 'needs-user' }, { from: 'baseline-snapshot', on: 'EFFECT_FAILED', to: 'failed' },
   { from: 'evidence', on: 'EVIDENCE', to: 'evidence' }, { from: 'evidence', on: 'EVIDENCE', to: 'complete' },
   { from: 'concerns', on: 'DECISION', to: 'code-review' }, { from: 'concerns', on: 'DECISION', to: 'stopped' },
   { from: 'code-review', on: 'RULINGS', to: 'post-review-snapshot' }, { from: 'code-review', on: 'WAVE_DONE', to: 'post-review-snapshot' }, { from: 'code-review', on: 'FIXES_APPLIED', to: 'code-review' }, { from: 'code-review', on: 'EFFECT_FAILED', to: 'failure-snapshot' },

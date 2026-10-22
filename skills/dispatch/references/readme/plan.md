@@ -8,7 +8,7 @@ If intent changes during standalone planning, the host updates the spec and retu
 
 ## What happens
 
-Dispatch helps identify the outcomes, affected files, prerequisites, and verification steps, then runs the plan review and fix rounds enabled by your level's `plan-review` policy. A level configured with zero targets or rounds can skip plan review. Read the plan and approve its verification commands before production changes begin.
+Dispatch helps identify the outcomes, affected files, prerequisites, and verification steps, then runs the plan review and fix rounds enabled by your level's `plan-review` policy. A level configured with zero targets or rounds can skip plan review. Read the settled plan and its verification commands, then run `implement` to begin.
 
 ### Flow at a glance
 
@@ -24,8 +24,7 @@ flowchart TD
     Fix --> Settled{"🔄 Settled?"}
     Settled -->|Findings remain| Review
     Settled -->|Decision needed| User
-    Settled -->|Yes| Gate{"🛑 You approve plan<br/>+ verify commands"}
-    Gate --> Next["▶️ implement: plan path"]
+    Settled -->|Yes| Next["▶️ implement: plan path"]
 ```
 
 ## How to use it
@@ -35,7 +34,7 @@ Describe the behavior you want, its constraints, and how you will know it is com
 ```text
 /dispatch plan: Add idempotency keys to webhook delivery
 /dispatch review: <path/to/change.plan.md>
-/dispatch implement: <approved plan path>
+/dispatch implement: <settled plan path>
 ```
 
 The separate review command is an optional additional pass; `.plan.md` lets Dispatch infer that the target is a plan. For work that needs ordered delivery increments, use [design](design.md) instead.

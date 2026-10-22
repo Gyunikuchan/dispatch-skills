@@ -113,8 +113,8 @@ function parseExecutionStatus(lines: readonly StructuralLine[], ids: ReadonlySet
 // SECTION: Public API
 
 export type DesignResult =
-  | { ok: true; design: ParsedDesign }
-  | { ok: false; defects: LintDefect[] };
+  | { ok: true; design: ParsedDesign; warnings: LintDefect[] }
+  | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
 /** Concrete design guard at journal-consuming machine boundaries. */
 export function asParsedDesign(value: unknown): ParsedDesign | null {
   const record = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -175,7 +175,7 @@ export function designScopeGrew(before: ParsedDesign, after: ParsedDesign): bool
   return false;
 }
 
-/** Parses and lints a design; any diagnostic fails the parse (design lint has no warnings). */
+/** Parses and lints a design; warnings preserve the parsed design. */
 export function parseDesign(source: string, options: { placeholders?: PlaceholderVocabulary } = {}): DesignResult {
   const lines = structuralLines(source);
   const defects: LintDefect[] = [];
@@ -220,9 +220,12 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   }
   defects.push(...graph.defects);
   const executionStatus = parseExecutionStatus(lines, new Set(graph.increments.map((row) => row.id)), defects);
-  if (defects.length) return { ok: false, defects };
+  const warnings = defects.filter(item => item.severity === 'warning');
+  const blocking = defects.filter(item => item.severity === 'defect');
+  if (blocking.length) return { ok: false, defects: blocking, warnings };
   return {
     ok: true,
+    warnings,
     design: { approachRequirements, title: documentTitle(source), box: boxValues(source), increments: graph.increments, details, executionStatus, governedText: governedDesignText(source) },
   };
 }

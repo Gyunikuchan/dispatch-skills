@@ -10,7 +10,7 @@ import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { implementData, implementMachine, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import { approvalState } from './fixtures/implement-recovery.ts';
+import { classificationState } from './fixtures/implement-recovery.ts';
 import { started } from './fixtures/design-delivery.ts';
 import { integration } from './fixtures/design-integration.ts';
 import { hash as designHash, design, run as designRun, approval as designApproval } from './fixtures/design.ts';
@@ -116,12 +116,11 @@ const implementEnvelope: Step = (_effect, state) => {
   return { type: 'WRITE_RECEIPT', status: 'submitted', envelopePath: 'run/outcome.json', briefHash: task.brief!.sha256, task: 'T1', attempt: task.attempt, signature: task.signature, handle: task.handle!, model };
 };
 const implementChecked: Step = (effect) => ({ type: 'ENVELOPE_CHECKED', effectId: id(effect), envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented', evidence: ['CRITERION SC1 | src/a.ts | delivered behavior'] }, defects: [], diff: { paths: ['src/a.ts'] } });
-const implementApprovalStop: Step = { type: 'DECISION', kind: 'approval', answer: 'stop' };
-const implementApproval: Step = { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } };
+const implementApprovalStop: Step = { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop here.' } };
 const implementEvidence: Step = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'reviewed behavior' } } };
 
 function implementsToTerminal(withEvidence: boolean): Step[] {
-  return [implementRun(), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementApproval, implementClassification,
+  return [implementRun(), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementClassification,
     implementCheckout, ...(withEvidence ? [implementCheckout, implementSnapshot, implementBrief, implementLaunched, implementEnvelope, implementChecked, implementCheckout, implementCheckout] : []),
     implementCheckout, implementCheckout, implementSnapshot, implementSnapshot, implementVerified, ...(withEvidence ? [implementEvidence] : [])];
 }
@@ -336,7 +335,7 @@ test('root transitions table matches step', () => {
   });
   const terminalRevisionEvents: readonly (readonly [RootState, Event])[] = [
     ...staleRoots,
-    ...(['escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(approvalState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
+    ...(['escalate'] as const).map((action): readonly [RootState, Event] => { const [child, event] = materialResolution(classificationState(), action); return [{ tag: 'implement', run: runInfo, child }, event]; }),
   ];
   parity(rootMachine, [
     ...rootSpecScenarios(),
@@ -384,7 +383,7 @@ test('implementation transition declarations include every observed reducer boun
     [implementRun(), implementSnapshot, implementBadParsed, implementSnapshot],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
   ];
-  const base = approvalState();
+  const base = classificationState();
   const review = beginReview({ kind: 'plan', target: base.c.planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governingSpec: { path: 'fixture.spec.md', hash: specHash() } }, 'implement.plan-review', base.c.counters);
   assert.ok(review.state.tag === 'pin-check');
   const parsing: ImplementState = { tag: 'parsing', c: base.c, phase: 'initial', effectId: 'parse' };
@@ -399,8 +398,8 @@ test('implementation transition declarations include every observed reducer boun
   assert.deepEqual([...observed].filter((triple) => !declared.has(triple)), []);
   assert.ok(declared.has('booting --RUN_STARTED--> starting'));
   assert.ok(declared.has('parsing --ARTIFACT_PARSED--> baseline-preflight'));
-  assert.ok(declared.has('approval --DECISION--> stopped'));
-  assert.ok(declared.has('approval --DECISION--> checking-host-event'));
+  assert.ok(declared.has('level-classification --DECISION--> stopped'));
+  assert.ok(declared.has('level-classification --DECISION--> checking-host-event'));
   assert.ok(declared.has('task-checkout --CHECKOUT_DONE--> task-brief'));
   assert.ok(declared.has('tasks --WRITE_RECEIPT--> task-envelope'));
 });
@@ -409,9 +408,7 @@ test('level-journal: machine parity includes classification, integration-conflic
   const declared = new Set(implementMachine.transitions.map((row) => `${row.from} --${row.on}--> ${row.to}`));
   for (const edge of [
     'baseline-decision --DECISION--> level-classification',
-    'approval --DECISION--> level-classification',
     'level-classification --DECISION--> checking-host-event',
-    'level-recommendation --DECISION--> checking-host-event',
     'checking-host-event --SNAPSHOT--> baseline-decision',
     'tasks --REQUEST--> request-decision',
     'request-decision --DECISION--> tasks',

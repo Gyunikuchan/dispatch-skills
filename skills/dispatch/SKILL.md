@@ -7,7 +7,7 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`; default `ask`. `design`/`plan`/`implement` need arguments; empty `review` targets working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep levels unless assessed higher; ask users to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user-selected `xhigh`/`max`. Pins `(a,b)`, `(3)`, `(all)` select providers/count/all; `-m`/`-e` map to `--model`/`--effort`.
+Parse `[level] [(pins)] [verb:] argument`; default `ask`. `design`/`plan`/`implement` need arguments; empty `review` targets working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep explicit levels; report a higher implementation assessment. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user-selected `xhigh`/`max`. Pins `(a,b)`, `(3)`, `(all)` select providers/count/all; `-m`/`-e` map to `--model`/`--effort`.
 
 Use `design` for increments, `plan` for one unit, `implement` for delivery; clarify mismatches.
 
@@ -55,7 +55,7 @@ Inspect summaries/logs; never rerun gates. Send `EVIDENCE` with id-keyed criteri
 
 ## Await decide
 
-Answer `data.kind` from listed options. Never invent decisions. Adjudicate `by:"orchestrator"` frames (conflicts, requests) autonomously with evidence; [implement](references/verbs/implement.md) owns answers and `AMEND`. Present [Decision Frame](references/decision-frame.md) on user escalations as executive deputy with verified evidence. Follow [spec approval](references/spec-stage.md#approval) for spec frames. Accept `SPEC_REVISED`. Production approval/manual completion require `{by:"user",quote:"..."}`. `REPLACE_PLAN` chooses replacement; `REVIEW_USE` sets applicability; follow [collision handling](references/change-handling.md). `run-stop` ends it; follow failure decisions. Reply `DECISION` with `kind`/`answer`.
+Answer `data.kind` from listed options. Never invent decisions. Adjudicate `by:"orchestrator"` frames (conflicts, requests) autonomously with evidence; [implement](references/verbs/implement.md) owns answers and `AMEND`. Present [Decision Frame](references/decision-frame.md) on user escalations as executive deputy with verified evidence. Follow [spec approval](references/spec-stage.md#approval) for spec frames. Accept `SPEC_REVISED`. Manual completion requires `{by:"user",quote:"..."}`. `REPLACE_PLAN` chooses replacement; `REVIEW_USE` sets applicability; follow [collision handling](references/change-handling.md). `run-stop` ends it; follow failure decisions. Reply `DECISION` with `kind`/`answer`.
 
 ## Await retro
 

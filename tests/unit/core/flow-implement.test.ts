@@ -13,7 +13,7 @@ import { governedPlanText } from '../../../skills/dispatch/scripts/domain/plan.t
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { approvalState, FP, HASH } from '../machines/fixtures/implement-recovery.ts';
+import { classificationState, FP, HASH } from '../machines/fixtures/implement-recovery.ts';
 import { authoringFlow, completionFlow, PLAN, SKILL_ROOT, type CommandRun } from './fixtures/flow-implement.ts';
 
 for (const planMode of ['external'] as const) test(`implement-completion-rules: ${planMode} flow binds a real walkthrough and replays completion`, async () => {
@@ -27,7 +27,7 @@ for (const planMode of ['external'] as const) test(`implement-completion-rules: 
 });
 
 test('governing spec default preserves implementation review artifacts criteria and structural focus', async () => {
-  const state = approvalState();
+  const state = classificationState();
   const c = { ...state.c, planPath: 'feature.plan.md', run: { ...state.c.run, config: { ...state.c.run.config, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } } };
   const result = stepImplement({ tag: 'delivered-snapshot', c: { ...c, phase: 'delivered' }, effectId: 'delivered' }, { type: 'SNAPSHOT', effectId: 'delivered', fingerprint: FP, diff: { paths: [] } });
   const checked = result.state.tag === 'checking-host-event' ? stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: FP, diff: { paths: [] } }) : result;
@@ -51,7 +51,7 @@ test('governing spec default preserves implementation review artifacts criteria 
 
 test('task-map-authored: direct implement authoring preserves the authored Task Map through review fixes', async () => {
   const { authored, settled, frame } = await authoringFlow();
-  assert.deepEqual([frame?.await, frame?.data['kind']], ['decide', 'approval'], JSON.stringify(frame));
+  assert.deepEqual([frame?.await, frame?.data['kind']], ['decide', 'level-classification'], JSON.stringify(frame));
   assert.match(authored, /## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|\n\| --- \| --- \| --- \| --- \| --- \|\n\| T1 \| Normalize values \| Values are normalized before use so downstream comparisons agree\. \| none \| SC1 \|/);
   assert.match(settled, /## Task Map\n\| ID \| Title \| Outcome \| Prerequisites \| Criteria \|\n\| --- \| --- \| --- \| --- \| --- \|\n\| T1 \| Normalize trimmed values \| Values are normalized before use so downstream comparisons agree\. \| none \| SC1 \|/);
   assert.equal((settled.match(/^## Task Map$/gm) ?? []).length, 1);

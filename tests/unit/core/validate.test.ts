@@ -6,6 +6,10 @@ import { arr, AWAIT_ACCEPTS, lit, num, obj, oneOf, opt, rec, str, validateHostEv
 const IDENTITY = { task: 'T1', attempt: 1, signature: 'sig', handle: 'writer-T1' } as const;
 const AMEND = { type: 'AMEND', delta: [{ kind: 'modify', target: 'T2', current: 'old', proposed: 'new' }], notify: [{ task: 'T2', notice: 'T2 owns src/b.ts now' }], rationale: 'T1 needs the shared helper' } as const;
 
+test('level-recommendation decisions are rejected', () => {
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'level-recommendation', answer: { choice: 'retain', quote: 'Keep medium.' } }).ok, false);
+});
+
 test('combinators accept matching values and name the failing path', () => {
   const shape = obj({ name: str, count: num, mode: lit('a', 'b'), tags: arr(str), meta: rec(num), note: opt(str), pick: oneOf<unknown>(num, str) });
   assert.deepEqual(shape({ name: 'x', count: 1, mode: 'a', tags: ['t'], meta: { k: 2 }, pick: 's' }, 'v').ok, true);

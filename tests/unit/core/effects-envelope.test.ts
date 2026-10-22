@@ -23,6 +23,18 @@ function setup(changed: string[]) {
 const complete = { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented.', evidence: ['CRITERION SC1 | src/a.ts | handles the valid input'] };
 const check = (envelopePath: string, permitted: string[]): Extract<Effect, { kind: 'check-envelope' }> => ({ kind: 'check-envelope', id: 'implement.check-envelope.1', envelopePath, permitted });
 
+test('checkpoint concerns use the typed envelope result field', async () => {
+  const { runDir, handler, ports } = setup([]);
+  const envelopePath = path.join(runDir, 'outcome.json');
+  fs.writeFileSync(envelopePath, JSON.stringify(complete));
+  const checkpointPath = path.join(runDir, 'missing.json');
+  const result = resultOf(await handler({ ...check(envelopePath, ['tests/a.ts']), checkpointPath, checkpointTests: ['tests/a.ts'] }, ports, { runDir, attempt: 1 }));
+  assert.equal(result.type, 'ENVELOPE_CHECKED');
+  if (result.type !== 'ENVELOPE_CHECKED') return;
+  assert.deepEqual(result.checkpointConcerns, [`RED checkpoint is missing: ${checkpointPath}`]);
+  assert.deepEqual(result.diff, { paths: [] });
+});
+
 test('implement-envelope-self-check parses a strict receipt and accepts only approved changed paths', async () => {
   const { runDir, handler, ports } = setup(['src/a.ts']);
   const file = path.join(runDir, 'outcome.json');
@@ -154,16 +166,18 @@ test('submission preflight preserves live RED admission for evidence, checkpoint
   fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, validRed, checkRow, `RED-MATRIX SC2 | ${testPath}:extra case | exit 1 test:extra case`]);
   fixture.writeCheckpoint({ [testPath]: submitted });
   const before = fs.readdirSync(fixture.runDir).sort();
-  assert.match((await fixture.preview()) ?? '', /RED matrix rejected:.*SC2/);
+  assert.equal(await fixture.preview(), null);
 
   fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, 'RED-MATRIX SC1 | malformed', checkRow]);
-  assert.match((await fixture.preview()) ?? '', /RED matrix rejected:.*Malformed RED-MATRIX/);
+  assert.equal(await fixture.preview(), null);
 
   fixture.writeEnvelope([`CRITERION SC1 | src/a.ts | rejects invalid input`, validRed, checkRow]);
   fs.rmSync(fixture.checkpointPath);
-  assert.match((await fixture.preview()) ?? '', /RED checkpoint is missing/);
+  assert.equal(await fixture.preview(), null);
+  assert.match(fixture.ports.stderrLines.join(''), /T1: RED checkpoint is missing/);
   fs.writeFileSync(fixture.checkpointPath, '{');
-  assert.match((await fixture.preview()) ?? '', /RED checkpoint is invalid JSON/);
+  assert.equal(await fixture.preview(), null);
+  assert.match(fixture.ports.stderrLines.join(''), /T1: RED checkpoint is invalid JSON/);
 
   fixture.writeCheckpoint({ [testPath]: other });
   assert.match((await fixture.preview()) ?? '', /RED checkpoint.*bytes|checkpoint.*differs/i);
@@ -307,4 +321,19 @@ test('amendment delta self check binds the latest delta envelope and hash and pa
   const state = { tag: 'implement', child: { tag: 'tasks', c: { plan, tasks: { T1: { worktree: cwd, baseline: { head: 'h', index: 'i', worktree: 'w' }, attempt: 1, signature: 'sig', handle: 'h1' } } } } };
   ports.git = { run: async (argv) => argv.slice(2).map(() => 'a'.repeat(40)).join('\n') };
   assert.equal(await preview(state as never, { ...receipt, handle: 'h1' } as never, handlers, ports, runDir), null);
+});
+
+test('writer self-check accepts evidence without RED or CHECK rows', async () => {
+  const fixture = submissionPreviewFixture();
+  fixture.writeCheckpoint({ [fixture.testPath]: Buffer.from('submitted test bytes').toString('base64') });
+  fixture.writeEnvelope(['CRITERION SC1 | src/a.ts | rejects invalid input']);
+  assert.equal(await fixture.preview(), null);
+  assert.match(fixture.ports.stderrLines.join(''), /note: T1: missing CHECK row for npm run lint/);
+  assert.match(fixture.ports.stderrLines.join(''), /note: T1: Exactly one RED-MATRIX/);
+  fixture.ports.stderrLines.length = 0;
+  fs.rmSync(fixture.checkpointPath);
+  fixture.writeEnvelope(['CHECK npm run lint | exit 0']);
+  assert.match((await fixture.preview()) ?? '', /missing criterion rows for SC1/);
+  assert.deepEqual(fixture.ports.stderrLines, []);
+  assert.deepEqual(fixture.counters(), { writes: 0, gitRuns: 0 });
 });

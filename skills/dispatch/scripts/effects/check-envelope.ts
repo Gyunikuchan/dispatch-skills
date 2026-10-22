@@ -231,14 +231,15 @@ function currentTaskFile(ports: Ports, cwd: string, file: string): { bytes: stri
   return { bytes: null };
 }
 
-function checkpointDefects(effect: CheckEffect, envelope: ParsedEnvelope | null, ports: Ports, cwd: string): string[] {
-  if (!effect.checkpointTests?.length || envelope?.stage !== 'COMPLETE' || !['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) return [];
+function checkpointDefects(effect: CheckEffect, envelope: ParsedEnvelope | null, ports: Ports, cwd: string): { defects: string[]; concerns: string[] } {
+  if (!effect.checkpointTests?.length || envelope?.stage !== 'COMPLETE' || !['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) return { defects: [], concerns: [] };
   const checkpoint = effect.checkpointPath;
-  if (!checkpoint || !ports.fs.exists(checkpoint)) return [`RED checkpoint is missing: ${checkpoint || '(none)'}`];
+  if (!checkpoint || !ports.fs.exists(checkpoint)) return { defects: [], concerns: [`RED checkpoint is missing: ${checkpoint || '(none)'}`] };
   let checked: ReturnType<typeof validateRedCheckpoint>;
   try { checked = validateRedCheckpoint(JSON.parse(ports.fs.readText(checkpoint)) as unknown, effect.checkpointTests); }
-  catch (error) { return [`RED checkpoint is invalid JSON: ${error instanceof Error ? error.message : String(error)}`]; }
-  const defects = [...checked.defects];
+  catch (error) { return { defects: [], concerns: [`RED checkpoint is invalid JSON: ${error instanceof Error ? error.message : String(error)}`] }; }
+  const defects = [...checked.safety];
+  const concerns = [...checked.evidence];
   // Preview and live admission apply this raw-byte guard before replay, preserving immutable test bytes; replay then checks the committed Git blob.
   for (const [file, expected] of Object.entries(checked.files)) {
     const current = currentTaskFile(ports, cwd, file);
@@ -247,7 +248,7 @@ function checkpointDefects(effect: CheckEffect, envelope: ParsedEnvelope | null,
       defects.push(`RED checkpoint bytes differ from current task file: ${file}`);
     }
   }
-  return defects;
+  return { defects, concerns };
 }
 
 export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffect> {
@@ -291,7 +292,8 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
       if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
       if (normalized !== null && envelope.stage === 'RED_READY' && !tests.has(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
     }
-    defects.push(...checkpointDefects(effect, envelope, ports, deps.cwd));
-    return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
+    const checkpoint = checkpointDefects(effect, envelope, ports, deps.cwd);
+    defects.push(...checkpoint.defects);
+    return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], ...(checkpoint.concerns.length ? { checkpointConcerns: checkpoint.concerns } : {}), diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };
 }

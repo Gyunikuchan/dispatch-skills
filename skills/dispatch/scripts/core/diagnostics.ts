@@ -20,7 +20,7 @@ export const ATTEST_HINT = ['tokens', 'durationMs'] as const;
  * Decide kinds whose production answer comes from the user: a `by:"user"` quote, per-finding user quotes, or a user
  * selection (`opt-in`). Mixed kinds (`failure`, `concerns`) are classified per reply.
  */
-export const USER_DECIDE_KINDS: ReadonlySet<string> = new Set(['approval', 'level-recommendation', 'needs-user', 'request-user', 'opt-in']);
+export const USER_DECIDE_KINDS: ReadonlySet<string> = new Set(['approval', 'needs-user', 'request-user', 'opt-in']);
 
 const HOST_TYPES: ReadonlySet<string> = new Set(Object.keys(HOST_EVENT_SHAPES));
 // Lock recovery and config refresh happen inside a host wait, so they never split a timing interval.

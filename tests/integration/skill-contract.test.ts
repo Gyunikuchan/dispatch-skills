@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { ALIASES, parseCommand } from '../../skills/dispatch/scripts/lib/cli.ts';
 import { AWAIT_ACCEPTS } from '../../skills/dispatch/scripts/core/validate.ts';
-import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
+import { OVERLAY_ROOT } from './scan.ts';
 const documents = new Map<string, string>();
 const read = (file: string): string => {
   let text = documents.get(file);
@@ -40,14 +40,22 @@ test('level-rubric: documents invocation and pre-write assessment timing', () =>
   const config = read('skills/dispatch/references/readme/configuration.md');
   const implement = read('skills/dispatch/references/verbs/implement.md');
   assert.match(contract, /Classify omitted levels at invocation; implementation receives one more assessment before its first write/);
-  assert.match(config, /after its plan, baseline, and applicable write authorization are concrete, immediately before the first production write/);
+  assert.match(config, /after its plan and baseline are concrete, immediately before the first production write/);
   assert.match(implement, /ordinary tasks, inline baseline hotfixes, and the first child of a design/);
 });
 
-test('level-rubric: preserves explicit levels and asks before adopting a higher assessment', () => {
+test('level-rubric: preserves explicit levels and reports a higher assessment', () => {
   const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /An explicit level stays in force unless the assessment recommends a higher level; Dispatch then asks whether to adopt or retain it/);
+  assert.match(config, /An explicit level stays in force; Dispatch reports a higher assessment/);
   assert.match(config, /`xhigh` and `max` remain user-selected/);
+  const gates = read('skills/dispatch/references/decision-frame.md');
+  assert.match(gates, /`spec-approval`, design `approval`, and manual completion/);
+  assert.match(gates, /Changed intent/);
+  assert.match(gates, /External dependencies/);
+  assert.match(gates, /Discarded work/);
+  assert.match(gates, /### Design Approval \(`approval`\)/);
+  assert.doesNotMatch(gates, /Design and Plan Approval|### Plan Approval|Approve writer launch/);
+  assert.doesNotMatch(config, /asks whether to adopt or retain/);
 });
 
 test('level-rubric: medium remains the default for bounded recoverable work', () => {
@@ -81,7 +89,7 @@ test('contract documents receipt request amend events', () => {
   for (const name of ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'briefHash']) assert.ok(awaitWrite.includes(name), name);
   assert.match(awaitWrite, /Taskless hotfix receipts omit identity fields/);
   const guide = read('skills/dispatch/references/verbs/implement.md');
-  for (const kind of ['run-stop', 'level-classification', 'level-recommendation', 'integration-conflict', 'request', 'request-user']) {
+  for (const kind of ['run-stop', 'level-classification', 'integration-conflict', 'request', 'request-user']) {
     assert.ok(guide.includes('DECISION kind=' + kind + '`'), kind);
   }
   for (const status of ['launched', 'submitted', 'failed', 'cancelled']) assert.ok(guide.includes('`' + status + '`'), status);
@@ -99,7 +107,12 @@ test('level-rubric: Await sections contain only their configured accepted events
 });
 
 test('branch references and manuals resolve every local link and use portable relative paths', () => {
-  const files = scanOverlay().filter((file) => file.path.startsWith('skills/') && file.path.endsWith('.md'));
+  const markdownFiles = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+    const file = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return ['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(entry.name) ? [] : markdownFiles(file);
+    return entry.name.endsWith('.md') ? [file] : [];
+  });
+  const files = markdownFiles('skills').sort().map((file) => ({ path: file, text: read(file) }));
   const errors: string[] = [];
   for (const file of files) {
     assert.ok(!/file:\/\/|[A-Z]:\\Users\\/.test(file.text), file.path);

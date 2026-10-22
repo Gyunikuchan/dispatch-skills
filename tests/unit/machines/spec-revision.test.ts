@@ -8,7 +8,7 @@ import { approval as designApproval, approveDesignScope, design as designFixture
 import { stepDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { beginReview, reviewSpecFromRun, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { started as deliveryStarted } from './fixtures/design-delivery.ts';
-import { approvalState } from './fixtures/implement-recovery.ts';
+import { classificationState } from './fixtures/implement-recovery.ts';
 import { launch, start } from './fixtures/implement-tasks.ts';
 
 const CONFIG = {
@@ -161,7 +161,7 @@ test('spec revision: standalone review supersedes pending findings and re-prepar
 });
 
 test('spec revision: implement halts with stale-spec for a standalone plan and stale-design-spec for an increment plan', () => {
-  const child = approvalState();
+  const child = classificationState();
   const standalone = revise({ tag: 'implement', run: runInfo('implement', started('implement')), child }).state;
   assert.equal(rootMachine.awaitOf(drive([{ type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/session', warning: null }], standalone).state), 'done');
   assert.match(String((standalone.tag === 'handoff' ? standalone.done : {} as Record<string, unknown>)['summary']), /^stale-spec: /);

@@ -15,7 +15,7 @@ import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../../helpers/memory-run-fs.ts';
 import { withLaunch } from '../../../helpers/launch.ts';
 import { stepImplement } from '../../../../skills/dispatch/scripts/machines/implement.ts';
-import { approvalState, FP, HASH } from '../../machines/fixtures/implement-recovery.ts';
+import { classificationState, FP, HASH } from '../../machines/fixtures/implement-recovery.ts';
 
 export const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../skills/dispatch');
 export const PLAN = `# Normalize values
@@ -119,9 +119,7 @@ export async function completionFlow(planMode: 'external' | 'session' | 'objecti
   ports.spawn = { run: async (argv, spawnOptions) => { runs.push({ command: argv.at(-1) ?? '', cwd: path.relative(cwd, spawnOptions.cwd).split(path.sep).join('/') || '.' }); return { exit: 0, stdout: 'ok', stderr: '' }; } };
   const options = { runDir, machine: rootMachine, handlers, ports, runRel: 'chat/.state/runs/run-1' };
 
-  const approval = await start({ ...options, runStarted });
-  assert.deepEqual([approval.frame?.await, approval.frame?.at], ['decide', 'implement › approval'], JSON.stringify(approval.frame));
-  const classification = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } } });
+  const classification = await start({ ...options, runStarted });
   assert.deepEqual([classification.frame?.await, classification.frame?.data['kind']], ['decide', 'level-classification']);
   const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded and recoverable behavior change.', gateScopeHash: classification.frame?.data['gateScopeHash'] } } });
   assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › tasks']);

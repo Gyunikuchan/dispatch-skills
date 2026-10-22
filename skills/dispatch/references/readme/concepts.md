@@ -10,7 +10,7 @@ For example, a webhook spec can require safe retries without duplicate charges. 
 
 Every work verb except `ask` uses one canonical governing spec. Dispatch reuses the supplied artifact's governing spec or the session spec; when none exists, your host writes one from the discussion in the session folder. A resolved supplied spec keeps its path and references, including when it belongs to another session; Dispatch does not move it to normalize placement. Standalone review also uses the diff and labels inferred requirements. If another planning skill runs during Dispatch, its spec/design output and discussion go into that resolved canonical spec. Content in a stray spec is merged before removal; deleting a tracked stray needs your approval.
 
-At `medium` and above, you approve the spec's exact contents before design or plan authoring. At `low`, Dispatch proceeds and links the spec at handoff. This is separate from design approval and permission for production writes. Standalone code review needs a spec but adds no spec approval just to review it. There is no separate delegated spec review: design and plan reviewers check governing intent as part of their review.
+At `medium` and above, you approve the spec's exact contents before design or plan authoring. At `low`, Dispatch proceeds and links the spec at handoff. This is separate from design approval. Standalone code review needs a spec but adds no spec approval just to review it. There is no separate delegated spec review: design and plan reviewers check governing intent as part of their review.
 
 Authors, writers and every reviewer read the whole spec. Authors also read the same quality criteria as their reviewers. A writer reads the plan's shared context and its assigned task details. This keeps the outcome available while task ownership remains bounded.
 
@@ -20,7 +20,7 @@ If intent changes, the host records your decision in the spec and checks its new
 
 - **Read delegates** inspect the repository and return analysis or review findings. They use provider-specific read-only controls.
 - **Your host agent** compares those claims with the code, repository instructions, and your goal. It accepts, rejects, or narrows findings with reasons.
-- **A native writer** makes production changes only after you approve the plan. The writer is configured for the platform running your host agent.
+- **A native writer** makes production changes from a settled plan or approved design. The writer is configured for the platform running your host agent.
 
 This keeps independent review useful while leaving decisions and production changes under your control.
 
@@ -35,7 +35,7 @@ The default concurrency is one. Increasing it lets independent tasks overlap, bu
 
 When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host agent decide what can proceed independently.
 
-After a task finishes, the host agent checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
+After a task finishes, the host agent checks its submitted changes before integrating them. It records setup-only RED failures as concerns, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
 
 ## Session folder
 

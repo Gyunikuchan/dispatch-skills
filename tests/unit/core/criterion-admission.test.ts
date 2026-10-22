@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { send, start as startRun } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { JOURNAL_PROTOCOL_REVISION, type Handlers, type Machine, type PlanEdit } from '../../../skills/dispatch/scripts/core/types.ts';
 import { parsePlan } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import type { PlanCriterion } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { asParsedPlan, criterionEvidenceRows, parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
@@ -68,6 +69,20 @@ async function harness() {
 }
 
 // SECTION: Admission and replacement
+
+test('RED matrix exposes only valid eligible rows while retaining diagnostics', () => {
+  const base = { ...AMEND_PLAN.criteria[0]!, evidence: 'red' as const, red: 'node --test {files}', tests: ['tests/a.ts'], redException: null };
+  const criteria: PlanCriterion[] = ['SC1', 'SC2', 'SC3', 'SC4', 'SC5'].map((id) => ({ ...base, id }));
+  criteria[3] = { ...criteria[3]!, evidence: 'verify' };
+  criteria[4] = { ...criteria[4]!, redException: 'Approved exception.' };
+  const row = (id: string, name = 'rejects invalid input') => `RED-MATRIX ${id} | tests/a.ts:${name} | exit 1 test:${name}`;
+  const parsed = parseRedMatrix([row('SC1'), row('SC2'), row('SC2'), row('SC3', 'SC3 fails'), row('SC4'), row('SC5'), row('SC99')], criteria, criteria.map((criterion) => criterion.id));
+  assert.deepEqual(parsed.validRows.map((row) => row.id), ['SC1']);
+  assert.match(parsed.defects.join('\n'), /Exactly one RED-MATRIX row required for SC2/);
+  assert.match(parsed.defects.join('\n'), /names plan ID SC3/);
+  assert.match(parsed.defects.join('\n'), /RED exception/);
+  assert.match(parsed.defects.join('\n'), /unknown criterion SC99/);
+});
 
 test('criterion-admission: writer self-check receipts stay in the in-memory session', async () => {
   const h = await harness();

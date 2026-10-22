@@ -4,9 +4,39 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Effect, Ports, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { createCheckout, worktreePath } from '../../../skills/dispatch/scripts/effects/checkout.ts';
+import { createCheckout, validateRedCheckpoint, worktreePath } from '../../../skills/dispatch/scripts/effects/checkout.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { memoryRunFs } from '../../helpers/memory-run-fs.ts';
+
+test('RED checkpoint classifies approved-path safety separately from evidence shape', () => {
+  const checked = validateRedCheckpoint({ schemaVersion: 1, files: { '../escape.ts': 'YQ==', 'tests/a.ts': 12 } }, ['tests/a.ts']);
+  assert.deepEqual(checked.safety, ['RED checkpoint path is not an approved task test path: ../escape.ts']);
+  assert.deepEqual(checked.evidence, ['RED checkpoint content must be base64 or null: tests/a.ts']);
+  assert.deepEqual(checked.files, {});
+});
+
+test('RED checkout keeps mixed checkpoint safety defects hard and evidence gaps advisory', async () => {
+  const cwd = tempDir(), runDir = path.join(cwd, 'run'), ports = fakePorts();
+  memoryRunFs(ports, cwd);
+  const checkpointPath = path.join(runDir, 'red.json');
+  ports.fs.writeAtomic(checkpointPath, JSON.stringify({ schemaVersion: 1, files: { '../escape.ts': 'YQ==', 'tests/a.ts': 12 } }));
+  ports.git.run = async () => { throw new Error('unsafe checkpoint must not reach Git'); };
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const [event] = await handler({ kind: 'checkout', id: 'checkout.red.1', op: 'red', input: { name: 'red-t1', checkpointPath, permitted: ['tests/a.ts'] } }, ports, { runDir, attempt: 1 });
+  assert.equal(event?.type, 'CHECKOUT_DONE');
+  if (event?.type !== 'CHECKOUT_DONE') return;
+  assert.deepEqual(event.result['defects'], ['RED checkpoint path is not an approved task test path: ../escape.ts']);
+  assert.deepEqual(event.result['concerns'], ['RED checkpoint content must be base64 or null: tests/a.ts']);
+  for (const content of [null, '{']) {
+    if (content === null) ports.fs.remove(checkpointPath);
+    else ports.fs.writeAtomic(checkpointPath, content);
+    const [gap] = await handler({ kind: 'checkout', id: 'checkout.red.2', op: 'red', input: { name: 'red-t1', checkpointPath, permitted: ['tests/a.ts'] } }, ports, { runDir, attempt: 1 });
+    assert.equal(gap?.type, 'CHECKOUT_DONE');
+    if (gap?.type !== 'CHECKOUT_DONE') return;
+    assert.deepEqual(gap.result['defects'], []);
+    assert.match(JSON.stringify(gap.result['concerns']), /RED checkpoint is missing|RED checkpoint is invalid JSON/);
+  }
+});
 
 test('delivery replay: interrupted completed pick retries provenance without reset or duplicate pick', async () => {
   const cwd = tempDir(), runDir = tempDir(), root = worktreePath(runDir, 'integration'), ports = fakePorts();
@@ -621,7 +651,16 @@ test('submission preflight preserves live RED admission by checking committed ca
   const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
   const [event] = await handler({ kind: 'checkout', id: 'implement.checkout.red.1', op: 'red', input: { name: 'red-t1', base, candidate, checkpointPath, permitted: [testPath], links: [], ignored: [] } }, ports, { runDir, attempt: 1 });
   assert.ok(event?.type === 'CHECKOUT_DONE');
-  if (event?.type === 'CHECKOUT_DONE') assert.deepEqual(event.result['defects'], [`Submitted test differs from its RED checkpoint: ${testPath}`]);
+  if (event?.type === 'CHECKOUT_DONE') {
+    assert.deepEqual(event.result['defects'], [`Submitted test differs from its RED checkpoint: ${testPath}`]);
+    assert.deepEqual(event.result['concerns'], []);
+  }
+  ports.fs.writeAtomic(checkpointPath, JSON.stringify({ schemaVersion: 1, files: { [testPath]: Buffer.from('checkpointed test\n').toString('base64'), 'tests/other.ts': 12 } }));
+  const [mixed] = await handler({ kind: 'checkout', id: 'implement.checkout.red.2', op: 'red', input: { name: 'red-t1', base, candidate, checkpointPath, permitted: [testPath, 'tests/other.ts'], links: [], ignored: [] } }, ports, { runDir, attempt: 1 });
+  assert.equal(mixed?.type, 'CHECKOUT_DONE');
+  if (mixed?.type !== 'CHECKOUT_DONE') return;
+  assert.deepEqual(mixed.result['defects'], [`Submitted test differs from its RED checkpoint: ${testPath}`], 'an evidence gap must not bypass committed-byte validation for the valid entries');
+  assert.deepEqual(mixed.result['concerns'], ['RED checkpoint content must be base64 or null: tests/other.ts']);
 });
 
 test('trim treats absent file as done', async () => {

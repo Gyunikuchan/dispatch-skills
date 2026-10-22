@@ -9,7 +9,7 @@ The orchestrator acts as the user's executive deputy. Formulate every user-facin
 
 ## User Gate Boundaries
 
-Mandatory workflow approvals (`spec-approval`, design/plan `approval`, production-write authorization, level-recommendation adopt/retain choices, and manual completion) require explicit user authorization (`{ by: "user", quote }`).
+Mandatory workflow approvals (`spec-approval`, design `approval`, and manual completion) require explicit user authorization (`{ by: "user", quote }`).
 
 For all other runtime decisions and scope escalations, user authority is required only at explicit user gates:
 - **Changed intent:** New, removed, or altered governing requirements (`REQ-<n>`) or settled decisions (`DEC-<n>`).
@@ -33,22 +33,15 @@ Present path, hash, and distilled governing intent:
 - **Recommendation:** Approve revision to proceed with authoring, or stop with noted adjustments.
 ```
 
-### Design and Plan Approval (`approval`)
+### Design Approval (`approval`)
 
-Present paths, increment structure or verification gates, and risk profile:
+Present the design path, hash, strategy, increment structure, and risk profile:
 
 ```markdown
 ### Design Approval
 - **Path & Hash:** `<session>/<slug>.design.md` (`<hash>`)
 - **Strategy & Increments:** Core architectural approach and planned increment sequence.
 - **Recommendation:** Approve design to proceed with increment delivery, or stop with noted adjustments.
-```
-
-```markdown
-### Plan Approval
-- **Scope:** Declared task paths and proposed edits.
-- **Verification:** Verification commands mapped to criteria (`[SC<n>]`).
-- **Recommendation:** Approve writer launch, or request tactical plan amendment.
 ```
 
 ### Intent Findings (`needs-user`)
@@ -87,18 +80,6 @@ Evaluate writer scope and invariant impact:
 - **Invariant Impact:** Architectural boundaries or file ownership affected.
 - **Recommendation:** Approve with plan amendment, or decline and instruct writer within original scope.
 - **Consequences:** Blast radius and risk of widening task scope.
-```
-
-### Level Recommendation (`level-recommendation`)
-
-Evaluate implementation blast radius against level rubric:
-
-```markdown
-### Implementation Level Recommendation
-- **Current Level:** `<explicit-level>` | **Evaluated Level:** `<assessed-level>`
-- **Verified Facts:** File counts, critical contracts, and consequential risk factors.
-- **Recommendation:** Adopt assessed level or retain explicit level.
-- **Consequences:** Review depth, gate rigor, and token expenditure.
 ```
 
 ### Baseline Failures (`baseline`)

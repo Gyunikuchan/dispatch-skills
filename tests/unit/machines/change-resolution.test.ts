@@ -3,15 +3,15 @@ import { test } from 'node:test';
 import { applyDispositions, refreshEvidence, resolution, validateDispositions } from '../../../skills/dispatch/scripts/machines/change-resolution.ts';
 import { initialTasks } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import type { ChangeNotice } from '../../../skills/dispatch/scripts/core/types.ts';
-import { stepImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, stepImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
-import { approvalState, FP, assessed } from './fixtures/implement-recovery.ts';
+import { classificationState, FP, assessed } from './fixtures/implement-recovery.ts';
 const notice: ChangeNotice = { id: 'n', phase: 'host', pendingId: 'approval', beforeHash: 'b', afterHash: 'a', paths: ['src/a.ts'], pathCount: 1, relevance: 'relevant', reason: 'input changed', affectedEvidence: ['SC1'], rawDeltaRef: { version: 1, sha256: 'a'.repeat(64), bytes: 10, path: 'recovery-deltas/a.json' } };
 const answer = { by: 'orchestrator', noticeId: 'n', afterHash: 'a', action: 'refresh', rationale: 'Same approved intent; redo affected checks.', evidenceIds: ['SC1'] };
 // SECTION: Evidence refresh and change contract
 
 test('phase adapter: refresh retains independent criteria, task acceptance, live writers and integration', () => {
-  const c = approvalState().c, plan = c.plan!;
+  const c = classificationState().c, plan = c.plan!;
   const independent = { ...plan.criteria[0]!, id: 'SC2', changes: ['src/b.ts'], verify: [{ command: 'check-b', final: false }] };
   const revised = { ...plan, criteria: [...plan.criteria, independent], tasks: [...plan.tasks, { ...plan.tasks[0]!, id: 'T2', paths: ['src/b.ts'], criteria: ['SC2'] }] };
   const initial = initialTasks(revised);
@@ -31,7 +31,7 @@ test('change contract: resolution binds actor, revision, rationale and evidence 
   assert.ok(resolution({ ...answer, action: 'preserve' }, notice));
 });
 test('change contract: dispositions bind open observations once and only to current criteria', () => {
-  const c0 = approvalState().c;
+  const c0 = classificationState().c;
   const observation = { id: 'o', afterHash: 'a', beforeHash: 'b', phase: 'approval', pendingId: 'DECISION', rawDeltaRef: notice.rawDeltaRef, paths: ['README.md'], pathCount: 1, suggestedRelevance: 'unknown' as const, reason: 'r', suggestedEvidence: [] };
   const c = { ...c0, observations: [observation] };
   const bind = { observationId: 'o', afterHash: 'a', rationale: 'Unrelated documentation.' };
@@ -45,16 +45,17 @@ test('change contract: dispositions bind open observations once and only to curr
 });
 // SECTION: Phase adapters and recovery assessment
 
-test('phase adapter: an ordinary parked approval resumes once and does not grant observed paths', () => {
-  const original = approvalState();
-  const check = stepImplement(original, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
+test('phase adapter: an ordinary parked classification resumes once and does not grant observed paths', () => {
+  const original = classificationState();
+  const check = stepImplement(original, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local work.', gateScopeHash: implementData(original)['gateScopeHash'] } });
   const resumed = assessed(stepImplement(check.state, { type: 'SNAPSHOT', effectId: check.effects[0]!.id, fingerprint: { ...FP, worktree: 'new' }, diff: { paths: ['caller.ts'] } }), ['caller.ts']);
-  assert.equal(resumed.state.tag, 'level-classification');
+  assert.equal(resumed.state.tag, 'task-checkout');
   assert.ok('c' in resumed.state && resumed.state.c && !('adoptedPaths' in resumed.state.c));
   if ('c' in resumed.state && resumed.state.c) assert.deepEqual(resumed.state.c.observations?.map((row) => row.paths), [['caller.ts']]);
 });
 test('recovery assessment: duplicate or stale receipts do not advance a pending observation', () => {
-  const check = stepImplement(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
+  const original = classificationState();
+  const check = stepImplement(original, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local work.', gateScopeHash: implementData(original)['gateScopeHash'] } });
   const pending = stepImplement(check.state, { type: 'SNAPSHOT', effectId: check.effects[0]!.id, fingerprint: { ...FP, worktree: 'new' }, diff: { paths: ['caller.ts'] } });
   assert.equal(pending.state.tag, 'assessing-host-event');
   const bad = { type: 'RECOVERY_ASSESSED' as const, effectId: pending.effects[0]!.id, purpose: 'drift' as const, beforeHash: 'stale', afterHash: 'stale', notice };
@@ -65,7 +66,7 @@ test('recovery assessment: duplicate or stale receipts do not advance a pending 
 });
 test('phase adapter: changes in parked phases apply the parked result once with an advisory observation', () => {
   for (const phase of ['baseline', 'generated', 'final', 'hotfix'] as const) {
-    const c = approvalState().c, changed = { ...FP, worktree: 'new' };
+    const c = classificationState().c, changed = { ...FP, worktree: 'new' };
     const row = { command: 'check', exit: 0, logPath: 'check.log' };
     let parent: ImplementState, event: Event;
     if (phase === 'baseline') {
@@ -91,7 +92,7 @@ test('phase adapter: changes in parked phases apply the parked result once with 
   }
 });
 test('phase adapter: a live delivery collision still requires a bound decision before rebuilding', () => {
-  const c = approvalState().c, changed = { ...FP, worktree: 'new' };
+  const c = classificationState().c, changed = { ...FP, worktree: 'new' };
   const parent: ImplementState = { tag: 'task-checkout', c: { ...c, phase: 'tasks' }, effectId: 'old', step: 'deliver', task: null, reason: null };
   let result = stepImplement(parent, { type: 'CHECKOUT_DONE', effectId: 'old', op: 'deliver', result: { conflicts: ['caller.ts'], collision: { kind: 'newer-content' } } });
   result = stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.effects[0]!.id, fingerprint: changed, diff: { paths: ['caller.ts'] } });

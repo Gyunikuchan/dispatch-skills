@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { Event, RecoveryManifest, RunStartedEvent, TreeFingerprint } from '../../../skills/dispatch/scripts/core/types.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { artifactRelative, type VerifyRecord } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
-import { HASH, FP, PLAN, RUN, failedRow, approvalState, host, classify, failure, taskFailure, assessed } from './fixtures/implement-recovery.ts';
+import { HASH, FP, PLAN, RUN, failedRow, classificationState, host, classify, failure, taskFailure, assessed } from './fixtures/implement-recovery.ts';
 
 test('implement-failure-disposition: task retry re-pends failed tasks within the attempt bound', () => {
   const retry = host(taskFailure(1), { type: 'DECISION', kind: 'failure', answer: { by: 'orchestrator', action: 'retry', rationale: 'wrong mapping' } });
@@ -31,7 +31,7 @@ test('manual waiver retains user attribution and RED provenance', () => {
   assert.match(r.state.summary, /0 passed; 1 waived/);
 });
 test('recovery manifest: inline baseline hotfix immediately reruns stalled check and expands finalFocus', () => {
-  const c = approvalState().c;
+  const c = classificationState().c;
   const baseline: ImplementState = { tag: 'baseline-decision', c, items: [failedRow] };
   let r = classify(host(baseline, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'environment' } }));
   assert.equal(r.state.tag, 'hotfix-snapshot');
@@ -41,10 +41,10 @@ test('recovery manifest: inline baseline hotfix immediately reruns stalled check
   assert.deepEqual(r.effects[0]?.kind === 'verify' && r.effects[0].commands.map((row) => row['command']), ['check']);
   if ('c' in r.state && r.state.c) assert.ok(r.state.c.finalFocus.includes('env.txt'));
   r = stepImplement(r.state, { type: 'VERIFY_DONE', effectId: r.effects[0]!.id, purpose: 'hotfix', results: [{ command: 'check', exit: 0, logPath: 'pass.log' }], fingerprint: changed });
-  assert.equal(r.state.tag, 'approval');
+  assert.equal(r.state.tag, 'task-checkout');
 });
 test('prewrite-level: baseline hotfix assesses before inline write', () => {
-  const c = approvalState().c;
+  const c = classificationState().c;
   const baseline: ImplementState = { tag: 'baseline-decision', c, items: [failedRow] };
   const proposal = host(baseline, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'environment' } });
   assert.equal(proposal.state.tag, 'level-classification');
@@ -73,7 +73,7 @@ test('failure inline hotfix nested spec answer preserves pre-await delta and che
 });
 test('hotfix budget or hard-limit violation re-asks without stalled check', () => {
   for (const violation of ['budget', 'hard-limit'] as const) {
-    const c = approvalState().c;
+    const c = classificationState().c;
     let r = classify(host({ tag: 'baseline-decision', c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
     const changed = { ...FP, recovery: FP['recovery'] };
     r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } }), ['src/a.ts'], [violation]);
@@ -81,7 +81,7 @@ test('hotfix budget or hard-limit violation re-asks without stalled check', () =
   }
 });
 test('unchanged failure withdraws hotfix for stage', () => {
-  let r = classify(host({ tag: 'baseline-decision', c: approvalState().c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
+  let r = classify(host({ tag: 'baseline-decision', c: classificationState().c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { by: 'orchestrator', action: 'hotfix', mode: 'inline', rationale: 'fix' } }));
   r = assessed(stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } }));
   r = stepImplement(r.state, { type: 'VERIFY_DONE', effectId: r.effects[0]!.id, purpose: 'hotfix', results: [failedRow], fingerprint: FP });
   assert.equal(r.state.tag, 'baseline-decision');

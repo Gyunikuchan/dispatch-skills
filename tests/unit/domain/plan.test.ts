@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  governedPlanText, isTestPath, normalizePlanPath, parsePlan, placeholderVocabulary, selectTaskBrief, structuralLines, taskExecutionSummary, taskMapRows,
+  governedPlanText, isTestPath, lint, normalizePlanPath, parsePlan, placeholderVocabulary, selectTaskBrief, structuralLines, taskExecutionSummary, taskMapRows,
 } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
@@ -68,8 +68,27 @@ const PLAN = `# Add retry budget
 
 const defects = (source: string) => {
   const result = parsePlan(source);
-  return result.ok ? [] : result.defects.map((item) => item.code);
+  return [...(result.ok ? [] : result.defects), ...result.warnings.filter(item => !['missing-seams', 'criterion-red-test-path', 'undeclared-test-path', 'red-downgraded', 'overlap'].includes(item.code))].map((item) => item.code);
 };
+
+test('presentation and traceability findings are warnings while structural findings block', () => {
+  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'retired-section', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'criterion-test-rationale', 'criterion-critical-review'] as const) {
+    assert.equal(lint(code, null, 'finding').severity, 'warning', code);
+  }
+  const result = parsePlan(PLAN.replace('> **Risk:** low — isolated helper\n', '').replaceAll('  - Satisfies: REQ-1\n', ''));
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.ok(result.warnings.some(item => item.code === 'summary-label'));
+  assert.ok(result.warnings.some(item => item.code === 'missing-satisfies'));
+  for (const [source, code] of [
+    [PLAN.replace('[SC1]', '[SC0]'), 'criterion-id'],
+    [PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`', '  - Verify: invalid'), 'criterion-verify'],
+    [PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts'), 'change-heading'],
+    [PLAN.replace('## Task Map', '## Tasks'), 'task-map'],
+  ]) {
+    const invalid = parsePlan(source!);
+    assert.ok(!invalid.ok && invalid.defects.some(item => item.code === code), code);
+  }
+});
 
 const TESTS_LINE = '  - Tests: tests/fetch.test.ts\n';
 const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
@@ -193,7 +212,7 @@ test('implement-plan-lint: missing criterion fields, unknown markers, and GENERA
 test('implement-plan-lint: leftover template placeholders fail when a vocabulary is supplied', () => {
   const vocabulary = placeholderVocabulary(['````markdown\n# <Goal Description>\n- Verify: `<command>`\n````\n']);
   const result = parsePlan(PLAN.replace('Observe logs.', 'Observe <Goal Description>.'), { placeholders: vocabulary });
-  assert.ok(!result.ok && result.defects.some((item) => item.code === 'leftover-placeholder'));
+  assert.ok(result.ok && result.warnings.some((item) => item.code === 'leftover-placeholder'));
 });
 
 test('implement-plan-lint: governed text excludes the trailing resolution section only', () => {
@@ -408,7 +427,7 @@ test('task-plan: the journal boundary preserves the task graph and rejects pre-t
 
 const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
-const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === code); };
+const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return [...(result.ok ? [] : result.defects), ...result.warnings].filter((item) => item.code === code); };
 
 test('missing satisfies emits one diagnostic per criterion', () => {
   for (const replacement of ['', '  - Satisfies:\n', '  - Satisfies: REQ-x\n', '  - Satisfies: REQ-x\n  - Satisfies: wrong\n']) {
@@ -827,7 +846,7 @@ test('plan-section-order: old order fails and new order with absent optional sec
   const oldOrder = PLAN.replace('## Key Decisions & Context\n', '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n')
     .replace('## Technical-Design Traceability\n', '## Background\n- Current behavior.\n\n## Technical-Design Traceability\n')
     .replace('## Review Findings', '## Out of Scope\n- Backoff.\n\n## Review Findings');
-  const orderDefects = (source: string) => { const result = parsePlan(source); return result.ok ? [] : result.defects.filter((item) => item.code === 'section-order'); };
+  const orderDefects = (source: string) => parsePlan(source).warnings.filter((item) => item.code === 'section-order');
   assert.deepEqual(orderDefects(criteriaFirst).map((item) => item.line), [criteriaFirst.split('\n').indexOf('## Proposed Changes') + 1]);
   assert.deepEqual(orderDefects(oldOrder).map((item) => item.line), ['## Background', '## Out of Scope'].map((heading) => oldOrder.split('\n').lastIndexOf(heading) + 1));
   assert.match(orderDefects(oldOrder)[0]!.message, /Move "## Background" before "## Task Map"/);

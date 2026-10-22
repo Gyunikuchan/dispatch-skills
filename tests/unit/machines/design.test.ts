@@ -7,7 +7,7 @@ import { implementData, type ImplementState } from '../../../skills/dispatch/scr
 import { launch, record, start } from './fixtures/implement-tasks.ts';
 import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
-import { approvalState, FP } from './fixtures/implement-recovery.ts';
+import { classificationState, FP } from './fixtures/implement-recovery.ts';
 import { hash, design, run, approval, approveDesignScope } from './fixtures/design.ts';
 // SECTION: Authoring and level gates
 
@@ -56,7 +56,7 @@ test('level-journal: design parent delegates nested implementation event validat
 test('REVISE design waits for nested level gates', () => {
   const parent = approval('implement');
   if (parent.tag !== 'approval') throw new Error('design approval');
-  const c = approvalState().c;
+  const c = classificationState().c;
   const runInfo = { verb: 'design' as const, argument: 'x.design.md', slug: 'x' };
   const rootFor = (child: ImplementState): RootState => ({ tag: 'design', run: runInfo, child: { tag: 'increment', c: parent.c, increment: 'I01', child } });
   const designRevision = { type: 'REVISE' as const, artifact: 'design' as const, reason: 'design-invalidates-increment', evidence: 'The accepted design scope must be reconsidered.' };
@@ -65,10 +65,7 @@ test('REVISE design waits for nested level gates', () => {
     commandMappings: [], baselineEvidence: [], phaseObligations: { writer: [], review: [] }, remainingIncrements: [], design: null,
   };
   const classification: ImplementState = { tag: 'level-classification', c, gateScope, resume: { kind: 'tasks' } };
-  const recommendation: ImplementState = {
-    tag: 'level-recommendation', c, assessment: { evaluatedLevel: 'high', rationale: 'Cross-cutting scope.', gateScopeHash: hash }, resume: { kind: 'tasks' },
-  };
-  for (const child of [classification, recommendation]) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /pending level gate/);
+  for (const child of [classification]) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /pending level gate/);
 });
 test('design child request keeps siblings running', () => {
   const sim = {}, trace = { effects: [], events: [] };

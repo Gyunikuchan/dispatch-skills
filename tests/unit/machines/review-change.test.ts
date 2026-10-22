@@ -6,7 +6,7 @@ import { stepRoot, rootMachine, type RootState } from '../../../skills/dispatch/
 import { beginPlan } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { beginDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import type { ReviewFinding } from '../../../skills/dispatch/scripts/machines/types.ts';
-import { approvalState, RUN } from './fixtures/implement-recovery.ts';
+import { classificationState, RUN } from './fixtures/implement-recovery.ts';
 import { approval as designApproval } from './fixtures/design.ts';
 import { integration } from './fixtures/design-integration.ts';
 
@@ -68,7 +68,7 @@ test('review branch: parent applies parked receipt without change decision acros
   for (const family of ['plan', 'implementation-plan', 'implementation-code', 'design', 'design-revision', 'design-integration'] as const) {
     const c = context(family.includes('code') || family.includes('integration') ? 'code' : family.includes('design') ? 'design' : 'plan');
     const check: ReviewState = { tag: 'target-check', c, before: { tag: 'rule', c }, pending: { type: 'RULINGS', rulings: {} }, effectId: 'check' };
-    const run = { verb: 'implement' as const, argument: 'feature', slug: 'feature' }, implemented = approvalState(), design = designApproval('implement');
+    const run = { verb: 'implement' as const, argument: 'feature', slug: 'feature' }, implemented = classificationState(), design = designApproval('implement');
     let seed: RootState;
     if (family === 'plan') {
       const plan = beginPlan({ path: 'feature.plan.md', spec: c.spec }, 'plan', {}).state;

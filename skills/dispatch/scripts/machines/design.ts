@@ -1,5 +1,5 @@
 import { qualitySections } from '../domain/prompt.ts';
-import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment, SpecIdentity } from '../core/types.ts';
+import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent, LevelClassificationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment, SpecIdentity } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, designScopeGrew } from '../domain/design.ts';
 import { beginBoundImplement, stepImplement, implementAwait, implementData, validateImplement, type Context as ImplementContext, type ImplementState } from './implement.ts';
@@ -17,7 +17,7 @@ export type DesignContext = {
   histories: Readonly<Record<string, readonly ImplementState[]>>; revisions: readonly { before: string; after: string; reason: string; invalidated: readonly string[] }[];
   repairs: Readonly<Record<string, readonly string[]>>;
   levelGatePassed: boolean; gateScope: LevelGateScope | null; levelAssessment: LevelClassificationAnswer | null;
-  levelChoice: LevelRecommendationAnswer | null; scopeAdjustments: readonly ScopeAdjustment[];
+  scopeAdjustments: readonly ScopeAdjustment[];
   scopeNotice: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
   revisionReviewRound: number; integrationRound: number;
   designReview: ReviewState | null; integrationReview: ReviewState | null;
@@ -57,7 +57,7 @@ export function beginDesign(run: RunStartedEvent, counters: Counters = {}, gover
       : sessionDir
         ? `${sessionDir}/${slugOf(run.argument)}.design.md`
         : `${slugOf(run.argument)}.design.md`;
-  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null, governingSpec, specEpoch: 0, revisionReviewEpoch: 0, restartIncrements: [] };
+  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, levelGatePassed: false, gateScope: null, levelAssessment: null, scopeAdjustments: [], scopeNotice: null, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null, governingSpec, specEpoch: 0, revisionReviewEpoch: 0, restartIncrements: [] };
   return run.verb === 'implement' ? parse(c, false) : stay({ tag: 'author', c, defects: [] });
 }
 function parse(c: DesignContext, afterReview: boolean): S {
@@ -104,7 +104,7 @@ function deliver(c: DesignContext): S {
       path: c.path, revision: c.hash, revisionIndex: c.revisions.length, increment, contract,
       paths: c.design.increments.find((row) => row.id === increment)!.paths, approval: c.approval,
       repair: c.repairs[increment] ?? [], remainingIncrements, governingDesign, levelGatePassed: c.levelGatePassed,
-      gateScope: c.gateScope, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice,
+      gateScope: c.gateScope, levelAssessment: c.levelAssessment,
       scopeAdjustments: c.scopeAdjustments, scopeNotice: c.scopeNotice,
     }, c.counters, c.governingSpec ?? null, c.restartIncrements?.includes(increment) ? ((c.histories[increment]?.at(-1) as { c?: ImplementContext })?.c?.specEpoch ?? 0) + 1 : 0);
     return { state: { tag: 'increment', c: { ...c, restartIncrements: (c.restartIncrements ?? []).filter(id => id !== increment) }, increment, child: result.state }, effects: result.effects };
@@ -134,7 +134,7 @@ function incrementResult(c0: DesignContext, increment: string, result: Step<Impl
     ...(childContext ? {
       run: { ...c0.run, level: childContext.run.level }, levelGatePassed: childContext.levelGatePassed,
       gateScope: c0.gateScope ?? childContext.gateScope, levelAssessment: c0.levelAssessment ?? childContext.levelAssessment,
-      levelChoice: c0.levelChoice ?? childContext.levelChoice, scopeAdjustments, scopeNotice: childContext.scopeNotice ?? c0.scopeNotice,
+      scopeAdjustments, scopeNotice: childContext.scopeNotice ?? c0.scopeNotice,
     } : {}),
   };
   if (child.tag === 'complete') {
@@ -386,7 +386,7 @@ export function validateDesign(state: DesignState, event: HostEvent): string | n
     if (state.tag === 'increment' && event.artifact === 'plan') return validateImplement(state.child, event);
     if (event.artifact !== 'design') return 'Only design revision is available on the design parent.';
     if (state.tag === 'increment') {
-      if (state.child.tag === 'level-classification' || state.child.tag === 'level-recommendation') return 'Finish the pending level gate before design revision so a revised design cannot reuse stale classification.';
+      if (state.child.tag === 'level-classification') return 'Finish the pending level gate before design revision so a revised design cannot reuse stale classification.';
     }
     // NOTE: REQUEST and integration-conflict await decide while writers still run; a revision that replaced the increment would abandon them.
     const live = liveWriters(state);

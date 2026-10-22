@@ -52,12 +52,10 @@ function atBaseline(overrides: Record<string, unknown> = {}, parsedPlan = PLAN, 
 
 function classificationGate(parsedPlan = PLAN, invocation = run()) {
   const { state, effect } = atBaseline({}, parsedPlan, invocation);
-  const approval = toDecision(state, effect.id);
-  assert.equal(approval.tag, 'approval');
-  const result = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  assert.equal(result.state.tag, 'level-classification');
-  if (result.state.tag !== 'level-classification') throw new Error('level-classification');
-  return result.state;
+  const gate = toDecision(state, effect.id);
+  assert.equal(gate.tag, 'level-classification');
+  if (gate.tag !== 'level-classification') throw new Error('level-classification');
+  return gate;
 }
 
 function toDecision(state: ReturnType<typeof initialImplement>, effectId: string, exit = 0, failureId: string | null = null, after = FP) {
@@ -69,6 +67,14 @@ function toDecision(state: ReturnType<typeof initialImplement>, effectId: string
 }
 
 // SECTION: Baseline and settled plan
+
+test('standalone plan implementation reaches level classification from a clean baseline without an approval frame', () => {
+  const { state, effect } = atBaseline();
+  const gate = toDecision(state, effect.id);
+  assert.equal(gate.tag, 'level-classification');
+  const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local change.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
+  assert.equal(result.state.tag, 'task-checkout');
+});
 
 test('implement-settled-plan-skip: settled metadata binds path and governed hash before skipping plan review', () => {
   const metadata = settledPlanInput({ path: 'plans/example.plan.md', hash: HASH, outcome: 'settled' });
@@ -119,7 +125,7 @@ test('implement-baseline-known-red: acceptance requires every recorded failure i
   if (decision.tag !== 'baseline-decision') return;
   assert.match(validateImplement(decision, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids: [] } }) ?? '', /every distinct baseline failure/);
   const accepted = step(decision, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids: ['node --test tests/example.test.ts::test:old failure'] } });
-  assert.equal(accepted.state.tag, 'approval');
+  assert.equal(accepted.state.tag, 'level-classification');
 
 });
 
@@ -131,57 +137,7 @@ test('implement-baseline: verification side effects require recovery assessment'
 
 // SECTION: Prewrite level classification
 
-test('prewrite-level: approval-by-quote resolves classification before checkout', () => {
-  const { state, effect } = atBaseline();
-  const approval = toDecision(state, effect.id);
-  assert.equal(approval.tag, 'approval');
-  assert.match(validateImplement(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user' } }) ?? '', /by and quote/);
-  const denied = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user' } });
-  assert.equal(denied.state.tag, 'approval');
-  const allowed = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  assert.equal(allowed.state.tag, 'level-classification');
-  if (allowed.state.tag !== 'level-classification') return;
-  const classified = step(allowed.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScopeHash: implementData(allowed.state)['gateScopeHash'] } });
-  assert.equal(classified.state.tag, 'task-checkout');
-});
 
-function classifyExplicitRun(choice: 'adopt' | 'retain') {
-  const { state, effect } = atBaseline();
-  let result = toDecision(state, effect.id);
-  assert.equal(result.tag, 'approval');
-  result = step(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }).state;
-  assert.equal(result.tag, 'level-classification');
-  if (result.tag !== 'level-classification') throw new Error('level-classification');
-  const gateScopeHash = implementData(result)['gateScopeHash'];
-  result = step(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded integration has meaningful uncertainty, but failures remain observable and recoverable.', gateScopeHash } }).state;
-  assert.equal(result.tag, 'level-recommendation');
-  if (result.tag !== 'level-recommendation') throw new Error('level-recommendation');
-  const recommendation = implementData(result);
-  assert.equal(recommendation['explicitLevel'], 'low');
-  assert.equal(recommendation['assessedLevel'], 'medium');
-  result = step(result, { type: 'DECISION', kind: 'level-recommendation', answer: { choice, quote: `I choose to ${choice} the recommended level.` } }).state;
-  return result;
-}
-
-test('prewrite-level: a higher assessment pauses an explicit level until the user retains it', () => {
-  const result = classifyExplicitRun('retain');
-  assert.equal(result.tag, 'task-checkout');
-  if (result.tag === 'task-checkout') {
-    assert.equal(result.c.run.level, 'low');
-    assert.equal(result.c.levelAssessment?.evaluatedLevel, 'medium');
-    assert.equal(result.c.levelChoice?.choice, 'retain');
-  }
-});
-
-test('prewrite-level: adopting a higher assessment settles the run at that level', () => {
-  const result = classifyExplicitRun('adopt');
-  assert.equal(result.tag, 'task-checkout');
-  if (result.tag === 'task-checkout') {
-    assert.equal(result.c.run.level, 'medium');
-    assert.equal(result.c.levelAssessment?.evaluatedLevel, 'medium');
-    assert.equal(result.c.levelChoice?.choice, 'adopt');
-  }
-});
 
 test('prewrite-level: classified task assessment controls writer and review routing', () => {
   const config = {
@@ -189,11 +145,8 @@ test('prewrite-level: classified task assessment controls writer and review rout
     'read-delegates': { codex: { targets: [{ low: { model: 'reader-low' }, medium: { model: 'reader-medium' } }] } },
     phases: { 'plan-review': { rounds: { low: 1, medium: 1 }, targets: { low: 1, medium: 1 } }, 'code-review': { rounds: { low: 0, medium: 1 }, targets: { low: 1, medium: 1 } } },
   } as unknown as RunStartedEvent['config'];
-  const gate = classificationGate(PLAN, { ...run(), config });
+  const gate = classificationGate(PLAN, { ...run(), levelSource: 'classified', config });
   let result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The change crosses task boundaries but remains observable and recoverable.', gateScopeHash: implementData(gate)['gateScopeHash'] } });
-  assert.equal(result.state.tag, 'level-recommendation');
-  if (result.state.tag !== 'level-recommendation') return;
-  result = step(result.state, { type: 'DECISION', kind: 'level-recommendation', answer: { choice: 'adopt', quote: 'Adopt medium.' } });
   assert.equal(result.state.tag, 'task-checkout');
   if (result.state.tag !== 'task-checkout') return;
   assert.equal(result.state.c.run.level, 'medium');
@@ -219,7 +172,6 @@ test('prewrite-level: explicit equal-or-lower assessment continues without promp
     assert.equal(result.state.tag, 'task-checkout');
     if (result.state.tag === 'task-checkout') {
       assert.equal(result.state.c.run.level, level);
-      assert.equal(result.state.c.levelChoice, null);
     }
   }
 });

@@ -88,9 +88,8 @@ async function liveRun(f: Fixture, source: string, inputs: Record<string, string
     const ids = [...new Set((frame.data['items'] as { failureId: string }[]).map((row) => row.failureId))];
     frame = await f.reply(run, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } });
   }
-  assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
+  assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
   fs.writeFileSync(path.join(f.repo, 'report.txt'), 'unrelated caller content\n');
-  frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with the fixture plan.' } });
   frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded, reversible fixture tasks.', gateScopeHash: frame.data['gateScopeHash'] } });
   const launchFrame = frame;
   for (const slot of taskSlots(launchFrame, run).filter((item) => item.action === 'launch')) {

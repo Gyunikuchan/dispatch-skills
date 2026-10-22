@@ -141,8 +141,7 @@ export function start(concurrency: number, sim: Sim = {}): { result: Result; tra
   const started = run(concurrency, sim.reviewRounds);
   if (sim.planHash) started.overrides = { ...started.overrides, settledPlan: { path: 'x.plan.md', hash: sim.planHash, outcome: 'settled' } };
   let result = pump(stepImplement(initialImplement(), started), sim, trace);
-  assert.equal(result.state.tag, 'approval');
-  result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
+  assert.equal(result.state.tag, 'level-classification');
   result = classify(result, sim, trace);
   return { result, trace };
 }

@@ -70,8 +70,8 @@ test('submission preflight preserves live RED admission after receipt edits and 
   };
   let runState = start(1, invalid), result = launch(runState.result, invalid, runState.trace);
   result = submit(result, 'T1', invalid, runState.trace);
-  assert.equal(record(result, 'T1')?.status, 'failed');
-  assert.match(record(result, 'T1')?.reason ?? '', /RED matrix rejected/);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*RED-MATRIX/);
 
   const invalidOutsideScope: Sim = {
     ...extraPaths,
@@ -86,8 +86,8 @@ test('submission preflight preserves live RED admission after receipt edits and 
   const scopeRequest = result.state.tag === 'request-decision' ? result.state.request : null;
   assert.deepEqual([scopeRequest?.source, scopeRequest?.paths], ['scope', ['README.md']]);
   result = host(result, scopeAnswer('approve'), invalidOutsideScope, runState.trace);
-  assert.equal(record(result, 'T1')?.status, 'failed');
-  assert.match(record(result, 'T1')?.reason ?? '', /RED matrix rejected/);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*RED-MATRIX/);
 
   const amended: Sim = { plan: PLAN };
   runState = start(1, amended);
@@ -266,7 +266,6 @@ const draftStart = (sessionDir: string, draft: boolean): { result: Result; run: 
   const started = run(1);
   started.overrides = { ...started.overrides, sessionDir };
   let result = draftPump(stepImplement(initialImplement(), started), drafts);
-  result = draftHost(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, drafts);
   if (result.state.tag === 'level-classification') result = draftHost(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded task with local and recoverable effects.', gateScopeHash: implementData(result.state)['gateScopeHash'] } }, drafts);
   return { result, run: drafts };
 };
@@ -329,10 +328,7 @@ test('draft snapshot cleanup after delivery names only the draft refs of its own
 // SECTION: Admission
 
 const rejections: [string, Sim, RegExp][] = [
-  ['missing RED matrix', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: ['CRITERION SC1 | src/a.ts | behavior'] }) }, /RED matrix rejected/],
-  ['unapproved checkpoint', { redDefects: ['T1'] }, /RED checkpoint rejected/],
-  ['RED without the expected names', { verify: (purpose) => purpose === 'red' ? { exit: 1 } : { exit: 0 } }, /expected failures were not observed/],
-  ['fabricated RED', { verify: () => ({ exit: 0 }) }, /expected failures were not observed/],
+  ['missing criterion rows', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: [RED_ROW] }) }, /missing criterion rows/],
   ['failing GREEN', { verify: (purpose, _command, _task) => purpose === 'red' ? defaultVerify('red') : purpose === 'scoped' ? { exit: 1, failedTests: ['test:x'] } : { exit: 0 } }, /Task verification failed/],
 ];
 test('tasks: admission rejects defective candidate submissions and keeps dependents blocked', () => {
@@ -345,6 +341,114 @@ test('tasks: admission rejects defective candidate submissions and keeps depende
     result = submit(launch(result, sim, trace), 'T2', sim, trace);
     assert.equal(result.state.tag, 'failure', name);
     assert.equal(launchedTasks(trace).includes('task-t3'), false, name);
+  }
+});
+
+test('envelope without RED rows is admitted with a concern', () => {
+  const sim: Sim = { envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((row) => !row.startsWith('RED-MATRIX ')) }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*Exactly one RED-MATRIX/);
+  assert.ok(trace.effects.some((effect) => effect.kind === 'verify' && effect.purpose === 'scoped'));
+  assert.equal(trace.effects.some((effect) => effect.kind === 'verify' && effect.purpose === 'red'), false);
+});
+
+test('envelope without RED and CHECK rows is admitted with a concern per gap', () => {
+  const sim: Sim = { plan: CONTRACT_PLAN, envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((row) => row.startsWith('CRITERION ')) }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.ok('c' in result.state && result.state.c);
+  if (!('c' in result.state) || !result.state.c) return;
+  assert.deepEqual(result.state.c.concerns.filter((item) => item.startsWith('T1:')), [
+    'T1: missing CHECK row for npm run lint',
+    'T1: Exactly one RED-MATRIX row required for SC1; list every failure in that row.',
+  ]);
+});
+
+test('malformed RED rows become concerns while only valid rows replay', () => {
+  const invalid = [
+    'RED-MATRIX SC1 | malformed',
+    RED_ROW.replace('tests/validation.test.ts', 'src/a.ts'),
+    RED_ROW.replace('rejects bad input', 'SC1 rejects bad input'),
+    `${RED_ROW}\n${RED_ROW}`,
+  ];
+  for (const row of invalid) {
+    const sim: Sim = { envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((item) => !item.startsWith('RED-MATRIX ')).concat(row.split('\n')) }) };
+    let { result, trace } = start(1, sim);
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.equal(record(result, 'T1')?.status, 'accepted', row);
+    assert.deepEqual(redCommand(trace), [], row);
+    assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*RED-MATRIX/, row);
+  }
+  const sim: Sim = { envelope: (id) => ({ ...defaultEnvelope(id), evidence: [...defaultEnvelope(id).evidence, RED_ROW.replace('SC1', 'SC99')] }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.equal(redCommand(trace).length, 1);
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*unknown criterion SC99/);
+});
+
+test('RED rows for verify criteria become concerns and never replay', () => {
+  const plan: ParsedPlan = { ...PLAN, criteria: [...PLAN.criteria, { ...criterion('SC4', 'tests/validation.test.ts', 'verify'), tests: ['tests/validation.test.ts'] }], tasks: PLAN.tasks.map((row) => row.id === 'T1' ? { ...row, criteria: [...row.criteria, 'SC4'] } : row) };
+  const sim: Sim = { plan, envelope: (id) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.filter((row) => !row.startsWith('RED-MATRIX ')).concat(RED_ROW.replace('SC1', 'SC4')) }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.deepEqual(record(result, 'T1')?.redRows, []);
+  assert.deepEqual(redCommand(trace), []);
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1: RED-MATRIX names unknown criterion SC4/);
+});
+
+test('typed checkpoint concerns skip RED replay and remain task named', () => {
+  const sim: Sim = {};
+  let { result, trace } = start(1, sim);
+  result = launch(result, sim, trace);
+  const slot = slots(result).find((row) => row.task === 'T1')!;
+  result = implement.stepImplement(result.state, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, model: slot.model, envelopePath: slot.envelopePath, briefHash: slot.briefHash });
+  const effect = result.effects[0]!;
+  assert.equal(effect.kind, 'check-envelope');
+  const event = answer(result.state, effect, sim)!;
+  assert.equal(event.type, 'ENVELOPE_CHECKED');
+  if (event.type !== 'ENVELOPE_CHECKED') return;
+  result = pump(implement.stepImplement(result.state, { ...event, checkpointConcerns: ['RED checkpoint is missing: red.json'] }), sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.deepEqual(redCommand(trace), []);
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1: RED checkpoint is missing: red.json/);
+});
+
+test('RED replay evidence gaps become concerns and the task proceeds to verification', () => {
+  const sim: Sim = { verify: () => ({ exit: 0 }) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*RED/);
+  assert.ok(trace.effects.some((effect) => effect.kind === 'verify' && effect.purpose === 'scoped'));
+});
+
+test('RED checkout safety and committed-byte defects block GREEN while evidence concerns proceed', () => {
+  for (const [hard, message] of [
+    [true, 'Submitted test differs from its RED checkpoint: tests/validation.test.ts'],
+    [true, 'RED checkpoint path is not an approved task test path: ../escape.ts'],
+    [false, 'RED checkpoint is missing: red.json'],
+  ] as const) {
+    const sim: Sim = {};
+    let { result, trace } = start(1, sim);
+    result = launch(result, sim, trace);
+    const slot = slots(result).find((row) => row.task === 'T1')!;
+    result = implement.stepImplement(result.state, { type: 'WRITE_RECEIPT', status: 'submitted', task: 'T1', attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, model: slot.model, envelopePath: slot.envelopePath, briefHash: slot.briefHash });
+    for (let guard = 0; !(result.effects[0]?.kind === 'checkout' && result.effects[0].op === 'red'); guard++) {
+      assert.ok(guard < 20, 'RED checkout must be reached');
+      const effect = result.effects[0]!;
+      assert.ok(effect, 'RED checkout must be reached');
+      result = implement.stepImplement(result.state, answer(result.state, effect, sim)!);
+    }
+    result = pump(implement.stepImplement(result.state, { type: 'CHECKOUT_DONE', effectId: result.effects[0]!.id, op: 'red', result: { path: 'red-tree', defects: hard ? [message] : [], concerns: hard ? [] : [message] } }), sim, trace);
+    assert.equal(record(result, 'T1')?.status, hard ? 'failed' : 'accepted', message);
+    assert.equal(trace.effects.some((effect) => effect.kind === 'verify' && effect.purpose === 'scoped'), !hard, message);
+    if (hard) assert.match(record(result, 'T1')?.reason ?? '', /RED checkpoint/);
+    else assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1: RED checkpoint: RED checkpoint is missing: red.json/);
   }
 });
 
@@ -532,7 +636,7 @@ test('tasks: declared RED command without {files} runs unchanged', () => {
   assert.equal(record(result, 'T1')?.status, 'accepted');
 });
 
-test('tasks: declared RED command rejects runs without expected failures or that exit 0', () => {
+test('tasks: declared RED command defects become concerns without expected failures or with exit 0', () => {
   for (const [verify, pattern] of [
     [(purpose: string) => purpose === 'red' ? { exit: 1 } : { exit: 0 }, /expected failures were not observed: test:rejects bad input/],
     [(purpose: string) => purpose === 'red' ? { exit: 0, failedTests: ['test:rejects bad input'] } : { exit: 0 }, /RED command exited 0/],
@@ -540,7 +644,8 @@ test('tasks: declared RED command rejects runs without expected failures or that
     const sim: Sim = { plan: withRed({ red: 'npx jest --ci {files}' }), verify };
     let { result, trace } = start(1, sim);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
-    assert.match(record(result, 'T1')?.reason ?? '', pattern);
+    assert.equal(record(result, 'T1')?.status, 'accepted');
+    assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), pattern);
   }
 });
 
@@ -558,7 +663,8 @@ test('tasks: declared RED command refuses a test path that could break its quoti
     let { result, trace } = start(1, sim);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
     assert.deepEqual(redCommand(trace), [], unsafe);
-    assert.match(record(result, 'T1')?.reason ?? '', /unsafe test path/, unsafe);
+    assert.equal(record(result, 'T1')?.status, 'accepted');
+    assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /unsafe test path/, unsafe);
   }
 });
 
@@ -604,7 +710,8 @@ test('red replay expands every criterion test and refuses an unsafe declared pat
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
   assert.deepEqual(redCommand(trace), []);
-  assert.match(record(result, 'T1')?.reason ?? '', /unsafe test path tests\/"rules"\.test\.ts/);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /unsafe test path/);
 });
 
 const isRecordLike = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -660,7 +767,6 @@ function afterFailingBaseline(sim: Sim): { result: Result; trace: Trace } {
   assert.equal(result.state.tag, 'baseline-decision');
   const ids = (implementData(result.state)['items'] as { failureId: string }[]).map((row) => row.failureId);
   result = host(result, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } }, sim, trace);
-  result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
   result = classify(result, sim, trace);
   return { result: submit(launch(result, sim, trace), 'T1', sim, trace), trace };
 }
@@ -678,10 +784,11 @@ test('tasks: a RED baseline collision is a recorded concern unless Pre-existing 
   }
 });
 
-test('tasks: declared RED command fails the task when a failing baseline log is unreadable', () => {
+test('tasks: unreadable failing baseline logs become concerns', () => {
   const sim: Sim = { verify: (purpose) => purpose === 'baseline' ? { exit: 1 } : purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'], scanUnreadable: ['gone.log'] } : { exit: 0 } };
   const { result } = afterFailingBaseline(sim);
-  assert.match(record(result, 'T1')?.reason ?? '', /baseline log unreadable: gone\.log/);
+  assert.equal(record(result, 'T1')?.status, 'accepted');
+  assert.match(JSON.stringify('c' in result.state && result.state.c?.concerns), /T1:.*baseline log unreadable: gone\.log/);
 });
 
 test('tasks: downgraded RED evidence skips RED replay, verifies GREEN, names the criterion in concerns, and settles evidence', () => {
@@ -751,7 +858,6 @@ test('tasks: admission skips RED replay after an attributed RED exception ruling
   const sim: Sim = { plan: withRed({ redException: 'External invariant prevents a failing state.' }), envelope: (id) => ({ ...defaultEnvelope(id), evidence: defaultEnvelope(id).evidence.filter((row) => !row.startsWith('RED-MATRIX')) }) };
   const trace: Trace = { effects: [], events: [] };
   let result = pump(stepImplement(initialImplement(), run(1)), sim, trace);
-  result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
   assert.equal(result.state.tag, 'needs-user');
   assert.ok(validateImplement(result.state, { type: 'DECISION', kind: 'needs-user', answer: { decision: 'accept', by: 'user' } }));
   result = host(result, { type: 'DECISION', kind: 'needs-user', answer: { decision: 'accept', by: 'user', quote: 'Accept the invariant' } }, sim, trace);
@@ -1178,11 +1284,12 @@ test('contract self-check admission briefs carry each contract command and the C
   assert.ok((input?.['envelopeSchema'] as { evidence: string[] }).evidence.includes('CHECK <contract command> | exit <code>'));
 });
 
-test('contract self-check admission fails a DONE envelope without a CHECK row naming the command', () => {
+test('envelope missing CHECK rows is admitted with a concern', () => {
   const sim: Sim = { plan: CONTRACT_PLAN, envelope: (id) => defaultEnvelope(id, PLAN) };
   let { result, trace } = start(1, sim);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
-  assert.deepEqual([contractRecord(result, 'T1').status, contractRecord(result, 'T1').reason], ['failed', 'Evidence is missing CHECK rows for npm run lint.']);
+  assert.equal(contractRecord(result, 'T1').status, 'accepted');
+  assert.ok('c' in result.state && result.state.c?.concerns.includes('T1: missing CHECK row for npm run lint'));
 });
 
 test('contract self-check admission admits a CHECK row with a nonzero exit', () => {

@@ -370,9 +370,10 @@ test('governing pin resolves standalone plan, increment plan, and design', async
     assert.deepEqual(result.governing, { pinned: specHash(), current: specHash(), design: kind === 'increment plan' ? 'child.design.md' : null, reqIds: ['REQ-1'] });
   }
 });
-test('governing spec rejects unknown requirement', async () => {
+test('governing spec warns about unknown requirement', async () => {
   const f = governingFixture(), result = await f.parse(f.source.replace('Satisfies: REQ-1', 'Satisfies: REQ-9'));
-  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.ok(result.defects.some(item => item['code'] === 'unknown-requirement'));
+  assert.ok(result.type === 'ARTIFACT_PARSED'); assert.deepEqual(result.defects, []);
+  assert.ok(f.ports.stderrLines.some(line => line.includes('warning unknown-requirement:')));
 });
 test('governing pin fails on missing design', async () => {
   const f = governingFixture(), result = await f.parse(f.source.replace(/`governing.spec.md` · sha256:[a-f0-9]{64}/, '`missing.design.md` · I01'));
@@ -400,14 +401,27 @@ test('governing omitted without field', async () => {
   assert.ok(result.type === 'ARTIFACT_PARSED'); assert.equal('governing' in result, false);
 });
 
-test('governing spec rejects unknown approach requirement', async () => {
+test('downgraded plan and design findings are reported as warnings without blocking', async () => {
+  for (const kind of ['plan', 'design'] as const) {
+    const f = governingFixture();
+    const source = (kind === 'plan' ? f.source.replace('Satisfies: REQ-1', 'Satisfies: REQ-9') : GOVERNED_DESIGN.replace('REQ-1 maps', 'REQ-9 maps')).replace(/> \*\*Risk:\*\*.*\n/, '');
+    const result = await f.parse(source, kind);
+    assert.ok(result.type === 'ARTIFACT_PARSED');
+    assert.deepEqual(result.defects, []);
+    for (const code of ['unknown-requirement', 'summary-label']) assert.ok(f.ports.stderrLines.some(line => line.includes(`warning ${code}:`)), code);
+  }
+});
+
+test('governing spec warns about unknown approach requirement', async () => {
   const f = governingFixture(), result = await f.parse(GOVERNED_DESIGN.replace('REQ-1 maps', 'REQ-9 maps'), 'design');
   assert.ok(result.type === 'ARTIFACT_PARSED');
-  assert.deepEqual(result.defects.map(item => item['code']), ['unknown-requirement']);
+  assert.deepEqual(result.defects, []);
+  assert.ok(f.ports.stderrLines.some(line => line.includes('warning unknown-requirement:')));
 });
-test('governing pin preserves lint defects for malformed Parent', async () => {
+test('governing pin preserves lint warnings for malformed Parent', async () => {
   const f = governingFixture(), result = await f.parse(f.source.replace(/`governing.spec.md` \u00b7 sha256:[a-f0-9]{64}/, 'user request'));
   assert.ok(result.type === 'ARTIFACT_PARSED');
   assert.equal(result.governing?.pinned, null);
-  assert.ok(result.defects.some(item => item['code'] === 'summary-label'));
+  assert.deepEqual(result.defects, []);
+  assert.ok(f.ports.stderrLines.some(line => line.includes('warning summary-label:')));
 });

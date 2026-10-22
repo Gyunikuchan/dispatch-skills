@@ -5,7 +5,7 @@ import { amendPlan, replacementPlan } from '../../../skills/dispatch/scripts/mac
 import { implementData, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { AMEND_PLAN } from './fixtures/implement-amend.ts';
-import { approvalState } from './fixtures/implement-recovery.ts';
+import { classificationState } from './fixtures/implement-recovery.ts';
 import { host, launch, record, slots, start, type Result, type Sim, type Trace } from './fixtures/implement-tasks.ts';
 
 // SECTION: Helpers — live plan revision is an AMEND delta on the governed text of a parseable plan.
@@ -72,7 +72,7 @@ test('replacement plan rejects lint defects and invalid hashes', () => {
 test('in-run plan REVISE is rejected with a pointer to AMEND', () => {
   const { result } = running();
   assert.match(validateImplement(result.state, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'stalled check' }) ?? '', /AMEND/);
-  const root: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'x.plan.md', slug: 'feature' }, child: approvalState() };
+  const root: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'x.plan.md', slug: 'feature' }, child: classificationState() };
   assert.match(rootMachine.validate!(root, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'stalled check' }) ?? '', /AMEND/);
 });
 

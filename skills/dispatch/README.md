@@ -19,7 +19,7 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
 
-Every work verb settles a governing spec for the outcome, constraints and user decisions. At `medium` and above, you approve its contents before design or plan authoring; at `low`, Dispatch proceeds and shows it at handoff. For implementation, Dispatch then prepares a plan and applies the review and fix rounds enabled by the selected level's policy before asking you to approve production work. After approval, a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
+Every work verb settles a governing spec for the outcome, constraints and user decisions. At `medium` and above, you approve its contents before design or plan authoring; at `low`, Dispatch proceeds and shows it at handoff. For implementation, Dispatch then prepares a plan and applies the review and fix rounds enabled by the selected level's policy before a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
 
 The diagram shows implementation. Questions need no spec; standalone code review settles a spec without adding an authoring approval gate. See [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
 
@@ -30,8 +30,7 @@ flowchart LR
     Spec --> SpecGate{Approve spec at medium+<br/>before authoring}
     SpecGate --> Delegates[Read-only delegates]
     Delegates --> Evidence[Findings with evidence]
-    Evidence --> Gate{Approve production plan?}
-    Gate -->|Yes| Writer[Writer for your host platform]
+    Evidence --> Writer[Writer for your host platform]
     Writer --> Checks[Verification and review]
     Checks --> You
 ```
@@ -95,10 +94,10 @@ Plan and deliver one change:
 ```text
 /dispatch plan: Add idempotency keys to webhook delivery
 /dispatch review: <path/to/change.plan.md>
-/dispatch implement: <approved plan path>
+/dispatch implement: <settled plan path>
 ```
 
-Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans present task summaries before file ownership and prerequisites. Read the plan and approve its verification commands before production changes begin.
+Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans present task summaries before file ownership and prerequisites. Read the settled plan and its verification commands, then run `implement` to begin.
 
 Design work that needs multiple increments:
 
@@ -131,8 +130,8 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 ## Safety and session files
 
 - Read delegates use provider-specific read-only controls and credential stripping. Dispatch requests an OS sandbox where the provider and execution mode support it; Doctor reports unsupported sandboxing. Setting `sandbox: false` opts out of OS isolation, which provider read-only controls do not replace.
-- Production changes require your approval and use a writer configured for the host platform.
-- Dispatch runs the verification commands approved in the plan. Review fixes are checked and reviewed again.
+- Production changes use a writer configured for the host platform after the plan settles.
+- Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
 - Dispatch does not commit, push, or open a pull request.
 

@@ -63,8 +63,16 @@ Run everything.
 
 const codes = (source: string) => {
   const result = parseDesign(source);
-  return result.ok ? [] : result.defects.map((item) => item.code);
+  return [...(result.ok ? [] : result.defects), ...('warnings' in result ? result.warnings : [])].map((item) => item.code);
 };
+
+test('design presentation findings are warnings', () => {
+  const result = parseDesign(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3').replace('REQ-1 strategy', 'Importer strategy'));
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.warnings.map(item => item.code).sort(), ['missing-requirement-ref', 'summary-label']);
+  const invalid = parseDesign(DESIGN.replace('| I02 | 2 | Loader | I01 |', '| I02 | 2 | Loader | I07 |'));
+  assert.ok(!invalid.ok && invalid.defects.some(item => item.code === 'missing-prerequisite'));
+});
 
 test('design: parses graph, details, and Execution Status', () => {
   const result = parseDesign(DESIGN);
@@ -124,7 +132,7 @@ test('design-section-order: old order fails and new order passes', () => {
     .replace('## Alternatives & Decisions', `${architecture}## Alternatives & Decisions`)
     .replace('## Review Findings', `${status}## Review Findings`);
   const result = parseDesign(oldOrder);
-  const defects = result.ok ? [] : result.defects.filter((item) => item.code === 'section-order');
+  const defects = result.warnings.filter((item) => item.code === 'section-order');
   const lines = oldOrder.split('\n');
   assert.deepEqual(defects.map((item) => item.line),
     ['## Alternatives & Decisions', '## Risks, Security & Operations', '## Execution Status'].map((heading) => lines.indexOf(heading) + 1));

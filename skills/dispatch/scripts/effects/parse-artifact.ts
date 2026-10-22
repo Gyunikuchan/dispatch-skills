@@ -56,7 +56,7 @@ export const createParseArtifact = (deps: { cwd: string }): Handler<ParseEffect>
       warnings.push(...trace.filter(item => item.severity === 'warning'));
     }
   }
-  for (const warning of warnings.filter(item => item.code === 'missing-seams' || item.code === 'unsatisfied-requirement')) {
+  for (const warning of warnings) {
     ports.proc.stderr(`[dispatch] ${effect.path}${warning.line === null ? '' : `:${warning.line}`}: warning ${warning.code}: ${warning.message}\n`);
   }
   return [{ ...base, hash, parsed, defects, ...(governing ? { governing } : {}) }];

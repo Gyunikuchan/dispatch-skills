@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
+import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoveryRef } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask, PlanWarning } from '../domain/types.ts';
 import { CRITERION_ID_SOURCE, isCriterionId } from '../domain/criterion-id.ts';
 import { planIdPattern } from '../domain/plan.ts';
@@ -17,7 +17,7 @@ export type DesignBinding = {
   remainingIncrements?: readonly { id: string; priority: number; outcome: string; dependencies: readonly string[]; paths: readonly string[]; acceptance: readonly string[] }[];
   governingDesign?: LevelDesignScope;
   levelGatePassed?: boolean; gateScope?: LevelGateScope | null; levelAssessment?: LevelClassificationAnswer | null;
-  levelChoice?: LevelRecommendationAnswer | null; scopeAdjustments?: readonly ScopeAdjustment[];
+  scopeAdjustments?: readonly ScopeAdjustment[];
   scopeNotice?: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
 };
 export type ImplementOutcome = 'complete' | 'failed' | 'stopped';
@@ -267,11 +267,6 @@ export function sameFingerprint(left: TreeFingerprint, right: TreeFingerprint): 
     && (left['observation'] === undefined || right['observation'] === undefined || left['observation'] === right['observation']);
 }
 
-export function approvalAnswer(value: DecisionAnswer): { by: string; quote: string } | null {
-  if (!isRecord(value) || !NON_EMPTY(value['by']) || !NON_EMPTY(value['quote'])) return null;
-  return { by: value['by'].trim(), quote: value['quote'].trim() };
-}
-
 export function isWriterEnvelope(value: unknown): value is WriterEnvelope {
   return isRecord(value) && value['schemaVersion'] === 1
     && ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'].includes(String(value['status']))
@@ -288,11 +283,12 @@ export function criterionEvidenceRows(evidence: readonly string[], criteria: rea
 }
 
 /** `ignored` names task criteria whose red evidence downgraded to verify; their rows are skipped, not rejected. */
-export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[], planIds: readonly string[], ignored: readonly string[] = []): { rows: RedMatrixRow[]; defects: string[] } {
+export function parseRedMatrix(evidence: readonly string[], criteria: readonly PlanCriterion[], planIds: readonly string[], ignored: readonly string[] = []): { rows: RedMatrixRow[]; validRows: RedMatrixRow[]; defects: string[] } {
   const planId = planIdPattern(planIds);
   const skip = new Set(ignored.map((id) => id.toUpperCase()));
   const source = evidence.filter((row) => row.startsWith('RED-MATRIX ') && !skip.has(/^RED-MATRIX\s+([^\s|]+)/.exec(row)?.[1]?.toUpperCase() ?? ''));
   const rows: RedMatrixRow[] = [];
+  const valid = new Set<RedMatrixRow>();
   const defects: string[] = [];
   for (const line of source) {
     // NOTE: a Windows path written into JSON as `tests\tooling` decodes `\t` to a tab; name the cause instead of a vague mismatch.
@@ -314,20 +310,25 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
       continue;
     }
     // The leading criterion column is exempt: it names the criterion, not the test.
+    const beforeNames = defects.length;
     for (const name of [leaf, ...failureTests.filter((test) => test.startsWith('test:')).map((test) => test.slice(5).trim())]) {
       const id = planId?.exec(name)?.[0];
       if (id) defects.push(`RED-MATRIX ${match[1]} test name ${name} names plan ID ${id.toUpperCase()}; name the behavior instead.`);
     }
-    rows.push({ id: match[1] as string, path: file, leaf, exit: Number(match[3]), tests: failureTests });
+    const row = { id: match[1] as string, path: file, leaf, exit: Number(match[3]), tests: failureTests };
+    rows.push(row);
+    if (defects.length === beforeNames) valid.add(row);
   }
+  const eligible = new Set<RedMatrixRow>();
   for (const criterion of criteria) {
     const matches = rows.filter((row) => row.id === criterion.id);
     if (matches.length !== 1) defects.push(`Exactly one RED-MATRIX row required for ${criterion.id}; list every failure in that row.`);
     else if (!criterion.tests.includes(matches[0]?.path ?? '')) defects.push(`${criterion.id} RED-MATRIX path is not one of its declared Tests paths.`);
     else if (criterion.redException) defects.push(`${criterion.id} has a RED exception and cannot claim a failing-state matrix row.`);
+    else if (effectiveEvidence(criterion) === 'red' && valid.has(matches[0]!)) eligible.add(matches[0]!);
   }
   for (const row of rows) if (!criteria.some((criterion) => criterion.id === row.id)) defects.push(`RED-MATRIX names unknown criterion ${row.id}.`);
-  return { rows, defects: [...new Set(defects)] };
+  return { rows, validRows: rows.filter((row) => eligible.has(row)), defects: [...new Set(defects)] };
 }
 
 /** Shared semantic gate for task previews and live admission. Callers select the contract checks issued by the matching brief. */
@@ -338,21 +339,19 @@ function validateTaskSubmissionEvidence(evidence: readonly string[], criteria: r
   const missingChecks = missingCheckRows(evidence, requiredChecks);
   const activeRed = criteria.filter((criterion) => effectiveEvidence(criterion) === 'red' && !criterion.redException);
   const downgraded = criteria.filter((criterion) => criterion.evidence === 'red' && effectiveEvidence(criterion) !== 'red').map((criterion) => criterion.id);
-  const red = activeRed.length ? parseRedMatrix(evidence, activeRed, planIds, downgraded) : { rows: [], defects: [] };
-  return { missingCriteria, missingChecks, redRows: red.rows, redDefects: red.defects };
+  const red = activeRed.length ? parseRedMatrix(evidence, activeRed, planIds, downgraded) : { validRows: [], defects: [] };
+  return { missingCriteria, missingChecks, redRows: red.validRows, redDefects: red.defects };
 }
 
 /** Shares issued-check selection, plan IDs, and the first rejection across task preflight and live admission. */
 export function taskSubmissionValidation(evidence: readonly string[], plan: ParsedPlan, criteria: readonly PlanCriterion[], issuedChecks?: readonly string[]): {
-  rejection: string | null; redRows: RedMatrixRow[];
+  rejection: string | null; concerns: string[]; redRows: RedMatrixRow[];
 } {
   const requiredChecks = contractCommands(plan).filter((command) => !issuedChecks || issuedChecks.includes(command));
   const planIds = [...new Set([...plan.planIds, ...plan.criteria.map((criterion) => criterion.id)])];
   const checked = validateTaskSubmissionEvidence(evidence, criteria, requiredChecks, planIds);
-  if (checked.missingCriteria.length) return { rejection: `Evidence is missing criterion rows for ${checked.missingCriteria.join(', ')}.`, redRows: checked.redRows };
-  if (checked.missingChecks.length) return { rejection: `Evidence is missing CHECK rows for ${checked.missingChecks.join(', ')}.`, redRows: checked.redRows };
-  if (checked.redDefects.length) return { rejection: `RED matrix rejected: ${checked.redDefects.join('; ')}`, redRows: checked.redRows };
-  return { rejection: null, redRows: checked.redRows };
+  const concerns = [...checked.missingChecks.map((command) => `missing CHECK row for ${command}`), ...checked.redDefects];
+  return { rejection: checked.missingCriteria.length ? `Evidence is missing criterion rows for ${checked.missingCriteria.join(', ')}.` : null, concerns, redRows: checked.redRows };
 }
 
 export function redactOneLine(value: string): string { return value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(); }

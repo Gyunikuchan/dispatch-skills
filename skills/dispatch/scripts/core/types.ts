@@ -7,7 +7,7 @@ export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' 
 export const JOURNAL_PROTOCOL_REVISION = 11 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
-  | 'level-classification' | 'level-recommendation' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval' | 'fix-verification';
+  | 'level-classification' | 'integration-conflict' | 'request' | 'request-user' | 'run-stop' | 'spec-approval' | 'fix-verification';
 
 export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
 
@@ -72,7 +72,6 @@ export type LevelGateScope = {
 
 /** `gateScopeHash` is `sha256:` of the canonical gate scope, so the answer binds the scope without echoing it. */
 export type LevelClassificationAnswer = { evaluatedLevel: ClassifiedLevel; rationale: string; gateScopeHash: string };
-export type LevelRecommendationAnswer = { choice: 'adopt' | 'retain'; quote: string };
 /** Writer-proposed plan change on BLOCKED/NEEDS_CONTEXT; the orchestrator adjudicates and owns plan edits. */
 export type PlanAmendment = {
   finding: string;
@@ -291,7 +290,7 @@ export type ResultEvent =
   | { type: 'WAVE_DONE'; effectId: string; round: number; slots: SlotOutcome[]; findings: Finding[] }
   | { type: 'VERIFY_DONE'; effectId: string; purpose: VerifyPurpose; results: CommandResult[]; fingerprint: TreeFingerprint }
   | { type: 'BRIEF_READY'; effectId: string; stage: WriteStage; path: string; sha256: string; envelopePath: string; delta?: { path: string; sha256: string } }
-  | { type: 'ENVELOPE_CHECKED'; effectId: string; envelope: WriteEnvelope | null; defects: string[]; diff: PathDiff }
+  | { type: 'ENVELOPE_CHECKED'; effectId: string; envelope: WriteEnvelope | null; defects: string[]; diff: PathDiff; checkpointConcerns?: string[] }
   | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
   | { type: 'RECOVERY_ASSESSED'; effectId: string; purpose: 'drift' | 'hotfix'; beforeHash: string; afterHash: string; notice: ChangeNotice; judgement?: { violations: readonly string[]; violationCount?: number; withdrawn: boolean; files: number; lines: number } }
   | { type: 'RESTORED'; effectId: string; paths: string[]; patchPath: string }
