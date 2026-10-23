@@ -38,6 +38,26 @@ function create(file: string, bytes: string): boolean {
   }
 }
 
+// A breaker that died mid-break never removes its file; move it aside atomically so only the bytes judged stale are discarded.
+function clearStale(file: string, bytes: string, deps: LockDeps): void {
+  const aside = file + '.stale-' + deps.pid + '-' + deps.clock();
+  try {
+    fs.renameSync(file, aside);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  // NOTE: a contender may have replaced the stale file between read and rename; restore the live one unless a newer one exists.
+  if (read(aside) !== bytes) {
+    try {
+      fs.linkSync(aside, file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  fs.unlinkSync(aside);
+}
+
 export async function withLock<T>(session: string, tool: string, deps: LockDeps, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
   const directory = path.join(session, '.state');
   fs.mkdirSync(directory, { recursive: true });
@@ -49,6 +69,11 @@ export async function withLock<T>(session: string, tool: string, deps: LockDeps,
   let broken: LockOwner | null = null;
   while (true) {
     const breaking = read(breaker);
+    const deadBreaker = breaking === null ? null : owner(breaking);
+    if (deadBreaker && deadBreaker.host === deps.host && !deps.isAlive(deadBreaker.pid)) {
+      clearStale(breaker, breaking!, deps);
+      continue;
+    }
     let held = breaking ?? read(lock);
     if (breaking === null && held === null && create(lock, ours)) break;
     if (breaking === null && held !== null) {

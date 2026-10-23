@@ -14,7 +14,25 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
  f.deps.isAlive=()=>false;assert.equal(await run(),0);assert.equal(fs.existsSync(lock),false);const records=fs.readFileSync(path.join(f.session,'ledger.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x));assert.equal(records[0].kind,'note');assert.equal(records[0].by,'tool');assert.equal(records.length,2);
  fs.writeFileSync(input,'{"kind":"bad"}');assert.equal(await run(),1);assert.equal(fs.existsSync(lock),false);
  fs.writeFileSync(lock,JSON.stringify({pid:99,host:'foreign',at:'now',tool:'test'}));assert.equal(await run(),3);assert.equal(fs.existsSync(lock),true);fs.unlinkSync(lock);
- fs.writeFileSync(path.join(state,'lock.break'),JSON.stringify({pid:999,host:f.deps.host,at:'now'}));assert.equal(await run(),3);assert.match(f.output().summary,/999/);
+ const breaker=path.join(state,'lock.break');fs.writeFileSync(input,JSON.stringify({kind:'note',key:'b',by:'tool',data:{text:'ok'}}));
+ f.deps.isAlive=pid=>pid===999;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));assert.equal(await run(),3);assert.match(f.output().summary,/999/);assert.equal(fs.existsSync(breaker),true);
+ f.deps.isAlive=()=>false;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:'foreign',at:'now'}));assert.equal(await run(),3);assert.equal(fs.existsSync(breaker),true);
+ fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));
+ f.deps.isAlive=()=>false;fs.writeFileSync(lock,JSON.stringify({pid:999,host:f.deps.host,at:'now',tool:'test'}));
+ assert.equal(await run(),0);assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')),[]);
+ }finally{f.cleanup();}
+});
+
+test('session lock stale breaker cleanup restores a live replacement breaker', async () => {
+ const f=sessionFixture();try{
+ const state=path.join(f.session,'.state');fs.mkdirSync(state);const breaker=path.join(state,'lock.break');
+ const live=JSON.stringify({pid:7,host:f.deps.host,at:'live'});
+ fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'dead'}));
+ const input=f.artifact('r.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'ok'}}));
+ // A contender replaces the stale breaker between our read and our rename.
+ f.deps.isAlive=pid=>{if(pid===999&&fs.readFileSync(breaker,'utf8')!==live)fs.writeFileSync(breaker,live);return pid===7;};
+ assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),3);
+ assert.equal(fs.readFileSync(breaker,'utf8'),live);assert.deepEqual(fs.readdirSync(state).filter(x=>x.includes('stale')),[]);
  }finally{f.cleanup();}
 });
 
