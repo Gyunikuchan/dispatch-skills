@@ -58,14 +58,20 @@ export function latest(fold: Fold, kind: string): LedgerRecord | undefined {
   return fold.records.findLast(record => record.kind === kind);
 }
 
-export function currentHashes(root: string, bind: Record<string, any> | LedgerRecord | undefined): Hashes {
-  const result: Hashes = {};
+export function currentSnapshot(root: string, bind: Record<string, any> | LedgerRecord | undefined): { bytes: Partial<Record<ArtifactKind, string | null>>; hashes: Hashes } {
+  const hashes: Hashes = {};
+  const bytes: Partial<Record<ArtifactKind, string | null>> = {};
   const data = bind && 'data' in bind ? bind.data : bind;
   for (const [kind, file] of Object.entries(data ?? {})) {
     const source = readArtifact(root, file as string);
-    result[kind as ArtifactKind] = source === null ? null : artifactHash(kind as ArtifactKind, source);
+    bytes[kind as ArtifactKind] = source;
+    hashes[kind as ArtifactKind] = source === null ? null : artifactHash(kind as ArtifactKind, source);
   }
-  return result;
+  return {bytes, hashes};
+}
+
+export function currentHashes(root: string, bind: Record<string, any> | LedgerRecord | undefined): Hashes {
+  return currentSnapshot(root, bind).hashes;
 }
 
 function content(record: RecordInput | LedgerRecord): string {
@@ -75,9 +81,14 @@ function content(record: RecordInput | LedgerRecord): string {
   });
 }
 
+export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
 export async function appendRecord(session: string, input: unknown, deps: LockDeps): Promise<{ seq: number; deduped: boolean }> {
-  return withLock(session, 'ledger append', deps, async broken => {
+  return withLedger(session, 'ledger append', deps, tx => tx.append(input));
+}
+export async function withLedger<T>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
+  return withLock(session, tool, deps, async broken => {
     const fold = foldLedger(session);
+    const append = async (input: unknown) => {
     const record = validateRecord(input) as RecordInput;
     const key = record.key ?? defaultKey(record);
     const existing = fold.records.find(row => row.key === key);
@@ -122,24 +133,26 @@ export async function appendRecord(session: string, input: unknown, deps: LockDe
       while (fs.existsSync(path.join(session, 'ledger.torn-' + n + '.jsonl'))) n++;
       fs.writeFileSync(path.join(session, 'ledger.torn-' + n + '.jsonl'), fold.torn, { flag: 'wx' });
       fs.truncateSync(file, fs.statSync(file).size - fold.torn.length);
+      fold.torn = null;
     }
     const handle = fs.openSync(file, 'a');
     try {
-      if (broken) {
-        const note = {
-          seq: ++fold.lastSeq, key: 'stale-lock:' + broken.host + ':' + broken.pid + ':' + broken.at,
-          at: new Date(deps.clock()).toISOString(), kind: 'note', by: 'tool',
-          data: { text: 'Broke stale lock from pid ' + broken.pid + ' on ' + broken.host },
-        };
-        fs.writeSync(handle, JSON.stringify(note) + '\n');
-      }
       const seq = fold.lastSeq + 1;
-      fs.writeSync(handle, JSON.stringify({ ...record, key, seq, at: new Date(deps.clock()).toISOString() }) + '\n');
+      const stored = { ...record, key, seq, at: new Date(deps.clock()).toISOString() };
+      fs.writeSync(handle, JSON.stringify(stored) + '\n');
       fs.fsyncSync(handle);
+      fold.records.push(stored);
+      fold.lastSeq = seq;
       return { seq, deduped: false };
     } finally {
       fs.closeSync(handle);
     }
+    };
+    if (broken) await append({
+      kind: 'note', key: 'stale-lock:' + broken.host + ':' + broken.pid + ':' + broken.at, by: 'tool',
+      data: {text: 'Broke stale lock from pid ' + broken.pid + ' on ' + broken.host},
+    });
+    return fn({fold,append});
   });
 }
 

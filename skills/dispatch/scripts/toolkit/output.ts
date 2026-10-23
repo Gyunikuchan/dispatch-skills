@@ -30,7 +30,7 @@ export function capSummary(text: string): string {
 export function writeResult(session: string, tool: string, action: string, value: unknown): string {
   const directory = path.join(path.resolve(session), '.state', 'results');
   fs.mkdirSync(directory, { recursive: true });
-  const target = path.join(directory, tool + '-' + action + '.json');
+  const target = path.join(directory, tool + '-' + action + '-' + crypto.randomUUID() + '.json');
   const temp = target + '.' + crypto.randomUUID() + '.tmp';
   try {
     fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });

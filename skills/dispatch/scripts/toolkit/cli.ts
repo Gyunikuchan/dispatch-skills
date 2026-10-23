@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { spawn } from 'node:child_process';
+import { verifyRun } from './verify.ts';
+import { renderBrief } from './brief.ts';
+import { create, submit, abandon } from './writers.ts';
+import { integrate, continueIntegration, commit, abort } from './integrate.ts';
+import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, type Manifest } from '../lib/session.ts';
 import { lintArtifact } from './lint.ts';
 import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
@@ -13,6 +19,8 @@ import { statusReport } from './status.ts';
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  run: (argv: string[], options: {cwd: string; env?: NodeJS.ProcessEnv; stdin?: string}) => Promise<{exit: number; stdout: string; stderr: string}>;
+  hook?: (point: string) => Promise<void> | void;
   stdout: (line: string) => void;
   env: NodeJS.ProcessEnv;
   clock: () => number;
@@ -27,6 +35,18 @@ export type CliDeps = {
 
 export function nodeDeps(): CliDeps {
   return {
+    run: (argv, options) => new Promise((resolve, reject) => {
+      // cmd.exe must receive the plan command without Node's argument quoting.
+      const child = spawn(argv[0]!, argv.slice(1), {cwd: options.cwd, env: {...process.env,...options.env}, windowsHide: true, windowsVerbatimArguments: process.platform === 'win32' && argv[0]!.toLowerCase() === 'cmd.exe', stdio: 'pipe'});
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', exit => resolve({exit: exit ?? 1,stdout,stderr}));
+      child.stdin.on('error', error => { if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(error); });
+      child.stdin.end(options.stdin);
+    }),
     stdout: (line) => { process.stdout.write(line); }, env: process.env, clock: () => Date.now(),
     sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)), pid: process.pid, host: os.hostname(),
     isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } },
@@ -35,6 +55,18 @@ export function nodeDeps(): CliDeps {
 }
 
 const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResult>> = {
+  'brief render': renderBrief,
+  'worktree integrate': integrate,
+  'worktree continue': continueIntegration,
+  'worktree commit': commit,
+  'worktree abort': abort,
+  'worktree deliver': deliver,
+  'worktree close': close,
+  'worktree cleanup': cleanup,
+  'worktree create': create,
+  'worktree submit': submit,
+  'worktree abandon': abandon,
+  'verify run': verifyRun,
   'ledger append': async ({ session, args, deps }) => {
     let input: unknown;
     try {
@@ -56,9 +88,9 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const value = doctorReport(session, deps.skillRoot, values['level']);
     return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}) };
   },
-  'status show': async ({ session, manifest, args }) => {
+  'status show': async ({ session, manifest, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'status takes no arguments');
-    const value = statusReport(session, manifest.repositoryRoot);
+    const value = await statusReport(session, manifest.repositoryRoot, deps);
     return { ok: true, value, summary: JSON.stringify(value), exit: 0 };
   },
   'lint run': async ({ args }) => {
@@ -86,6 +118,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
+      criteria: {type: 'string'}, reason: {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');

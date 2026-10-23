@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { capSummary } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
+import {appendRecord,currentHashes,foldLedger,latest} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 test('summary byte cap includes marker and preserves multibyte code points', () => {
   for (const text of ['a'.repeat(2000), 'a'.repeat(1020) + '😀'.repeat(300), '界'.repeat(500)]) {
@@ -14,6 +15,23 @@ test('summary byte cap includes marker and preserves multibyte code points', () 
     assert.equal(Buffer.from(summary).toString('utf8'), summary);
     assert.ok(text.startsWith(summary.slice(0, -1)));
   }
+});
+
+test('summary byte cap keeps the full gated multibyte brief for two hundred criteria',async()=>{
+  const f=sessionFixture(); try {
+    const ids=Array.from({length:200},(_,i)=>'SC'+(i+1));
+    const source='# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | '+ids.join(', ')+' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n'+ids.map(id=>'- ['+id+'] 日本語 works\n  - Changes: src/file.ts\n  - Verify: `node check.ts`\n  - Evidence: verify').join('\n')+'\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
+    const plan=f.artifact('large-multibyte.plan.md',source); f.artifact('mission.spec.md','# Mission\n');
+    const skill=path.join(f.root,'skill'); const templates=path.join(skill,'references/templates'); fs.mkdirSync(templates,{recursive:true});
+    for(const file of ['writer-brief.md','quality-bar.md']) fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(templates,file));
+    const add=(kind:string,data:object,extra:object={})=>appendRecord(f.session,{kind,by:'orchestrator',key:kind,data,...extra},f.deps);
+    await add('bind',{spec:'mission.spec.md',plan:'large-multibyte.plan.md'});
+    await add('approval',currentHashes(f.root,latest(foldLedger(f.session),'bind')),{by:'user',quote:'Approved'});
+    await add('writer',{phase:'launched',task:'T1',path:'.state/worktrees/T1-1',base:{commit:'a'.repeat(40),taskSection:'sha256:'+'b'.repeat(64),seq:1}});
+    assert.equal(await main(['brief','render','T1','--session',f.session],{...f.deps,skillRoot:skill,hook:point=>{if(point==='brief:after-gate') fs.writeFileSync(plan,'UNGATED');}}),0);
+    const output=f.output(); assert.ok(Buffer.byteLength(output.summary)<=1024); const result=JSON.parse(fs.readFileSync(output.path!,'utf8'));
+    const brief=fs.readFileSync(result.path,'utf8'); assert.equal(result.bytes,Buffer.byteLength(brief)); assert.match(brief,/\[SC200\] 日本語 works/); assert.ok(!brief.includes('UNGATED'));
+  } finally {f.cleanup();}
 });
 
 test('summary byte cap applies to every tool with full result files including refusals', async () => {

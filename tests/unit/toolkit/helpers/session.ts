@@ -13,6 +13,7 @@ export function sessionFixture() {
   const lines: string[] = [];
   const sleeps: number[] = [];
   const deps: CliDeps = {
+    run: async () => { throw new Error('Unit tests must not spawn processes'); },
     stdout: (line) => lines.push(line), env: {}, clock: () => 0,
     sleep: async (ms) => { sleeps.push(ms); }, pid: 42, host: 'test-host', isAlive: () => false,
     skillRoot: path.resolve('skills/dispatch'),
