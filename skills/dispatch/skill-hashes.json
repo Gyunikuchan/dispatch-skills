@@ -135,5 +135,21 @@
   "scripts/providers/opencode-runtime.ts": "0d7d069d79cf9380ebced5ed02ebe929e36777c3d2d5669b799b1725a93c4e06",
   "scripts/providers/opencode.ts": "5d26513931491383bf8022b028ea4a503387a4e6557f66ea8d9810d7a04d8644",
   "scripts/providers/runner.ts": "5567aa0499e3b93ef3adb7db1a50e689942529069cf8d2cc851a69b2d71148a8",
-  "scripts/providers/types.ts": "68c08d9b072f9f1844eb1a511dfdde77c9df91bab8624c585c44769acd52a469"
+  "scripts/providers/types.ts": "68c08d9b072f9f1844eb1a511dfdde77c9df91bab8624c585c44769acd52a469",
+  "scripts/toolkit/artifacts.ts": "a8151ec4132d029725e1358ab5470d93f50fc24d891481aaf078d2a2feaad607",
+  "scripts/toolkit/cli.ts": "c0d923e33829cf6c5f8171d6b79898169076ecc89174a858ff634758243c72d8",
+  "scripts/toolkit/doctor.ts": "fb99d10f67be3d59e49ca819e5433955b4b23cfb73e0bb2bfd8d651bbb3605c2",
+  "scripts/toolkit/domain/criterion-id.ts": "10c6a8739d2b16788c5db5aae491f6237eeb96d4847310ca07ad9a7a3fe8ee35",
+  "scripts/toolkit/domain/design.ts": "dca04e5aba53e36f32f2d2b4c587334f6d6d2ca30dde78a4fd1d87142fb7ff3c",
+  "scripts/toolkit/domain/plan.ts": "915dfaa96b3e5b636ba261ad3f0ecee70ee5edceea6b94577cbd0b54c5461e63",
+  "scripts/toolkit/domain/spec.ts": "11dad65bf7d0f97936f3e07fa167157f25e2b4076614034c0ebecdfa9be90429",
+  "scripts/toolkit/domain/stable-value.ts": "62cbeca6a9100317fdedc21370417d158d2daa1e9cd9eb47d8b07c796eea7d0f",
+  "scripts/toolkit/domain/types.ts": "503cb5782953334480acfc4e4fc4913dafc84f8d215b8047ea37b9a995d42ffb",
+  "scripts/toolkit/ledger.ts": "4d13fb1c857cf6aa3842b37fdb8b1012977459507ef8def8acb704f54fbf7840",
+  "scripts/toolkit/lint.ts": "1a75c48ba9689a29a8564f77049078921096913afb540765a640860aeb325ed6",
+  "scripts/toolkit/lock.ts": "9ef71064da6f174eedfdbd0bdb4d89d197c0e67e6dc496a5878c5351aebb55f3",
+  "scripts/toolkit/output.ts": "72ed28105743468c8e9f6b3b1ad603387ffcecf5d495d3fd1f1fb2075496f186",
+  "scripts/toolkit/records.ts": "74a49b441cc664e92a047527d3db0e2bff0fed15ae5340fafffa46eecbb4ada5",
+  "scripts/toolkit/status.ts": "718296ac8143be578255427e86cd02aa672a74ec99b7beb823c48200bc26593f",
+  "scripts/toolkit/types.ts": "a6d2d62bc6d4b5ff50ba57d006c3978d12d89624c8b9cd3b624d914dd5400af4"
 }

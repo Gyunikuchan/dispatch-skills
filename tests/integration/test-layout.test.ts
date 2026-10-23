@@ -4,7 +4,7 @@ import { scanOverlay, type FileTable } from './scan.ts';
 
 export const TIERS = [
   'tests/unit/core/', 'tests/unit/policy/', 'tests/unit/domain/', 'tests/unit/providers/', 'tests/unit/lib/', 'tests/unit/machines/',
-  'tests/integration/', 'tests/tooling/', 'tests/e2e/',
+  'tests/unit/toolkit/', 'tests/integration/', 'tests/tooling/', 'tests/e2e/',
 ] as const;
 
 export function checkTestLayout(files: FileTable): string[] {

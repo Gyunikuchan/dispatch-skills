@@ -338,11 +338,12 @@ test('retro observations: rejects foreign component', () => {
     assert.deepEqual(retroObservations([observation({ component })]), { values: [], rejected: 1 }, component);
   }
   assert.equal(retroObservations([observation({ component: 'skills/dispatch/scripts/core/frame.ts' })]).values[0]?.component, 'scripts/core/frame.ts');
-  // NOTE: the allowlist mirrors the shipped tree, so adding or removing a script or reference fails here.
+  // NOTE: the legacy allowlist mirrors shipped files outside the independent toolkit.
   const shipped = ['SKILL.md', ...['scripts', 'references'].flatMap((dir) => fs.readdirSync(path.join(SKILL_ROOT, dir), { recursive: true })
-    .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')))];
+    .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')).filter((file) => !file.startsWith('scripts/toolkit/')))];
   assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
   for (const component of shipped) assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
+  assert.deepEqual(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]), { values: [], rejected: 1 });
 });
 
 test('retro observations: rejects unknown category', () => {

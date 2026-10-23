@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { LanguageVariant, SyntaxKind } from 'typescript/unstable/ast';
 import { createScanner } from 'typescript/unstable/ast/scanner';
 import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
 
 const SCRIPTS = 'skills/dispatch/scripts/';
-type Layer = 'dispatch' | 'core' | 'machines' | 'policy' | 'domain' | 'effects' | 'providers' | 'lib';
+type Layer = 'dispatch' | 'core' | 'machines' | 'policy' | 'domain' | 'effects' | 'providers' | 'lib' | 'toolkit';
 
 // Design § Layers: anything not listed is forbidden (which also rules out cycles).
 export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
@@ -18,6 +18,7 @@ export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
   effects: ['providers', 'policy', 'domain', 'lib'],
   providers: ['lib'],
   lib: [],
+  toolkit: ['toolkit', 'providers', 'lib', 'policy', 'effects'], // checkDependencies restricts effects to effects/git.ts.
 };
 
 const PURE: readonly Layer[] = ['machines', 'policy', 'domain'];
@@ -61,8 +62,18 @@ export function checkDependencies(files: FileTable): string[] {
       }
       const target = resolveRelative(file, specifier);
       const targetLayer = target ? layerOf(target) : null;
+      if (layer === 'toolkit' && target) {
+        if (!(targetLayer === 'toolkit' || targetLayer === 'providers' || targetLayer === 'lib' || targetLayer === 'policy' || target === SCRIPTS + 'effects/git.ts')) {
+          errors.push('dependency rule: ' + file + ' (toolkit) imports ' + specifier + '; toolkit may import only toolkit/, providers/, lib/, policy/ and effects/git.ts');
+        }
+        continue;
+      }
+      if (targetLayer === 'toolkit' && layer !== 'toolkit') {
+        errors.push('dependency rule: ' + file + ' imports toolkit/; legacy layers must not depend on toolkit');
+        continue;
+      }
       if (!targetLayer || targetLayer === layer) continue;
-      if (typeOnly && target === `${SCRIPTS}core/types.ts`) continue;
+      if (layer !== 'toolkit' && typeOnly && target === `${SCRIPTS}core/types.ts`) continue;
       if (!ALLOWED[layer].includes(targetLayer)) {
         errors.push(`dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(', ') || 'nothing'}, so invert the dependency or move the code`);
       } else if (layer === 'core' && !typeOnly && (targetLayer === 'machines' || targetLayer === 'effects') && file !== `${SCRIPTS}core/interpreter.ts`) {
@@ -86,6 +97,26 @@ test('the overlay obeys the dependency matrix and purity rules', () => {
 
 const IMPORT = 'imp' + 'ort';
 const file = (path: string, ...lines: string[]) => ({ path, text: lines.join('\n') });
+
+describe('toolkit import boundary', () => {
+  test('toolkit refuses legacy engine and non git effects imports', () => {
+    for (const [specifier, type] of [['../core/types.ts', 'type '], ['../core/interpreter.ts', ''], ['../machines/implement.ts', ''], ['../effects/parse-artifact.ts', '']]) {
+      const errors = checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' ' + type + '{ X } from ' + JSON.stringify(specifier) + ';')]);
+      assert.equal(errors.length, 1, specifier);
+      assert.match(errors[0]!, /toolkit/);
+    }
+  });
+  test('toolkit allows portable services and its own domain', () => {
+    for (const specifier of ['./domain/plan.ts', '../providers/types.ts', '../lib/session.ts', '../policy/roster.ts', '../effects/git.ts']) {
+      assert.deepEqual(checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]), []);
+    }
+  });
+  test('legacy layers cannot depend on toolkit', () => {
+    for (const layer of ['core', 'machines', 'policy', 'domain', 'effects', 'providers', 'lib']) {
+      assert.equal(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from "../toolkit/types.ts";')]).length, 1);
+    }
+  });
+});
 
 test('purity checks ignore performance in strings and comments', () => {
   assert.deepEqual(checkDependencies([file(`${SCRIPTS}domain/report.ts`,
