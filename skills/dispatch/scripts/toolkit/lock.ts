@@ -38,24 +38,16 @@ function create(file: string, bytes: string): boolean {
   }
 }
 
-// A breaker that died mid-break never removes its file; move it aside atomically so only the bytes judged stale are discarded.
-function clearStale(file: string, bytes: string, deps: LockDeps): void {
-  const aside = file + '.stale-' + deps.pid + '-' + deps.clock();
-  try {
-    fs.renameSync(file, aside);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
+// Breaker slots are `lock.break`, `lock.break.1`, ... A breaker that died mid-break never removes its slot, so contenders
+// skip dead slots instead of deleting them; removing one could displace a live breaker that replaced it.
+function activeBreaker(breaker: string, deps: LockDeps): { file: string; bytes: string | null } {
+  for (let n = 0; ; n++) {
+    const file = n === 0 ? breaker : breaker + '.' + n;
+    const bytes = read(file);
+    const dead = bytes === null ? null : owner(bytes);
+    if (dead && dead.host === deps.host && !deps.isAlive(dead.pid)) continue;
+    return { file, bytes };
   }
-  // NOTE: a contender may have replaced the stale file between read and rename; restore the live one unless a newer one exists.
-  if (read(aside) !== bytes) {
-    try {
-      fs.linkSync(aside, file);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-  }
-  fs.unlinkSync(aside);
 }
 
 export async function withLock<T>(session: string, tool: string, deps: LockDeps, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
@@ -68,17 +60,12 @@ export async function withLock<T>(session: string, tool: string, deps: LockDeps,
   let waited = 0;
   let broken: LockOwner | null = null;
   while (true) {
-    const breaking = read(breaker);
-    const deadBreaker = breaking === null ? null : owner(breaking);
-    if (deadBreaker && deadBreaker.host === deps.host && !deps.isAlive(deadBreaker.pid)) {
-      clearStale(breaker, breaking!, deps);
-      continue;
-    }
-    let held = breaking ?? read(lock);
-    if (breaking === null && held === null && create(lock, ours)) break;
-    if (breaking === null && held !== null) {
+    const slot = activeBreaker(breaker, deps);
+    let held = slot.bytes ?? read(lock);
+    if (slot.bytes === null && held === null && create(lock, ours)) break;
+    if (slot.bytes === null && held !== null) {
       const stale = owner(held);
-      if (stale && stale.host === deps.host && !deps.isAlive(stale.pid) && create(breaker, ours)) {
+      if (stale && stale.host === deps.host && !deps.isAlive(stale.pid) && create(slot.file, ours)) {
         try {
           if (read(lock) === held) {
             fs.unlinkSync(lock);
@@ -88,15 +75,15 @@ export async function withLock<T>(session: string, tool: string, deps: LockDeps,
             }
           }
         } finally {
-          if (read(breaker) === ours) fs.unlinkSync(breaker);
+          if (read(slot.file) === ours) fs.unlinkSync(slot.file);
         }
       }
     }
-    const currentBreaker = read(breaker);
-    held = currentBreaker ?? read(lock) ?? held;
+    const current = activeBreaker(breaker, deps);
+    held = current.bytes ?? read(lock) ?? held;
     if (waited >= 10000 || deps.clock() - start >= 10000) {
       const holder = owner(held ?? '');
-      const file = currentBreaker !== null ? breaker : lock;
+      const file = current.bytes !== null ? current.file : lock;
       throw new ToolError(3, 'lock-held', holder ? 'lock held by pid ' + holder.pid + ' on ' + holder.host : 'lock holder unreadable at ' + file);
     }
     await deps.sleep(100);

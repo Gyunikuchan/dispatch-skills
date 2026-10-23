@@ -19,35 +19,24 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
  f.deps.isAlive=()=>false;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:'foreign',at:'now'}));assert.equal(await run(),3);assert.equal(fs.existsSync(breaker),true);
  fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));
  f.deps.isAlive=()=>false;fs.writeFileSync(lock,JSON.stringify({pid:999,host:f.deps.host,at:'now',tool:'test'}));
- assert.equal(await run(),0);assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')),[]);
+ assert.equal(await run(),0);assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')).sort(),['lock.break']);assert.equal(JSON.parse(fs.readFileSync(breaker,'utf8')).pid,999);
  }finally{f.cleanup();}
 });
 
-test('session lock stale breaker cleanup restores a live replacement breaker', async () => {
+test('session lock skips dead breaker slots without displacing a live breaker', async () => {
  const f=sessionFixture();try{
- const state=path.join(f.session,'.state');fs.mkdirSync(state);const breaker=path.join(state,'lock.break');
- const live=JSON.stringify({pid:7,host:f.deps.host,at:'live'});
- fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'dead'}));
+ const state=path.join(f.session,'.state');fs.mkdirSync(state);const lock=path.join(state,'lock');
+ const dead=JSON.stringify({pid:999,host:f.deps.host,at:'dead'}),live=JSON.stringify({pid:7,host:f.deps.host,at:'live'});
+ fs.writeFileSync(path.join(state,'lock.break'),dead);fs.writeFileSync(path.join(state,'lock.break.1'),live);
+ fs.writeFileSync(lock,JSON.stringify({pid:998,host:f.deps.host,at:'old',tool:'old'}));
  const input=f.artifact('r.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'ok'}}));
- // A contender replaces the stale breaker between our read and our rename.
- f.deps.isAlive=pid=>{if(pid===999&&fs.readFileSync(breaker,'utf8')!==live)fs.writeFileSync(breaker,live);return pid===7;};
- assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),3);
- assert.equal(fs.readFileSync(breaker,'utf8'),live);assert.deepEqual(fs.readdirSync(state).filter(x=>x.includes('stale')),[]);
- }finally{f.cleanup();}
-});
-
-test('session lock refuses unreadable holders and names the exact lock file', async () => {
- const f=sessionFixture();try{
- const state=path.join(f.session,'.state');fs.mkdirSync(state);
- const input=f.artifact('r.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'ok'}}));
- for(const name of ['lock','lock.break'])for(const bytes of ['', '{', 'null', 'false', '42', '"holder"', '[]', '{}']){
-  const file=path.join(state,name);fs.writeFileSync(file,bytes);f.lines.length=0;
-  assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),3);
-  assert.equal(f.output().reason,'lock-held');assert.equal(f.output().summary,'lock holder unreadable at '+file);
-  assert.equal(fs.readFileSync(file,'utf8'),bytes);assert.equal(fs.existsSync(path.join(f.session,'ledger.jsonl')),false);
-  if(name==='lock.break')assert.equal(fs.existsSync(path.join(state,'lock')),false);
-  fs.unlinkSync(file);
- }
+ f.deps.isAlive=pid=>pid===7;
+ assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),3);assert.match(f.output().summary,/pid 7 /);
+ assert.equal(fs.readFileSync(path.join(state,'lock.break'),'utf8'),dead);assert.equal(fs.readFileSync(path.join(state,'lock.break.1'),'utf8'),live);
+ assert.equal(JSON.parse(fs.readFileSync(lock,'utf8')).pid,998);assert.equal(fs.existsSync(path.join(state,'lock.break.2')),false);
+ fs.unlinkSync(path.join(state,'lock.break.1'));f.lines.length=0;
+ assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),0);
+ assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')).sort(),['lock.break']);
  }finally{f.cleanup();}
 });
 
