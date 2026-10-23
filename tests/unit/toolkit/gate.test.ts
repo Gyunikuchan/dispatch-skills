@@ -1,6 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+test('level gate requires the latest matching user selection for extreme levels', async () => {
+  const {levelGate,gate}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
+  const fold=(level?:string,by='user')=>({records:level?[{seq:1,kind:'level',data:{level},by,key:'level',at:'now'}]:[],lastSeq:level?1:0,torn:null});
+  for(const level of ['xhigh','max']) {
+    for(const f of [fold(),fold(level,'orchestrator'),fold(level==='max'?'xhigh':'max')]) {
+      assert.deepEqual(levelGate(f,level),{allowed:false,reason:'level-unapproved'});
+      assert.equal(gate(f,{},level).reason,'level-unapproved');
+    }
+    assert.deepEqual(levelGate(fold(level),level),{allowed:true});
+    assert.deepEqual(levelGate(fold(level)),{allowed:true});
+  }
+  for(const level of ['low','medium','high']) assert.deepEqual(levelGate(fold(),level),{allowed:true});
+});
+
 test('approval gate follows edit chains and refuses broken authority', async () => {
   const {gate}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
   const record = (seq: number, kind: string, data: object, by = 'orchestrator') => ({seq, kind, data, by, key: String(seq), at: 'now'});

@@ -51,9 +51,11 @@ function activeBreaker(breaker: string, deps: LockDeps): { file: string; bytes: 
 }
 
 export async function withLock<T>(session: string, tool: string, deps: LockDeps, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
-  const directory = path.join(session, '.state');
-  fs.mkdirSync(directory, { recursive: true });
-  const lock = path.join(directory, 'lock');
+  return withLockFile(path.join(session, '.state', 'lock'), tool, deps, 10000, fn);
+}
+
+export async function withLockFile<T>(lock: string, tool: string, deps: LockDeps, waitMs: number, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
   const breaker = lock + '.break';
   const ours = JSON.stringify({ pid: deps.pid, host: deps.host, at: new Date(deps.clock()).toISOString(), tool });
   const start = deps.clock();
@@ -81,7 +83,7 @@ export async function withLock<T>(session: string, tool: string, deps: LockDeps,
     }
     const current = activeBreaker(breaker, deps);
     held = current.bytes ?? read(lock) ?? held;
-    if (waited >= 10000 || deps.clock() - start >= 10000) {
+    if (waited >= waitMs || deps.clock() - start >= waitMs) {
       const holder = owner(held ?? '');
       const file = current.bytes !== null ? current.file : lock;
       throw new ToolError(3, 'lock-held', holder ? 'lock held by pid ' + holder.pid + ' on ' + holder.host : 'lock holder unreadable at ' + file);

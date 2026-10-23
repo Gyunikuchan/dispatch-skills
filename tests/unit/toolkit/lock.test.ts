@@ -5,6 +5,21 @@ import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 
+test('fan-out claim creates parents refuses a live owner and reclaims a dead owner',async()=>{
+ const {withLockFile}=await import('../../../skills/dispatch/scripts/toolkit/lock.ts');
+ const f=sessionFixture();try{
+  const file=path.join(f.session,'.state','reviews','plan','claim');
+  assert.equal(await withLockFile(file,'review',f.deps,0,async()=>7),7);
+  assert.equal(fs.existsSync(file),false);
+  fs.writeFileSync(file,JSON.stringify({pid:99,host:f.deps.host,at:'now'}));f.deps.isAlive=()=>true;
+  await assert.rejects(withLockFile(file,'review',f.deps,0,async()=>{throw new Error('launched');}),{exit:3,reason:'lock-held'});
+  assert.deepEqual(f.sleeps,[]);
+  f.deps.isAlive=()=>false;
+  assert.equal(await withLockFile(file,'review',f.deps,0,async broken=>broken?.pid),99);
+  assert.equal(fs.existsSync(file),false);
+ }finally{f.cleanup();}
+});
+
 test('session lock waits refuses reclaims and releases on failure', async () => {
  const f=sessionFixture();try {
  const state=path.join(f.session,'.state');fs.mkdirSync(state);const lock=path.join(state,'lock');

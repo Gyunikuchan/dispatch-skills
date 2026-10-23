@@ -108,6 +108,9 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
   object(value.data, fields!, ['bind', 'approval'].includes(value.kind) ? ['design'] : []);
+  if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
+    choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
+  }
   const userOnly = ['approval', 'waiver', 'manual-complete'].includes(value.kind) ||
     (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));
   if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {

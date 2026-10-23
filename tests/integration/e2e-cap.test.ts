@@ -8,7 +8,8 @@ import { scanOverlay, type FileTable } from './scan.ts';
 // The approved authority/continuation plan adds two real-main and real-Git fixture files; the I01 spec-stage plan adds tests/e2e/spec-stage.test.ts.
 // The approved self-build and quota plan adds preparation, quota-state and quota-routing filesystem/subprocess suites.
 // I04 adds six real-Git toolkit suites and their shared helper; count all seven files.
-export const E2E_CAP = 20;
+// I05 adds toolkit-review.test.ts for committed-diff and admission boundaries.
+export const E2E_CAP = 21;
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));

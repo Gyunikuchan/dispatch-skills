@@ -7,6 +7,56 @@ import { capSummary } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import {appendRecord,currentHashes,foldLedger,latest} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 
+test('summary byte cap preserves large ask answers review findings and native slots', async () => {
+  const missingReasons: string[] = [];
+  for (const scenario of ['ask', 'findings', 'native'] as const) {
+    const f = sessionFixture();
+    try {
+      const skill = path.join(f.root, 'skill');
+      fs.mkdirSync(path.join(skill, 'references/templates'), {recursive: true});
+      for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md'])
+        fs.copyFileSync(path.join(f.deps.skillRoot, 'references/templates', file), path.join(skill, 'references/templates', file));
+      const native = scenario === 'native';
+      fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+        'read-delegates': {codex: {nativeSubagentsOnly: native, targets: Array.from({length: native ? 20 : 1}, () => ({medium: {model: 'fixture'}}))}},
+        phases: {'plan-review': {targets: {medium: native ? 20 : 1}, rounds: {medium: 1}}},
+      }));
+      f.deps.skillRoot = skill;
+      if (native) f.deps.orchestrator = {platform: 'codex', model: null};
+      const answer = '日本語😀'.repeat(2000);
+      const findings = Array.from({length: 300}, (_, i) => ({severity: 'SHOULD', tag: 'correctness',
+        locus: `§ Work ${i}`, defect: `日本語😀 defect ${i}`, requiredChange: `修正 ${i}`}));
+      f.script('codex', 'fixture', scenario === 'ask' ? answer : JSON.stringify({status: 'FINDINGS', findings}));
+      const target = f.artifact(scenario === 'ask' ? 'question.md' : 'work.plan.md', '# Work\n## Work\n日本語\n');
+      if (scenario === 'ask') f.artifact('work.plan.md', '# Work\n');
+      f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nPreserve results.\n');
+      await appendRecord(f.session, {kind: 'bind', by: 'orchestrator', key: 'bind',
+        data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
+      const args = scenario === 'ask' ? ['ask', 'run', target] : ['review', 'run', target, '--kind', 'plan'];
+      assert.equal(await main([...args, '--session', f.session], f.deps), native ? 4 : 0, f.lines.join('\n'));
+      const output = f.output();
+      assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
+      assert.equal(output.ok, !native);
+      if (!Object.hasOwn(output, 'reason')) missingReasons.push(scenario);
+      assert.ok(output.path);
+      const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
+      if (scenario === 'ask') assert.deepEqual(result.answers, [{slot: 'codex[0]', provider: 'codex', text: answer}]);
+      if (scenario === 'findings') {
+        const captured = JSON.parse(fs.readFileSync(result.path, 'utf8'));
+        assert.equal(captured.findings.length, 300);
+        assert.deepEqual(captured.findings.map((finding: {defect: string}) => finding.defect), findings.map(finding => finding.defect));
+      }
+      if (native) {
+        assert.equal(output.reason, 'native-pending');
+        assert.equal(result.pending.length, 20);
+        assert.equal(new Set(result.pending.map((slot: {slot: string}) => slot.slot)).size, 20);
+        assert.ok(result.pending.every((slot: {promptPath: string; replyPath: string}) => fs.existsSync(slot.promptPath) && slot.replyPath));
+      }
+    } finally {f.cleanup();}
+  }
+  assert.deepEqual(missingReasons, []);
+});
+
 test('summary byte cap includes marker and preserves multibyte code points', () => {
   for (const text of ['a'.repeat(2000), 'a'.repeat(1020) + '😀'.repeat(300), '界'.repeat(500)]) {
     const summary = capSummary(text);

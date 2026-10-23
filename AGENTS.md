@@ -144,7 +144,7 @@ Explain non-obvious rationale (why, CLI/subprocess quirks, cross-platform nuance
 
 ## Long-Running Work and Handoff
 
-Start each command or delegate once and retain its handle. Wait event-driven for completion, material blockers, or user input, with a 30-minute fallback. Ask delegates to report only completion or material blockers; continue through routine progress without status requests or narration. When an API caps waits, use its longest event-capable wait and reuse the handle.
+Start each command or delegate once and retain its handle. Wait event-driven for completion, material blockers, or user input, with a 30-minute fallback. Do not poll with repeated status checks, short waits, or file reads while work is running. Ask delegates to report only completion or material blockers; continue through routine progress without status requests or narration. When an API caps waits, use its longest event-capable wait and reuse the handle.
 
 For completed repository edit tasks, report:
 

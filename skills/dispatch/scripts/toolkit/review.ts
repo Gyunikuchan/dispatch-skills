@@ -1,0 +1,226 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import type { HandlerContext, HandlerResult } from './cli.ts';
+import { artifactHash, artifactKind } from './artifacts.ts';
+import { foldLedger, latest, levelGate, withLedger } from './ledger.ts';
+import { withLockFile } from './lock.ts';
+import { fanOut, resolveSlots, type SlotOutcome, type Validation } from './fanout.ts';
+import { parseReport } from './domain/report.ts';
+import { parsePlan, selectTaskBrief } from './domain/plan.ts';
+import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
+import { taskMarkdown } from './brief.ts';
+import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
+import { finalizeRound, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
+import { gitOk } from './git.ts';
+import { launches } from './writers.ts';
+import { integrationRecord } from './integration.ts';
+import { loadPlan, ownedPaths } from './plan-view.ts';
+import { LEVELS, type Level } from './types.ts';
+import { ToolError } from './output.ts';
+import { redGaps } from './red.ts';
+
+type Capture = {spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
+type Round = {round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; target: ReviewTarget};
+function read<T>(file: string): T | null {
+  try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
+  catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
+}
+function atomic(file: string, value: unknown) {
+  const temp = file + '.' + crypto.randomUUID() + '.tmp';
+  try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
+  finally {fs.rmSync(temp, {force: true});}
+}
+const same = (round: Round, capture: Capture) => round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target);
+const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
+const splitPaths = (text: string) => text.split('\0').filter(Boolean);
+
+export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
+  const {session, manifest, deps} = ctx;
+  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One review target is required');
+  const requested = ctx.args[0]!;
+  const inferred = artifactKind(requested);
+  const kind = (ctx.values['kind'] ?? (inferred === 'plan' || inferred === 'design' ? inferred : 'code')) as ReviewKind;
+  if (!['code', 'plan', 'design'].includes(kind)) throw new ToolError(1, 'invalid-input', 'Review kind must be code, plan or design');
+  const fold = foldLedger(session);
+  const level = (ctx.values['level'] ?? latest(fold, 'level')?.data['level'] ?? 'medium') as Level;
+  if (!LEVELS.includes(level)) throw new ToolError(1, 'invalid-input', 'Unknown level');
+  const gate = levelGate(fold, level);
+  if (!gate.allowed) throw new ToolError(4, gate.reason!, gate.reason!);
+  const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
+  if (!cap) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
+  const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
+  const slug = (kind === 'code' ? requested : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9._-]/g, '-');
+  if (!slug || slug === '.' || slug === '..') throw new ToolError(1, 'invalid-input', 'Invalid review target');
+  const review = kind + '-' + slug;
+  const directory = path.join(session, '.state/reviews', review);
+  fs.mkdirSync(directory, {recursive: true});
+
+  async function capture(): Promise<Capture> {
+    const current = foldLedger(session), bind = latest(current, 'bind');
+    if (!bind) throw new ToolError(4, 'lint-errors', 'Review needs a bound spec');
+    const specPath = path.resolve(manifest.repositoryRoot, bind.data['spec']);
+    const specText = fs.readFileSync(specPath, 'utf8');
+    const spec = {path: specPath, hash: artifactHash('spec', specText)};
+    const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
+    if (kind !== 'code') {
+      const source = fs.readFileSync(artifact, 'utf8');
+      return {spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
+    }
+    let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
+    if (requested === 'integration') {
+      const integration = integrationRecord(current);
+      if (!integration || !current.records.some(row=>row.kind==='integrate'&&row.data['phase']==='done')) throw new ToolError(4, 'nothing-to-review', 'No task has been integrated');
+      cwd = path.resolve(session, integration.data['path']);
+      base = integration.data['base']; head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
+      const tasks = [...new Set(current.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task']))];
+      summary = 'Integrated tasks: ' + tasks.join(', ');
+    } else {
+      const launch = launches(current, requested).findLast(launch => launch.finished);
+      if (!launch?.finished) throw new ToolError(1, 'invalid-input', 'No finished launch for ' + requested);
+      base = launch.record.data['base'].commit; head = launch.finished.data['candidate'];
+      const planText = fs.readFileSync(path.resolve(manifest.repositoryRoot, bind.data['plan']), 'utf8');
+      const plan = parsePlan(planText);
+      if (!plan.ok) throw new ToolError(4, 'lint-errors', JSON.stringify(plan.defects));
+      const brief = selectTaskBrief(plan.plan, requested);
+      if (!brief) throw new ToolError(1, 'invalid-input', 'Unknown task ' + requested);
+      summary = taskMarkdown(planText, brief);
+    }
+    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head, '--']));
+    return {spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
+  }
+
+  return withLockFile(path.join(directory, 'claim'), 'review', deps, 0, async () => {
+    const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
+    const last = numbers.at(-1) ?? 0;
+    const completed = last > 0 && fs.existsSync(path.join(directory, 'round-' + last, 'findings.json'));
+    const n = completed ? last + 1 : last || 1;
+    if (n > cap) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
+    const dir = path.join(directory, 'round-' + n);
+    fs.mkdirSync(dir, {recursive: true});
+    const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
+    let round = read<Round>(roundFile);
+    const current = await capture();
+    const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {};
+    for (let i = 1; i < n; i++) {
+      const value = read<FindingsValue>(path.join(directory, 'round-' + i, 'findings.json'));
+      const metadata = read<Round>(path.join(directory, 'round-' + i, 'round.json'));
+      if (value && metadata) {prior.push(value); priorTargets[i] = metadata.target;}
+    }
+    const rulingRows = () => foldLedger(session).records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'));
+    const settled: Settled[] = prior.flatMap(value => value.findings.flatMap(finding => {
+      const ruling = rulingRows().findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
+      return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
+    }));
+
+    async function start(generation: number, captured: Capture): Promise<Round> {
+      let scope = 'Full review';
+      if (n > 1) {
+        const previous = priorTargets[n - 1]!;
+        const changed = kind === 'code' ? 'changed paths: ' + splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])).join(', ') : changedHeadings(fs.readFileSync(path.join(directory, 'round-' + (n - 1), 'target.snapshot.md'), 'utf8'), captured.source!).join(', ');
+        scope = `Re-review round ${n} (full) — changed: ${changed}; comparison: ${label(previous)}..${label(captured.target)}`;
+      } else if (kind === 'code') {
+        const target = captured.target as {base: string; head: string};
+        scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
+      }
+      const value: Round = {round: n, generation, cap, level, roster: [...roster.targets, ...roster.reserves], scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target};
+      fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+      if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
+      atomic(roundFile, value);
+      return value;
+    }
+
+    async function supersede(captured: Capture) {
+      const pending = read<Finalized>(pendingFile);
+      if (pending) {
+        await withLedger(session, 'review supersede', deps, async tx => {
+          for (const escalation of pending.escalations) {
+            if (!tx.fold.records.some(row => row.key === escalation.key)) continue;
+            await tx.append({kind: 'escalation', by: 'tool', key: escalation.key + ':superseded', data: {id: escalation.data['id'], state: 'resolved', summary: 'superseded: target moved'}});
+          }
+        });
+        fs.rmSync(pendingFile, {force: true});
+      }
+      round = await start(round!.generation + 1, captured);
+    }
+    const hadPending = fs.existsSync(pendingFile);
+    if (!round) round = await start(1, current);
+    else if (!same(round, current)) {
+      await supersede(current);
+      if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
+    }
+    let pending = read<Finalized>(pendingFile);
+    if (!pending) {
+      const bind = latest(foldLedger(session), 'bind');
+      const prompt = reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round.spec, artifact, scope: round.scope, taskSummary: current.taskSummary,
+        ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled});
+      const validate = (text: string): Validation => {
+        const parsed = parseReport({kind, source: 'validation', text});
+        if (parsed.ok) return {ok: true};
+        const cls = parsed.failure.kind === 'uncovered-scope' || parsed.failure.kind === 'loose-locus' ? 'refusal' : parsed.failure.kind;
+        return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
+      };
+      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd}, deps);
+      const captured = await capture();
+      if (!same(round, captured)) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target moved during fan-out');}
+      const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
+      if (native.length) return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native}, summary: 'review ' + review + ': ' + native.length + ' native slots pending'};
+      if (!replies.some(reply => reply.state === 'done')) throw new ToolError(2, 'review-failed', 'Every review slot failed');
+      const changedSince: Record<number, string[]> = {}, owners: Record<string, string[]> = {};
+      if (kind === 'code' && requested === 'integration') {
+        for (const [number, target] of Object.entries(priorTargets)) changedSince[Number(number)] = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(target), label(round.target)]));
+        const plan = loadPlan(session, manifest);
+        for (const task of plan.tasks) owners[task.id] = ownedPaths(plan, task.id);
+      }
+      pending = finalizeRound({review, round: n, generation: round.generation, cap: round.cap, level: round.level, startSeq: round.startSeq, replies,
+        prior, priorTargets, changedSince, owners, rulings: rulingRows(), kind, artifact, target: round.target});
+      if (kind === 'code') {
+        const plan = loadPlan(session, manifest), currentFold = foldLedger(session);
+        const bind = latest(currentFold, 'bind')!;
+        const tasks = requested === 'integration' ? [...new Set(currentFold.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task'] as string))] : [requested];
+        let redCount = 0;
+        for (const task of tasks) {
+          const integrated = currentFold.records.findLast(row => row.kind === 'integrate' && row.data['phase'] === 'done' && row.data['task'] === task);
+          const launch = launches(currentFold, task).findLast(launch => launch.finished && (requested !== 'integration' || launch.finished.seq < (integrated?.seq ?? 0)));
+          const reportFile = path.join(session, '.state/briefs', task + '-' + launch?.launch + '.report.md');
+          const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : undefined;
+          for (const gap of redGaps({plan, task, changed: captured.changed, report})) {
+            const defect = 'missing-red: ' + task + ' ' + gap.criterion;
+            const file = path.resolve(manifest.repositoryRoot, bind.data['plan']);
+            const finding: Finding & {unresolved?: {of: string}} = {
+              id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'), severity: 'SHOULD', category: 'testing',
+              locus: file + ':L' + gap.line, defect: defect + '; Tests touched: ' + (gap.testsTouched ? 'yes' : 'no'),
+              requiredChange: "Show the criterion's test failing before the fix in the writer report", sources: ['tool'], scope: 'in',
+            };
+            const previous = [...prior].reverse().flatMap(value => value.findings.map(finding => ({round: value.round, finding}))).find(value => value.finding.defect.startsWith(defect + ';'));
+            if (previous) {
+              const previousTarget = priorTargets[previous.round];
+              const changed = requested === 'integration'
+                ? (changedSince[previous.round] ?? []).some(file => ownedPaths(plan, task).includes(file))
+                : typeof previousTarget !== 'string' && previousTarget?.head !== (round.target as {head: string}).head;
+              if (changed) {
+                const id = 'missing-red:' + review + ':' + task + ':' + gap.criterion + ':R' + n + ':g' + round.generation;
+                pending.escalations.push({kind: 'escalation', by: 'tool', key: id, data: {id, state: 'open', summary: finding.defect}});
+              } else finding.unresolved = {of: previous.finding.id};
+            }
+            pending.findings.push(finding);
+            const cluster = pending.clusters.find(cluster => cluster.file === file);
+            if (cluster) cluster.findings.push(finding.id);
+            else pending.clusters.push({file, findings: [finding.id]});
+          }
+        }
+      }
+      atomic(pendingFile, pending);
+      await deps.hook?.('review:after-pending');
+    }
+    await withLedger(session, 'review finalize', deps, async tx => {for (const escalation of pending!.escalations) await tx.append(escalation);});
+    await deps.hook?.('review:after-append');
+    const finalCapture = await capture();
+    if (!same(round, finalCapture)) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target moved during finalization');}
+    fs.renameSync(pendingFile, path.join(dir, 'findings.json'));
+    const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
+    const recurrences = pending.findings.filter(finding => finding.recurrence).length;
+    const file = path.join(dir, 'findings.json');
+    return {ok: true, exit: 0, value: {path: file, review, round: n}, summary: `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`};
+  });
+}

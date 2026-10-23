@@ -175,12 +175,19 @@ export function queryLedger(fold: Fold, filter: { kind?: unknown; key?: unknown;
     (filter.key === undefined || row.key === filter.key) && row.seq > since);
 }
 
-export function gate(fold: Fold, current: Hashes, level?: string): { allowed: boolean; reason?: string; artifact?: string } {
+export function levelGate(fold: Fold, level?: string): { allowed: boolean; reason?: string } {
   const selected = latest(fold, 'level');
   level ??= selected?.data['level'] ?? 'medium';
   if (['xhigh', 'max'].includes(level!) && (selected?.by !== 'user' || selected.data['level'] !== level)) {
     return { allowed: false, reason: 'level-unapproved' };
   }
+  return { allowed: true };
+}
+
+export function gate(fold: Fold, current: Hashes, level?: string): { allowed: boolean; reason?: string; artifact?: string } {
+  const decision = levelGate(fold, level);
+  if (!decision.allowed) return decision;
+  level ??= latest(fold, 'level')?.data['level'] ?? 'medium';
   if (level === 'low') return { allowed: true };
   const approval = latest(fold, 'approval');
   const bind = latest(fold, 'bind');

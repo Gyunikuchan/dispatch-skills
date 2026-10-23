@@ -4,6 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import { currentPlatform, detectOrchestrator, type Orchestrator } from '../lib/platform.ts';
+import { createDiscovery } from '../providers/discovery.ts';
+import { SPECS } from '../providers/index.ts';
+import { runDelegate, type RunnerFs } from '../providers/runner.ts';
+import { nodeProcess } from '../providers/node-process.ts';
+import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
+import type { DelegateRequest, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
 import { renderBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
@@ -15,10 +23,16 @@ import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
+import { askRun } from './ask.ts';
+import { reviewRun } from './review.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
+  modes: (provider: ProviderId) => readonly ModeId[];
+  orchestrator: Orchestrator | null;
+  liveness: Readonly<Record<string, boolean>>;
   run: (argv: string[], options: {cwd: string; env?: NodeJS.ProcessEnv; stdin?: string}) => Promise<{exit: number; stdout: string; stderr: string}>;
   hook?: (point: string) => Promise<void> | void;
   stdout: (line: string) => void;
@@ -34,7 +48,41 @@ export type CliDeps = {
 };
 
 export function nodeDeps(): CliDeps {
+  const platform = currentPlatform();
+  const discovery = createDiscovery(SPECS, platform, {
+    list: dir => { try {return fs.readdirSync(dir);}catch{return [];} }, exists:fs.existsSync,
+    executable(file) {try{return fs.statSync(file).isFile() && (platform.os === 'win32' || (fs.statSync(file).mode & 0o111)!==0);}catch{return false;}},
+  });
+  const modes = (provider:ProviderId) => SPECS[provider].modes.filter(mode=>discovery.resolve(provider,mode.id).status==='path').map(mode=>mode.id);
+  const runnerFs: RunnerFs = {
+    readText:file=>fs.readFileSync(file,'utf8'),writeText:(file,text)=>fs.writeFileSync(file,text,{mode:0o600}),
+    realpath:file=>{try{return fs.realpathSync(file);}catch{return null;}},
+    size:file=>{try{const info=fs.statSync(file);return info.isFile()?info.size:null;}catch{return null;}},
+    readPrefix(file,max){const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(max);return bytes.subarray(0,fs.readSync(fd,bytes)).toString('utf8');}finally{fs.closeSync(fd);}},
+  };
   return {
+    modes, orchestrator:detectOrchestrator(key=>process.env[key]),
+    liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
+    async delegate(provider,request,mode) {
+      const failedLaunch=(cls:'not-found'|'config',detail:string):RunResult=>({
+        outcome:{status:'fail',cls,detail},invocations:[{provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls}],
+      });
+      const binary=discovery.resolve(provider,mode).path;
+      if(!binary)return failedLaunch('not-found',provider+': missing '+mode);
+      const deadline=Date.now()+request.timeoutMs;
+      let resolved=request;
+      if(provider==='opencode'){
+        try{resolved=await resolveEffectiveOpencodeLaunch(request,nativeOpencodeIntrospection(binary,request,process.env,request.timeoutMs));}
+        catch(error){return failedLaunch('config',String(error));}
+        if(resolved.readOnlyBestEffort)process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
+      }
+      resolved={...resolved,timeoutMs:Math.max(1,deadline-Date.now())};
+      return runDelegate(SPECS[provider],resolved,mode,{
+        process:nodeProcess,fs:runnerFs,env:process.env,platform,binary,nonce:crypto.randomUUID,workspaceRoot:request.cwd,
+        clock:{now:()=>Date.now(),every:(ms,fn)=>{const timer=setInterval(fn,ms);return()=>clearInterval(timer);}},
+        ...(provider==='opencode'?{prepare:createOpencodePreparePorts(deadline)}:{}),
+      });
+    },
     run: (argv, options) => new Promise((resolve, reject) => {
       // cmd.exe must receive the plan command without Node's argument quoting.
       const child = spawn(argv[0]!, argv.slice(1), {cwd: options.cwd, env: {...process.env,...options.env}, windowsHide: true, windowsVerbatimArguments: process.platform === 'win32' && argv[0]!.toLowerCase() === 'cmd.exe', stdio: 'pipe'});
@@ -55,6 +103,8 @@ export function nodeDeps(): CliDeps {
 }
 
 const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResult>> = {
+  'ask run': askRun,
+  'review run': reviewRun,
   'brief render': renderBrief,
   'worktree integrate': integrate,
   'worktree continue': continueIntegration,
@@ -139,7 +189,8 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   }
   try {
     const resultPath = (deps.writeResult ?? writeResult)(session, tool, action, outcome.value);
-    return print({ ok: outcome.ok, summary: outcome.summary, path: resultPath, exit: outcome.exit, ...(outcome.reason ? { reason: outcome.reason } : {}) });
+    const reason = outcome.reason ?? (outcome.ok && (tool === 'ask' || tool === 'review') ? 'complete' : undefined);
+    return print({ ok: outcome.ok, summary: outcome.summary, path: resultPath, exit: outcome.exit, ...(reason ? { reason } : {}) });
   } catch (error) {
     return print({ ok: false, summary: error instanceof Error ? error.message : String(error), path: null, reason: 'fault', exit: 2 });
   }

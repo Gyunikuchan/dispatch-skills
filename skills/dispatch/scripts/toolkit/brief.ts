@@ -7,6 +7,22 @@ import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 
+function taskParts(source: string, selected: NonNullable<ReturnType<typeof selectTaskBrief>>) {
+  const lines = source.split(/\r?\n/);
+  const taskEnd = lines.findIndex((line, i) => i >= selected.task.line && /^#{2,3} /.test(line));
+  const section = lines.slice(selected.task.line - 1, taskEnd < 0 ? undefined : taskEnd).join('\n').trim();
+  const criteria = selected.criteria.map(criterion => {
+    const end = lines.findIndex((line, i) => i >= criterion.line && (/^## /.test(line) || /^- \[SC\d+\]/.test(line)));
+    return lines.slice(criterion.line - 1, end < 0 ? undefined : end).join('\n').trim();
+  }).join('\n\n');
+  return {section, criteria};
+}
+
+export function taskMarkdown(source: string, brief: NonNullable<ReturnType<typeof selectTaskBrief>>): string {
+  const {section, criteria} = taskParts(source, brief);
+  return [section, criteria].filter(Boolean).join('\n\n');
+}
+
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
   const task = ctx.args[0]!;
@@ -27,13 +43,9 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     return {bind, snapshot, launch, source, parsed, selected};
   });
   const {bind, snapshot, launch, source, parsed, selected} = gated;
-  const lines = source.split(/\r?\n/);
-  const taskEnd = lines.findIndex((line, i) => i >= selected.task.line && /^#{2,3} /.test(line));
-  const section = lines.slice(selected.task.line - 1, taskEnd < 0 ? undefined : taskEnd).join('\n').trim();
-  const criteria = selected.criteria.map(criterion => {
-    const end = lines.findIndex((line, i) => i >= criterion.line && (/^## /.test(line) || /^- \[SC\d+\]/.test(line)));
-    return lines.slice(criterion.line - 1, end < 0 ? undefined : end).join('\n').trim();
-  }).join('\n\n');
+  const markdown = taskMarkdown(source, selected);
+  const {section} = taskParts(source, selected);
+  const criteria = markdown.slice(section.length).trim();
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
   const quality = ['shared', 'code'].map(name => {

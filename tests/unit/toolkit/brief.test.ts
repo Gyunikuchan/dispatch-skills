@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -63,6 +64,15 @@ async function fixture(design = false) {
 }
 
 describe('writer brief', () => {
+  test('renderBrief bytes match fixed pre-extraction output', async () => {
+    const f = await fixture();
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      const text = fs.readFileSync(result.value.path, 'utf8').split(path.resolve(f.session, '.state/worktrees/T1-1')).join('<worktree>');
+      assert.equal(crypto.createHash('sha256').update(text).digest('hex'), '9244f0bcebcdef84ae9cf6fe46139b711469624872b88f7ccacdb662901666ae');
+    } finally {f.cleanup();}
+  });
   test('approval chain and open launch govern rendering without Git', async () => {
     const f = await fixture();
     try {
