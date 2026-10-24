@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { parsePlan } from '../../skills/dispatch/scripts/toolkit/domain/plan.ts';
+import { redGaps } from '../../skills/dispatch/scripts/toolkit/red.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -107,4 +110,112 @@ describe('toolkit session flow', () => {
       assert.equal((await f.run(['worktree','deliver'])).exit,0); assert.equal(f.git(['rev-parse','HEAD']),f.git(['rev-parse','HEAD'],f.integration));
     } finally {f.cleanup();}
   });
+});
+
+const capturePlanSource = [
+  '# Capture RED output',
+  '',
+  '## Task Map',
+  '| ID | Title | Outcome | Prerequisites | Criteria |',
+  '| --- | --- | --- | --- | --- |',
+  '| T1 | Capture | Preserve subprocess evidence | none | SC1 |',
+  '',
+  '## Proposed Changes',
+  '### T1 — Capture',
+  '#### [MODIFY] src/file.ts',
+  '- Purpose: Holds the implementation under test.',
+  '#### [NEW] `tests/with space.test.ts`',
+  '- Purpose: Gives the capture command a path that needs shell quoting.',
+  '',
+  '## Success Criteria',
+  '- [SC1] Captured output is retained',
+  '  - Satisfies: REQ-1',
+  '  - Changes: src/file.ts, `tests/with space.test.ts`',
+  '  - Tests: `tests/with space.test.ts`',
+  '  - Verify: `node -e "process.exit(0)"`',
+  '  - RED: `node -e "process.stdout.write(\'raw stdout\'); process.stderr.write(\'raw stderr\'); process.exit(7)" {files}`',
+  '  - Evidence: red',
+  '  - Retain: durable',
+  '  - Test rationale: Captured bytes and exit status prove subprocess evidence is retained.',
+  '',
+  '## Verification Plan',
+  'Seams: tests/e2e/toolkit-flow.test.ts',
+  '### Automated Tests',
+  '- `node -e "process.stdout.write(\'contract\')"`',
+  '',
+].join('\n');
+
+function commandFrom(brief: string): string {
+  const marker = '## RED capture commands\n';
+  const start = brief.indexOf(marker);
+  assert.notEqual(start, -1, 'brief includes a RED capture section');
+  const section = brief.slice(start + marker.length).split(/\n## /, 1)[0]!;
+  const match = /`(node -e [^`]+)`/.exec(section);
+  assert.ok(match, 'brief includes a runnable outer node -e command');
+  return match[1]!;
+}
+
+function commandData(command: string): { bootstrap: string; data: { command: string; cwd: string; logDir: string; criterion: string } } {
+  const match = /([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
+  assert.ok(match, 'outer command ends with two base64url arguments');
+  return {
+    bootstrap: Buffer.from(match[1]!, 'base64url').toString('utf8'),
+    data: JSON.parse(Buffer.from(match[2]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
+  };
+}
+
+test('captured RED command preserves raw output and status and its report clears redGaps', async () => {
+  const f = await toolkitRepo(capturePlanSource, {'tests/with space.test.ts': 'export const caseName = "capture";\n'});
+  try {
+    await f.level('low');
+    await appendRecord(f.session, {
+      kind: 'writer', by: 'orchestrator', key: 'writer:T1:1',
+      data: {phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}},
+    }, f.deps);
+    const worktree = path.join(f.session, '.state', 'worktrees', 'T1-1');
+    fs.mkdirSync(path.join(worktree, 'tests'), {recursive: true});
+    fs.writeFileSync(path.join(worktree, 'tests', 'with space.test.ts'), 'export const caseName = "capture";\n');
+
+    const rendered = await f.run(['brief', 'render', 'T1']);
+    assert.equal(rendered.exit, 0);
+    const brief = fs.readFileSync(rendered.value.path, 'utf8');
+    const command = commandFrom(brief);
+    const {bootstrap, data} = commandData(command);
+    const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
+    assert.ok(data.command.endsWith(quotedPath), 'test path is quoted for the shell used by spawnSync');
+    assert.equal(data.cwd, worktree);
+    assert.equal(data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
+    assert.equal(data.criterion, 'SC1');
+    assert.match(bootstrap, /spawnSync/);
+    assert.match(bootstrap, /encoding:\s*['"]buffer['"]/);
+    assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
+    assert.doesNotMatch(command, /[$%]/);
+
+    const captured = spawnSync(command, {cwd: f.root, shell: true, encoding: 'buffer', windowsHide: true});
+    assert.ifError(captured.error);
+    assert.equal(captured.status, 7, captured.stderr?.toString('utf8'));
+    assert.deepEqual(captured.stdout, Buffer.from('raw stdout'));
+    assert.deepEqual(captured.stderr, Buffer.from('raw stderr'));
+
+    const logDir = data.logDir;
+    assert.deepEqual(fs.readFileSync(path.join(logDir, 'SC1.stdout')), Buffer.from('raw stdout'));
+    assert.deepEqual(fs.readFileSync(path.join(logDir, 'SC1.stderr')), Buffer.from('raw stderr'));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')).status, 7);
+
+    const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
+    assert.ok(brief.includes(reportPath));
+    fs.writeFileSync(reportPath, [
+      '## Observed RED failures',
+      `SC1 | tests/with space.test.ts | ${path.join(logDir, 'SC1.stdout')} | ${path.join(logDir, 'SC1.stderr')} | ${path.join(logDir, 'SC1.exit')}`,
+      '',
+    ].join('\n'));
+    const parsed = parsePlan(capturePlanSource);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+    assert.deepEqual(redGaps({
+      plan: parsed.plan,
+      task: 'T1',
+      changed: [],
+      report: fs.readFileSync(reportPath, 'utf8'),
+    }), []);
+  } finally { f.cleanup(); }
 });

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -40,17 +39,27 @@ Shared gated context 日本語.
 - \`node contract-check\`
 `;
 
-async function fixture(design = false) {
+const CAPTURE_PLAN = PLAN
+  .replace(
+    '#### [NEW] src/first.ts\n- Purpose: First implementation detail.',
+    '#### [NEW] src/first.ts\n- Purpose: First implementation detail.\n#### [NEW] `tests/with space.test.ts`\n- Purpose: Exercise command capture.',
+  )
+  .replace(
+    '  - Changes: src/first.ts\n  - Tests: src/first.ts\n  - Verify: `node first-check`\n  - RED: `node first-red`\n',
+    '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Verify: `node first-check`\n  - RED: `node first-red {files}`\n',
+  );
+
+async function fixture(design = false, source = PLAN) {
   const f = sessionFixture();
   f.artifact('mission.spec.md', '# Mission\n## Requirements\n### REQ-1 — Works\n');
-  const planPath = f.artifact('work.plan.md', PLAN);
+  const planPath = f.artifact('work.plan.md', source);
   if (design) f.artifact('strategy.design.md', '# Strategy\n');
   let key = 0;
   const add = (kind: string, data: object, extra: object = {}) => appendRecord(f.session, {kind, key: 'record-' + key++, by: 'orchestrator', data, ...extra}, f.deps);
   await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
   const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
   const approve = () => add('approval', hashes, {by: 'user', quote: 'Approved'});
-  const launch = () => add('writer', {phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}});
+  const launch = (task = 'T1') => add('writer', {phase: 'launched', task, path: `.state/worktrees/${task}-1`, base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}});
   let processes = 0;
   f.deps.run = async () => { processes++; throw new Error('Brief must not run Git'); };
   const call = async (level?: string, task = 'T1') => {
@@ -63,16 +72,29 @@ async function fixture(design = false) {
   return {...f, planPath, hashes, add, approve, launch, call};
 }
 
+function captureSection(brief: string): string {
+  const marker = '## RED capture commands\n';
+  const start = brief.indexOf(marker);
+  assert.notEqual(start, -1, 'brief includes the RED capture section');
+  return brief.slice(start + marker.length).split(/\n## /, 1)[0]!.trim();
+}
+
+function captureCommand(section: string): string {
+  const match = /`(node -e [^`]+)`/.exec(section);
+  assert.ok(match, 'applicable RED criterion has a runnable node -e command');
+  return match[1]!;
+}
+
+function captureData(command: string): { bootstrap: string; data: { command: string; cwd: string; logDir: string; criterion: string } } {
+  const match = /([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
+  assert.ok(match, 'outer command ends with two base64url arguments');
+  return {
+    bootstrap: Buffer.from(match[1]!, 'base64url').toString('utf8'),
+    data: JSON.parse(Buffer.from(match[2]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
+  };
+}
+
 describe('writer brief', () => {
-  test('renderBrief bytes match fixed pre-extraction output', async () => {
-    const f = await fixture();
-    try {
-      await f.approve(); await f.launch();
-      const result = await f.call();
-      const text = fs.readFileSync(result.value.path, 'utf8').split(path.resolve(f.session, '.state/worktrees/T1-1')).join('<worktree>');
-      assert.equal(crypto.createHash('sha256').update(text).digest('hex'), '9244f0bcebcdef84ae9cf6fe46139b711469624872b88f7ccacdb662901666ae');
-    } finally {f.cleanup();}
-  });
   test('approval chain and open launch govern rendering without Git', async () => {
     const f = await fixture();
     try {
@@ -148,18 +170,21 @@ describe('writer brief', () => {
   });
 
   test('gated snapshot supplies scoped context criteria quality and short report', async () => {
-    const f = await fixture();
+    const f = await fixture(false, CAPTURE_PLAN);
     try {
       await f.approve(); await f.launch();
       f.deps.hook = point => {
         assert.equal(point, 'brief:after-gate');
-        fs.writeFileSync(f.planPath, 'Rewritten ungated content');
+        fs.writeFileSync(f.planPath, CAPTURE_PLAN.replace('node first-red {files}', 'node poison-red {files}'));
       };
       const result = await f.call();
       assert.equal(result.exit, 0);
       assert.equal(result.value.path, path.join(f.session, '.state', 'briefs', 'T1-1.md'));
       assert.ok(result.output.summary.includes(result.value.path));
       const brief = fs.readFileSync(result.value.path, 'utf8');
+      const payload = captureData(captureCommand(captureSection(brief)));
+      assert.match(payload.data.command, /node first-red/);
+      assert.doesNotMatch(payload.data.command, /node poison-red/);
       const quality = fs.readFileSync(path.join(f.deps.skillRoot, 'references/templates/quality-bar.md'), 'utf8');
       for (const name of ['shared', 'code']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
@@ -169,8 +194,99 @@ describe('writer brief', () => {
       assert.match(brief, /read.*whole/i);
       assert.match(brief, /failing tests/i);
       assert.match(brief, /Git write commands/);
-      for (const forbidden of ['Rewritten ungated content', '### T2', 'Private second detail', 'node second-check', 'envelope', 'RED-MATRIX', 'briefHash', 'receipt']) assert.ok(!brief.includes(forbidden), forbidden);
+      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check', 'envelope', 'RED-MATRIX', 'briefHash', 'receipt']) assert.ok(!brief.includes(forbidden), forbidden);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
+    } finally { f.cleanup(); }
+  });
+
+  test('capture command expands only declared test paths and quotes for the child shell', async () => {
+    const f = await fixture(false, CAPTURE_PLAN);
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const brief = fs.readFileSync(result.value.path, 'utf8');
+      const command = captureCommand(captureSection(brief));
+      const payload = captureData(command);
+      const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
+      assert.equal(payload.data.criterion, 'SC1');
+      assert.equal(payload.data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
+      assert.ok(payload.data.command.includes(quotedPath));
+      assert.ok(!payload.data.command.includes('src/first.ts'), 'Changes paths do not become {files}');
+      assert.match(payload.bootstrap, /spawnSync/);
+      assert.match(payload.bootstrap, /encoding:\s*['"]buffer['"]/);
+      assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
+      assert.doesNotMatch(command, /[$%]/);
+    } finally { f.cleanup(); }
+  });
+
+  test('capture slot is empty for verify-only and excepted criteria', async () => {
+    const cases: { task: string; source: string }[] = [
+      {task: 'T2', source: PLAN},
+      {task: 'T1', source: CAPTURE_PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - RED exception: already-satisfied\n')},
+    ];
+    for (const item of cases) {
+      const f = await fixture(false, item.source);
+      try {
+        await f.approve(); await f.launch(item.task);
+        const result = await f.call(undefined, item.task);
+        assert.equal(result.exit, 0);
+        const brief = fs.readFileSync(result.value.path, 'utf8');
+        assert.equal(captureSection(brief), '');
+      } finally { f.cleanup(); }
+    }
+  });
+
+  test('empty test paths produce an inline diagnostic and no capture command', async () => {
+    const source = CAPTURE_PLAN.replace('  - Tests: `tests/with space.test.ts`\n', '');
+    const f = await fixture(false, source);
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
+      assert.match(section, /T1/);
+      assert.match(section, /SC1/);
+      assert.match(section, /no test paths/i);
+      assert.doesNotMatch(section, /node -e/);
+    } finally { f.cleanup(); }
+  });
+
+  test('unsafe test paths produce an inline diagnostic and no capture command', async () => {
+    const unsafePath = 'tests/bad;touch marker.test.ts';
+    const source = CAPTURE_PLAN.replaceAll('tests/with space.test.ts', unsafePath);
+    const f = await fixture(false, source);
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
+      assert.match(section, /T1/);
+      assert.match(section, /SC1/);
+      assert.ok(section.includes(unsafePath));
+      assert.doesNotMatch(section, /node -e/);
+    } finally { f.cleanup(); }
+  });
+
+  test('writer instructions save the report in the path redGaps consumes', async () => {
+    const f = await fixture(false, CAPTURE_PLAN);
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const brief = fs.readFileSync(result.value.path, 'utf8');
+      const template = fs.readFileSync(path.join(f.deps.skillRoot, 'references', 'templates', 'writer-brief.md'), 'utf8');
+      const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
+      const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
+      assert.ok(template.includes('{{redCapture}}'));
+      assert.ok(template.includes('{{reportPath}}'));
+      assert.ok(template.includes('{{redLogDir}}'));
+      assert.ok(brief.includes(reportPath));
+      assert.ok(brief.includes(logDir));
+      assert.ok(template.includes('## Observed RED failures'));
+      assert.match(template, /plain-text lines directly below the heading/i);
+      assert.match(template, /Do not add # or ## headings inside that section/i);
+      assert.match(template, /outside.*{{reportPath}}.*{{redLogDir}}/is);
     } finally { f.cleanup(); }
   });
 });
