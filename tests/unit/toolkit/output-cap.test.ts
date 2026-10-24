@@ -115,3 +115,44 @@ test('summary byte cap applies to every tool with full result files including re
     }
   } finally { f.cleanup(); }
 });
+
+test('summary byte cap keeps all report rows in its result file', async () => {
+  const f = sessionFixture();
+  try {
+    const ids = Array.from({length: 300}, (_, i) => 'SC' + (i + 1));
+    const source = '# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | ' + ids.join(', ') + ' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n' + ids.map(id => '- [' + id + '] 日本語 works\n  - Changes: src/file.ts\n  - Verify: `node check.ts`\n  - Evidence: verify').join('\n') + '\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
+    f.artifact('report.spec.md', '# Mission\n');
+    f.artifact('report.plan.md', source);
+    await appendRecord(f.session, {kind: 'bind', by: 'orchestrator', key: 'bind',
+      data: {spec: 'report.spec.md', plan: 'report.plan.md'}}, f.deps);
+
+    const quotes = ids.map((_, i) => `由用户批准界😀 ${i}`);
+    const records = [
+      ...ids.map((criterion, i) => ({
+        seq: i + 2, key: 'waiver-' + (i + 1), at: 'now', kind: 'waiver', by: 'user', quote: quotes[i],
+        data: {criterion, reason: 'accepted with evidence ' + (i + 1)},
+      })),
+      ...ids.map((criterion, i) => ({
+        seq: i + 302, key: 'edit-' + (i + 1), at: 'now', kind: 'edit', by: 'orchestrator',
+        data: {artifact: 'plan', before: 'sha256:' + 'a'.repeat(64), after: 'sha256:' + 'b'.repeat(64),
+          class: 'non-intent', affects: [criterion], rationale: 'revised plan entry ' + (i + 1), diffRef: 'diff-' + (i + 1)},
+      })),
+    ];
+    fs.appendFileSync(path.join(f.session, 'ledger.jsonl'), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), '{"diagnostics":false}');
+
+    assert.equal(await main(['report', 'render', '--session', f.session], {...f.deps, skillRoot: skill}), 0);
+    const output = f.output();
+    assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
+    assert.equal(output.ok, true);
+    assert.ok(output.path);
+    const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
+    const criteria = result.statuses.filter((row: {criterion: string}) => row.criterion !== 'contract');
+    assert.deepEqual(criteria.map((row: {criterion: string; state: string}) => [row.criterion, row.state]), ids.map(id => [id, 'waived']));
+    assert.equal(result.deviations.edits.length, 300);
+    assert.deepEqual(result.deviations.edits.map((edit: {affects: string[]}) => edit.affects[0]), ids);
+    assert.deepEqual(result.userRecords.map((record: {quote: string}) => record.quote), quotes);
+  } finally { f.cleanup(); }
+});

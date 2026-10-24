@@ -25,6 +25,7 @@ import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
+import { reportComplete, reportRender } from './report.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
@@ -105,6 +106,8 @@ export function nodeDeps(): CliDeps {
 const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResult>> = {
   'ask run': askRun,
   'review run': reviewRun,
+  'report render': reportRender,
+  'report complete': reportComplete,
   'brief render': renderBrief,
   'worktree integrate': integrate,
   'worktree continue': continueIntegration,
