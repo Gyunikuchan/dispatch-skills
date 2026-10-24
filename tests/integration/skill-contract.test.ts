@@ -1,213 +1,148 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
-import { ALIASES, parseCommand } from '../../skills/dispatch/scripts/lib/cli.ts';
-import { AWAIT_ACCEPTS } from '../../skills/dispatch/scripts/core/validate.ts';
-import { OVERLAY_ROOT } from './scan.ts';
-const documents = new Map<string, string>();
-const read = (file: string): string => {
-  let text = documents.get(file);
-  if (text === undefined) {
-    text = fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
-    documents.set(file, text);
-  }
-  return text;
-};
-const contractName = 'SKILL.md';
+import {test} from 'node:test';
+import {TOOL_ACTIONS} from '../../skills/dispatch/scripts/toolkit/cli.ts';
+import {KINDS} from '../../skills/dispatch/scripts/toolkit/records.ts';
+import {OVERLAY_ROOT} from './scan.ts';
+const root = 'skills/dispatch/';
+const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
+const refs = ['toolkit', 'spec-stage', 'review-rules', 'decision-frame', 'providers', 'worktree-cleanup', 'diagnostics', 'glossary', 'self-build', ...['ask', 'design', 'plan', 'implement', 'review'].map(v => 'verbs/' + v)];
+const scanned = ['SKILL.md', ...refs.map(v => 'references/' + v + '.md')];
+const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(m => m[1]!);
+const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
+const legacy = [/\bstart (ask|design|plan|implement|review)\b/, /\bsend --run\b/, /\brebind\b/, /^#+ Await\b/m, /\bAWAIT_/, /\bREVIEW_USE\b/, /\bFIXES_APPLIED\b/, /\bRULINGS\b/, /quiescen/, /\bjournal\b/, /\bAMEND\b/, /\bWRITE_RECEIPT\b/, /\bREQUEST\b/, /\bREPLACE_PLAN\b/, /\bbriefHash\b/, /\breceipt\b/, /\bamendment\b/i, /\benvelope\b/i];
+function noLegacy(text: string, file: string) {
+  for (const re of legacy) assert.doesNotMatch(text, re, file);
+  const plain = text.replace(/\[[^\]]+\]\([^)]*\bdecision-frame\.md(?:#[^)]*)?\)/g, '').replace(/Decision Frame Format|Decision Frame/g, '');
+  assert.doesNotMatch(plain, /\bframes?\b/i, file);
+}
+const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
 
-test('walkthrough-reference: template links to findings rules without a removed anchor', () => {
-  const file = 'skills/dispatch/references/templates/walkthrough.md';
-  const reference = /\[[^\]]+\]\(([^)]+)\)/.exec(read(file));
-  assert.equal(reference?.[1], '../review-rules.md');
-  const target = path.resolve(OVERLAY_ROOT, path.dirname(file), reference![1]!);
-  assert.ok(fs.existsSync(target));
-});
-test('four contracts carry exact alias mappings and named dependency guards', () => {
-  const contract = read(`skills/dispatch/${contractName}`);
-  for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'retro', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
-  assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /unrelated dirty or ignored files stay intact/i);
-  for (const [name, mapping] of Object.entries(ALIASES)) {
-    const text = read(`skills/${name}/${contractName}`); assert.doesNotMatch(text, /disable-model-invocation/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));
-    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, `skills/${name}/README.md`)));
-  }
-  assert.doesNotMatch(contract, /disable-model-invocation/);
-  assert.ok(!Object.keys(ALIASES).some((name) => contract.includes(name)));
-});
-
-test('level-rubric: documents invocation and pre-write assessment timing', () => {
-  const contract = read(`skills/dispatch/${contractName}`);
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  const implement = read('skills/dispatch/references/verbs/implement.md');
-  assert.match(contract, /Classify omitted levels at invocation; implementation receives one more assessment before its first write/);
-  assert.match(config, /after its plan and baseline are concrete, immediately before the first production write/);
-  assert.match(implement, /ordinary tasks, inline baseline hotfixes, and the first child of a design/);
-});
-
-test('level-rubric: preserves explicit levels and reports a higher assessment', () => {
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /An explicit level stays in force; Dispatch reports a higher assessment/);
-  assert.match(config, /`xhigh` and `max` remain user-selected/);
-  const gates = read('skills/dispatch/references/decision-frame.md');
-  assert.match(gates, /`spec-approval`, design `approval`, and manual completion/);
-  assert.match(gates, /Changed intent/);
-  assert.match(gates, /External dependencies/);
-  assert.match(gates, /Discarded work/);
-  assert.match(gates, /### Design Approval \(`approval`\)/);
-  assert.doesNotMatch(gates, /Design and Plan Approval|### Plan Approval|Approve writer launch/);
-  assert.doesNotMatch(config, /asks whether to adopt or retain/);
-});
-
-test('level-rubric: medium remains the default for bounded recoverable work', () => {
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /`medium` is the normal level for bounded behavior/);
-  assert.match(config, /failures remain observable and recoverable/);
-});
-
-test('level-rubric: high requires concrete consequential risk', () => {
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /`high` requires a credible consequential risk/);
-  assert.match(config, /financial or data-integrity errors/);
-  assert.match(config, /a small rate-precision change can/);
-});
-
-test('level-rubric: file count and finance-domain labels alone do not force high', () => {
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /A large diff, changed external contract, finance repository, or state-machine file alone does not require high/);
-  assert.match(config, /a broad reversible accessibility change may not/);
-});
-
-test('level-rubric: carries phase skips and post-gate scope decisions forward', () => {
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment/);
-  assert.match(config, /Retries, later phases, accepted scope changes, and later design increments keep the settled level/);
-});
-
-test('contract documents receipt request amend events', () => {
-  const contract = read(`skills/dispatch/${contractName}`);
-  const awaitWrite = contract.split('## Await write\n')[1]?.split('\n## ')[0] ?? '';
-  for (const name of ['WRITE_RECEIPT', 'REQUEST', 'AMEND', 'briefHash']) assert.ok(awaitWrite.includes(name), name);
-  assert.match(awaitWrite, /Taskless hotfix receipts omit identity fields/);
-  const guide = read('skills/dispatch/references/verbs/implement.md');
-  for (const kind of ['run-stop', 'level-classification', 'integration-conflict', 'request', 'request-user']) {
-    assert.ok(guide.includes('DECISION kind=' + kind + '`'), kind);
-  }
-  for (const status of ['launched', 'submitted', 'failed', 'cancelled']) assert.ok(guide.includes('`' + status + '`'), status);
-  assert.match(guide, /reply `REQUEST` with `\{ task, attempt, need, paths, rationale \}`; the writer keeps running/);
-  assert.match(guide, /`AMEND` `\{ delta, notify, rationale, by\? \}` changes the plan live/);
-  assert.match(guide, /first send a user-gated `AMEND` that records the discarded work, then reply `discard`/);
-});
-test('level-rubric: Await sections contain only their configured accepted events', () => {
-  const contract = read(`skills/dispatch/${contractName}`);
-  for (const [awaitKind, accepts] of Object.entries(AWAIT_ACCEPTS)) {
-    const section = contract.split(`## Await ${awaitKind}\n`)[1]?.split('\n## ')[0] ?? '';
-    for (const event of accepts.filter((event) => event !== 'REVISE')) assert.ok(section.includes(`\`${event}\``), `${awaitKind} must document ${event}`);
-    for (const event of section.matchAll(/`([A-Z_]+)`/g)) assert.ok(accepts.includes(event[1] as typeof accepts[number]), `${awaitKind} documents unaccepted ${event[1]}`);
+test('skill contract keeps a compact router and resolving reference links', () => {
+  const skill = read(root + 'SKILL.md');
+  assert.ok(Buffer.byteLength(skill) <= 4096);
+  for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
+    const local = target.split('#')[0]!;
+    if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
+    assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
   }
 });
 
-test('branch references and manuals resolve every local link and use portable relative paths', () => {
-  const markdownFiles = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
-    const file = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) return ['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(entry.name) ? [] : markdownFiles(file);
-    return entry.name.endsWith('.md') ? [file] : [];
-  });
-  const files = markdownFiles('skills').sort().map((file) => ({ path: file, text: read(file) }));
-  const errors: string[] = [];
-  for (const file of files) {
-    assert.ok(!/file:\/\/|[A-Z]:\\Users\\/.test(file.text), file.path);
-    for (const match of file.text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
-      const target = match[1]!.split('#')[0]!;
-      if (!target || /^(?:https?:|mailto:|<)/.test(target)) continue;
-      const absolute = path.resolve(OVERLAY_ROOT, path.dirname(file.path), target);
-      if (!fs.existsSync(absolute)) errors.push(`${file.path}: ${target}`);
+test('skill contract owns action syntax and removes obsolete mechanics', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  const actions = toolkit.split('## Tool actions\n')[1]?.split('\n## ')[0] ?? '';
+  assert.deepEqual([...actions.matchAll(/^### (.+)$/gm)].map(m => m[1]).sort(), [...TOOL_ACTIONS].sort());
+  for (const action of TOOL_ACTIONS) for (const label of ['Arguments:', 'Result path:', 'Refusals:']) assert.ok(section(actions, action).includes(label), action + ' ' + label);
+  assert.ok(toolkit.indexOf('## Session commands') > toolkit.indexOf('## Tool actions'));
+  for (const file of scanned) {
+    const text = read(root + file);
+    noLegacy(text, file);
+    assert.ok(!links(text).some(v => /(?:^|\/)change-handling\.md(?:#|$)/.test(v)), file);
+    const matches = TOOL_ACTIONS.filter(action => text.split(/\r?\n/).some(line => new RegExp('\\b' + action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(line) && /--session\b/.test(line)));
+    if (file !== 'references/toolkit.md') assert.ok(matches.length <= 1, file + ' ' + matches);
+    if (file === 'SKILL.md') { assert.deepEqual(matches, []); assert.ok(text.includes('<tool> <action>')); }
+  }
+});
+
+test('skill contract documents ledger data and native reply and session contracts', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  const ledger = toolkit.split('## Ledger records\n')[1]?.split('\n## ')[0] ?? '';
+  for (const kind of KINDS) { const body = section(ledger, kind); assert.match(body, /data/); assert.match(body, /by/); }
+  for (const field of ['spec', 'plan', 'design', 'criterion', 'reason', 'evidence', 'subject', 'ruling', 'rationale', 'before', 'after', 'class', 'diffRef', 'affects', 'commandDigest', 'tree', 'clean', 'exit', 'phase', 'task', 'launch', 'candidate', 'dest']) assert.ok(ledger.includes('`' + field + '`'), field);
+  for (const term of ['native-pending', 'promptPath', 'replyPath', 'rerun']) assert.ok(toolkit.includes(term), term);
+  const sessions = toolkit.split('## Session commands\n')[1] ?? '';
+  for (const term of ['session init', 'session reactivate', 'session quota-reprobe', 'ok', 'summary', 'path', 'appliesTo', "action:'quota-reprobe'", "v:1"]) assert.ok(sessions.includes(term), term);
+  const fields: Record<string, string[]> = {
+    bind: ['spec', 'plan', 'design'], approval: ['spec', 'plan', 'design'],
+    level: ['level'], waiver: ['criterion', 'reason'], 'manual-complete': ['criterion', 'evidence'],
+    escalation: ['id', 'state', 'summary'], ruling: ['subject', 'ruling', 'rationale'], note: ['text'],
+    edit: ['artifact', 'before', 'after', 'class', 'affects', 'rationale', 'diffRef'],
+    evidence: ['criterion', 'commandDigest', 'tree', 'clean', 'before', 'after', 'exit', 'path'],
+    writer: ['phase', 'task', 'launched', 'path', 'base', 'commit', 'taskSection', 'seq', 'finished', 'launch', 'candidate', 'abandoned', 'reason'],
+    integrate: ['phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'from', 'to', 'delivered', 'closed'],
+  };
+  for (const [kind, names] of Object.entries(fields)) {
+    const body = section(ledger, kind);
+    for (const name of names) assert.ok(body.includes(name), kind + ' ' + name);
+    assert.ok(body.includes('Allowed by: user'), kind);
+    if (['approval', 'waiver', 'manual-complete'].includes(kind)) assert.ok(body.includes('user only with a nonblank quote'), kind);
+    else for (const author of ['orchestrator', 'tool']) assert.ok(body.includes(author), kind + ' ' + author);
+  }
+});
+
+test('phase prose places each workflow rule in its canonical home', () => {
+  const ref = (name: string) => read(root + 'references/' + name + '.md');
+  for (const term of ['ask run', 'replyPath', 'rerun']) assert.ok(ref('verbs/ask').includes(term), term);
+  for (const verb of ['design', 'plan']) for (const term of ['edit', 'before', 'after', 'class', 'diffRef', 'rationale', 'intent', 'dependency', 'discard', 'walkthrough']) assert.ok(ref('verbs/' + verb).includes(term), verb + ' ' + term);
+  for (const term of ['only writers whose paths or criteria change', 'scope overrun', 'concerns', 'conflicts', 'red baselines', 'information with options']) assert.ok(ref('verbs/implement').includes(term), term);
+  for (const term of ['review run', 'plan', 'design', 'code', 'integration', 'task ID', 'worktree', '<a>..<b>', '<rev>']) assert.ok(ref('verbs/review').includes(term), term);
+  assert.match(ref('spec-stage'), /intent.*user quote/i);
+  assert.match(ref('spec-stage'), /continue.*unaffected writers/i);
+  assert.ok(ref('review-rules').includes('review:<review>:<finding>'));
+  assert.match(ref('review-rules'), /ruling/);
+  const decision = ref('decision-frame');
+  for (const term of ['Conflict or blocker', 'Verified facts', 'Recommendation', 'Consequences', 'User Gate Boundaries', 'approval tuple']) assert.ok(decision.includes(term), term);
+  for (const trigger of ['Spec approval', 'Plan or design approval', 'Intent finding', 'Writer scope request', 'Red baseline', 'Failed task', 'Optional findings', 'Concerns', 'Review escalation']) assert.ok(decision.includes('### ' + trigger), trigger);
+  for (const term of ['doctor run', 'native-pending']) assert.ok(ref('providers').includes(term), term);
+  for (const term of ['ledger', 'result file', 'tool']) assert.ok(ref('glossary').includes('**' + term + '**'), term);
+  assert.equal(fs.existsSync(path.join(OVERLAY_ROOT, 'tests/integration/driver-authority-contract.test.ts')), false);
+});
+
+test('aliases and self-build preserve entry mappings and controller isolation', () => {
+  const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code'};
+  for (const [name, verb] of Object.entries(mapping)) {
+    const text = read('skills/' + name + '/SKILL.md');
+    assert.ok(text.includes('`' + verb + '`'), name);
+    assert.ok(text.includes('Missing dependency: dispatch is required by ' + name));
+    noLegacy(text, name);
+  }
+  const review = read('skills/dispatch-code-review/SKILL.md');
+  for (const term of ['target', 'argument', '--spec', 'bound spec']) assert.ok(review.includes(term), term);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review)\b/, file);
+  const self = read(root + 'references/self-build.md');
+  assert.ok(Buffer.byteLength(self) <= 8192);
+  for (const term of ['stable controller', 'v0.8.0', 'complete controller copy', 'outside writer scope', 'doctor run', 'integrity', 'scripts/dispatch.ts', 'npm test', 'status show', 'bounded manual repair', 'demonstrated controller defect', 'worktree cleanup']) assert.ok(self.includes(term), term);
+});
+
+test('human configuration keeps level and workspace guidance', () => {
+  const config = read(root + 'references/readme/configuration.md');
+  for (const term of ['An explicit level stays in force', '`xhigh` and `max` remain user-selected', '`medium` is the normal level', '`high` requires a credible consequential risk', 'write-concurrency', '.scratch/dispatch-skills']) assert.ok(config.includes(term), term);
+  assert.match(read(root + 'README.md'), /\^22\.18 \|\| >=23\.6/);
+  assert.ok(links(read(root + 'references/templates/walkthrough.md')).includes('../review-rules.md'));
+});
+
+test('human manuals retain portable links and unchanged operational guidance', () => {
+  for (const file of markdown('skills')) {
+    const text = read(file);
+    assert.doesNotMatch(text, /file:\/\/|[A-Z]:\\Users\\/, file);
+    for (const target of links(text)) {
+      const local = target.split('#')[0]!;
+      if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
+      assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
     }
   }
-  assert.deepEqual(errors, []);
-  assert.match(read('skills/dispatch/README.md'), /\^22\.18 \|\| >=23\.6/);
-});
-
-
-test('review alias maps to code review and host contract uses emitted envelopes', () => {
-  assert.match(read('skills/dispatch-code-review/SKILL.md'), /start review --kind code/);
-  assert.match(read('skills/dispatch/SKILL.md'), /`events`/); assert.match(read('skills/dispatch/SKILL.md'), /outcome:"pass"/);
-});
-
-
-test('guidance uses delivered APIs and describes migration boundaries', () => {
-  const root = read('README.md'); assert.doesNotMatch(root, /--phases|clean tree falls back/i); assert.match(root, /Ambient credential/); assert.match(root, /invoke `implement:`/);
-  const config = read('skills/dispatch/references/readme/configuration.md'); for (const term of ['nativeSubagentsOnly', 'write-subagents', 'unsupported-journal-protocol', 'OPENCODE_CONFIG_DIR', 'sandbox:false']) assert.ok(config.includes(term), term);
-  assert.doesNotMatch(read('skills/dispatch/references/templates/plan.md'), /Resolution log|entry format/);
-  assert.doesNotMatch(read('skills/dispatch/references/templates/walkthrough.md'), /Resolution log/);
-  assert.doesNotMatch(read('skills/dispatch/scripts/machines/plan.ts'), /is not available in plan/);
-});
-
-test('operational contracts reflect workspace session retention and contain no temp migration instructions', () => {
-  const contract = read(`skills/dispatch/${contractName}`);
-  assert.doesNotMatch(contract, /published folder|temp folder/i);
-  assert.match(contract, /session reactivate/i);
-
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /\.scratch\/dispatch-skills/);
-  assert.doesNotMatch(config, /OS temp/i);
-
-  const planTemplate = read('skills/dispatch/references/templates/plan.md');
-  assert.match(planTemplate, /retaining the session in the workspace/);
-  assert.doesNotMatch(planTemplate, /OS temp/i);
-});
-
-test('governing spec identity is the documented review and alias intent channel', () => {
-  const verbRef = read('skills/dispatch/references/verbs/review.md');
-  assert.match(verbRef, /\[--spec <path>\]/);
-  assert.doesNotMatch(verbRef, /--context/);
-
-  const reviewRef = read('skills/dispatch/references/review-rules.md');
-  assert.match(reviewRef, /settled governing spec path and hash/);
-  assert.match(reviewRef, /sessionDir/);
-
-  const codeReviewSkill = read('skills/dispatch-code-review/SKILL.md');
-  assert.match(codeReviewSkill, /reuse the governing spec with `--spec "<path>"` or author it under dispatch/);
-  const command = /map this invocation to `([^`]+)`/.exec(codeReviewSkill)![1]!;
-  const parsed = parseCommand([...command.split(' '), '--session-dir', 'session', '--orchestrator', 'codex', '--spec', 'intent.spec.md', '--', 'HEAD'], { levels: ['low'], pins: () => null, provider: (value) => value });
-  assert.equal(parsed.verb, 'review'); assert.equal(parsed.flags['spec'], 'intent.spec.md');
-
-  const agentCodeReviewSkill = read('.agents/skills/dispatch-code-review/SKILL.md');
-  assert.equal(codeReviewSkill, agentCodeReviewSkill);
-});
-
-test('task execution guidance describes graph ownership, continuous writers and recovery boundaries', () => {
-  const plan = read('skills/dispatch/references/verbs/plan.md');
-  assert.match(plan, /task outcomes/); assert.match(plan, /prerequisite graph/); assert.match(plan, /producer\/consumer interfaces/);
-  const implement = read('skills/dispatch/references/verbs/implement.md');
-  assert.match(implement, /one continuous writer invocation/); assert.match(implement, /\[task brief\]\(\.\.\/templates\/write-brief-task\.md\) owns the development sequence/);
-  assert.match(read('skills/dispatch/references/templates/write-brief-task.md'), /record RED, implement to verified GREEN, inspect for refactoring/);
-  assert.match(implement, /submission alone does not/); assert.match(implement, /Keep running handles and completed receipts/);
-  assert.match(implement, /final code review\/fixes.*caller checkout/s);
-  assert.doesNotMatch(implement, /Tests-only RED evidence precedes production/);
-  const config = read('skills/dispatch/references/readme/configuration.md');
-  assert.match(config, /write-concurrency/); assert.match(config, /positive safe integer/); assert.match(config, /omission defaults to one/);
+  const config = read(root + 'references/readme/configuration.md');
+  for (const term of [
+    'after its plan and baseline are concrete, immediately before the first production write',
+    'failures remain observable and recoverable', 'financial or data-integrity errors',
+    'a small rate-precision change can',
+    'A large diff, changed external contract, finance repository, or state-machine file alone does not require high',
+    'Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment',
+    'Retries, later phases, accepted scope changes, and later design increments keep the settled level',
+    'nativeSubagentsOnly', 'write-subagents', 'unsupported-journal-protocol', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
+    'positive safe integer', 'omission defaults to one',
+  ]) assert.ok(config.includes(term), term);
+  assert.doesNotMatch(config, /OS temp|asks whether to adopt or retain/i);
   assert.match(config, /older plans without file ownership.*rewrite the plan and start a new run/);
-  const concepts = read('skills/dispatch/references/readme/concepts.md');
+  const humanRoot = read('README.md');
+  assert.doesNotMatch(humanRoot, /--phases|clean tree falls back/i);
+  for (const term of ['Ambient credential', 'invoke `implement:`']) assert.ok(humanRoot.includes(term), term);
+  assert.match(read(root + 'references/templates/plan.md'), /retaining the session in the workspace/);
+  for (const name of ['plan', 'walkthrough']) assert.doesNotMatch(read(root + 'references/templates/' + name + '.md'), /Resolution log/);
+  const concepts = read(root + 'references/readme/concepts.md');
   for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
-  assert.match(read('skills/dispatch/README.md'), /task summaries/);
-  assert.match(read('skills/dispatch/references/readme/design.md'), /increments in order/);
-});
-
-
-test('amendment: writers propose plan changes on BLOCKED and the orchestrator adjudicates them', () => {
-  const brief = read('skills/dispatch/references/templates/write-brief-task.md');
-  assert.match(brief, /is wrong or infeasible, stop and return `BLOCKED` with an `amendment`/);
-  assert.doesNotMatch(read('skills/dispatch/references/templates/write-brief.md') + read('skills/dispatch/references/templates/write-brief-hotfix.md'), /amendment/);
-  assert.match(brief, /Never edit the plan or work around it/);
-  const implement = read('skills/dispatch/references/verbs/implement.md');
-  assert.match(implement, /verify each failed task's `amendment` against plan intent, invariants, and code/);
-});
-
-test('run-loop: long-running work runs as background tasks', () => {
-  assert.match(read(`skills/dispatch/${contractName}`), /`start`, subagents, and long checks as background tasks; act on completion notices/);
-});
-
-test('Await decide retains the decision fabrication guard', () => {
-  const contract = fs.readFileSync(path.join(OVERLAY_ROOT, 'skills/dispatch/SKILL.md'), 'utf8');
-  assert.match(contract.split('## Await decide')[1]!.split('## Await retro')[0]!, /Never invent decisions\./);
+  assert.match(read(root + 'README.md'), /task summaries/);
+  assert.match(read(root + 'references/readme/design.md'), /increments in order/);
 });

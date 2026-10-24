@@ -1,7 +1,9 @@
 # Design
 
-Settle the governing spec through [spec operation](../spec-stage.md) before strategy authoring. Read its whole content and every emitted `data.read` path/section before drafting. The design maps REQs to components and increments and records architectural AD decisions; intent and user decisions remain in the spec's DEC log. Use the spec's path/hash Parent pin and the [revision protocol](../spec-stage.md#revision-protocol) for changed intent.
+Resolve and read the whole [governing spec](../spec-stage.md). Author the strategy with the [design template](../templates/design.md): map REQs to components and ordered increments; record architecture choices as AD entries. Keep user intent in the spec's DEC log.
 
-Use the [design template](../templates/design.md) for strategy, grouped component/increment outcomes and single-sourced constraints with local exceptions.
+Lint the design, then use design review under [review rules](../review-rules.md). Resolve findings against the spec. Present the strategy, increment sequence and risks for user approval; record that decision with the first implemented plan's approval tuple, including the design hash. Design-only delivery ends with the reviewed artifact and unresolved concerns.
 
-Use `start design --session-dir <dir> --orchestrator <platform> -- <objective>`. Author from the emitted template, resolve lint and reviews, and obtain user approval bound to the governed design revision. Design ends at approval. A later `implement -- <design-path>` delivers its graph in priority order; [the contract](../..) owns host replies.
+Design is a living document. Edit it in place and append a ledger `edit` record with `before` and `after` hashes, `class`, `diffRef` and `rationale`. The [ledger contract](../toolkit.md#edit) owns fields and hashing. Re-approval is required only for intent, dependency or discard changes under the [user gate](../decision-frame.md#user-gate-boundaries). Include changes as walkthrough deviations. Continue unaffected work; notify affected writers under [implementation](implement.md).
+
+A later implement invocation delivers increments in prerequisite order. Author one coherent increment plan at a time.

@@ -1,143 +1,54 @@
 # Decision Frame
 
-The orchestrator acts as the user's executive deputy. Formulate every user-facing decision as an autonomous, pre-investigated Decision Frame with verified facts, technical rationale, and concrete trade-offs:
+Investigate before consulting the user. Present four parts:
 
-1. **Conflict or blocker:** Concise statement of the pending decision or required authorization.
-2. **Verified facts:** Inspected repository, test, or artifact evidence verified before consulting the user.
-3. **Recommendation:** Proposed action with explicit technical rationale.
-4. **Consequences:** Trade-offs and impact of alternative choices.
+1. **Conflict or blocker:** State the pending decision.
+2. **Verified facts:** Cite inspected code, tests or artifacts.
+3. **Recommendation:** Propose an action with technical rationale.
+4. **Consequences:** Give trade-offs and the effect of alternatives.
 
 ## User Gate Boundaries
 
-Mandatory workflow approvals (`spec-approval`, design `approval`, and manual completion) require explicit user authorization (`{ by: "user", quote }`).
+At medium and above, implementation approval is one approval tuple of spec hash, plan hash and optional design hash, recorded with `by: "user"` and a verbatim quote. Waivers, manual completion and selection of xhigh/max also require user quotes.
 
-For all other runtime decisions and scope escalations, user authority is required only at explicit user gates:
-- **Changed intent:** New, removed, or altered governing requirements (`REQ-<n>`) or settled decisions (`DEC-<n>`).
-- **Suspected user mistake or contradiction:** Conflicting instructions or prompt defects that alter outcomes.
-- **External dependencies:** New package dependencies, external services, or runtime prerequisites.
-- **Discarded work:** Dropping previously accepted tasks, candidates, or integration commits.
+Other user gates are changed intent or settled decisions, a suspected user mistake that changes the outcome, a new external dependency or runtime prerequisite, and discarded accepted work. Technical repairs, review adjudication and non-intent plan/design edits within approved scope are orchestrator decisions. Preserve evidence and continue independent work.
 
-Adjudicate technical claims, test failures within approved scope, and quality-bar compliance autonomously using repository evidence.
+## Templates by trigger
 
-## Application by Decision Kind
+Use the four-part format above with the following concrete content.
 
-### Spec Approval (`spec-approval`)
+### Spec approval
 
-Present path, hash, and distilled governing intent:
+Present the canonical path/hash, intent, core REQs, settled DECs and unresolved material questions. Recommend confirmation or specific corrections. Record actual user words; include the settled spec hash in the later implementation tuple.
 
-```markdown
-### Governing Spec Approval
-- **Path:** `<session>/<slug>.spec.md` (`<hash>`)
-- **Intent & Core Requirements:** Concise summary of problem and key `REQ-<n>` items.
-- **Settled Decisions:** Primary architectural and scope decisions (`DEC-<n>`).
-- **Recommendation:** Approve revision to proceed with authoring, or stop with noted adjustments.
-```
+### Plan or design approval
 
-### Design Approval (`approval`)
+Present current artifact paths/hashes, strategy, task or increment sequence, scope and verification. Recommend the bounded unit. Explain delivery risk and alternatives. Record the tuple under [approval](toolkit.md#approval); design-only approval is recorded with the first implemented plan.
 
-Present the design path, hash, strategy, increment structure, and risk profile:
+### Intent finding
 
-```markdown
-### Design Approval
-- **Path & Hash:** `<session>/<slug>.design.md` (`<hash>`)
-- **Strategy & Increments:** Core architectural approach and planned increment sequence.
-- **Recommendation:** Approve design to proceed with increment delivery, or stop with noted adjustments.
-```
+Present the claim, governing REQs/DECs and inspected source. Recommend a settled-evidence rejection or a specific intent change. Explain scope and verification effects; record a user quote for a changed decision.
 
-### Intent Findings (`needs-user`)
+### Writer scope request
 
-The `needs-user` decision kind serves two distinct runtime contexts:
+Present the needed paths, rationale, verified ownership and interface impact. Approve routine additive scope by editing the plan and notifying affected writers. Escalate only when a user gate applies; recommend a bounded alternative.
 
-#### Review Intent Findings
-Investigate source code and spec before presenting the finding:
+### Red baseline
 
-```markdown
-### Intent Decision: `<finding-id>`
-- **Conflict:** Reviewer claim against current spec or code behavior.
-- **Verified Facts:** Inspected source lines, test outcomes, or governing spec sections.
-- **Recommendation:** Accept as governing intent change (with proposed `DEC-<n>` wording), or reject with evidence.
-- **Consequences:** Scope and implementation impact of accepting versus rejecting.
-```
+Present exact failed commands, logs and root cause. Recommend repair, retained known failure or stop, with confidence limits. A known failure is not a pass or a criterion waiver. Obtain a user quote for any actual waiver.
 
-#### Implementation RED Exceptions
-When an external invariant prevents a failing test, investigate the exception rationale and verification impact before escalating or ruling:
+### Failed task
 
-```markdown
-### RED Exception Ruling: Criteria `<criteria-ids>`
-- **Exception Claim:** Task writer rationale for why behavioral RED cannot be produced.
-- **Verified Facts:** Inspected environment, test harness, or external constraints.
-- **Recommendation:** `accept` (allow admission to proceed without behavioral RED replay) or `stop`.
-- **Consequences:** Verification rigor versus unblock of production work.
-```
+Present the failed behavior, retained candidate, logs and verified cause. Recommend bounded repair, clarified scope, retry or stop. Preserve completed independent work. Manual completion needs criterion evidence and user authorization.
 
-### Writer Requests (`request-user`)
+### Optional findings
 
-Evaluate writer scope and invariant impact:
+Present bounded options, affected paths and benefits. Recommend which to select and explain cost or risk. Record unselected work as follow-up; user selection authorizes adjacent work.
 
-```markdown
-### Scope Escalation: Task `<task-id>`
-- **Writer Request:** Needed paths and declared rationale.
-- **Invariant Impact:** Architectural boundaries or file ownership affected.
-- **Recommendation:** Approve with plan amendment, or decline and instruct writer within original scope.
-- **Consequences:** Blast radius and risk of widening task scope.
-```
+### Concerns
 
-### Baseline Failures (`baseline`)
+Separate observed limitations from claims needing investigation. Present evidence, impact and a recommendation to repair, accept a bounded limitation or stop. Escalate only material intent decisions.
 
-Inspect failure logs before presenting baseline options:
+### Review escalation
 
-```markdown
-### Baseline Failure
-- **Failing Checks:** List failing commands, exit codes, and log paths.
-- **Root Cause:** Pre-existing failure in checkout versus new regression.
-- **Recommendation:** Choose `inline-hotfix` (for isolated defect) or `accept-known-red` (for pre-existing baseline issue).
-- **Consequences:** Risk of carrying known red into task verification.
-```
-
-### Implementation Failure (`failure`)
-
-Evaluate failed attempts and potential amendments:
-
-```markdown
-### Implementation Failure: Task `<task-id>`
-- **Terminal State:** Failure reason, failing verification check, and log excerpt.
-- **Verified Facts:** Task candidate status and verified invariants.
-- **Recommendation:** `retry` with clarified context, or `stop` with work preserved (or send `AMEND` to reconcile plan first).
-- **Consequences:** Work preservation and risk of repeated attempts.
-```
-
-### Adjacent and Consider Options (`opt-in`)
-
-Curate optional findings into clear value propositions:
-
-```markdown
-### Optional Review Findings
-- **Findings:** Distilled summary of in-scope `CONSIDER` or `adjacent` findings.
-- **Recommendation:** Specific subset recommended for inclusion, if any.
-- **Consequences:** Added edit scope versus deferred maintenance.
-```
-
-### Writer Concerns (`concerns`)
-
-Adjudicate technical concerns within approved scope autonomously with evidence. When a concern touches a user gate (such as changed intent or discarded work), present the Decision Frame to the user:
-
-```markdown
-### Implementation Concerns
-- **Reported Concerns:** List writer concerns (`DONE_WITH_CONCERNS`), baseline collisions, or deviations.
-- **Verified Facts:** Inspected code status and test outcomes.
-- **Recommendation:** Choose `accept` (to proceed to code review with concerns recorded as deviations) or `stop`.
-- **Consequences:** Blast radius of continuing with known deviations versus halting.
-```
-
-### Review Escalation (`escalation`)
-
-Present review convergence deadlock or regression halts:
-
-```markdown
-### Review Escalation
-- **Halt Reason:** Re-raised regression or deadlocked findings (`<ids>`).
-- **Verified Facts:** Prior review rounds, attempts, and unresolved claims.
-- **Recommendation:** Stop review loop to address the underlying contradiction or deadlock.
-- **Consequences:** Halts automated rounds to preserve review artifacts and logs for manual resolution.
-```
-
+Present the recurring finding, prior accepted fixes, inspected feasibility and remaining uncertainty. Recommend keeping, relaxing or splitting the requirement, with concrete alternatives. Intent changes follow [spec operation](spec-stage.md#revision-protocol).

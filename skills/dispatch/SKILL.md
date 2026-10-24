@@ -7,68 +7,30 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`; default `ask`. `design`/`plan`/`implement` need arguments; empty `review` targets working tree. `.plan.md` and `.design.md` infer review kind; other targets use code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Keep explicit levels; report a higher implementation assessment. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). Require user-selected `xhigh`/`max`. Pins `(a,b)`, `(3)`, `(all)` select providers/count/all; `-m`/`-e` map to `--model`/`--effort`.
+Parse `[level] [(pins)] [verb:] argument`; default `ask`. Verbs are `ask`, `design`, `plan`, `implement`, `review`. Use design for ordered increments, plan for one unit, implement for delivery. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
 
-Use `design` for increments, `plan` for one unit, `implement` for delivery; clarify mismatches.
+Pick and report the level. Preserve explicit levels; `xhigh` and `max` require user selection. Levels select roster, rounds and approval need. Use configured models and efforts exactly; provider configuration owns roster selection.
 
-## Run loop
+Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
 
-1. Initialize: `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain `sessionDir`/`sessionId`; fallback: `--session-id`. Reuse: `session reactivate --session-dir <dir>`.
-2. Start: `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] -- <argument>`. Retain `run`.
-3. Run `send --run <dir> [--event @<reply-path>]`, `start`, subagents, and long checks as background tasks; act on completion notices. Correct rejected payloads; supply evidence/quotes. Send one unwrapped `events` element per `await` until `done`; eventless send resumes automation. [Change handling](references/change-handling.md) governs observations and optional dispositions.
+## Tool loop
 
-When any step creates a worktree, follow [worktree cleanup](references/worktree-cleanup.md).
+Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. Stdout contains `ok`, a summary of at most 1024 UTF-8 bytes, and a result `path`. Read that file for details. Exit codes: 0 operation returned (inspect `ok`), 1 usage or invalid input, 2 fault, 3 lock held, 4 gate or pending native work.
 
-Read [verbs](references/verbs/), [rules](references/review-rules.md), [providers](references/providers.md).
+1. Read host rules and the [quality bar](references/templates/quality-bar.md). Resolve the [governing spec](references/spec-stage.md).
+2. Author and lint the required design or plan; resolve parse errors. Review against the spec, adjudicate findings and apply accepted fixes under [review rules](references/review-rules.md).
+3. Obtain the applicable approval tuple under the [Decision Frame](references/decision-frame.md).
+4. Implement scoped tasks with native writers, then verify the integrated tree. Inspect failed checks and repair within scope. Review code and verify again after fixes.
+5. Write retro observations to `<session>/.state/retro.json` per [diagnostics](references/diagnostics.md). Run `report complete`; after success run `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifact paths.
 
-## Quality inputs
+For `native-pending`, read each `promptPath`, launch the configured native slot, write its output to `replyPath`, and rerun the same tool call. Preserve running handles; wait on completion or material blockers. [Providers](references/providers.md) owns slot and fallback rules.
 
-Read host rules first for authoring, delegation, and finding rulings; authors obey `data.read`. Before review/writer work, read [quality bar](references/templates/quality-bar.md) sections selected by `qualitySections` in `scripts/domain/prompt.ts`.
+## Invariants and recovery
 
-## Governing spec
+User-only records (approval, waiver, manual completion and selection of xhigh/max) require actual user quotes. Never invent decisions. At medium and above, writer briefs and integration require the approved current artifact tuple or its recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
 
-Author/approve/revise/redirect specs via [spec operation](references/spec-stage.md). `SPEC_REVISED` follows [revision admission](references/spec-stage.md#revision-protocol). Other planning skills, including brainstorming, direct spec/design output to the resolved canonical spec; new specs use `<session>/<slug>.spec.md`. Follow merge/deletion gates; edit no managed skill.
+Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
-## Await author
+After interruption, use `status show`, inspect its result and retained worktrees, then resume the next unfinished operation. Keep uncertain effects and handles until completion is established.
 
-Before design/plan drafting, read the whole spec and every `data.read` path/section. Author `data.path` with `data.template`; resolve defects. Reply `AUTHORED` with `path`. Accept `SPEC_REVISED`; spec authoring uses authored reply.
-
-## Await native
-
-`REVIEW_USE` selects [review applicability](references/review-rules.md#review-provenance-and-applicability). Launch each `data.slots` subagent with prompt, model, effort, attachments. Reply `NATIVE_RESULTS` with attested slot fields ([fields](references/providers.md)).
-
-## Await rule
-
-`REVIEW_USE` selects applicability. Read `data.findingsPath` or inline findings; verify intent first under [review rules](references/review-rules.md#intent-and-findings). Send `RULINGS` before scoped edits. Follow [user gates](references/decision-frame.md#user-gate-boundaries) (changed intent, external prerequisite, discarded work). Accept `SPEC_REVISED`.
-
-## Await fix
-
-`REVIEW_USE` selects applicability. Apply accepted clusters within `affectedPaths` via frame `writer`, verify; reply `FIXES_APPLIED`. Adjacent changes require opt-in.
-
-## Await write
-
-`tasks` rows link a `launch.json` at `launchPath` (run-relative). Launch a native writer per `launch` row from its record fields. Send each `WRITE_RECEIPT` by copying the record's matching `receipts` entry; `launched` adds handle and attested `model`/`effort`; `submitted` echoes the writer's reported `briefHash` and envelope. Taskless hotfix receipts omit identity fields. Relay live writers' out-of-scope `REQUEST`s. `AMEND`/`REPLACE_PLAN` reconcile plan; per `amended` row, relay the record's `notice`, `deltaPath` and `deltaHash` (else `briefPath`). Never dump whole frames or briefs; read a brief section only for a named gap. See [implement](references/verbs/implement.md).
-
-## Await evidence
-
-Inspect summaries/logs; never rerun gates. Send `EVIDENCE` with id-keyed criterion evidence and `outcome:"pass"`. Accept `SPEC_REVISED`.
-
-## Await decide
-
-Answer `data.kind` from listed options. Never invent decisions. Adjudicate `by:"orchestrator"` frames (conflicts, requests) autonomously with evidence; [implement](references/verbs/implement.md) owns answers and `AMEND`. Present [Decision Frame](references/decision-frame.md) on user escalations as executive deputy with verified evidence. Follow [spec approval](references/spec-stage.md#approval) for spec frames. Accept `SPEC_REVISED`. Manual completion requires `{by:"user",quote:"..."}`. `REPLACE_PLAN` chooses replacement; `REVIEW_USE` sets applicability; follow [collision handling](references/change-handling.md). `run-stop` ends it; follow failure decisions. Reply `DECISION` with `kind`/`answer`.
-
-## Await retro
-
-Follow `data.diagnostics.instruction`; reply `RETRO`.
-
-## Await done
-
-Clean up [worktrees](references/worktree-cleanup.md). Report outcome, behavior, verification, concerns, rulings, artifacts. If `data.diagnostics` exists, add one line with its `path` and the report's first top finding. Complete only when every criterion passes and owned worktrees are cleaned; preserve the handoff folder.
-
-## Write boundaries and recovery
-
-Driver owns journals/generated artifacts; follow frame write permissions. Provider CLIs stay read-only; unrelated dirty or ignored files stay intact.
-
-Session-root files: `manifest.json`, deliverables, optional `diagnostics.md`. Helpers/logs/intermediates: `.state/runs/NNN-<kind>/scratch/`; shared: `.state/scratch/`. Preserve supplied paths; classify backups.
-
-After stop, failure, or interruption, follow [worktree cleanup](references/worktree-cleanup.md). Journal is authoritative; inspect `status --run <dir>` and follow [checkpoint/rebind recovery](references/change-handling.md#checkpoints-and-runtime-continuation) before resuming uncertain effects. `send --dry-run --event` validates (exit 1: invalid). Exit codes: 1 usage, 2 engine fault, 3 lock holder. Wait on live locks; break dead locks.
+Read the phase you execute: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md). For changes to Dispatch itself, use [self-build](references/self-build.md).

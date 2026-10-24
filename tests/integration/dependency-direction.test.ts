@@ -10,7 +10,7 @@ type Layer = 'dispatch' | 'core' | 'machines' | 'policy' | 'domain' | 'effects' 
 
 // Design § Layers: anything not listed is forbidden (which also rules out cycles).
 export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
-  dispatch: ['core', 'policy', 'effects', 'providers', 'lib'],
+  dispatch: ['lib', 'providers', 'policy', 'toolkit'],
   core: ['machines', 'policy', 'domain', 'effects', 'lib'],
   machines: ['policy', 'domain'],
   policy: ['domain'],
@@ -68,12 +68,12 @@ export function checkDependencies(files: FileTable): string[] {
         }
         continue;
       }
-      if (targetLayer === 'toolkit' && layer !== 'toolkit') {
+      if (targetLayer === 'toolkit' && layer !== 'toolkit' && layer !== 'dispatch') {
         errors.push('dependency rule: ' + file + ' imports toolkit/; legacy layers must not depend on toolkit');
         continue;
       }
       if (!targetLayer || targetLayer === layer) continue;
-      if (layer !== 'toolkit' && typeOnly && target === `${SCRIPTS}core/types.ts`) continue;
+      if (layer !== 'toolkit' && layer !== 'dispatch' && typeOnly && target === `${SCRIPTS}core/types.ts`) continue;
       if (!ALLOWED[layer].includes(targetLayer)) {
         errors.push(`dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(', ') || 'nothing'}, so invert the dependency or move the code`);
       } else if (layer === 'core' && !typeOnly && (targetLayer === 'machines' || targetLayer === 'effects') && file !== `${SCRIPTS}core/interpreter.ts`) {
@@ -97,6 +97,16 @@ test('the overlay obeys the dependency matrix and purity rules', () => {
 
 const IMPORT = 'imp' + 'ort';
 const file = (path: string, ...lines: string[]) => ({ path, text: lines.join('\n') });
+
+test('dispatch entry imports only portable services and toolkit', () => {
+  for (const layer of ['lib', 'providers', 'policy', 'toolkit']) {
+    assert.deepEqual(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]), []);
+  }
+  for (const layer of ['core', 'machines', 'effects', 'domain']) {
+    assert.equal(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]).length, 1);
+    assert.equal(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' type { X } from "./' + layer + '/types.ts";')]).length, 1);
+  }
+});
 
 describe('toolkit import boundary', () => {
   test('toolkit refuses legacy engine and non git effects imports', () => {

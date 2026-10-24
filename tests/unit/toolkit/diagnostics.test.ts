@@ -91,7 +91,7 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
       ],
     });
     const observations = [
-      {id: 'retro-1', component: 'scripts/dispatch.ts', category: 'correctness', evidence: 'One bounded observation.', impact: 'One review repeated work.', proposedFix: 'Use the prior ruling.'},
+      {id: 'retro-1', component: 'references/toolkit.md', category: 'correctness', evidence: 'One bounded observation.', impact: 'One review repeated work.', proposedFix: 'Use the prior ruling.'},
       {id: 'retro-2', component: 'outside-component.ts', category: 'correctness', evidence: 'Invalid component.', impact: 'Not dispatch owned.', proposedFix: 'No change.'},
     ];
     writeJson(path.join(fixture.session, '.state', 'retro.json'), observations);

@@ -1,0 +1,207 @@
+# Toolkit CLI contract
+
+Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
+
+Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
+
+## Tool actions
+
+### ask run
+
+Arguments: `ask run <question-file> --session <session> [--level <level>]`.
+Result path: answers, failed slots and native slots; successful captures also persist answers.json.
+Refusals: unreadable question, invalid level, level-unapproved, no read delegate, native-pending or ask-failed.
+
+### review run
+
+Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`.
+Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots.
+Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, native-pending or target-moved. A single revision without a merge-base is invalid-input.
+
+Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion.
+
+### report render
+
+Arguments: `report render --session <session>`.
+Result path: walkthrough path, criterion statuses, deviations, user records, findings and evidence references. Renders the current snapshot without claiming completion.
+Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
+
+### report complete
+
+Arguments: `report complete --session <session>`.
+Result path: completed walkthrough path, criterion statuses, deviations and optional diagnostics path.
+Refusals: no-integration, criteria-unmet or undelivered. Inspect reason and statuses; only a successful result is completion.
+
+### brief render
+
+Arguments: `brief render <task> --session <session>`.
+Result path: writer brief filename, task, launch and UTF-8 bytes.
+Refusals: approval-chain or level gate, lint-errors, unknown task or no-open-launch. Create the task worktree before rendering.
+
+### worktree integrate
+
+Arguments: `worktree integrate <task> --session <session> [--ack-stale <rationale>]`.
+Result path: integration commit and task, or retained conflict paths.
+Refusals: approval-chain gate, no-candidate, stale candidate, pending integration or wrong task. Inspect conflict state before continuing.
+
+### worktree continue
+
+Arguments: `worktree continue <task> --session <session>`.
+Result path: completed integration commit after a retained conflict.
+Refusals: approval-chain gate, wrong-task, no-pending-integration or unresolved-conflict.
+
+### worktree commit
+
+Arguments: `worktree commit --session <session> --reason <reason>`.
+Result path: integration fix commit and reason; use after direct accepted fixes.
+Refusals: blank reason, integration-pending or no-changes.
+
+### worktree abort
+
+Arguments: `worktree abort <task> --session <session> --reason <reason>`.
+Result path: preserved candidate and abandoned state.
+Refusals: blank reason, wrong-task, no-candidate or already-integrated. Obtain user authority before discarded accepted work.
+
+### worktree deliver
+
+Arguments: `worktree deliver --session <session>`.
+Result path: from/to commits and delivered boolean.
+Refusals: integration-pending, no-integration, caller-moved, caller-dirty or integration-dirty. Preserve caller changes and inspect collision paths.
+
+### worktree close
+
+Arguments: `worktree close --session <session> --reason <reason>`.
+Result path: closed state and reason, ending an integration retained for recovery.
+Refusals: blank reason or unexpected task argument. Closing records state; it does not establish verification or authorize discarded work.
+
+### worktree cleanup
+
+Arguments: `worktree cleanup --session <session>`.
+Result path: removed paths and kept paths with reasons, including unowned, non-terminal and unpreserved.
+Refusals: unexpected arguments, lock or filesystem/Git fault. Kept paths require inspection; cleanup preserves snapshots and ignored files. See [cleanup](worktree-cleanup.md).
+
+### worktree create
+
+Arguments: `worktree create <task> --session <session> [--relaunch]`.
+Result path: task, launch and worktree path, plus restored/relaunch markers when applicable.
+Refusals: unknown task, writer-open, candidate-pending, no-open-launch, missing-worktree or submit-pending. Relaunch requires the orchestrator to establish that the old writer has stopped.
+
+### worktree submit
+
+Arguments: `worktree submit <task> --session <session>`.
+Result path: task, launch, candidate commit and any uncommitted paths.
+Refusals: no-open-launch, out-of-scope, submit-pending or no-changes. The orchestrator invokes this Git-writing tool after the writer stops.
+
+### worktree abandon
+
+Arguments: `worktree abandon <task> --session <session> --reason <reason>`.
+Result path: preserved writer snapshot, task/launch and abandoned marker.
+Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and obtain user authority when discarding work.
+
+### verify run
+
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`.
+Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
+Refusals: unknown criterion, invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+
+### ledger append
+
+Arguments: `ledger append <record.json> --session <session>`.
+Result path: appended seq and deduped boolean.
+Refusals: unreadable JSON, invalid-record, missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
+
+### ledger query
+
+Arguments: `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`.
+Result path: matching full records.
+Refusals: positional arguments or invalid filters.
+
+### doctor run
+
+Arguments: `doctor run --session <session> [--level <level>]`.
+Result path: integrity, provider/mode discovery, selected roster and writer configuration.
+Refusals: positional arguments or invalid configuration. Inspect ok and reason for failed integrity or unavailable capabilities.
+
+### status show
+
+Arguments: `status show --session <session>`.
+Result path: ledger summary, artifact hashes, worktrees, writers and integration state.
+Refusals: positional arguments, invalid state or Git/filesystem fault. Use this after interruption before deciding what to resume.
+
+### lint run
+
+Arguments: `lint run <artifact> --session <session>`.
+Result path: artifact kind/hash, parse errors and warnings.
+Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
+
+## Ledger records
+
+Append JSON objects with kind, by, data, optional key and optional quote. Allowed by values are user, orchestrator and tool, except the user-only rules below. Tools supply seq and at on storage. Use stable explicit keys for bind, approval, level, escalation, edit, ruling and note; remaining kinds can derive idempotency keys. Reusing a key with different content refuses. Preserve quotes verbatim; never invent user evidence.
+
+### bind
+
+data: `spec`, `plan`, optional `design` are canonical artifact paths. Allowed by: user, orchestrator, tool.
+
+### approval
+
+data: `spec`, `plan`, optional `design` are artifact hashes, forming one approval tuple. Allowed by: user only with a nonblank quote. At medium and above, writer briefs and integration require this tuple or its non-intent edit chain.
+
+### level
+
+data: level selects low, medium, high, xhigh or max. Allowed by: user, orchestrator, tool for low/medium/high; xhigh/max require by user with a nonblank quote.
+
+### waiver
+
+data: `criterion`, `reason`. Allowed by: user only with a nonblank quote.
+
+### manual-complete
+
+data: `criterion`, `evidence`. Allowed by: user only with a nonblank quote.
+
+### escalation
+
+data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. Resolve recorded escalations with retained evidence.
+
+### ruling
+
+data: `subject`, `ruling`, `rationale`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, with ruling accepted/rejected/duplicate/deferred.
+
+### note
+
+data: text. Allowed by: user, orchestrator, tool.
+
+### edit
+
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. Include every edit as a walkthrough deviation.
+
+### evidence
+
+data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. User-only manual records are separate.
+
+### writer
+
+data includes `phase` and `task`. launched adds path and base {commit, taskSection, seq}; finished adds `launch`, `candidate`; abandoned adds launch and reason. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+
+### integrate
+
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {dest,from,to}; delivered {dest,to}; closed {reason}. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+
+## Native-slot replies
+
+When reason is native-pending, read the result's native slots and each promptPath. Launch the configured slot with its model, effort and attachments, retain the handle, and write its complete output to replyPath. Then rerun the same call with unchanged arguments. The tool consumes the reply and reuses completed slots. Report capability blockers or failed coverage; do not fabricate a capture. [Providers](providers.md) owns launch fidelity and read-only controls.
+
+## Session commands
+
+These commands use --session-dir rather than --session and run before tool calls.
+
+### session init
+
+`session init --objective "<objective>" [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>}; summary is at most 1024 UTF-8 bytes. Read manifest.json for session identity. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
+
+### session reactivate
+
+`session reactivate --session-dir <session>` reactivates the same session idempotently. Stdout: {ok:true, summary, path:<sessionDir>} with the same byte cap.
+
+### session quota-reprobe
+
+`session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]` clears one quota key. Stdout: {v:1, action:'quota-reprobe', key:{provider,model,mode}, appliesTo:'future-waves'}. Omit model for the provider default (null). Provider and mode must match a known provider implementation. Changes affect future provider selection.

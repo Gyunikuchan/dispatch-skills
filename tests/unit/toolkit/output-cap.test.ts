@@ -1,11 +1,37 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { test } from 'node:test';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { capSummary } from '../../../skills/dispatch/scripts/toolkit/output.ts';
-import { sessionFixture } from './helpers/session.ts';
+import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 import {appendRecord,currentHashes,foldLedger,latest} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+
+function sessionFixture() {
+  // Quota ancestor checks stay inside this shallow virtual root.
+  const root=path.join(path.parse(os.tmpdir()).root,'output-cap-'+crypto.randomUUID());
+  const cleanup=memoryNodeFs(root), session=path.join(root,'.scratch/dispatch-skills/20261023T0000Z-test');
+  fs.mkdirSync(session,{recursive:true});
+  fs.writeFileSync(path.join(session,'manifest.json'),JSON.stringify({schemaVersion:1,folderName:path.basename(session),sessionId:'test',safeSessionId:'test',repositoryRoot:fs.realpathSync(root)}));
+  const lines:string[]=[], replies=new Map<string,string>();
+  const deps:CliDeps={
+    run:async()=>{throw new Error('Unit tests must not spawn processes');},
+    delegate:async(provider,request)=>{
+      const text=replies.get(provider+':'+request.model);
+      if(text===undefined)throw new Error('Unscripted delegate '+provider+':'+request.model);
+      return {outcome:{status:'ok',text,resume:null,sessionId:null},invocations:[]};
+    },
+    modes:()=>['cli'],orchestrator:null,liveness:{claude:true,agy:true,codex:true,copilot:true,opencode:true},
+    stdout:line=>lines.push(line),env:{},clock:()=>0,sleep:async()=>{},pid:42,host:'test-host',isAlive:()=>false,skillRoot:path.resolve('skills/dispatch'),
+  };
+  return {root,session,lines,deps,cleanup,
+    artifact:(name:string,source:string)=>{const file=path.join(root,name);fs.writeFileSync(file,source);return file;},
+    script:(provider:string,model:string,text:string)=>replies.set(provider+':'+model,text),
+    output:()=>{assert.equal(lines.length,1);return JSON.parse(lines[0]!) as {ok:boolean;summary:string;path:string|null;reason?:string};},
+  };
+}
 
 test('summary byte cap preserves large ask answers review findings and native slots', async () => {
   const missingReasons: string[] = [];

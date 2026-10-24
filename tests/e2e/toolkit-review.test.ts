@@ -4,6 +4,50 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';
 import {appendRecord,foldLedger} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { CLEAN } from '../helpers/e2e.ts';
+import crypto from 'node:crypto';
+
+test('toolkit worktree review excludes unignored session state and preserves committed session blobs', async () => {
+  const f = await toolkitRepo();
+  try {
+    fs.writeFileSync(path.join(f.root, '.gitignore'), '');
+    fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'committed session bytes\n');
+    f.git(['add', '.']); f.git(['commit', '-qm', 'tracked session']);
+    fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'changed session bytes\n');
+    fs.writeFileSync(path.join(f.session, 'untracked.txt'), 'untracked session bytes\n');
+    fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'changed code\n');
+    const skill = path.join(f.session, 'native-skill');
+    fs.mkdirSync(skill); fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } }));
+    f.deps.skillRoot = skill;
+    f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
+    f.deps.liveness = {};
+    const run = async (expected: number) => {
+      const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+      assert.equal(result.exit, expected, JSON.stringify(result.output));
+      for (const key of ['v', 'run', 'reply', 'await', 'at']) assert.equal(Object.hasOwn(result.output, key), false, key);
+      return result;
+    };
+    const pending = await run(4);
+    assert.equal(pending.output.reason, 'native-pending');
+    assert.equal(pending.value.pending.length, 1);
+    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree').digest('hex');
+    const metadata = path.join(f.session, '.state/reviews', slug, 'round-1/round.json');
+    const before = JSON.parse(fs.readFileSync(metadata, 'utf8'));
+    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    const clean = await run(0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(clean.value.path, 'utf8')).findings, []);
+    const after = JSON.parse(fs.readFileSync(metadata, 'utf8'));
+    assert.equal(after.target.head, before.target.head);
+    const changed = f.git(['diff', '--name-only', before.target.base + '..' + before.target.head]).split(/\r?\n/);
+    assert.ok(changed.includes('src/file.ts'));
+    assert.equal(changed.some(file => file.startsWith(path.basename(f.session) + '/')), false);
+    assert.equal(f.git(['diff', '--name-only', before.target.base + '..' + before.target.head, '--', path.basename(f.session)]), '');
+    assert.equal(f.git(['show', before.target.head + ':' + path.basename(f.session) + '/tracked.txt']), 'committed session bytes');
+    assert.equal(fs.readFileSync(path.join(f.session, 'tracked.txt'), 'utf8'), 'changed session bytes\n');
+    assert.equal(fs.readFileSync(path.join(f.session, 'untracked.txt'), 'utf8'), 'untracked session bytes\n');
+  } finally { f.cleanup(); }
+});
 
 const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 test('toolkit code review reports missing evidence without admission gates and tracks changed targets',async()=>{

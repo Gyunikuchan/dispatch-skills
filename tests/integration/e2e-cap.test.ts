@@ -2,14 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { scanOverlay, type FileTable } from './scan.ts';
 
-// Audit subprocess fixtures need audit-tooling.test.ts and audit-probe.test.ts (probe termination/capture flows).
-// The approved observation-boundary plan adds one real-Git fixture file.
-// The approved plan-replacement plan adds tests/e2e/plan-replacement.test.ts for real-Git retirement and replay.
-// The approved authority/continuation plan adds two real-main and real-Git fixture files; the I01 spec-stage plan adds tests/e2e/spec-stage.test.ts.
-// The approved self-build and quota plan adds preparation, quota-state and quota-routing filesystem/subprocess suites.
-// I04 adds six real-Git toolkit suites and their shared helper; count all seven files.
-// I05 adds toolkit-review.test.ts for committed-diff and admission boundaries.
-export const E2E_CAP = 21;
+// Count the real Git/subprocess suites and their shared repository helper.
+export const E2E_CAP = 15;
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));
@@ -19,7 +13,26 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 }
 
 test('tests/e2e/ stays within the cap', () => {
-  assert.deepEqual(checkE2eCap(scanOverlay()), []);
+  const files = scanOverlay();
+  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, E2E_CAP);
+  assert.deepEqual(checkE2eCap(files), []);
+});
+
+test('e2e consumers use toolkit results without legacy frame helpers', () => {
+  const files = scanOverlay();
+  for (const name of ['driver-authority', 'plan-replacement', 'quota-routing', 'recovery', 'review', 'self-build-preparation', 'spec-stage']) {
+    assert.equal(files.some(file => file.path === 'tests/e2e/' + name + '.test.ts'), false, name);
+  }
+  for (const file of files.filter(file => file.path.startsWith('tests/e2e/') || file.path === 'tests/helpers/e2e.ts')) {
+    assert.doesNotMatch(file.text, /import\s+(?:type\s+)?\{[^}]*\bFrame\b[^}]*\}\s+from/, file.path);
+  }
+  const implement = files.find(file => file.path === 'tests/e2e/implement.test.ts')!;
+  const names = [...implement.text.matchAll(/\btest\(['"]([^'"]+)['"]/g)].map(match => match[1]!);
+  assert.ok(names.length > 0);
+  assert.ok(names.every(name => name.startsWith('checkout:')), names.join(', '));
+  for (const name of ['implement', 'observation-boundary']) {
+    assert.doesNotMatch(files.find(file => file.path === 'tests/e2e/' + name + '.test.ts')!.text, /\bf\.(?:cli|begin|reply|rebind|initialize)\s*\(/);
+  }
 });
 
 test('exceeding the cap fails with the rule and the fix', () => {

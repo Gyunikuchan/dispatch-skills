@@ -340,7 +340,7 @@ test('retro observations: rejects foreign component', () => {
   assert.equal(retroObservations([observation({ component: 'skills/dispatch/scripts/core/frame.ts' })]).values[0]?.component, 'scripts/core/frame.ts');
   // NOTE: the legacy allowlist mirrors shipped files outside the independent toolkit.
   const shipped = ['SKILL.md', ...['scripts', 'references'].flatMap((dir) => fs.readdirSync(path.join(SKILL_ROOT, dir), { recursive: true })
-    .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')).filter((file) => !file.startsWith('scripts/toolkit/') && file !== 'references/templates/writer-brief.md'))];
+    .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')).filter((file) => !file.startsWith('scripts/toolkit/') && !['references/templates/writer-brief.md', 'references/toolkit.md'].includes(file)))];
   assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
   for (const component of shipped) assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
   assert.deepEqual(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]), { values: [], rejected: 1 });

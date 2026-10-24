@@ -2,19 +2,37 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { sessionFixture } from './helpers/session.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
+import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 
 const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
 const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results') => JSON.stringify({status:'FINDINGS',findings:[{severity:'SHOULD',tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
-async function fixture() {
-  const f=sessionFixture();
+const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
+async function fixture(bound=true) {
+  // A shallow virtual root avoids physical ancestor probes in quota-path validation.
+  const root=path.join(path.parse(os.tmpdir()).root,'review-'+crypto.randomUUID());
+  const cleanup=memoryNodeFs(root);
+  const session=path.join(root,'.scratch/dispatch-skills/20261023T0000Z-test');
+  fs.mkdirSync(session,{recursive:true});
+  fs.writeFileSync(path.join(session,'manifest.json'),JSON.stringify({schemaVersion:1,folderName:path.basename(session),sessionId:'test',safeSessionId:'test',repositoryRoot:fs.realpathSync(root)}));
+  const lines:string[]=[], launches:{provider:Parameters<CliDeps['delegate']>[0];request:Parameters<CliDeps['delegate']>[1];mode:Parameters<CliDeps['delegate']>[2]}[]=[];
+  const deps:CliDeps={
+    run:async()=>{throw new Error('Unit tests must not spawn processes');},
+    delegate:async()=>{throw new Error('Unscripted delegate');},
+    modes:()=>['cli'],orchestrator:null,liveness:{claude:true,agy:true,codex:true,copilot:true,opencode:true},
+    stdout:line=>lines.push(line),env:{},clock:()=>0,sleep:async()=>{},pid:42,host:'test-host',isAlive:()=>false,skillRoot:path.resolve('skills/dispatch'),
+  };
+  const f={root,session,lines,launches,deps,cleanup,
+    artifact:(name:string,source:string)=>{const file=path.join(root,name);fs.writeFileSync(file,source);return file;},
+    output:()=>{assert.equal(lines.length,1);return JSON.parse(lines[0]!) as {ok:boolean;summary:string;path:string|null;reason?:string};},
+  };
   const skill=path.join(f.root,'skill');
   fs.mkdirSync(path.join(skill,'references/templates'),{recursive:true});
-  for(const file of ['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'])
-    fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(skill,'references/templates',file));
+  for(const [file,source] of templates)fs.writeFileSync(path.join(skill,'references/templates',file),source);
   f.deps.skillRoot=skill;
   const config=(native=false)=>fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({
     'read-delegates':native?{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}}:{claude:{targets:[{low:{model:'fake'}}]},agy:{targets:[{low:{model:'fake'}}]}},
@@ -24,7 +42,7 @@ async function fixture() {
   const plan=f.artifact('work.plan.md','# Work\n## Work\nOriginal body.\n## Review Findings & Resolutions\nDriver log.\n');
   let key=0;
   const add=(kind:string,data:object)=>appendRecord(f.session,{kind,by:'orchestrator',key:'input-'+key++,data},f.deps);
-  await add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});
+  if(bound) await add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});
   f.deps.delegate=async(provider,request,mode)=>{
     f.launches.push({provider,request,mode});
     return {outcome:{status:'ok',text:report(),resume:null,sessionId:null},invocations:[]};
@@ -39,6 +57,104 @@ async function fixture() {
   const read=(round:number,file:string)=>JSON.parse(fs.readFileSync(path.join(directory,'round-'+round,file),'utf8'));
   return {...f,spec,plan,add,call,directory,read,config};
 }
+
+test('standalone review targets accept spec overrides and stable Git snapshots',async()=>{
+  const f=await fixture(false);
+  try {
+    f.config(true);f.deps.liveness={};
+    f.deps.orchestrator={platform:'codex',model:'native'} as typeof f.deps.orchestrator;
+    const calls:{argv:string[];env:NodeJS.ProcessEnv|undefined}[]=[];
+    let tree='tree-one', feature='feature-id', missing=false, unrelated=false;
+    f.deps.run=async(argv,options)=>{
+      calls.push({argv,env:options.env});
+      const op=argv[1];
+      if(op==='rev-parse') return {exit:missing||argv.at(-1)==='T1^{commit}'?1:0,stdout:argv.at(-1)==='HEAD^{commit}'?'head-id':argv.at(-1)==='feature^{commit}'?feature:'main-id',stderr:'unknown revision'};
+      if(op==='merge-base')return {exit:unrelated?1:0,stdout:'ancestor-id',stderr:'no common ancestor'};
+      return {exit:0,stdout:op==='write-tree'?tree:op==='commit-tree'?'snapshot-'+tree:op==='diff'?'src.ts\0':'',stderr:''};
+    };
+    const call=async(kind:string,target:string,spec:string|null='mission.spec.md')=>{
+      f.lines.length=0;
+      const exit=await main(['review','run',target,'--kind',kind,'--level','medium','--session',f.session,...(spec===null?[]:['--spec',spec])],f.deps);
+      const output=f.output();return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};
+    };
+    const finish=async(result:Awaited<ReturnType<typeof call>>,kind:string,target:string,spec?:string)=>{
+      assert.equal(result.exit,4);assert.equal(result.output.reason,'native-pending');
+      for(const slot of result.value.pending)fs.writeFileSync(slot.replyPath,CLEAN);
+      const done=await call(kind,target,spec);assert.equal(done.exit,0,JSON.stringify(done));
+      assert.deepEqual(JSON.parse(fs.readFileSync(done.value.path,'utf8')).findings,[]);
+      return done;
+    };
+    const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
+    const pending=await call('design',design);
+    await finish(pending,'design',design,f.spec);
+    const designRound=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-1/round.json'),'utf8'));
+    assert.equal(designRound.spec.path,fs.realpathSync.native(f.spec));
+    await finish(await call('plan',f.plan),'plan',f.plan);
+    assert.equal((await call('code','integration')).output.reason,'lint-errors');
+    const work=await call('code','worktree');
+    await finish(work,'code','worktree');
+    const commit=calls.find(row=>row.argv[1]==='commit-tree')!;
+    assert.deepEqual(commit.argv.slice(2),['tree-one','-p','head-id','-m','dispatch review snapshot']);
+    for(const role of ['AUTHOR','COMMITTER']) {
+      assert.equal(commit.env!['GIT_'+role+'_NAME'],'Dispatch Review');
+      assert.equal(commit.env!['GIT_'+role+'_EMAIL'],'dispatch-review@localhost');
+      assert.equal(commit.env!['GIT_'+role+'_DATE'],'1970-01-01T00:00:00Z');
+    }
+    assert.ok(calls.some(row=>row.argv[1]==='read-tree'&&row.argv[2]==='head-id'));
+    assert.ok(calls.some(row=>row.argv[1]==='add'&&row.argv.at(-1)===':(top,exclude,literal)'+path.relative(fs.realpathSync(f.root),fs.realpathSync(f.session)).split(path.sep).join('/')));
+    tree='tree-two';assert.equal((await call('code','worktree')).output.reason,'native-pending');
+    tree='tree-three';assert.equal((await call('code','worktree')).output.reason,'native-pending');
+    const workDir=fs.readdirSync(path.join(f.session,'.state/reviews')).find(name=>name.startsWith('code-worktree-'))!;
+    const moved=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',workDir,'round-2/round.json'),'utf8'));
+    assert.deepEqual(moved.target,{base:'head-id',head:'snapshot-tree-three'});assert.equal(moved.generation,2);
+    for(const target of ['feat/x','feat-x','main..feature','main'])assert.equal((await call('code',target)).output.reason,'native-pending');
+    feature='moved-feature';assert.equal((await call('code','main..feature')).output.reason,'native-pending');
+    const rangeDir=fs.readdirSync(path.join(f.session,'.state/reviews')).find(name=>name.startsWith('code-main..feature-'))!;
+    const range=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',rangeDir,'round-1/round.json'),'utf8'));
+    assert.deepEqual(range.target,{base:'main-id',head:'moved-feature'});assert.equal(range.generation,2);
+    const dirs=fs.readdirSync(path.join(f.session,'.state/reviews')).filter(name=>name.startsWith('code-feat-x-'));
+    assert.equal(dirs.length,2);assert.notEqual(dirs[0],dirs[1]);
+    assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','rev-parse','--verify','--end-of-options','feature^{commit}'])));
+    assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','merge-base','main-id','head-id'])));
+    assert.equal((await call('code','T1')).output.reason,'invalid-input');
+    unrelated=true;const orphan=await call('code','orphan');assert.equal(orphan.output.reason,'invalid-input');assert.match(orphan.output.summary,/common ancestor/);unrelated=false;
+    missing=true;assert.equal((await call('code','worktree')).output.reason,'invalid-input');missing=false;
+    assert.equal((await call('plan',f.plan,'absent.spec.md')).output.reason,'invalid-input');
+    const noSpec=await call('plan',f.plan,null);assert.equal(noSpec.exit,4);assert.equal(noSpec.output.reason,'lint-errors');
+    await f.add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});
+    const override=f.artifact('override.spec.md','# Override\n## Requirements\n### REQ-1 — Override\n');
+    assert.equal((await call('design',design,override)).output.reason,'native-pending');
+    const overridden=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-2/round.json'),'utf8'));
+    assert.equal(overridden.spec.path,fs.realpathSync.native(override));
+  }finally{f.cleanup();}
+});
+
+test('standalone Git reviews survive invalid or missing bound plans',async()=>{
+  const f=await fixture();
+  try {
+    f.deps.delegate=async()=>({outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]});
+    f.deps.run=async(argv)=>({exit:0,stdout:argv[1]==='diff'?'src.ts\0':argv[1]==='write-tree'?'tree-id':argv[1]==='commit-tree'?'snapshot-id':'commit-id',stderr:''});
+    for(const state of ['invalid','missing']) {
+      if(state==='invalid')fs.writeFileSync(f.plan,'# Broken plan\n');else fs.unlinkSync(f.plan);
+      for(const target of ['worktree','main..feature','main']) {
+        const result=await f.call('code',target);
+        assert.equal(result.exit,0,state+' '+target+' '+result.output.summary);
+        assert.deepEqual(JSON.parse(fs.readFileSync(result.value.path,'utf8')).findings,[]);
+      }
+    }
+  }finally{f.cleanup();}
+});
+
+test('standalone Git reviews explain unsupported three dot ranges',async()=>{
+  const f=await fixture(false);
+  try {
+    f.deps.run=async()=>({exit:1,stdout:'',stderr:'unknown revision'});
+    f.lines.length=0;
+    const exit=await main(['review','run','main...feature','--kind','code','--spec',f.spec,'--session',f.session],f.deps);
+    const output=f.output();assert.equal(exit,1);assert.equal(output.reason,'invalid-input');
+    assert.match(output.summary,/three-dot.*not supported.*a\.\.b/i);
+  }finally{f.cleanup();}
+});
 
 test('review rounds capture dedupe clusters scope caps and design prompts',async()=>{
   const f=await fixture();

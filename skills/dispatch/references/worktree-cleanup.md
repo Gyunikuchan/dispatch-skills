@@ -1,9 +1,9 @@
 # Worktree cleanup
 
-Record every invocation worktree (including native-agent and manual-flow worktrees outside the driver) in `.state/runs/NNN-<kind>/scratch/worktrees.json` with its path, owner, host/lifecycle identity, and status (`active`, `removed`, `archived`, or `retained`). Update this durable record on cleanup; read it after interruption or compaction. Before final handoff for any verb, confirm that agents using each recorded worktree have stopped and account for every owned worktree. The driver removes its private worktrees after delivery; verify that cleanup rather than repeat it.
+After successful `report complete`, run `worktree cleanup`. Inspect its result: `removed` lists completed cleanup; `kept` gives paths and reasons. Resolve owned retained paths before a successful handoff, or report an explicit user retention decision. Preserve the session, result files and required evidence.
 
-Record pre-run and cross-run worktrees in `.state/scratch/worktrees.json`; recovery must read it and every run's `.state/runs/NNN-<kind>/scratch/worktrees.json`.
+Tools track owned writer and integration paths in the ledger under `.state/worktrees/`. Cleanup checks physical containment, ownership, terminal state and preserved snapshots. It retains unpreserved edits and ignored files. Preserve unrelated, pre-existing and shared worktrees.
 
-Preserve results and required evidence in the caller checkout or handoff folder before removing completed worktrees. Archive host-managed worktrees through the host's worktree lifecycle tool; remove ordinary Git worktrees with `git worktree remove <path>` from a surviving checkout. Verify removal through the host's artifact list or `git worktree list --porcelain`. Preserve pre-existing, shared, and unrelated worktrees. Never force removal of unpreserved work.
+Before cleanup, confirm that agents using the paths have stopped. For host-managed worktrees created outside the toolkit, record ownership and use the host lifecycle to archive them after preserving work. Verify removal with host artifacts or Git's worktree list.
 
-On stopped or failed runs, retain worktrees needed for recovery or untransferred work. Report each retained path and reason, including live agents or cleanup failures; retry safe cleanup after the blocker clears. A successful handoff requires every owned worktree removed or archived, unless the user explicitly requested retention. Preserve the handoff folder.
+After stop, failure or interruption, inspect status and retain paths needed for recovery. Report each retained owned path and reason. Retry safe cleanup when the blocker clears; cleanup never implies that failed verification passed.

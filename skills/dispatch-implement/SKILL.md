@@ -7,4 +7,4 @@ description: Alias for `/dispatch implement`. Use only when the user invokes dis
 
 Require sibling `dispatch`. If missing, report `Missing dependency: dispatch is required by dispatch-implement` and stop.
 
-Read [dispatch](../dispatch), map this invocation to `start implement`, and forward level, pins, model, effort, and argument through its loop. Implementation owns review fix mode; dispatch owns host-await judgment and write boundaries.
+Read [dispatch](../dispatch/SKILL.md), map this invocation to `implement`, and forward the level and argument through its tool loop. Dispatch owns the workflow, user gates and write boundaries.

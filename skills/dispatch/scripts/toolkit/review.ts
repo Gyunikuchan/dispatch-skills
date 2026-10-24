@@ -12,7 +12,7 @@ import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
 import { finalizeRound, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
-import { gitOk } from './git.ts';
+import { git, gitOk } from './git.ts';
 import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
@@ -50,7 +50,19 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
   if (!cap) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
-  const slug = (kind === 'code' ? requested : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9._-]/g, '-');
+  const bound = latest(fold, 'bind');
+  let taskTarget = false;
+  if (kind === 'code' && bound && requested !== 'integration' && requested !== 'worktree' && !requested.includes('..')) {
+    try {taskTarget = loadPlan(session, manifest).tasks.some(task => task.id === requested);}
+    catch (error) {
+      // An unusable plan cannot classify tasks, but standalone revision review still works.
+      if (!(error instanceof ToolError && error.reason === 'lint-errors') &&
+          !['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+  }
+  const gitTarget = kind === 'code' && requested !== 'integration' && !taskTarget;
+  let slug = (kind === 'code' ? requested : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9._-]/g, '-');
+  if (gitTarget) slug += '-' + crypto.createHash('sha256').update(requested).digest('hex');
   if (!slug || slug === '.' || slug === '..') throw new ToolError(1, 'invalid-input', 'Invalid review target');
   const review = kind + '-' + slug;
   const directory = path.join(session, '.state/reviews', review);
@@ -58,9 +70,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
 
   async function capture(): Promise<Capture> {
     const current = foldLedger(session), bind = latest(current, 'bind');
-    if (!bind) throw new ToolError(4, 'lint-errors', 'Review needs a bound spec');
-    const specPath = path.resolve(manifest.repositoryRoot, bind.data['spec']);
-    const specText = fs.readFileSync(specPath, 'utf8');
+    const specInput = ctx.values['spec'] ?? bind?.data['spec'];
+    if (typeof specInput !== 'string') throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
+    let specPath = path.resolve(manifest.repositoryRoot, specInput);
+    let specText: string;
+    try {specPath = fs.realpathSync.native(specPath); specText = fs.readFileSync(specPath, 'utf8');}
+    catch {throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);}
     const spec = {path: specPath, hash: artifactHash('spec', specText)};
     const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
     if (kind !== 'code') {
@@ -68,25 +83,64 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return {spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
     }
     let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
+    let exclusion: string[] = [];
+    const revision = async (ref: string) => {
+      const result = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
+      if (result.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref);
+      return result.stdout.trim();
+    };
     if (requested === 'integration') {
+      if (!bind) throw new ToolError(4, 'lint-errors', 'Review of integration needs a bound plan');
       const integration = integrationRecord(current);
       if (!integration || !current.records.some(row=>row.kind==='integrate'&&row.data['phase']==='done')) throw new ToolError(4, 'nothing-to-review', 'No task has been integrated');
       cwd = path.resolve(session, integration.data['path']);
       base = integration.data['base']; head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
       const tasks = [...new Set(current.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task']))];
       summary = 'Integrated tasks: ' + tasks.join(', ');
-    } else {
+    } else if (taskTarget) {
       const launch = launches(current, requested).findLast(launch => launch.finished);
       if (!launch?.finished) throw new ToolError(1, 'invalid-input', 'No finished launch for ' + requested);
       base = launch.record.data['base'].commit; head = launch.finished.data['candidate'];
-      const planText = fs.readFileSync(path.resolve(manifest.repositoryRoot, bind.data['plan']), 'utf8');
+      const planText = fs.readFileSync(path.resolve(manifest.repositoryRoot, bind!.data['plan']), 'utf8');
       const plan = parsePlan(planText);
       if (!plan.ok) throw new ToolError(4, 'lint-errors', JSON.stringify(plan.defects));
       const brief = selectTaskBrief(plan.plan, requested);
       if (!brief) throw new ToolError(1, 'invalid-input', 'Unknown task ' + requested);
       summary = taskMarkdown(planText, brief);
+    } else {
+      if (requested === 'worktree') {
+        base = await revision('HEAD');
+        const relative = path.relative(fs.realpathSync(cwd), fs.realpathSync(session)).split(path.sep).join('/');
+        const inside = relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative);
+        if (inside && relative) exclusion = [':(top,exclude,literal)' + relative];
+        const directory = path.join(session, '.state/tmp');
+        fs.mkdirSync(directory, {recursive: true});
+        const index = path.join(directory, crypto.randomUUID() + '.index');
+        const env = {GIT_INDEX_FILE: index};
+        try {
+          await gitOk(deps, cwd, ['read-tree', base], env);
+          if (!inside || relative) await gitOk(deps, cwd, ['add', '-A', '--', '.', ...exclusion], env);
+          const tree = await gitOk(deps, cwd, ['write-tree'], env);
+          head = await gitOk(deps, cwd, ['commit-tree', tree, '-p', base, '-m', 'dispatch review snapshot'], {
+            GIT_AUTHOR_NAME: 'Dispatch Review', GIT_COMMITTER_NAME: 'Dispatch Review',
+            GIT_AUTHOR_EMAIL: 'dispatch-review@localhost', GIT_COMMITTER_EMAIL: 'dispatch-review@localhost',
+            GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z',
+          });
+        } finally {fs.rmSync(index, {force: true}); fs.rmSync(index + '.lock', {force: true});}
+      } else if (requested.includes('..')) {
+        if (requested.includes('...')) throw new ToolError(1, 'invalid-input', 'Three-dot revision ranges are not supported; use a..b');
+        const parts = requested.split('..');
+        if (parts.length !== 2 || !parts[0] || !parts[1]) throw new ToolError(1, 'invalid-input', 'Expected a..b revision range');
+        base = await revision(parts[0]); head = await revision(parts[1]);
+      } else {
+        const ref = await revision(requested); head = await revision('HEAD');
+        const result = await git(deps, cwd, ['merge-base', ref, head]);
+        if (result.exit) throw new ToolError(1, 'invalid-input', 'Revision ' + requested + ' has no common ancestor with HEAD');
+        base = result.stdout.trim();
+      }
+      summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
     }
-    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head, '--']));
+    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head, '--', ...exclusion]));
     return {spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
 
@@ -174,7 +228,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       }
       pending = finalizeRound({review, round: n, generation: round.generation, cap: round.cap, level: round.level, startSeq: round.startSeq, replies,
         prior, priorTargets, changedSince, owners, rulings: rulingRows(), kind, artifact, target: round.target});
-      if (kind === 'code') {
+      if (kind === 'code' && !gitTarget) {
         const plan = loadPlan(session, manifest), currentFold = foldLedger(session);
         const bind = latest(currentFold, 'bind')!;
         const tasks = requested === 'integration' ? [...new Set(currentFold.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task'] as string))] : [requested];

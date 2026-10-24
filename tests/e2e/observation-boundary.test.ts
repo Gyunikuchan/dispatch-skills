@@ -9,7 +9,6 @@ import { createSnapshot } from '../../skills/dispatch/scripts/effects/snapshot.t
 import { loadRecovery } from '../../skills/dispatch/scripts/effects/recovery-manifest.ts';
 import { createAssessRecovery } from '../../skills/dispatch/scripts/effects/assess-recovery.ts';
 import { tempDir } from '../helpers/fake-ports.ts';
-import { fixture, CLEAN } from '../helpers/e2e.ts';
 
 // SECTION: Git snapshot observation boundary
 
@@ -47,25 +46,4 @@ test('observation boundary: real Git excludes ignored descendants but tracks for
   const assessed = (await createAssessRecovery()({ kind: 'assess-recovery', id: 'assess.1', purpose: 'drift', before: observed.fingerprint, after: omitted.fingerprint, phase: 'host', pendingId: 'approval', input: {} }, ports, ctx))[0]!;
   assert.equal(assessed.type, 'RECOVERY_ASSESSED');
   if (assessed.type === 'RECOVERY_ASSESSED') assert.equal(assessed.notice.relevance, 'relevant');
-});
-// SECTION: Review session scratch observation boundary
-
-test('observation boundary: non-ignored session outputs remain quiet while unrelated scratch edits produce notices', async () => {
-  const finding = { severity: 'SHOULD', locus: 'src/a.ts:L1', tag: 'correctness', defect: 'Missing condition', requiredChange: 'Add condition' };
-  for (const material of [false, true]) {
-    const f = fixture({ responses: [{ status: 'FINDINGS', findings: [finding] }, CLEAN] });
-    try {
-      fs.writeFileSync(path.join(f.repo, '.gitignore'), '');
-      fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'changed');
-      fs.mkdirSync(path.join(f.repo, '.scratch'), { recursive: true });
-      const unrelated = path.join(f.repo, '.scratch', 'input.txt'); fs.writeFileSync(unrelated, 'existing input');
-      const session = await f.initialize(), frame = await f.begin('review', session, '', ['--kind', 'code']);
-      assert.equal(frame.await, 'rule', JSON.stringify(frame));
-      if (material) fs.writeFileSync(unrelated, 'second input edit');
-      const next = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Intentional condition with existing evidence.' } } });
-      assert.equal(next.await, 'done', JSON.stringify(next));
-      const coverage = (next.data['completion'] as Record<string, unknown> | undefined)?.['coverage'] as { unassessed: { paths: string[] }[] } | undefined;
-      assert.deepEqual(coverage?.unassessed.flatMap((row) => row.paths) ?? [], material ? ['.scratch/input.txt'] : [], JSON.stringify(next));
-    } finally { f.cleanup(); }
-  }
 });
