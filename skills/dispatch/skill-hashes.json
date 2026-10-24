@@ -141,7 +141,7 @@
   "scripts/toolkit/ask.ts": "d0bbb734cf59e543d019f4b7089fadbb058d0b89006a55753bbd6448b6d6f020",
   "scripts/toolkit/brief.ts": "1f080d67a26f9493105994fe08dfce11ca4879a17156b1365e4a2b27b13d7260",
   "scripts/toolkit/cli.ts": "c1391fc17997cbbfd391f9ce44955def2c148d65c064e7dfc408d478353a900f",
-  "scripts/toolkit/deliver.ts": "8637497acc5332cb5ab8db0f43f00a7249bb69945033915f4f4d875e084818a8",
+  "scripts/toolkit/deliver.ts": "5fb322da46f758b89e66ca7e0dd59ea70c2ecca7c0a9266479a60cef5530b4a0",
   "scripts/toolkit/doctor.ts": "fb99d10f67be3d59e49ca819e5433955b4b23cfb73e0bb2bfd8d651bbb3605c2",
   "scripts/toolkit/domain/criterion-id.ts": "10c6a8739d2b16788c5db5aae491f6237eeb96d4847310ca07ad9a7a3fe8ee35",
   "scripts/toolkit/domain/design.ts": "dca04e5aba53e36f32f2d2b4c587334f6d6d2ca30dde78a4fd1d87142fb7ff3c",

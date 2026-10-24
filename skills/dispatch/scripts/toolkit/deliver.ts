@@ -17,20 +17,26 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const to=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     const last=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered' && r.data['dest'].path===dest.path && r.data['dest'].branch===dest.branch);
     const from=(last?.data['to'] ?? opened.data['base']) as string;
-    if(to===from)return result({from,to,delivered:false});
-    if((await changedPaths(ctx.deps,cwd,'HEAD')).length)refuse('integration-dirty');
-    const paths=(await gitOk(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',from,to])).split('\0').filter(Boolean);
-    const check=async(expected: string)=>{
+    const check=async(expected: string, paths: readonly string[])=>{
       const branch=await git(ctx.deps,dest.path,['symbolic-ref','--quiet','--short','HEAD']);
       if(branch.exit || branch.stdout.trim()!==dest.branch || await gitOk(ctx.deps,dest.path,['rev-parse','HEAD'])!==expected)refuse('caller-moved');
       const dirty=await changedPaths(ctx.deps,dest.path,'HEAD');
       if(dirty.some(p=>paths.some(delivery=>p===delivery || p.startsWith(delivery+'/') || delivery.startsWith(p+'/'))))refuse('caller-dirty');
     };
+    if(to===from) {
+      if(last)return result({from,to,delivered:false});
+      if((await changedPaths(ctx.deps,cwd,'HEAD')).length)refuse('integration-dirty');
+      await check(to,[]);
+      await tx.append({kind:'integrate',by:'tool',data:{phase:'delivered',dest,to}});
+      return result({from,to,delivered:true,noop:true});
+    }
+    if((await changedPaths(ctx.deps,cwd,'HEAD')).length)refuse('integration-dirty');
+    const paths=(await gitOk(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',from,to])).split('\0').filter(Boolean);
     const current=await gitOk(ctx.deps,dest.path,['rev-parse','HEAD']);
     const started=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='deliver-started' && r.data['from']===from && r.data['to']===to && r.data['dest'].path===dest.path && r.data['dest'].branch===dest.branch);
-    if(current===to && started)await check(to);
+    if(current===to && started)await check(to,paths);
     else {
-      await check(from);
+      await check(from,paths);
       await tx.append({kind:'integrate',by:'tool',data:{phase:'deliver-started',dest,from,to}});
       await ctx.deps.hook?.('deliver:before-ff');
       const merged=await git(ctx.deps,dest.path,['merge','--ff-only',to]);
@@ -39,7 +45,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
         throw new ToolError(2,'fault',merged.stderr||merged.stdout);
       }
       await ctx.deps.hook?.('deliver:after-ff');
-      await check(to);
+      await check(to,paths);
     }
     await tx.append({kind:'integrate',by:'tool',data:{phase:'delivered',dest,to}});
     return result({from,to,delivered:true});

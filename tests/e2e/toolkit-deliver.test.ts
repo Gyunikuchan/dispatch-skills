@@ -22,6 +22,49 @@ describe('toolkit delivery and cleanup',()=>{
       assert.equal(r.git(['branch','--list','dispatch/test/integration']),''); assert.equal(r.git(['for-each-ref','--format=%(refname)','refs/dispatch/test/candidates']),'');
     }finally{r.cleanup();}
   });
+  it('records a no-op delivery once when the integration has no new commits',async()=>{
+    const r=await toolkitRepo(); try {
+      await r.level(); assert.equal((await r.run(['verify','run'])).exit,0);
+      const caller=r.git(['rev-parse','HEAD']), integration=r.git(['rev-parse','HEAD'],r.integration);
+      const callerFile=path.join(r.root,'work.spec.md'), callerBytes=Buffer.from('# Caller work\nUnrelated no-op delivery edit.\n');
+      fs.writeFileSync(callerFile,callerBytes);
+      assert.equal(integration,caller);
+      const first=await r.run(['worktree','deliver']);
+      assert.equal(first.exit,0); assert.equal(first.value.from,integration); assert.equal(first.value.to,integration);
+      assert.equal(first.value.delivered,true); assert.equal(first.value.noop,true);
+      assert.equal(rows(r,'delivered').length,1); assert.equal(rows(r,'delivered')[0]!.data['to'],integration);
+      assert.equal(rows(r,'deliver-started').length,0); assert.equal(r.git(['rev-parse','HEAD']),caller);
+      assert.deepEqual(fs.readFileSync(callerFile),callerBytes);
+      const second=await r.run(['worktree','deliver']);
+      assert.equal(second.exit,0); assert.equal(second.value.delivered,false); assert.equal(rows(r,'delivered').length,1);
+      const cleaned=await r.run(['worktree','cleanup']);
+      assert.equal(cleaned.exit,0); assert.ok(!fs.existsSync(r.integration));
+      assert.equal(r.git(['branch','--list','dispatch/test/integration']),'');
+    }finally{r.cleanup();}
+  });
+  it('refuses no-op delivery with a dirty integration',async()=>{
+    const r=await toolkitRepo(); try {
+      await r.level(); assert.equal((await r.run(['verify','run'])).exit,0);
+      const file=path.join(r.integration,'src/file.ts'), bytes=Buffer.from('uncommitted integration edit\n');
+      fs.writeFileSync(file,bytes);
+      const refused=await r.run(['worktree','deliver']);
+      assert.equal(refused.exit,4); assert.equal(refused.output.reason,'integration-dirty');
+      assert.equal(rows(r,'delivered').length,0); assert.equal(rows(r,'deliver-started').length,0);
+      assert.deepEqual(fs.readFileSync(file),bytes);
+    }finally{r.cleanup();}
+  });
+  it('refuses a no-op delivery when the caller moved',async()=>{
+    const r=await toolkitRepo(); try {
+      await r.level(); assert.equal((await r.run(['verify','run'])).exit,0);
+      const integration=r.git(['rev-parse','HEAD'],r.integration);
+      r.git(['commit','--allow-empty','-m','outside']);
+      const caller=r.git(['rev-parse','HEAD']);
+      const refused=await r.run(['worktree','deliver']);
+      assert.equal(refused.exit,4); assert.equal(refused.output.reason,'caller-moved');
+      assert.equal(rows(r,'delivered').length,0); assert.equal(rows(r,'deliver-started').length,0);
+      assert.equal(r.git(['rev-parse','HEAD']),caller); assert.equal(r.git(['rev-parse','HEAD'],r.integration),integration);
+    }finally{r.cleanup();}
+  });
   it('reconciles a delivery crash exactly once without a second merge',async()=>{
     const {r}=await prepared(); try {
       assert.equal((await r.run(['worktree','deliver'],point=>{if(point==='deliver:after-ff') throw new Error('crash');})).exit,2);
