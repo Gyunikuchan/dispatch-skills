@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 
 import { loadConfig, parseJsonc, stripJsonc, validateConfig } from '../../../skills/dispatch/scripts/lib/config.ts';
-import { writeConcurrency } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 
 
 // SECTION: Configuration loading and validation
@@ -42,8 +41,6 @@ const minimal = { 'read-delegates': { codex: { targets: [{ low: { model: 'm' } }
 
 test('write-concurrency validates positive integers and defaults to 1', () => {
   assert.deepEqual(validateConfig({ ...minimal, 'write-concurrency': 3 }), []);
-  assert.equal(writeConcurrency({ 'write-concurrency': 3 }), 3);
-  assert.equal(writeConcurrency({}), 1);
   for (const value of [0, -1, 1.5, '2', true]) {
     assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
   }

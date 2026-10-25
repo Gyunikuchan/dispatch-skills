@@ -1,4 +1,3 @@
-// Vendored from domain/plan.ts at 63420d16 (AD-5).
 // Plan parse + lint + governed text (spec §8.1). Shared Markdown helpers are exported for domain/design.ts.
 
 import type {

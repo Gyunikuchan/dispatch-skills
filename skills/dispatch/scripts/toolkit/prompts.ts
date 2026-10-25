@@ -6,7 +6,6 @@ import { structuralLines } from './domain/plan.ts';
 
 export type Settled = {id: string; locus: string; defect: string; ruling: string; reason: string};
 
-// Vendored from effects/prepare-review.ts at aa26d27f (AD-5).
 export function settledSection(settled: readonly Settled[]): string {
   if (!settled.length) return '';
   const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;

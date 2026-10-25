@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { initializeSession } from '../../skills/dispatch/scripts/lib/session.ts';
 import { publishQuotaFailure, readQuotaState, reprobeQuota } from '../../skills/dispatch/scripts/lib/quota-store.ts';
 import { H, quotaSnapshot } from '../../skills/dispatch/scripts/policy/quota.ts';
-import type { QuotaKey } from '../../skills/dispatch/scripts/core/types.ts';
+import type { QuotaKey } from '../../skills/dispatch/scripts/toolkit/types.ts';
 
 const execute = promisify(execFile);
 const key: QuotaKey = { provider: 'codex', model: null, mode: 'cli' };

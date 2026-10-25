@@ -1,4 +1,4 @@
-import type { DiagnosticUsage } from '../core/types.ts';
+import type { DiagnosticUsage } from '../toolkit/types.ts';
 type Row = Record<string, unknown>;
 const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;

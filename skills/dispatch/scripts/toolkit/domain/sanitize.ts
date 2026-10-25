@@ -1,4 +1,3 @@
-// Vendored from domain/sanitize.ts at aa26d27f (AD-5).
 // Delegate text sanitization before relay or render,
 // plus comment-marker neutralisation so delegate text can never open hidden Markdown/HTML regions.
 

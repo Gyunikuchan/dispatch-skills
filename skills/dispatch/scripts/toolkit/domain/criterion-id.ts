@@ -1,4 +1,3 @@
-// Vendored from domain/criterion-id.ts at 63420d16 (AD-5).
 // One numeric criterion grammar for plans and writer evidence.
 export const CRITERION_ID_SOURCE = 'SC[1-9][0-9]*';
 const ID = new RegExp(`^${CRITERION_ID_SOURCE}$`);

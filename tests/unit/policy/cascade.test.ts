@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { FailureClass } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { FailureClass } from '../../../skills/dispatch/scripts/toolkit/types.ts';
 import { failureDisposition, hasReserve, next, reservePool, takeReserve, type Voice } from '../../../skills/dispatch/scripts/policy/cascade.ts';
 
 const agy: Voice = {

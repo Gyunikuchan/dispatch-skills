@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { FsPort, Ports } from '../../skills/dispatch/scripts/core/types.ts';
+import type { TestFs } from './fake-ports.ts';
 
 /** In-memory run storage; caller files and external artifacts retain their real filesystem port. */
-export function memoryRunFs(ports: Ports, root: string): void {
+export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
   const real = ports.fs, base = path.resolve(root);
   type Entry = { kind: 'file' | 'directory' | 'symlink'; bytes: Buffer; mode: number };
   const entries = new Map<string, Entry>();
@@ -44,7 +44,7 @@ export function memoryRunFs(ports: Ports, root: string): void {
     if (exclusive && entries.has(key(destination))) return false;
     write(destination, bytes, exclusive); return true;
   };
-  const overlay: FsPort = {
+  const overlay: TestFs = {
     hashFile: file => managed(file) ? crypto.createHash('sha256').update(read(file)).digest('hex') : real.hashFile(file),
     copyFileAtomic: (source, destination) => { if (!managed(source) && !managed(destination)) real.copyFileAtomic(source, destination); else copy(source, destination, false); },
     copyFileExclusive: (source, destination) => !managed(source) && !managed(destination) ? real.copyFileExclusive(source, destination) : copy(source, destination, true),

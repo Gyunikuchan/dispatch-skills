@@ -1,4 +1,4 @@
-import type { QuotaGeneration, QuotaKey, QuotaObservation, QuotaSnapshot } from '../core/types.ts';
+import type { QuotaGeneration, QuotaKey, QuotaObservation, QuotaSnapshot } from '../toolkit/types.ts';
 
 export const H = 3_600_000;
 const sameKey = (a: QuotaKey, b: QuotaKey): boolean => a.provider === b.provider && a.model === b.model && a.mode === b.mode;

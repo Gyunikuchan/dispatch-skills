@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { H, quotaSnapshot } from '../../../skills/dispatch/scripts/policy/quota.ts';
-import type { QuotaGeneration, QuotaKey, QuotaObservation } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { QuotaGeneration, QuotaKey, QuotaObservation } from '../../../skills/dispatch/scripts/toolkit/types.ts';
 
 test('quota eligibility preserves exact keys and bounded expiry', async (t) => {
   const key: QuotaKey = { provider: 'codex', model: null, mode: 'cli' };

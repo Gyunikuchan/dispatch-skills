@@ -71,7 +71,7 @@ skills/dispatch-{plan,implement,code-review}/ compatibility aliases and human ma
 .agents/skills/           local-only and vendored agent skills; none shipped
 docs/                     long-term human and agent maintainer context
 scripts/                  repository tooling
-tests/unit/{core,policy,domain,providers,lib,machines}/ unit tests
+tests/unit/{toolkit,policy,providers,lib}/ unit tests
 tests/integration/        layout, dependency, runtime, and skill contracts
 tests/tooling/             repository tool tests
 tests/e2e/                 Git/subprocess flows
@@ -136,10 +136,10 @@ Explain non-obvious rationale (why, CLI/subprocess quirks, cross-platform nuance
 
   Keep narrow selectors for RED/GREEN feedback; declare affected-file checks as fast `Automated Tests` commands in plans.
 - Use `node scripts/brief-size.ts <brief-file> [<brief-file> ...]` to report total and section UTF-8 bytes for valid UTF-8 inputs; it does not estimate tokens. Keep output under run scratch and link it in the handoff.
-- Protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Put real Git/subprocess flows in `tests/e2e/`.
-- Keep logical unit fixtures in memory (`memoryRunFs`); use physical storage only when the claim depends on bytes or filesystem behavior. Physical I/O breaks per-file timing budgets under aggregate load.
+- Toolkit tests cover tool results, ledger records, and rendered sections. Put real Git/subprocess flows in `tests/e2e/`.
+- Keep logical unit fixtures in memory; use physical storage only when the claim depends on bytes or filesystem behavior. Physical I/O breaks per-file timing budgets under aggregate load.
 - Apply the [quality bar's code section](skills/dispatch/references/templates/quality-bar.md#code) to test behavior, naming, and retention.
-- When a change alters a shared machine or effect contract, list its callers with CodeGraph and cover every parent machine family, including failure after each durable boundary.
+- When a change alters a shared toolkit contract, list its callers with CodeGraph and cover every caller family, including failure after each durable boundary.
 - For a plan that changes hash-tracked skill files, its `[GENERATED] skills/dispatch/skill-hashes.json` entry lists every changed hash-tracked skill file, including scripts, as Inputs; run `npm run hashes`, then rerun `npm test`.
 
 ## Long-Running Work and Handoff

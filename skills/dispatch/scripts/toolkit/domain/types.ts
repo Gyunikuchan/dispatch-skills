@@ -1,6 +1,4 @@
-// Vendored from domain/types.ts at 63420d16 (AD-5).
-// Concrete payload shapes produced by domain/ and policy/. `type` aliases (not interfaces) so they stay
-// assignable to the core/types.ts `Payload` placeholders; core-owned unions are imported, never redeclared.
+// Concrete payload shapes produced by toolkit domain modules and policy.
 
 import type { FindingId, SlotId } from '../types.ts';
 
@@ -70,7 +68,7 @@ export type PlanCriterion = {
   title: string;
   line: number;
   changes: readonly string[];
-  /** Declared `Tests:` paths, a subset of `changes`; RED checkpoint, trim, and envelope decisions read these, never path shape. */
+  /** Declared `Tests:` paths, a subset of `changes`; RED capture expansion and brief rendering read these. */
   tests: readonly string[];
   verify: readonly PlanCommand[];
   evidence: EvidenceClass | null;

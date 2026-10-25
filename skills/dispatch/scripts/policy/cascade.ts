@@ -1,7 +1,7 @@
 // Delegate failure cascade (spec §6.4, ADR 0001): model array inside one voice, provider-declared mode cascade,
 // sandbox-unsupported skip, reserves once per wave, native fallback on the orchestrator platform only.
 
-import type { FailureClass, SlotId } from '../core/types.ts';
+import type { FailureClass, SlotId } from '../toolkit/types.ts';
 
 export type Voice = {
   slot: SlotId;

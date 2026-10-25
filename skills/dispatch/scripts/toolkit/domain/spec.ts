@@ -1,4 +1,3 @@
-// Vendored from domain/spec.ts at 63420d16 (AD-5).
 // Spec parse + lint (governing spec, KD-8). Pure: callers supply the source text.
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';

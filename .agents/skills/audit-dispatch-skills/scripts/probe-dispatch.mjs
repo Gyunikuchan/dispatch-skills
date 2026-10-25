@@ -33,7 +33,10 @@ import { SPECS } from '../../../../skills/dispatch/scripts/providers/index.ts';
 import { nodeProcess } from '../../../../skills/dispatch/scripts/providers/node-process.ts';
 import { runDelegate } from '../../../../skills/dispatch/scripts/providers/runner.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
-import { nodePorts } from '../../../../skills/dispatch/scripts/core/ports.ts';
+const clock = {
+  now: () => Date.now(),
+  every: (ms, fn) => { const handle = setInterval(fn, ms); handle.unref(); return () => clearInterval(handle); },
+};
 import { moveEntry } from './finalize.mjs';
 import { loadAuditConfig, readRun, updateRun } from './run-state.ts';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
@@ -60,7 +63,7 @@ const resolveTargets = (config, level) => Object.fromEntries(Object.entries(conf
 /** Real process, clock and preparation ports; bound only by `main`, so exported helpers never reach them implicitly. */
 function cliPorts() {
   return {
-    process: nodeProcess, clock: nodePorts().clock, specs: SPECS, env: process.env, platform: currentPlatform(), prepareFor: createOpencodePreparePorts,
+    process: nodeProcess, clock, specs: SPECS, env: process.env, platform: currentPlatform(), prepareFor: createOpencodePreparePorts,
     // Read-only `debug config`/`debug agents` introspection; the shipped helper caps each call.
     introspect: { opencode: nativeOpencodeIntrospection },
   };

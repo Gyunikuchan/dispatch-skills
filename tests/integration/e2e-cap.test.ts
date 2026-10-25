@@ -14,7 +14,7 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 
 test('tests/e2e/ stays within the cap', () => {
   const files = scanOverlay();
-  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, E2E_CAP);
+  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 12);
   assert.deepEqual(checkE2eCap(files), []);
 });
 
@@ -26,12 +26,8 @@ test('e2e consumers use toolkit results without legacy frame helpers', () => {
   for (const file of files.filter(file => file.path.startsWith('tests/e2e/') || file.path === 'tests/helpers/e2e.ts')) {
     assert.doesNotMatch(file.text, /import\s+(?:type\s+)?\{[^}]*\bFrame\b[^}]*\}\s+from/, file.path);
   }
-  const implement = files.find(file => file.path === 'tests/e2e/implement.test.ts')!;
-  const names = [...implement.text.matchAll(/\btest\(['"]([^'"]+)['"]/g)].map(match => match[1]!);
-  assert.ok(names.length > 0);
-  assert.ok(names.every(name => name.startsWith('checkout:')), names.join(', '));
-  for (const name of ['implement', 'observation-boundary']) {
-    assert.doesNotMatch(files.find(file => file.path === 'tests/e2e/' + name + '.test.ts')!.text, /\bf\.(?:cli|begin|reply|rebind|initialize)\s*\(/);
+  for (const name of ['checkpoint-continuation', 'implement', 'observation-boundary']) {
+    assert.equal(files.some(file => file.path === 'tests/e2e/' + name + '.test.ts'), false, name);
   }
 });
 

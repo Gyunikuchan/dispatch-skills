@@ -1,6 +1,6 @@
 # ADR 0006: Dispatch as typed state machines over an event journal
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR 0013](0013-toolkit-and-ledger.md)
 - **Date**: 2026-09-30
 - **Spec**: `dispatch-state-machine.spec.md` in the brainstorming session folder (`.scratch/dispatch-skills/20260929T1754Z-68393a1a0a77-rewrite-dispatch-as/`)
 

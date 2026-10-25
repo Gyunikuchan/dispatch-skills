@@ -1,8 +1,8 @@
 // Review roster (spec §6.5 step 1, §14): level → phase policy (`targets`, `only`) → pins → diversity sort with
 // orchestrator demotion → `-m`/`-e` collapse → native marking → reserves.
 
-import type { Level, SlotId } from '../core/types.ts';
-import type { RosterSlot } from '../domain/types.ts';
+import type { Level, SlotId } from '../toolkit/types.ts';
+import type { RosterSlot } from '../toolkit/domain/types.ts';
 
 export const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 

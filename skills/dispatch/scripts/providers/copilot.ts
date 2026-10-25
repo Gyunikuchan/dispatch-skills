@@ -2,7 +2,7 @@
 // quota moves to the next mode, auth does not; resume `copilot --resume <id>`.
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
-import type { FailureClass } from '../core/types.ts';
+import type { FailureClass } from '../toolkit/types.ts';
 import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
 
 const AUTH = /(no authentication|can be authenticated|oauth token|personal access token|gh auth login|subscription required|not subscribed|active github copilot subscription)/i;

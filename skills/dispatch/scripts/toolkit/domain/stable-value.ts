@@ -1,4 +1,3 @@
-// Vendored from domain/stable-value.ts at 63420d16 (AD-5).
 /** Canonical JSON value encoding makes protocol comparisons independent of object key order. */
 export function stableValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`;

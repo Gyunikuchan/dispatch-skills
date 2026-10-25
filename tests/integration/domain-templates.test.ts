@@ -1,16 +1,17 @@
-import { qualityBar } from '../../skills/dispatch/scripts/domain/prompt.ts';
+import { qualityBar } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
-import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/domain/plan.ts';
-import { parseDesign } from '../../skills/dispatch/scripts/domain/design.ts';
-import { parseSpec } from '../../skills/dispatch/scripts/domain/spec.ts';
+import { fileURLToPath } from 'node:url';
+import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/toolkit/domain/plan.ts';
+import { parseDesign } from '../../skills/dispatch/scripts/toolkit/domain/design.ts';
+import { parseSpec } from '../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
-  'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md', 'writer-brief.md', 'quality-bar.md',
-  'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
+  'writer-brief.md', 'quality-bar.md',
 ];
 
 test('design template parses under layered lint and preserves executable fields and exclusions', () => {
@@ -78,7 +79,9 @@ test('templates: spec template skeleton lints at low and medium', () => {
 });
 
 test('templates: every kept template exists and none are extra', () => {
-  const files = [...readdirSync(root).filter((name) => name !== 'schemas'), ...readdirSync(new URL('schemas/', root)).map((name) => `schemas/${name}`)];
+  const files = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => path.relative(fileURLToPath(root), path.join(entry.parentPath, entry.name)).replaceAll(path.sep, '/'));
   assert.deepEqual(files.sort(), [...KEPT].sort());
 });
 
@@ -87,13 +90,6 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
     const text = readFileSync(new URL(name, root), 'utf8');
     for (const token of [/<!--/, /rebuttal/i, /consensus/i]) assert.ok(!token.test(text), `${name} contains ${String(token)}`);
   }
-});
-
-test('templates: task brief requires an isolated worktree and a pre-production RED checkpoint', () => {
-  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
-  for (const text of ['## purpose', '## kind-rules', '<Checkpoint Command>', 'admissionDefects']) assert.ok(brief.includes(text), text);
-  assert.match(brief, /only inside the worktree/);
-  assert.match(brief, /before any production edit/);
 });
 
 test('templates: plan.md shows [FINAL] after the Verify code span', () => {
@@ -120,7 +116,7 @@ test('quality selection: plan review checks task dependencies, ownership, and in
 });
 
 test('review prompts offer shared family tags each defined by a quality-bar bullet', async () => {
-  const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/domain/report.ts');
+  const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
   const families = [
     'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility',
     'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
@@ -133,14 +129,6 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   const sorted = (tags: readonly string[]) => [...tags].sort();
   assert.deepEqual(sorted([...REVIEW_TAGS]), sorted(families), 'validator vocabulary');
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
-  const enumOf = (node: unknown): string[] | null => {
-    if (!node || typeof node !== 'object') return null;
-    const record = node as Record<string, unknown>;
-    const tag = record['tag'] as Record<string, unknown> | undefined;
-    if (tag && Array.isArray(tag['enum'])) return tag['enum'] as string[];
-    for (const value of Object.values(record)) { const found = enumOf(value); if (found) return found; }
-    return null;
-  };
   for (const kind of ['code', 'plan', 'design'] as const) {
     const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
     const offered = [...block.matchAll(/^- `([^`]+)`$/gm)].map((tag) => tag[1]!);
@@ -149,11 +137,6 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     for (const family of offered.filter((tag) => tag !== 'standards' && tag !== 'adjacent')) {
       assert.ok(selectedQuality.split('\n').some((line) => line.startsWith(`- **${family}** —`)), `${kind}: missing ${family} quality bullet`);
     }
-  }
-  for (const kind of ['code', 'plan'] as const) {
-    const schema = enumOf(JSON.parse(readFileSync(new URL(`schemas/report-${kind}.json`, root), 'utf8')));
-    assert.ok(schema, `${kind} schema tag enum`);
-    assert.deepEqual(sorted(schema), sorted(families), `${kind} schema families`);
   }
 });
 
@@ -170,25 +153,11 @@ test('quality selection: plans name searched equivalents and plan review checks 
   assert.ok(maintainability.includes('search the repository by name and behaviour for an existing equivalent'));
 });
 
-test('templates: task brief cleanup applies the quality bar without a new step', () => {
-  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
-  assert.match(brief, /^- After GREEN, inspect the task's changes against the injected quality bar\./m);
-  assert.equal((brief.match(/^- After GREEN/gm) ?? []).length, 1);
-  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(quality.includes('avoid pass-through modules, speculative seams (one adapter is hypothetical), excess coupling'));
-});
-
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(plan.includes('- Retain: <transient|durable>'));
-  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'are trimmed after final review', 'test files listed solely by transient criteria are trimmed', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
+  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'Transient criteria require `Covered by:`', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
   assert.equal(plan.match(/\[quality bar's code test policy\]\(quality-bar\.md#code\)/g)?.length, 1);
-});
-
-test('templates: task brief applies the durable bar and isolates transient tests', () => {
-  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8').replace(/\s+/g, ' ');
-  for (const text of ['only in their transient files', "the bar's test criteria", 'under concerns', 'never change `Retain:`']) assert.ok(brief.includes(text), text);
-  assert.ok(readFileSync(new URL('quality-bar.md', root), 'utf8').includes("code section's test policy"));
 });
 
 test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });

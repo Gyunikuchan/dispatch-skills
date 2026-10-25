@@ -2,7 +2,7 @@
 // credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
-import type { FailureClass, DiagnosticUsage } from '../core/types.ts';
+import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 

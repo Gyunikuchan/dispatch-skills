@@ -5,7 +5,6 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
-import { nodePorts } from '../../skills/dispatch/scripts/core/ports.ts';
 import { DEFAULT_CONFIG_PATH, loadAuditConfig, reserveRun } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,9 +28,13 @@ function workspace(childSource: string) {
   const limits = { ...loadAuditConfig(DEFAULT_CONFIG_PATH).limits, probeDeadlineSeconds: 1, probeTerminationGraceSeconds: 2 };
   return { root, spec, fixture, stageDir, limits };
 }
+const clock = {
+  now: () => Date.now(),
+  every: (ms: number, fn: () => void) => { const handle = setInterval(fn, ms); handle.unref(); return () => clearInterval(handle); },
+};
 const ctxFor = (w: ReturnType<typeof workspace>, processPort: unknown = nodeProcess) => ({
   fixture: w.fixture, stageDir: w.stageDir, limits: w.limits,
-  ports: { process: processPort, clock: nodePorts().clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
+  ports: { process: processPort, clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
 });
 const target = { id: 'claude', provider: 'claude', mode: 'cli', binary: process.execPath, model: null, effort: null, sandbox: false, aliases: ['cli'], skip: null };
 const killQuietly = (handle: string | null) => { try { if (handle) process.kill(Number(handle), 'SIGKILL'); } catch { /* already gone */ } };
@@ -91,7 +94,7 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
   const run = probe.main({
     root: repo, argv: ['node', 'probe', '--run', '2026-10-07-0000', '--only', 'claude'], signal: controller.signal, home: path.join(w.root, 'home'),
     limits: { ...w.limits, probeDeadlineSeconds: 30 },
-    ports: { doctor, process: nodeProcess, clock: nodePorts().clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
+    ports: { doctor, process: nodeProcess, clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
   });
   setTimeout(() => controller.abort(), 1500);
   const result = await run;

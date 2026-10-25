@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v0.8.0 draft
+
+- A deterministic toolkit CLI and append-only ledger replace the workflow driver and event journal.
+- The orchestrator owns sequencing and technical decisions, with fewer non-intent gates. Plans and designs can change during delivery through recorded edits.
+- Approval still protects intent, external dependencies, runtime prerequisites and discarded work; waivers and manual completion require user authority.
+- **Breaking:** v0.7.x sessions are not readable after upgrade. Finish old runs or preserve their controller and session files before upgrading.
+
 ## [0.7.3] - 2026-10-21
 
 - Plans, designs, reviews, and implementation share a governing mission brief, keeping delivery tied to your requirements and decisions.

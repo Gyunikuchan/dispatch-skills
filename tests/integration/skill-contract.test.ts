@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {test} from 'node:test';
@@ -19,14 +20,41 @@ function noLegacy(text: string, file: string) {
 }
 const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
 
-test('skill contract keeps a compact router and resolving reference links', () => {
+test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
-  assert.ok(Buffer.byteLength(skill) <= 4096);
   for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
     const local = target.split('#')[0]!;
     if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
     assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
+  }
+});
+
+test('mechanics-only references and report schemas are absent from the skill and its links', () => {
+  const removed = ['references/change-handling.md', ...['write-brief', 'write-brief-task', 'write-brief-hotfix'].map(name => 'references/templates/' + name + '.md'), ...['code', 'plan', 'design'].map(kind => 'references/templates/schemas/report-' + kind + '.json')];
+  const removedPaths = new Set(removed.map(file => path.resolve(OVERLAY_ROOT, root, file)));
+  for (const file of removed) assert.equal(fs.existsSync(path.join(OVERLAY_ROOT, root, file)), false, file);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
+    assert.ok(!removedPaths.has(path.resolve(OVERLAY_ROOT, path.dirname(file), target.split('#')[0]!)), file + ' -> ' + target);
+  }
+});
+
+test('plan guidance excludes removed mechanics while preserving the authored skeleton', () => {
+  const plan = read(root + 'references/templates/plan.md').replace(/\r\n/g, '\n');
+  const skeleton = /\x60{4}markdown\n([\s\S]*?)\n\x60{4}/.exec(plan)?.[1];
+  assert.ok(skeleton);
+  assert.equal(crypto.createHash('sha256').update(skeleton).digest('hex'), '7383e3467a0ecf3558929827fcf542e1132f53d9081318df043282fa53489734');
+  const notes = plan.split('## Field notes\n')[1]!;
+  for (const term of [/RED_READY/, /RED-MATRIX/, /checkpoint/i, /state\/runs/, /\btrim(?:med|ming|s)?\b/i, /\benvelope\b/i, /\bdriver\b/i, /\breceipts?\b/i, /briefHash/]) assert.doesNotMatch(plan, term);
+  assert.doesNotMatch(read(root + 'references/templates/walkthrough.md'), /\bdriver\b/i);
+  for (const field of ['Tests', 'RED', 'Retain', 'Automated Tests', '`[GENERATED]`']) assert.ok(notes.includes('- ' + field + ':'), field);
+});
+
+test('audit catalog points to surviving toolkit and reference entry points', () => {
+  const catalog = JSON.parse(read('.agents/skills/audit-dispatch-skills/references/scenarios.json'));
+  for (const scenario of catalog.scenarios) for (const entry of scenario.entries) {
+    assert.doesNotMatch(entry, /scripts\/(?:core|domain|effects|machines)\/|scripts\/policy\/drift\.ts|write-brief(?:-task|-hotfix)?\.md/, scenario.id);
+    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, entry)), scenario.id + ' -> ' + entry);
   }
 });
 

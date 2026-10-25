@@ -1,9 +1,9 @@
 // Provider contracts (spec §6.1–§6.3). Specs are declarative data plus pure `argv`/`parse`; the runner owns I/O
 // through `ProcessPort` (core `SpawnPort` is buffered and cannot stream, cap, or kill a tree).
 
-import type { FailureClass } from '../core/types.ts';
+import type { FailureClass } from '../toolkit/types.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
-import type { DiagnosticUsage } from '../core/types.ts';
+import type { DiagnosticUsage } from '../toolkit/types.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 

@@ -1,4 +1,3 @@
-// Vendored from domain/report.ts at aa26d27f (AD-5).
 // The single delegate-report parse path for every source (spec §6.5 step 5).
 // Parse failures are named so the wave can fall back; findings dedup with `dupOf`.
 

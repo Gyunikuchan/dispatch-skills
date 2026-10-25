@@ -6,22 +6,18 @@ import { createScanner } from 'typescript/unstable/ast/scanner';
 import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
 
 const SCRIPTS = 'skills/dispatch/scripts/';
-type Layer = 'dispatch' | 'core' | 'machines' | 'policy' | 'domain' | 'effects' | 'providers' | 'lib' | 'toolkit';
+type Layer = 'dispatch' | 'policy' | 'providers' | 'lib' | 'toolkit';
 
 // Design § Layers: anything not listed is forbidden (which also rules out cycles).
 export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
   dispatch: ['lib', 'providers', 'policy', 'toolkit'],
-  core: ['machines', 'policy', 'domain', 'effects', 'lib'],
-  machines: ['policy', 'domain'],
-  policy: ['domain'],
-  domain: [],
-  effects: ['providers', 'policy', 'domain', 'lib'],
+  policy: [],
   providers: ['lib'],
   lib: [],
-  toolkit: ['toolkit', 'providers', 'lib', 'policy', 'effects'], // checkDependencies restricts effects to effects/git.ts.
+  toolkit: ['toolkit', 'providers', 'lib', 'policy'],
 };
 
-const PURE: readonly Layer[] = ['machines', 'policy', 'domain'];
+const PURE: readonly Layer[] = ['policy'];
 const IMPURE_MODULES = ['fs', 'child_process', 'os'];
 const IMPURE_TOKENS: readonly [RegExp, string][] = [
   [/\bDate\b/, 'Date'], [/\bMath\.random\b/, 'Math.random'], [/\bprocess\.env\b/, 'process.env'], [/\bperformance\b/, 'performance'],
@@ -51,33 +47,29 @@ export function checkDependencies(files: FileTable): string[] {
   const errors: string[] = [];
   for (const { path: file, text } of files) {
     const layer = layerOf(file);
-    if (!layer || !file.endsWith('.ts')) continue;
-    const imports = extractImports(text);
-    if (file === `${SCRIPTS}core/types.ts` && imports.length) {
-      errors.push(`dependency rule: ${file} imports nothing (it is shared type-only by every layer); move the import's user out of core/types.ts`);
+    if (!file.endsWith('.ts') || !file.startsWith(SCRIPTS)) continue;
+    if (!layer) {
+      errors.push(`dependency rule: ${file} is outside the shipped layers; move it to toolkit/, providers/, lib/ or policy/`);
+      continue;
     }
-    for (const { specifier, typeOnly } of imports) {
+    for (const { specifier, typeOnly } of extractImports(text)) {
       if (PURE.includes(layer) && IMPURE_MODULES.some((name) => specifier === name || specifier === `node:${name}`)) {
-        errors.push(`purity rule: ${file} (${layer}) imports ${specifier}; pure layers do no I/O, so move it to effects/ or lib/`);
+        errors.push(`purity rule: ${file} (${layer}) imports ${specifier}; pure layers do no I/O, so move it to toolkit/ or lib/`);
       }
       const target = resolveRelative(file, specifier);
       const targetLayer = target ? layerOf(target) : null;
-      if (layer === 'toolkit' && target) {
-        if (!(targetLayer === 'toolkit' || targetLayer === 'providers' || targetLayer === 'lib' || targetLayer === 'policy' || target === SCRIPTS + 'effects/git.ts')) {
-          errors.push('dependency rule: ' + file + ' (toolkit) imports ' + specifier + '; toolkit may import only toolkit/, providers/, lib/, policy/ and effects/git.ts');
-        }
+      if (target && !targetLayer) {
+        errors.push(`dependency rule: ${file} imports ${specifier} outside the shipped layers; use a surviving owner`);
         continue;
       }
       if (targetLayer === 'toolkit' && layer !== 'toolkit' && layer !== 'dispatch') {
-        errors.push('dependency rule: ' + file + ' imports toolkit/; legacy layers must not depend on toolkit');
+        if (typeOnly && [SCRIPTS + 'toolkit/types.ts', SCRIPTS + 'toolkit/domain/types.ts'].includes(target!)) continue;
+        errors.push(`dependency rule: ${file} imports ${specifier}; shared layers may only type-import toolkit/types.ts or toolkit/domain/types.ts`);
         continue;
       }
       if (!targetLayer || targetLayer === layer) continue;
-      if (layer !== 'toolkit' && layer !== 'dispatch' && typeOnly && target === `${SCRIPTS}core/types.ts`) continue;
       if (!ALLOWED[layer].includes(targetLayer)) {
         errors.push(`dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(', ') || 'nothing'}, so invert the dependency or move the code`);
-      } else if (layer === 'core' && !typeOnly && (targetLayer === 'machines' || targetLayer === 'effects') && file !== `${SCRIPTS}core/interpreter.ts`) {
-        errors.push(`dependency rule: ${file} value-imports ${targetLayer}/; only core/interpreter.ts may, so route the call through the interpreter`);
       }
     }
     if (PURE.includes(layer)) {
@@ -109,27 +101,47 @@ test('dispatch entry imports only portable services and toolkit', () => {
 });
 
 describe('toolkit import boundary', () => {
-  test('toolkit refuses legacy engine and non git effects imports', () => {
-    for (const [specifier, type] of [['../core/types.ts', 'type '], ['../core/interpreter.ts', ''], ['../machines/implement.ts', ''], ['../effects/parse-artifact.ts', '']]) {
+  test('shipped layers refuse relative imports outside the scripts tree', () => {
+    for (const layer of ['toolkit', 'lib']) {
+      for (const type of ['', 'type ']) {
+        const errors = checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' ' + type + '{ X } from "../../../../tests/example.ts";')]);
+        assert.equal(errors.length, 1, `${layer}: ${type || 'value'}`);
+        assert.match(errors[0]!, /outside the shipped layers; use a surviving owner/);
+      }
+    }
+  });
+  test('shipped layers allow external packages and builtins', () => {
+    for (const layer of ['toolkit', 'lib']) {
+      for (const specifier of ['node:fs', 'typescript/unstable/ast']) {
+        assert.deepEqual(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]), []);
+      }
+    }
+  });
+  test('toolkit refuses removed engine layers including git effects', () => {
+    for (const [specifier, type] of [['../core/types.ts', 'type '], ['../core/interpreter.ts', ''], ['../machines/implement.ts', ''], ['../effects/git.ts', ''], ['../domain/plan.ts', '']]) {
       const errors = checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' ' + type + '{ X } from ' + JSON.stringify(specifier) + ';')]);
       assert.equal(errors.length, 1, specifier);
       assert.match(errors[0]!, /toolkit/);
     }
   });
   test('toolkit allows portable services and its own domain', () => {
-    for (const specifier of ['./domain/plan.ts', '../providers/types.ts', '../lib/session.ts', '../policy/roster.ts', '../effects/git.ts']) {
+    for (const specifier of ['./domain/plan.ts', '../providers/types.ts', '../lib/session.ts', '../policy/roster.ts']) {
       assert.deepEqual(checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]), []);
     }
   });
-  test('legacy layers cannot depend on toolkit', () => {
-    for (const layer of ['core', 'machines', 'policy', 'domain', 'effects', 'providers', 'lib']) {
-      assert.equal(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from "../toolkit/types.ts";')]).length, 1);
+  test('shared layers allow only type imports from the two toolkit type modules', () => {
+    for (const layer of ['policy', 'providers', 'lib']) {
+      for (const specifier of ['../toolkit/types.ts', '../toolkit/domain/types.ts']) {
+        assert.deepEqual(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from ' + JSON.stringify(specifier) + ';')]), []);
+        assert.equal(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]).length, 1);
+      }
+      assert.equal(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from "../toolkit/cli.ts";')]).length, 1);
     }
   });
 });
 
 test('purity checks ignore performance in strings and comments', () => {
-  assert.deepEqual(checkDependencies([file(`${SCRIPTS}domain/report.ts`,
+  assert.deepEqual(checkDependencies([file(`${SCRIPTS}policy/example.ts`,
     `const family = 'performance';`,
     '// ' + 'performance' + '.now() is an example only',
     `/* performance['now']() is example text */`,
@@ -138,9 +150,9 @@ test('purity checks ignore performance in strings and comments', () => {
 
 test('purity checks reject direct, computed, and captured performance identifiers', () => {
   const errors = checkDependencies([
-    file(`${SCRIPTS}domain/direct.ts`, 'performance' + '.now();'),
-    file(`${SCRIPTS}domain/computed.ts`, "performance['now']();"),
-    file(`${SCRIPTS}domain/captured.ts`, 'const clock = performance;'),
+    file(`${SCRIPTS}policy/direct.ts`, 'performance' + '.now();'),
+    file(`${SCRIPTS}policy/computed.ts`, "performance['now']();"),
+    file(`${SCRIPTS}policy/captured.ts`, 'const clock = performance;'),
   ]);
   assert.equal(errors.length, 3);
   assert.ok(errors.every((error) => error.includes('uses performance')));
@@ -148,16 +160,14 @@ test('purity checks reject direct, computed, and captured performance identifier
 
 test('dependency and purity violations identify the broken layer rule and corrective action', () => {
   const errors = checkDependencies([
-    file(`${SCRIPTS}machines/root.ts`, `${IMPORT} fs from 'node:fs';`, `${IMPORT} { run } from '../effects/wave.ts';`, 'const t = new Date();'),
-    file(`${SCRIPTS}core/frame.ts`, `${IMPORT} { step } from '../machines/root.ts';`),
-    file(`${SCRIPTS}core/types.ts`, `${IMPORT} type { X } from '../lib/x.ts';`),
-    file(`${SCRIPTS}lib/config.ts`, `${IMPORT} type { Ports } from '../core/types.ts';`),
-    file(`${SCRIPTS}core/interpreter.ts`, `${IMPORT} { step } from '../machines/root.ts';`),
+    file(`${SCRIPTS}policy/example.ts`, `${IMPORT} fs from 'node:fs';`, `${IMPORT} { run } from '../providers/runner.ts';`, 'const t = new Date();'),
+    file(`${SCRIPTS}unknown/example.ts`, ''),
+    file(`${SCRIPTS}lib/config.ts`, `${IMPORT} type { X } from '../core/types.ts';`),
   ]);
   assert.equal(errors.length, 5);
-  assert.match(errors[0] ?? '', /^purity rule: .*machines\/root\.ts .*node:fs.*move it to effects\/ or lib\//);
-  assert.match(errors[1] ?? '', /^dependency rule: .*\(machines\) imports .*effects.*may import only policy, domain/);
+  assert.match(errors[0] ?? '', /^purity rule: .*policy\/example\.ts .*node:fs.*move it to toolkit\/ or lib\//);
+  assert.match(errors[1] ?? '', /^dependency rule: .*\(policy\) imports .*providers.*may import only nothing/);
   assert.match(errors[2] ?? '', /^purity rule: .*uses Date/);
-  assert.match(errors[3] ?? '', /only core\/interpreter\.ts may/);
-  assert.match(errors[4] ?? '', /core\/types\.ts imports nothing/);
+  assert.match(errors[3] ?? '', /outside the shipped layers; move it/);
+  assert.match(errors[4] ?? '', /outside the shipped layers; use a surviving owner/);
 });

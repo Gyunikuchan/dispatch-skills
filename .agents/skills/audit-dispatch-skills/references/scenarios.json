@@ -8,7 +8,7 @@
       "trigger": "User invokes dispatch with a bounded repository question and no verb.",
       "expectedOutcome": "Supported advice that cites evidence, with reviewer disagreement surfaced rather than voted away.",
       "startingState": "clean checkout, configured providers",
-      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/ask.md", "skills/dispatch/scripts/machines/ask.ts"]
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/ask.md", "skills/dispatch/scripts/toolkit/ask.ts"]
     },
     {
       "id": "ask-decision-missing-context",
@@ -17,7 +17,7 @@
       "trigger": "The question depends on context the delegates lack, or delegates disagree on the answer.",
       "expectedOutcome": "The orchestrator names the missing context or disagreement and resolves it with evidence or asks the user.",
       "startingState": "clean checkout, two or more reviewers",
-      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/machines/ask.ts"]
+      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/toolkit/ask.ts"]
     },
     {
       "id": "ask-recovery-provider-unavailable",
@@ -26,7 +26,7 @@
       "trigger": "A selected provider is unavailable or returns an incomplete response.",
       "expectedOutcome": "The run reports the failed slot and answers from remaining evidence or stops with a named blocker.",
       "startingState": "one provider missing or failing",
-      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/providers.md", "skills/dispatch/scripts/machines/ask.ts"]
+      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/providers.md", "skills/dispatch/scripts/toolkit/ask.ts"]
     },
     {
       "id": "design-normal-increments",
@@ -35,7 +35,7 @@
       "trigger": "User asks for a design spanning several increments.",
       "expectedOutcome": "A coherent design with explicit increments, boundaries, and review evidence.",
       "startingState": "clean checkout, new session",
-      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/references/templates/design.md", "skills/dispatch/scripts/machines/design.ts"]
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/references/templates/design.md", "skills/dispatch/scripts/toolkit/review.ts"]
     },
     {
       "id": "design-decision-constraint-change",
@@ -44,7 +44,7 @@
       "trigger": "User changes an architectural constraint after the first design draft.",
       "expectedOutcome": "The revision retains decisions and rationale that still hold and re-reviews affected increments.",
       "startingState": "authored design awaiting revision",
-      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/machines/design-revision.ts"]
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/toolkit/ledger.ts"]
     },
     {
       "id": "design-recovery-interrupted-handoff",
@@ -53,7 +53,7 @@
       "trigger": "The session stops between authoring and review.",
       "expectedOutcome": "Resume continues from the journal without duplicate authoring or lost review state.",
       "startingState": "interrupted design run with a journal",
-      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/machines/design.ts", "skills/dispatch/scripts/core/journal.ts"]
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/toolkit/review.ts", "skills/dispatch/scripts/toolkit/ledger.ts"]
     },
     {
       "id": "plan-normal-executable-unit",
@@ -62,7 +62,7 @@
       "trigger": "User asks for a plan for one coherent unit of work.",
       "expectedOutcome": "An executable plan with tasks, criteria, Verify commands, and review rulings.",
       "startingState": "clean checkout, new session",
-      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/references/templates/plan.md", "skills/dispatch/scripts/machines/plan.ts"]
+      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/references/templates/plan.md", "skills/dispatch/scripts/toolkit/lint.ts"]
     },
     {
       "id": "plan-decision-verb-mismatch",
@@ -71,7 +71,7 @@
       "trigger": "The requested scope needs several increments and does not fit plan.",
       "expectedOutcome": "The orchestrator recommends the fitting verb and waits for the user; it never switches silently.",
       "startingState": "clean checkout, oversized request",
-      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/domain/plan.ts"]
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/toolkit/domain/plan.ts"]
     },
     {
       "id": "plan-recovery-unmet-prerequisite",
@@ -80,7 +80,7 @@
       "trigger": "Review or revision reveals a prerequisite the plan does not meet.",
       "expectedOutcome": "The revision records the prerequisite and either amends the plan or escalates the blocker.",
       "startingState": "authored plan under review",
-      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/machines/revision.ts"]
+      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/toolkit/lint.ts"]
     },
     {
       "id": "review-normal-code-target",
@@ -90,7 +90,7 @@
       "trigger": "User asks for a review of the working tree.",
       "expectedOutcome": "Findings are ruled against the exact target, accepted in-scope fixes are verified, and rejected claims are explained.",
       "startingState": "dirty working tree",
-      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-code.md", "skills/dispatch/scripts/machines/review.ts"]
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-code.md", "skills/dispatch/scripts/toolkit/review.ts"]
     },
     {
       "id": "review-decision-plan-fix-scope",
@@ -100,7 +100,7 @@
       "trigger": "A plan review accepts findings with bounded fix scope.",
       "expectedOutcome": "Accepted fixes stay within their clusters and affected paths, and verification must pass before they complete.",
       "startingState": "authored plan file",
-      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-plan.md", "skills/dispatch/scripts/domain/fix-clustering.ts"]
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-plan.md", "skills/dispatch/scripts/toolkit/findings.ts"]
     },
     {
       "id": "review-decision-code-accepted-fix",
@@ -110,7 +110,7 @@
       "trigger": "A code review accepts findings with bounded fix scope.",
       "expectedOutcome": "The run applies accepted fixes within their authorized clusters and verifies them; failed attempts retain verified work and pending findings.",
       "startingState": "dirty working tree",
-      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/scripts/machines/review.ts"]
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/scripts/toolkit/review.ts"]
     },
     {
       "id": "review-recovery-design-target-drift",
@@ -120,7 +120,7 @@
       "trigger": "A .design.md target changes during review, or one reviewer fails.",
       "expectedOutcome": "The run detects drift or the failed slot and rules only on evidence tied to the reviewed target.",
       "startingState": "design under review, concurrent edit or failing reviewer",
-      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-design.md", "skills/dispatch/scripts/policy/drift.ts"]
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-design.md", "skills/dispatch/scripts/toolkit/review.ts"]
     },
     {
       "id": "implement-normal-approved-change",
@@ -129,7 +129,7 @@
       "trigger": "User asks to implement an approved plan.",
       "expectedOutcome": "Scoped native writers deliver each task with RED/GREEN and criterion evidence that the driver accepts.",
       "startingState": "approved plan, clean checkout",
-      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/write-brief-task.md", "skills/dispatch/scripts/machines/implement.ts"]
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/writer-brief.md", "skills/dispatch/scripts/toolkit/integrate.ts"]
     },
     {
       "id": "implement-decision-scope-amendment",
@@ -138,7 +138,7 @@
       "trigger": "A writer needs a path outside its brief, or the pre-write assessment recommends a higher level.",
       "expectedOutcome": "The writer submits a scope request; the orchestrator adjudicates and the user decides only on disagreement or level change.",
       "startingState": "running task writer",
-      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/machines/implement-tasks.ts"]
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/toolkit/writers.ts"]
     },
     {
       "id": "implement-recovery-interrupted-writer",
@@ -147,7 +147,7 @@
       "trigger": "A writer attempt is interrupted, or its verification fails.",
       "expectedOutcome": "The driver retains write-brief admissionDefects when it repairs or relaunches an interrupted writer; after three failed attempts it rejects another retry with failure limit. Trace both the admissionDefects handoff and the exhausted-retry validation rejection; never accept unverified work.",
       "startingState": "task worktree with a failed or missing envelope",
-      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/effects/check-envelope.ts", "skills/dispatch/scripts/effects/verify.ts"]
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/toolkit/writers.ts", "skills/dispatch/scripts/toolkit/verify.ts"]
     },
     {
       "id": "shared-design-to-plan",
@@ -165,7 +165,7 @@
       "trigger": "An approved plan starts implementation.",
       "expectedOutcome": "Implementation consumes the approved plan hash, criteria, and approval authority without re-deriving them.",
       "startingState": "approved plan",
-      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/write-brief.md", "skills/dispatch/scripts/effects/handoff.ts"]
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/writer-brief.md", "skills/dispatch/scripts/toolkit/brief.ts"]
     },
     {
       "id": "shared-review-to-fix",
@@ -174,7 +174,7 @@
       "trigger": "Accepted review findings move to fixes.",
       "expectedOutcome": "Fixes act only on ruled findings within affected paths, with bounded verification evidence.",
       "startingState": "ruled review findings",
-      "entries": ["skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/domain/fix-clustering.ts"]
+      "entries": ["skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/toolkit/findings.ts"]
     },
     {
       "id": "shared-interruption-to-resume",
@@ -183,7 +183,7 @@
       "trigger": "A host session ends mid-run and a new session resumes it.",
       "expectedOutcome": "Ownership, handles, and journal state transfer without duplicate effects or lost evidence.",
       "startingState": "interrupted run with a journal and lock",
-      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/scripts/core/journal.ts", "skills/dispatch/scripts/core/lock.ts", "skills/dispatch/scripts/effects/restore.ts"]
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/scripts/toolkit/ledger.ts", "skills/dispatch/scripts/toolkit/lock.ts", "skills/dispatch/scripts/toolkit/status.ts"]
     }
   ]
 }

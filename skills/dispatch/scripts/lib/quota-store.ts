@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { QuotaGeneration, QuotaKey, QuotaObservation } from '../core/types.ts';
+import type { QuotaGeneration, QuotaKey, QuotaObservation } from '../toolkit/types.ts';
 import { publishExclusive } from './fs-ext.ts';
 import { nodeLinkFs } from './node-fs-ext.ts';
 import { canonicalRepositoryRoot, readManifest } from './session.ts';

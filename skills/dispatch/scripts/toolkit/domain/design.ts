@@ -1,4 +1,3 @@
-// Vendored from domain/design.ts at 63420d16 (AD-5).
 // Design parse + lint + governed text. Increment selection by
 // graph priority belongs to the design machine, not here.
 

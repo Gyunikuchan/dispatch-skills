@@ -1,4 +1,3 @@
-// Vendored from domain/prompt.ts at aa26d27f (AD-5).
 // Prompt template extraction, frame assembly, and fill. Pure: callers
 // pass Markdown they read. Declared variables are the backtick-quoted `<Name>` bullets between the section
 // heading and its first fence; substitution is single-pass over declared names, so undeclared grammar
@@ -8,7 +7,6 @@ export type Template = { variables: readonly string[]; template: string };
 
 export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string };
 
-// Vendored from effects/prepare-review.ts at aa26d27f (AD-5).
 export function settledSection(settled: readonly Settled[], revisions = false): string {
   if (!settled.length) return '';
   const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;

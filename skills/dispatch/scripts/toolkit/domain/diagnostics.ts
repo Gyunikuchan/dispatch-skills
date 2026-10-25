@@ -1,4 +1,3 @@
-// Vendored unchanged from bf96caa9: skills/dispatch/scripts/domain/diagnostics.ts.
 
 // Pure diagnostics retrospective: per-run facts in, a severity-ordered, shareable Markdown report out.
 // The core collector derives the facts from session journals; nothing here reads ports or files.
@@ -65,19 +64,16 @@ const files = (dir: string, names: string, ext: string) => names.split(' ').map(
 /** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
-  'scripts/dispatch.ts',
-  ...files('scripts/core', 'checkpoint effect-recovery diagnostics effect-id frame interpreter journal lock ports progress spec-discovery types validate', '.ts'),
-  ...files('scripts/domain', 'effect-digest engine-fault private-state criterion-id design diagnostics execution-config fix-clustering path-identity plan prompt render report sanitize spec stable-value types', '.ts'),
-  ...files('scripts/effects', 'checkpoint-references artifacts assess-recovery check-envelope check-review-target checkout git handoff index parse-artifact prepare-review recovery-manifest review-manifest restore snapshot verify wave-native wave write-brief', '.ts'),
-  ...files('scripts/lib', 'immutable-artifact portable-effect runtime-identity cli config diagnostic-usage doctor fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
-  ...files('scripts/machines', 'ask change-resolution checkpoint design-revision design diagnostics execution-config implement-tasks implement-types implement plan plan-reconciliation review revision root spec types', '.ts'),
-  ...files('scripts/policy', 'cascade drift hotfix quota roster rounds', '.ts'),
-  ...files('scripts/providers', 'agy claude codex copilot discovery index native node-process opencode-runtime opencode runner types', '.ts'),
-  ...files('references', 'change-handling decision-frame diagnostics glossary providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
-  ...files('references/templates', 'design plan review-prompt-code review-prompt-design review-prompt-plan review-prompt quality-bar spec walkthrough write-brief-hotfix write-brief-task write-brief', '.md'),
-  ...files('references/templates/schemas', 'report-code report-design report-plan', '.json'),
+  ...files('references/templates', 'design plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan spec walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review', '.md'),
+  ...files('references', 'decision-frame diagnostics glossary providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
+  ...files('scripts/lib', 'cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
+  ...files('scripts/policy', 'cascade quota roster', '.ts'),
+  ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
+  ...files('scripts/toolkit/domain', 'criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
+  ...files('scripts/toolkit', 'artifacts ask brief cli deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review status types verify walkthrough writers', '.ts'),
+  ...files('scripts', 'dispatch', '.ts'),
 ]);
 
 // SECTION: Field gates
@@ -127,7 +123,7 @@ function categoryOf(v: unknown): Category | undefined {
 
 /** Bounded classes for a rejected host event; validator text echoes submitted values and keys, so only the class renders. */
 export const REJECTION_CLASSES = ['malformed-json', 'effect-pending', 'unknown-type', 'wrong-await', 'unexpected-field', 'invalid-value', 'state-check'] as const;
-// Host-event schema field names (core/validate.ts and machine checks); a name missing here only truncates a rendered path.
+// Record-validation field names (toolkit/records.ts); a name missing here only truncates a rendered path.
 const EVENT_FIELDS: ReadonlySet<string> = new Set((
   'type path slots rulings clusters tasks task attempt signature handle model effort substitution envelopePath kind reason tokens durationMs '
   + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScopeHash '
@@ -314,19 +310,19 @@ function groups<T>(items: readonly T[], key: (item: T) => string): Map<string, T
   return out;
 }
 
-const PREFLIGHT = ['scripts/lib/doctor.ts', 'Detect this condition in the preflight check and skip the provider before launch.'] as const;
+const PREFLIGHT = ['scripts/toolkit/doctor.ts', 'Detect this condition in the preflight check and skip the provider before launch.'] as const;
 const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
   quota: ['references/providers.md', "Check model quota or plan before the next run, or add another model alias to the voice's model array; quota limits may be shared."],
   timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
-  'context-overflow': ['scripts/effects/prepare-review.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
+  'context-overflow': ['scripts/toolkit/prompts.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
 };
 const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the delegate's last output and consider replacing the model or provider."] as const;
 const AWAIT_COMPONENTS: Record<string, string> = {
-  author: 'references/templates/plan.md', native: 'references/providers.md', rule: 'references/review-rules.md', fix: 'references/change-handling.md',
-  write: 'references/templates/write-brief-task.md', evidence: 'references/verbs/implement.md', retro: 'references/diagnostics.md',
+  author: 'references/templates/plan.md', native: 'references/providers.md', rule: 'references/review-rules.md', fix: 'references/verbs/implement.md',
+  write: 'references/templates/writer-brief.md', evidence: 'references/verbs/implement.md', retro: 'references/diagnostics.md',
 };
 
 /** Deterministic findings (H1–H6, H8, H9) for one run, in severity order. */
@@ -375,23 +371,23 @@ export function heuristics(run: RunFacts): Finding[] {
     const reporting = items.filter((i) => i.usage!.cacheRead !== undefined);
     const cacheRead = sum(reporting.map((i) => i.usage!.cacheRead)) ?? 0, input = cacheRead + (sum(reporting.map((i) => i.usage!.input)) ?? 0);
     if (!reporting.length || !input || cacheRead / input >= T.cacheReadShare) continue;
-    add('H4', 'token-economy', 'scripts/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
+    add('H4', 'token-economy', 'scripts/toolkit/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
   }
   if (metered.length >= T.minSamples) {
     const sizes = metered.map((i) => [i, total(i.usage!)] as const);
     const all = sum(sizes.map(([, n]) => n)) ?? 0;
     const [top, n] = sizes.reduce((a, b) => b[1] > a[1] ? b : a);
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
-    if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/effects/prepare-review.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
+    if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
   const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
   if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest elapsed host-await gap: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Elapsed gaps can include work, pauses and scheduling; internal activity is unknown.', `Use activity evidence for the \`${gap.await}\` await before attributing the gap or proposing a timing fix.`);
   if (run.rejectedEvents.length) {
     const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
-    add('H8', 'correctness', 'scripts/core/validate.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
+    add('H8', 'correctness', 'scripts/toolkit/records.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
   }
-  if (run.repairs) add('H9', 'correctness', 'references/templates/write-brief-task.md', `${plural(run.repairs, 'implementation repair attempt')}.`, 'Each repair relaunches a writer and repeats verification.', 'Put the failed check and its acceptance rule in the task brief before the first attempt.');
-  if (run.admissionDefects) add('H9', 'correctness', 'scripts/effects/check-envelope.ts', `${plural(run.admissionDefects, 'admission defect')}.`, 'Each defect rejects a writer result and costs another attempt.', 'Check envelope fields deterministically and return the exact failing field so the writer fixes it in one attempt.');
+  if (run.repairs) add('H9', 'correctness', 'references/templates/writer-brief.md', `${plural(run.repairs, 'implementation repair attempt')}.`, 'Each repair relaunches a writer and repeats verification.', 'Put the failed check and its acceptance rule in the task brief before the first attempt.');
+  if (run.admissionDefects) add('H9', 'correctness', 'scripts/toolkit/writers.ts', `${plural(run.admissionDefects, 'admission defect')}.`, 'Each defect rejects a writer result and costs another attempt.', 'Check envelope fields deterministically and return the exact failing field so the writer fixes it in one attempt.');
   return bySeverity(out);
 }
 

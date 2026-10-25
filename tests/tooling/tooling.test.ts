@@ -6,7 +6,6 @@ import { tempDir } from '../helpers/fake-ports.ts';
 import { hashes } from '../../scripts/generate-hashes.ts';
 import { checkTerms, toolingRoot } from '../../scripts/check-terms.ts';
 import { validateConfigs } from '../../scripts/validate-configs.ts';
-import { checkDiagram, diagram, writeDiagram } from '../../scripts/diagram.ts';
 // SECTION: Hashes
 
 test('root-aware hash fixture recognizes contract and catches drift', () => {
@@ -45,17 +44,3 @@ test('root-aware strict config fixture validates sample without reading ignored 
   fs.writeFileSync(path.join(skill, 'config.sample.jsonc'), '{"unknown":true}'); assert.match(validateConfigs(root).join(), /config.sample.jsonc.*Unrecognized/);
 });
 
-// SECTION: State diagrams
-
-test('machine diagrams are deterministic declared transitions written under the supplied root', () => {
-  const root = tempDir(), rendered = diagram(); writeDiagram(root);
-  assert.equal(fs.readFileSync(path.join(root, 'docs/state-diagrams.md'), 'utf8'), rendered);
-  assert.equal(checkDiagram(root), true);
-  assert.equal(diagram(), rendered); assert.match(rendered, /state "booting" as S\d+/); assert.match(rendered, /S\d+ --> S\d+: RUN_STARTED/); assert.match(rendered, /## implement/);
-  assert.doesNotMatch(rendered, /state "plan-revision"/);
-  assert.match(rendered, /state "checking-host-event" as S\d+/);
-  const edges = rendered.split(/\r?\n/).filter((line) => line.includes('-->'));
-  assert.ok(edges.length > 0 && edges.every((line) => /^\s+S\d+ --> S\d+: [A-Z_]+$/.test(line)));
-  fs.writeFileSync(path.join(root, 'docs/state-diagrams.md'), `${rendered}stale`);
-  assert.equal(checkDiagram(root), false);
-});
