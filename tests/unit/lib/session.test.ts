@@ -5,8 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  attemptOf, createRun, runPaths, runSegment, findRepoRoot, folderName, FOLDER_NAME, initializeSession, isRunId, readManifest, reactivateSession, restoreSessionPaths, storeSessionPaths,
-  truncateSlug,
+  findRepoRoot, folderName, FOLDER_NAME, initializeSession, readManifest, reactivateSession,
 } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 const now = new Date('2026-09-29T17:54:00.000Z');
@@ -25,7 +24,6 @@ function repo(): { root: string; temp: string } {
 test('timestamp-slug format without session ID', () => {
   assert.equal(folderName(now, 'Rewrite Dispatch As!'), '20260929T1754Z-rewrite-dispatch-as');
   assert.match(folderName(now, 'x'), FOLDER_NAME);
-  assert.equal(truncateSlug('a'.repeat(30) + '-' + 'b'.repeat(30)), 'a'.repeat(30));
 });
 
 test('repository root: ancestor Git metadata identifies the root; absence returns null', () => {
@@ -45,13 +43,6 @@ test('numeric suffix -1 on name collision', () => {
   const suffixed = initializeSession({ repositoryRoot: root, sessionId: 's2', sessionTitle: 'demo', now, tempRoot: temp });
   assert.equal(path.basename(suffixed), '20260929T1754Z-demo-1');
 
-  const run = createRun(dir, 'plan-review');
-  assert.deepEqual([run.id, isRunId(run.id), createRun(dir, 'implement').id], ['001-plan-review', true, '002-implement']);
-  const stored = storeSessionPaths({ log: path.join(dir, '.state', 'x.log') }, dir);
-  assert.equal(stored.log, '@session/.state/x.log');
-  assert.equal(storeSessionPaths(`${dir}-sibling/file.txt`, dir), `${dir}-sibling/file.txt`);
-  assert.equal(restoreSessionPaths(stored, dir).log, path.join(path.resolve(dir), '.state', 'x.log'));
-  assert.throws(() => restoreSessionPaths('@session/../escape', dir), /escapes/);
 });
 
 test('session matching skips corrupt unrelated directories and matches by manifest', () => {
@@ -108,40 +99,4 @@ test('session reactivate validates repository and rejects external locations', (
   fs.mkdirSync(external, { recursive: true });
   fs.writeFileSync(path.join(external, 'manifest.json'), fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   assert.throws(() => reactivateSession(external, root), /outside the workspace session root/);
-});
-
-
-// SECTION: Run paths
-
-test('run paths: effect files sit in a readable folder per dotted effect ID', () => {
-  const paths = runPaths(path.join('r'));
-  assert.equal(paths.input('review.wave.1'), path.join('r', 'review.wave.1', 'input.json'));
-  assert.equal(paths.launch('review.wave.1'), path.join('r', 'review.wave.1', 'launch.json'));
-  assert.equal(paths.prompt('review.prepare-review.1', 'opencode-0'), path.join('r', 'review.prepare-review.1', 'opencode-0.prompt.md'));
-  assert.equal(paths.slotLog('review.wave.1', 'opencode-0'), path.join('r', 'review.wave.1', 'opencode-0.log'));
-  assert.equal(paths.spill('review.wave.1', 'opencode-0'), path.join('r', 'review.wave.1', 'opencode-0.spill.md'));
-  assert.equal(paths.brief('implement.write-brief.1'), path.join('r', 'implement.write-brief.1', 'brief.md'));
-  assert.equal(paths.envelope('implement.write-brief.1'), path.join('r', 'implement.write-brief.1', 'outcome.json'));
-  assert.equal(paths.scope('review.prepare-review.1'), path.join('r', 'review.prepare-review.1', 'scope.json'));
-  assert.equal(paths.restore('implement.restore.1'), path.join('r', 'implement.restore.1', 'restore.json'));
-  assert.equal(paths.selfCheckEvent('implement.write-brief.1'), path.join('r', 'implement.write-brief.1', 'self-check.event.json'));
-  assert.equal(paths.verifyLog('implement.verify.2', 3), path.join('r', 'implement.verify.2', '3.log'));
-  assert.equal(paths.event(7, 'rule'), path.join('r', 'events', '7-rule.json'));
-});
-
-test('run paths: the first attempt has no infix and later attempts carry .a<n>', () => {
-  const paths = runPaths('r');
-  assert.equal(paths.claim('review.wave.1', 1), path.join('r', 'review.wave.1', 'claim.json'));
-  assert.equal(paths.heartbeat('review.wave.1', 2), path.join('r', 'review.wave.1', 'heartbeat.a2.json'));
-  assert.equal(paths.done('review.wave.1', 3), path.join('r', 'review.wave.1', 'done.a3.json'));
-  assert.equal(paths.slotOutcome('review.wave.1', 'codex-0', 2), path.join('r', 'review.wave.1', 'codex-0.a2.outcome.json'));
-  assert.equal(attemptOf('claim', 'claim.json'), 1);
-  assert.equal(attemptOf('claim', 'claim.a4.json'), 4);
-  assert.equal(attemptOf('claim', 'heartbeat.json'), null);
-});
-
-test('run paths: unsafe segments throw instead of hashing or escaping the run folder', () => {
-  for (const bad of ['../x', 'a/b', 'a\b', '.hidden', '', 'a..b', 'a.']) assert.throws(() => runSegment(bad), /Unsafe run path segment/, bad);
-  assert.throws(() => runPaths('r').input('../escape'), /Unsafe run path segment/);
-  assert.equal(runSegment('review.prepare-review.1'), 'review.prepare-review.1');
 });

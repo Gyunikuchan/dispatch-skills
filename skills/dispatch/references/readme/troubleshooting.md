@@ -63,14 +63,10 @@ Doctor checks Node, configuration, available executables, resolved targets and w
 
 ## Understand diagnostics coverage
 
-Token counts are measured only when a provider CLI reports them. In `diagnostics.md`, `—` marks an unavailable value, not zero. Provider CLI measurements show uncached input, cache read, cache write and output separately. Reasoning included in output is not added again. The Coverage column shows how many launched CLI invocations reported usage, for example `3/4`.
+In `diagnostics.md`, `—` marks an unavailable value, not zero. Current toolkit reports derive invocation outcomes and review rounds from session results; they do not reconstruct provider timing or token usage from removed engine journals. Missing measurements do not establish full conversation totals.
 
-`~` marks an attested or estimated token figure: optional counts your host agent reported for native subagents and writers, or Dispatch's estimate of orchestrator frame exposure from frame bytes. Measured totals exclude `~` figures. Frame exposure covers emitted frames only, not full orchestrator usage. These measurements and estimates do not establish full conversation totals. See [native and writer attestations](../providers.md) for the optional reporting fields.
+When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Elapsed intervals can include work, pauses and scheduling; they do not establish active reasoning time or usage-reset duration.
 
-Host time and H6 host-await gaps are elapsed journal intervals. They can include work, pauses and scheduling. A long gap does not measure active reasoning or establish a usage-reset duration; activity evidence is needed to attribute it. Checkpoint phase history preserves the same timing attribution.
-
-While diagnostics is on, Dispatch rewrites the report whenever a run in the session finishes or faults; until then, a run in progress has no report. If the handoff does not mention the report, it had no findings.
-
-Collection problems print a warning and never change workflow results or verification. Proposed fixes in the report are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, report completion writes the retrospective. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
 
 For setup and routing, see [Configure Dispatch](configuration.md). For session files and verification, see [Workspaces and results](concepts.md).

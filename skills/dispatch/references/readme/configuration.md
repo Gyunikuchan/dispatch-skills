@@ -88,11 +88,11 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 ## Optional settings
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
-- Set `"diagnostics": true` to add one retro turn at the end of each run and write a shareable `diagnostics.md` retrospective: per-phase time and token tables plus findings about Dispatch itself. A change takes effect at the next mutating send. The report is not uploaded automatically; review it before sharing. Token coverage is partial when a provider or execution surface does not report usage. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
+- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
 ## Older sessions and provider-specific settings
 
-Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. Finish active runs before upgrading, or preserve their folders for a handoff. If an older run reports `unsupported-journal-protocol`, see [Recovery and upgrades](troubleshooting.md#continue-after-a-local-driver-fix). Automatic migration is not available. For older plans without file ownership, ask your host to rewrite the plan and start a new run.
+Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. v0.7.x journals and frames are incompatible with the toolkit. Finish old runs before upgrading, or preserve their controller and session files. Automatic migration is not available. For older plans without file ownership, ask your host to rewrite the plan and start a new run. See [Recovery and upgrades](troubleshooting.md#continue-after-a-local-driver-fix).
 
 <details>
 <summary>Advanced provider settings</summary>

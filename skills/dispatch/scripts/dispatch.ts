@@ -16,7 +16,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
   if (argv[0] !== 'session') return toolkitMain([...argv], deps);
   const print = (value: Record<string, unknown>) => deps.stdout(JSON.stringify(value) + '\n');
   try {
-    const command = parseCommand(argv, { levels: [], pins: () => { throw new UsageError('Unsupported pins'); }, provider: () => null });
+    const command = parseCommand(argv);
     if (!['init', 'reactivate', 'quota-reprobe'].includes(command.action ?? '')) throw new UsageError('session requires init, reactivate, or quota-reprobe');
     const flag = (name: string) => command.flags[name] as string | undefined;
     const repo = findRepoRoot((deps.cwd ?? process.cwd)());

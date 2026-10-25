@@ -6,23 +6,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const MANIFEST = 'manifest.json';
-export const STATE_DIR = '.state';
 export const SLUG_MAX = 40;
-export const DELIVERABLE_TYPES = ['spec', 'design', 'plan', 'walkthrough', 'report'] as const;
-export const RUN_KINDS = ['ask', 'plan', 'design', 'implement', 'plan-review', 'design-review', 'code-review'] as const;
 export const CHAT_ID_ENV_VARS = [
   'DISPATCH_CHAT_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'OPENAI_CODEX_THREAD_ID',
   'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'CLAUDE_CODE_SESSION_ID', 'COPILOT_CLI_SESSION_ID',
 ] as const;
 
-export type DeliverableType = (typeof DELIVERABLE_TYPES)[number];
-export type RunKind = (typeof RUN_KINDS)[number];
 export type Location = 'workspace' | 'published' | 'moving-to-workspace' | 'moving-to-published';
 
 export const FOLDER_NAME = /^\d{8}T\d{4}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/;
-const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const RUN_ID = new RegExp(`^\\d{3}-(?:${RUN_KINDS.join('|')})$`);
 const WIN = process.platform === 'win32';
 
 export type Manifest = {
@@ -67,18 +60,6 @@ export function platformSessionId(env: (name: string) => string | undefined): st
     if (value) return value;
   }
   return null;
-}
-
-export function truncateSlug(slug: string): string {
-  if (slug.length <= SLUG_MAX) return slug;
-  const cut = slug.slice(0, SLUG_MAX + 1);
-  const boundary = cut.lastIndexOf('-');
-  return (boundary > 0 ? cut.slice(0, boundary) : slug.slice(0, SLUG_MAX)).replace(/-+$/, '');
-}
-
-export function deliverable(root: string, slug: string, type: DeliverableType): string {
-  if (!KEBAB.test(slug) || slug.length > SLUG_MAX) throw new Error(`Invalid deliverable slug "${slug}"; expected kebab-case up to ${SLUG_MAX} characters.`);
-  return path.join(root, `${slug}.${type}.md`);
 }
 
 // SECTION: Roots and manifest
@@ -207,105 +188,4 @@ export function reactivateSession(sessionDir: string, repositoryRoot: string): s
   const expected = path.join(workspaceSessionRoot(repositoryRoot), manifest.folderName);
   if (!samePath(sessionDir, expected)) throw new Error(`Session directory is outside the workspace session root: ${sessionDir}`);
   return fs.realpathSync(sessionDir);
-}
-
-// SECTION: Runs
-
-/** Next `NNN-<kind>` run folder under `.state/runs/`, created exclusively. */
-export function createRun(sessionRoot: string, kind: RunKind): { id: string; dir: string } {
-  const runs = ensureDir(path.join(sessionRoot, STATE_DIR, 'runs'));
-  for (;;) {
-    const highest = fs.readdirSync(runs).reduce((max, name) => Math.max(max, Number(/^(\d{3})-/.exec(name)?.[1] ?? 0)), 0);
-    if (highest + 1 > 999) throw new Error('Run sequence exhausted for this session.');
-    const id = `${String(highest + 1).padStart(3, '0')}-${kind}`;
-    try { fs.mkdirSync(path.join(runs, id), { mode: 0o700 }); return { id, dir: fs.realpathSync(path.join(runs, id)) }; } catch (error) {
-      if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
-    }
-  }
-}
-
-export const isRunId = (id: string): boolean => RUN_ID.test(id);
-
-// SECTION: Run paths
-
-const RUN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/** Rejects rather than hashes, so effect folders keep readable dotted IDs such as `review.wave.1`. */
-export function runSegment(value: string): string {
-  if (!RUN_SEGMENT.test(value) || value.split('.').includes('')) throw new Error(`Unsafe run path segment: ${JSON.stringify(value)}`);
-  return value;
-}
-
-const attemptInfix = (attempt: number): string => {
-  if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error(`Invalid attempt: ${attempt}`);
-  return attempt === 1 ? '' : `.a${attempt}`;
-};
-
-/** Pure builders for files this layout groups by effect; run-root files keep their own owners. */
-export function runPaths(runDir: string) {
-  const effectDir = (id: string): string => path.join(runDir, runSegment(id));
-  const inEffect = (id: string, name: string): string => path.join(effectDir(id), name);
-  return {
-    effectDir,
-    ruleFindings: () => path.join(runDir, 'rule.findings.json'),
-    input: (id: string) => inEffect(id, 'input.json'),
-    launch: (id: string) => inEffect(id, 'launch.json'),
-    prompt: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.prompt.md`),
-    slotLog: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.log`),
-    spill: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.spill.md`),
-    slotOutcome: (id: string, slot: string, attempt: number) => inEffect(id, `${runSegment(slot)}${attemptInfix(attempt)}.outcome.json`),
-    claim: (id: string, attempt: number) => inEffect(id, `claim${attemptInfix(attempt)}.json`),
-    heartbeat: (id: string, attempt: number) => inEffect(id, `heartbeat${attemptInfix(attempt)}.json`),
-    done: (id: string, attempt: number) => inEffect(id, `done${attemptInfix(attempt)}.json`),
-    brief: (id: string) => inEffect(id, 'brief.md'),
-    delta: (id: string) => inEffect(id, 'delta.md'),
-    envelope: (id: string) => inEffect(id, 'outcome.json'),
-    scope: (id: string) => inEffect(id, 'scope.json'),
-    restore: (id: string) => inEffect(id, 'restore.json'),
-    selfCheckEvent: (id: string) => inEffect(id, 'self-check.event.json'),
-    verifyLog: (id: string, n: number) => {
-      if (!Number.isSafeInteger(n) || n < 1) throw new Error(`Invalid command index: ${n}`);
-      return inEffect(id, `${n}.log`);
-    },
-    event: (seq: number, awaiting: string) => {
-      if (!Number.isSafeInteger(seq) || seq < 0) throw new Error(`Invalid event sequence: ${seq}`);
-      return path.join(runDir, 'events', `${seq}-${runSegment(awaiting)}.json`);
-    },
-  };
-}
-
-/** Attempt number encoded in a `<stem>[.a<n>].json` file name, or null when it is another file. */
-export function attemptOf(stem: string, name: string): number | null {
-  const match = new RegExp(`^${stem}(?:\\.a(\\d+))?\\.json$`).exec(name);
-  return match ? Number(match[1] ?? 1) : null;
-}
-
-// SECTION: Relative references
-
-/** Rewrites absolute paths under `root` to `@session/...` so stored state survives the handoff move. */
-export function storeSessionPaths<T>(value: T, root: string): T {
-  if (typeof value === 'string') {
-    let result: string = value;
-    for (const variant of new Set([root, root.replaceAll('\\', '/'), root.replaceAll('/', '\\')])) {
-      result = result.replace(new RegExp(`${variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[/\\\\]|$)`, 'g'), '@session');
-    }
-    return (result.includes('@session') ? result.replaceAll('\\', '/') : result) as T;
-  }
-  if (Array.isArray(value)) return value.map((item: unknown) => storeSessionPaths(item, root)) as T;
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, storeSessionPaths(item, root)])) as T;
-  return value;
-}
-
-/** Resolves `@session/...` markers against the session's current root; `..` segments are rejected. */
-export function restoreSessionPaths<T>(value: T, root: string): T {
-  if (typeof value === 'string') {
-    return value.replace(/@session(?:\/[A-Za-z0-9._-]+)*/g, (marker) => {
-      const parts = marker.slice('@session'.length).split('/').filter(Boolean);
-      if (parts.includes('..')) throw new Error('Stored session path escapes its session root.');
-      return path.join(path.resolve(root), ...parts);
-    }) as T;
-  }
-  if (Array.isArray(value)) return value.map((item: unknown) => restoreSessionPaths(item, root)) as T;
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, restoreSessionPaths(item, root)])) as T;
-  return value;
 }

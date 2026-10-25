@@ -156,7 +156,7 @@ test('human manuals retain portable links and unchanged operational guidance', (
     'A large diff, changed external contract, finance repository, or state-machine file alone does not require high',
     'Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment',
     'Retries, later phases, accepted scope changes, and later design increments keep the settled level',
-    'nativeSubagentsOnly', 'write-subagents', 'unsupported-journal-protocol', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
+    'nativeSubagentsOnly', 'write-subagents', 'v0.7.x journals and frames are incompatible with the toolkit', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
     'positive safe integer', 'omission defaults to one',
   ]) assert.ok(config.includes(term), term);
   assert.doesNotMatch(config, /OS temp|asks whether to adopt or retain/i);

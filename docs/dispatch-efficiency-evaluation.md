@@ -1,5 +1,7 @@
 # Dispatch efficiency evaluation
 
+> Historical v0.7.x measurement protocol. Its journal, receipt and timing sources were removed by [ADR 0013](decisions/0013-toolkit-and-ledger.md). Use it only with retained old controllers and sessions; current toolkit diagnostics cannot supply these measurements.
+
 Maintainer protocol for judging whether an instruction change, such as post-GREEN refactor inspection, improves verified delivery cost or speed. It uses evidence Dispatch already retains. It adds no instrumentation, does not enable diagnostics by default, and does not change local configuration.
 
 The question is total cost to a verified result, not the number of TDD steps. A cheaper run that needs more repairs or fails review is not an improvement.

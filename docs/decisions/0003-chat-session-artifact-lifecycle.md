@@ -3,7 +3,7 @@
 - **Status**: Accepted; updated for [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-28
 
-> Recovery execution policy is superseded by the [current checkpoint/continuation contract](../../skills/dispatch/references/change-handling.md#checkpoints-and-runtime-continuation). Historical rationale below is retained.
+> Recovery mechanics are superseded by [ADR 0013](0013-toolkit-and-ledger.md). Historical rationale below is retained.
 
 ## Context
 
