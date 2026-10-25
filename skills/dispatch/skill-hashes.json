@@ -86,7 +86,7 @@
   "scripts/toolkit/output.ts": "c29d46e06cb62eef4548a25424ce6a887a580cad5bf1fcb546cc69c65e6d936b",
   "scripts/toolkit/plan-view.ts": "a065e44b731235b2da58f38f94fa928f4a74ed40796c22b30d90fdb115816a5a",
   "scripts/toolkit/prompts.ts": "0ae180525e2b38484c99f3189f506bc7836a301eb978f29631225b3d40dcd997",
-  "scripts/toolkit/prune.ts": "088c693b0b4575d75aa7c5435d74aaadd5920b73aa0deee687a590414af6ff5c",
+  "scripts/toolkit/prune.ts": "db7793132fce7d8a91e689c21946de2963c737a74ac62ef37cb8c8212987f6f7",
   "scripts/toolkit/records.ts": "9a634f903f7dd46c4a1a1f30c22db83607a5796e52d5aeb919c567d7e1d293a4",
   "scripts/toolkit/red.ts": "de81f65dcc9dc56a637fec8a7a3a4c4b59aa218c1993c039f2faa57779ecdb86",
   "scripts/toolkit/report.ts": "40b09b82faae9c059cb892aa5693cf1469ab88dca73ff42a8b408cfce28ff561",
