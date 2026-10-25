@@ -67,7 +67,7 @@ const shapes: Record<string, Record<string, Rule>> = {
   evidence: {
     criterion: text, commandDigest: hash, tree: git,
     clean: (value, field) => { if (typeof value !== 'boolean') invalid(field); },
-    before: git, after: git, exit: integer, path: text,
+    before: git, after: git, exit: integer, path: text, artifacts: (value,field)=>object(value,{spec:hash,plan:hash,design:hash},['design'],field),
   },
 };
 const writers: Record<string, Record<string, Rule>> = {
@@ -78,8 +78,15 @@ const writers: Record<string, Record<string, Rule>> = {
   finished: { task: text, launch, candidate: git },
   abandoned: { task: text, launch, reason: text },
 };
+const checkRows: Rule = (value, field) => {
+  if(!Array.isArray(value)) invalid(field);
+  for(const row of value as unknown[]) object(row,{criterion:text,commands:array,commandDigest:hash},[],field);
+};
+const pruning = { operation: hash, artifacts: (value:unknown,field:string)=>object(value,{spec:hash,plan:hash,design:hash},['design'],field), from:git, sourceTree:git, targets:array, pre:checkRows, final:checkRows, review:hash };
 const integrations: Record<string, Record<string, Rule>> = {
   opened: { path: text, branch: text, base: git, dest },
+  'prune-started': pruning,
+  pruned: {...pruning,to:git,tree:git},
   started: { task: text, candidate: git },
   conflict: { task: text, paths: array },
   done: { task: text, commit: git },
@@ -107,7 +114,7 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase');
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  object(value.data, fields!, ['bind', 'approval'].includes(value.kind) ? ['design'] : []);
+  object(value.data, fields!, ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : []);
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
   }

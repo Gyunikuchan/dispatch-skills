@@ -417,6 +417,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   }
   const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
   lintTransientCoverage(criteria, finalCommands, out);
+  if(criteria.some(c=>c.retain==='transient') && !finalCommands.some(c=>c.trim()) && !out.some(d=>d.code==='transient-coverage'&&d.message.includes('[FINAL]'))) out.push(lint('transient-coverage',null,'Transient criteria require at least one plan-level [FINAL] Verify command.'));
   lintTransientTestPaths(criteria, changes, out);
   lintUndeclaredTestPaths(criteria, out);
   const planIds = collectPlanIds(lines, criteria);

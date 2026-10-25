@@ -117,3 +117,30 @@ describe('evidence eligibility', () => {
     assert.equal(dirtyCheckout[0]?.state, 'missing');
   });
 });
+
+test('pruned evidence requires exact transition and final tree',async()=>{
+ const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+ const pre=[{criterion:'SC1',commands:['step'],commandDigest:'pre'}],final=[{criterion:'final:contract',commands:['retained'],commandDigest:'final'}];
+ const artifacts={spec:'spec',plan:'plan'};
+ const rows=[{criterion:'SC1',commandDigest:'pre',tree:'source',before:'source',after:'source',clean:true,exit:0,path:'history.json',artifacts},{criterion:'final:contract',commandDigest:'final',tree:'target',before:'target',after:'target',clean:true,exit:0,path:'final.json',artifacts}];
+ const fold=(data=rows)=>({lastSeq:2,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
+ const transition={sourceTree:'source',tree:'target',pre,final,transient:['SC1'],sourceSeq:2,artifacts};
+ const current={headTree:'target',testedTree:'target'};
+ const status=criterionStatuses(fold(),pre,current,transition)[0]!;assert.equal(status.state,'verified');assert.equal(status.evidence,'history.json');assert.match(status.reason!,/source tree source; final evidence \[final:contract\]\(final.json\)/);
+ assert.equal(criterionStatuses(fold(),pre,current)[0]!.state,'missing');
+ for(const patch of [{sourceTree:'other'},{tree:'other'},{sourceSeq:1},{artifacts:{spec:'changed'}},{pre:[{...pre[0]!,commandDigest:'changed'}]}])assert.equal(criterionStatuses(fold(),pre,current,{...transition,...patch})[0]!.state,'missing');
+ for(const patch of [{exit:1},{after:'mutated'},{commandDigest:'stale'},{clean:false},{tree:'unrelated'}])assert.equal(criterionStatuses(fold([rows[0]!,{...rows[1]!,...patch}]),pre,current,transition)[0]!.state,'missing');
+ assert.equal(criterionStatuses(fold(),pre,{...current,testedTree:'dirty'},transition)[0]!.state,'missing');
+});
+
+test('final evidence cannot reuse an older success after a failed rerun',async()=>{
+ const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+ const check={criterion:'SC1',commands:['step'],commandDigest:'step'},final={criterion:'final:SC1',commands:['retained'],commandDigest:'retained'},artifacts={spec:'s',plan:'p'};
+ const rows=[{criterion:'SC1',commandDigest:'step',tree:'source',before:'source',after:'source',clean:true,exit:0,artifacts},{criterion:'final:SC1',commandDigest:'retained',tree:'target',before:'target',after:'target',clean:true,exit:0,artifacts}];
+ const fold=(data=rows)=>({lastSeq:data.length,torn:null,records:data.map((data,index)=>({seq:index+1,key:String(index),kind:'evidence',by:'tool',at:'',data}))});
+ const transition={sourceTree:'source',tree:'target',pre:[check],final:[final],transient:['SC1'],sourceSeq:2,artifacts},current={headTree:'target',testedTree:'target'};
+ assert.equal(criterionStatuses(fold(),[check],current,transition)[0]!.state,'verified');
+ assert.equal(criterionStatuses(fold([...rows,{...rows[1]!,exit:7}]),[check],current,transition)[0]!.state,'missing');
+ assert.equal(criterionStatuses(fold([{...rows[0]!,artifacts:{spec:'changed',plan:'p'}},rows[1]!]),[check],current,transition)[0]!.state,'missing');
+ const durable={...check,criterion:'SC2'};assert.equal(criterionStatuses(fold([{...rows[0]!,criterion:'SC2',tree:'target',before:'target',after:'target'},rows[1]!]),[durable],current,{...transition,transient:[]})[0]!.state,'missing');
+});

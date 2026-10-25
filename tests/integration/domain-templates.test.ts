@@ -156,7 +156,7 @@ test('quality selection: plans name searched equivalents and plan review checks 
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(plan.includes('- Retain: <transient|durable>'));
-  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'Transient criteria require `Covered by:`', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
+  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'explicit nonempty `[FINAL]` Verify command', 'even when Covered by names a durable criterion', 'remove declared transient test files', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'Transient criteria require `Covered by:`', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
   assert.equal(plan.match(/\[quality bar's code test policy\]\(quality-bar\.md#code\)/g)?.length, 1);
 });
 

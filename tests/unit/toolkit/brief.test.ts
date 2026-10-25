@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
@@ -49,14 +49,32 @@ const CAPTURE_PLAN = PLAN
     '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Verify: `node first-check`\n  - RED: `node first-red {files}`\n',
   );
 
+const sharedFixture = sessionFixture();
+const bindings = new Map<boolean, string>();
+after(() => sharedFixture.cleanup());
+
 async function fixture(design = false, source = PLAN) {
-  const f = sessionFixture();
+  const f = {...sharedFixture, cleanup: () => {}};
+  // Reset scenario state while retaining the same physical session and templates.
+  fs.rmSync(path.join(f.session, 'ledger.jsonl'), {force: true});
+  fs.rmSync(path.join(f.session, 'ledger.torn-1.jsonl'), {force: true});
+  fs.rmSync(path.join(f.root, 'strategy.design.md'), {force: true});
+  delete f.deps.hook;
+  f.lines.length = 0;
   f.artifact('mission.spec.md', '# Mission\n## Requirements\n### REQ-1 — Works\n');
   const planPath = f.artifact('work.plan.md', source);
   if (design) f.artifact('strategy.design.md', '# Strategy\n');
   let key = 0;
   const add = (kind: string, data: object, extra: object = {}) => appendRecord(f.session, {kind, key: 'record-' + key++, by: 'orchestrator', data, ...extra}, f.deps);
-  await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
+  const ledgerPath = path.join(f.session, 'ledger.jsonl');
+  const binding = bindings.get(design);
+  if (binding) {
+    fs.writeFileSync(ledgerPath, binding);
+    key = 1;
+  } else {
+    await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
+    bindings.set(design, fs.readFileSync(ledgerPath, 'utf8'));
+  }
   const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
   const approve = () => add('approval', hashes, {by: 'user', quote: 'Approved'});
   const launch = (task = 'T1') => add('writer', {phase: 'launched', task, path: `.state/worktrees/${task}-1`, base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}});

@@ -43,3 +43,19 @@ test('status report exposes bindings approval gate open escalations and torn tai
     assert.ok(fs.readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8').endsWith('{torn'));
   } finally { f.cleanup(); }
 });
+
+test('recovery status refuses transient success without a validated transition',async()=>{const PLAN=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');const {fakeGit}=await import('./helpers/fake-git.ts');const f=sessionFixture();try{
+ f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN.replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
+ const cwd=path.join(f.session,'.state/worktrees/integration');fs.mkdirSync(cwd,{recursive:true});const head='a'.repeat(40),tree='b'.repeat(40);f.deps.run=fakeGit({session:f.session,head,tree,testedTree:tree,changes:[],calls:[]});await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base:head,dest:{path:f.root,branch:'main'}}},f.deps);
+ await main(['status','show','--session',f.session],f.deps);const value=JSON.parse(fs.readFileSync(f.output().path!,'utf8'));assert.ok(value.criteria.includes('SC1'));
+}finally{f.cleanup();}});
+
+
+test('status retains missing automated criteria for manual completions and waivers',async()=>{const PLAN=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');const {fakeGit}=await import('./helpers/fake-git.ts');
+ for(const kind of ['manual-complete','waiver']){const f=sessionFixture();try{
+  f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN);await appendRecord(f.session,{kind:'bind',key:'bind',by:'tool',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
+  const cwd=path.join(f.session,'.state/worktrees/integration');fs.mkdirSync(cwd,{recursive:true});const head='a'.repeat(40),tree='b'.repeat(40);f.deps.run=fakeGit({session:f.session,head,tree,testedTree:tree,changes:[],calls:[]});await appendRecord(f.session,{kind:'integrate',key:'opened',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base:head,dest:{path:f.root,branch:'main'}}},f.deps);
+  await appendRecord(f.session,{kind,key:kind,by:'user',quote:'accepted',data:{criterion:'SC1',...(kind==='waiver'?{reason:'accepted risk'}:{evidence:'reviewed'})}},f.deps);
+  await main(['status','show','--session',f.session],f.deps);const value=JSON.parse(fs.readFileSync(f.output().path!,'utf8'));assert.ok(value.criteria.includes('SC1'),JSON.stringify(value));assert.equal(value.criterionStatuses.find((row:{criterion:string})=>row.criterion==='SC1').state,kind==='waiver'?'waived':'manual');
+ }finally{f.cleanup();}}
+});

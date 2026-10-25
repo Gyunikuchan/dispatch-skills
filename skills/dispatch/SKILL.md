@@ -20,7 +20,7 @@ Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action
 1. Read host rules and the [quality bar](references/templates/quality-bar.md). Resolve the [governing spec](references/spec-stage.md).
 2. Author and lint the required design or plan; resolve parse errors. Review against the spec, adjudicate findings and apply accepted fixes under [review rules](references/review-rules.md).
 3. Obtain the applicable approval tuple under the [Decision Frame](references/decision-frame.md).
-4. Implement scoped tasks with native writers, then verify the integrated tree. Inspect failed checks and repair within scope. Review code and verify again after fixes.
+4. Implement scoped tasks with native writers, then verify the integrated tree. Inspect failed checks and repair within scope. Resolve code findings, commit fixes, verify and review the exact HEAD. For transient plans, run `worktree prune`, then `verify run` with final selection under the [lifecycle](references/verbs/implement.md). Deliver only after successful final checks.
 5. Run `report complete`; after success run `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifact paths.
 
 For `native-pending`, read each `promptPath`, launch the configured native slot, write its output to `replyPath`, and rerun the same tool call. Preserve running handles; wait on completion or material blockers. [Providers](references/providers.md) owns slot and fallback rules.

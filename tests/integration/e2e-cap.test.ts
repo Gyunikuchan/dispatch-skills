@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scanOverlay, type FileTable } from './scan.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
 
 // Count the real Git/subprocess suites and their shared repository helper.
 export const E2E_CAP = 15;
+const e2eFiles = () => scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map(file => ({ ...file, path: 'tests/e2e/' + file.path }));
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));
@@ -13,13 +16,13 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 }
 
 test('tests/e2e/ stays within the cap', () => {
-  const files = scanOverlay();
-  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 13);
+  const files = e2eFiles();
+  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 14);
   assert.deepEqual(checkE2eCap(files), []);
 });
 
 test('e2e consumers use toolkit results without legacy frame helpers', () => {
-  const files = scanOverlay();
+  const files = [...e2eFiles(), { path: 'tests/helpers/e2e.ts', text: fs.readFileSync(path.join(OVERLAY_ROOT, 'tests/helpers/e2e.ts'), 'utf8') }];
   for (const name of ['driver-authority', 'plan-replacement', 'quota-routing', 'recovery', 'review', 'self-build-preparation', 'spec-stage']) {
     assert.equal(files.some(file => file.path === 'tests/e2e/' + name + '.test.ts'), false, name);
   }

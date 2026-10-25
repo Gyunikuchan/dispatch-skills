@@ -967,3 +967,9 @@ test('plan criterion satisfies ids parsed', () => {
 });
 
 test('plan criterion missing satisfies rejected', () => { for (const value of ['', '  - Satisfies: \n', '  - Satisfies: REQ-1, DEC-1\n']) assert.ok(defects(PLAN.replace('  - Satisfies: REQ-1\n', value)).includes('missing-satisfies')); });
+
+test('warns when transient coverage names a durable criterion without FINAL verification',()=>{
+ const source=transient('  - Retain: transient\n  - Covered by: SC2\n').replace('`npm test` [FINAL]','`npm test`');
+ const result=okPlan(source);assert.ok(result.warnings.some(w=>w.code==='transient-coverage'&&w.message.includes('plan-level')));
+ assert.equal(okPlan(transient('  - Retain: transient\n  - Covered by: SC2\n')).warnings.some(w=>w.code==='transient-coverage'),false);
+});

@@ -187,7 +187,7 @@ test('quality selection: reviews hold retained tests to the durable bar', () => 
       ]) assert.ok(prompt.includes(term), `${kind}: ${term}`);
     }
   }
-  assert.ok(ruleText('code').includes('mark step checks transient and trim them after review'));
+  assert.ok(ruleText('code').includes('classify intermediate step, helper and branch-permutation checks as transient for removal after review'));
 });
 
 test('review prompts: prompts keep plan IDs out of tests', () => {

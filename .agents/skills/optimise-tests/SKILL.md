@@ -1,6 +1,6 @@
 ---
 name: optimise-tests
-description: Measure this repository's test suite, refactor it unit by unit with parallel scoped writers, and prove no unapproved coverage loss with a runtime and test-count delta.
+description: Measure this repository's test suite, refactor it unit by unit with parallel scoped writers, and report measured runtime and leaf-test reductions under the high-value test bar.
 disable-model-invocation: true
 metadata:
   internal: true
@@ -8,9 +8,9 @@ metadata:
 
 # Optimise Tests
 
-You, the lead, make the `tests/` suite faster and higher-signal while preserving required behavior and baseline failures. Deterministic scripts measure; native writers refactor one unit each and provide positive retention and action evidence; you own the baseline, scheduling, checks, the move pass, coverage dispositions, the gate and the handoff.
+You, the lead, make the `tests/` suite faster and higher-signal while preserving required behavior and baseline failures. Deterministic scripts measure; native writers refactor one unit each and provide positive retention and action evidence; you own the baseline, scheduling, checks, the move pass, the gate and the handoff.
 
-**Objective**: a green suite with no unapproved covered-line loss; any production file reduced to zero coverage has its own bound user approval. Remove low-signal tests and report measured leaf-test and suite-duration deltas separately from ledger-derived scenario, case, and setup savings. Report unmet objectives explicitly.
+**Objective**: fewer reported leaf tests and lower suite wall time, with a green suite and durable tests that meet the [high-value bar](../../../skills/dispatch/references/templates/quality-bar.md#code). Coverage is informational implementation feedback. Report measured leaf-test and suite-duration deltas separately from ledger-derived scenario, case, and setup savings. Report unmet objectives explicitly.
 
 Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start; `<work>` is `.scratch/optimise-tests/<run>`. `<skill>` is the directory holding this `SKILL.md`:
 
@@ -46,7 +46,7 @@ Launch one native writer per packet, in parallel, at most `maxParallelWriters` a
 Optimise packet <id> of the dispatch-skills test suite. Read <skill>/references/criteria.md and follow it.
 Packet: <work>/before/packets/<id>.json. You own only the packet's files in <unit>. <new-files>
 Verify: the focused Node test command from AGENTS.md § Verification Details over the files you own.
-Ledger: append complete action and retained-scenario JSON records to <work>/ledger/<id>.jsonl. Classify every baseline test. Do not write coverage dispositions or savings records; the lead owns those after the full after snapshot.
+Ledger: append complete action and retained-scenario JSON records to <work>/ledger/<id>.jsonl. Classify every baseline test. The lead owns optional savings records after the full after snapshot.
 Never run git write commands. Return only completion (ledger path, verify result, any lead-owned request) or a blocker.
 ```
 
@@ -84,9 +84,7 @@ node <skill>/scripts/compare.ts <work>/before/inventory.json <work>/after/invent
 npm test
 ```
 
-The first comparison is review input. It checks all action and retention evidence, reports after-run failures, and lists each coverage drop with an expected binding and candidate action IDs. The initial action-ID list includes every delete and merge; review it against the affected file and select only the actions that contributed to that loss. Add one lead-owned `coverage` record per dropped file, using measured before/after counts and a review explanation for the full loss. Use a 64-zero provisional binding, rerun comparison after narrowing action IDs, and replace it with the newly printed expected binding. See [criteria.md](references/criteria.md) for the projection and record shape. A drop remains pending until its disposition is complete and the binding matches.
-
-For each file reduced to zero covered lines, ask the user once about that concrete file loss after presenting its bound evidence, then record the user's exact quote in that file's approval. The policy or plan decision does not approve a future loss. Renew approval if its target, counts, references, or contributing action details change. Nonzero drops need lead review and a valid binding, but no user approval. The gate rejects missing classifications and invalid evidence even when coverage holds; malformed records and unknown kinds do not count as keep.
+The comparison validates complete action and retention evidence and reports after-run failures. Review retained scenarios against the high-value bar and check same-defect claims against the named survivors. Coverage changes, including zero or missing metrics, are informational and require no disposition, digest binding or approval. Missing classifications, malformed records, unknown kinds and invalid evidence fail the gate even when coverage holds.
 
 The report measures reported leaf-test counts and suite wall-clock duration. Add at most one optional `savings` record for ledger-derived scenarios, cases, cosmetic table merges, or reduced repeated setup calls, with concrete evidence. `compare.md` labels these separately from measured totals; unreported quantities remain unmeasured. A table merge that retains all cases is cosmetic, not removed work. Preserve configured concurrency and timing budgets.
 
@@ -94,6 +92,6 @@ The report measures reported leaf-test counts and suite wall-clock duration. Add
 
 ## 6. Hand off
 
-Reply in the handoff format of `AGENTS.md` § Long-Running Work and Handoff. Report measured leaf-test and suite-duration deltas against the baseline; if an objective was not met, say so. Keep these results separate from ledger-derived scenario, case, cosmetic-merge, and setup claims. Include `<work>/compare.md`, ledger paths, counts of deleted, merged, moved, and restored tests, coverage dispositions and their approval status, plus every rejected edit and unresolved blocker.
+Reply in the handoff format of `AGENTS.md` § Long-Running Work and Handoff. Report measured leaf-test and suite-duration deltas against the baseline; if an objective was not met, say so. Keep these results separate from ledger-derived scenario, case, cosmetic-merge, and setup claims. Include `<work>/compare.md`, ledger paths, counts of deleted, merged, moved, and restored tests, informational coverage changes, plus every rejected edit and unresolved blocker.
 
 **Done when:** the reply is sent.

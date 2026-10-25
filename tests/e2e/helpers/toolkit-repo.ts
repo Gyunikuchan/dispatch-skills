@@ -32,3 +32,21 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   });
   return {root,session,deps,git,run,spawned,concurrent,approve,level,edit, integration:path.join(session,'.state/worktrees/integration'), cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
+
+export const transientTarget='tests/step.transient.test.ts';
+export const transientPlanSource=planSource.replace('#### [MODIFY] src/file.ts','#### [NEW] '+transientTarget).replace('  - Changes: src/file.ts','  - Changes: '+transientTarget+'\n  - Tests: '+transientTarget+'\n  - Retain: transient\n  - Covered by: FINAL').replace('  - Evidence: verify','  - Verify: `node -e "process.exit(0)"` [FINAL]\n  - Evidence: verify');
+export async function transientRepo(source=transientPlanSource,writerFiles:Record<string,string>={}) {
+ const r=await toolkitRepo(source); await r.level(); const made=await r.run(['worktree','create','T1']);
+ assert.equal(made.output.ok,true,JSON.stringify(made));const writer=path.join(r.session,made.value.path);
+ for(const [file,text] of Object.entries({[transientTarget]:'step\n',...writerFiles})){fs.mkdirSync(path.dirname(path.join(writer,file)),{recursive:true});fs.writeFileSync(path.join(writer,file),text);}
+ assert.equal((await r.run(['worktree','submit','T1'])).exit,0);assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
+ assert.equal((await r.run(['verify','run'])).output.ok,true);return r;
+}
+export function captureIntegrationReview(r:Awaited<ReturnType<typeof toolkitRepo>>,round=1,findings:Record<string,unknown>[]=[]){
+ const dir=path.join(r.session,'.state/reviews/code-integration/round-'+round);fs.mkdirSync(path.join(dir,'gen-1/slots'),{recursive:true});
+ const hashes=currentHashes(r.root,latest(foldLedger(r.session),'bind'));
+ const base=foldLedger(r.session).records.find(x=>x.data['phase']==='opened')!.data['base'];
+ fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify({round,startSeq:foldLedger(r.session).lastSeq,generation:1,cap:3,roster:[{slot:'reviewer'},{slot:'unused-reserve',reserve:true}],scope:'Full review',artifacts:hashes,spec:{hash:hashes.spec},target:{base,head:r.git(['rev-parse','HEAD'],r.integration)}}));
+ fs.writeFileSync(path.join(dir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
+ fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'code-integration',round,failed:[],findings}));return dir;
+}

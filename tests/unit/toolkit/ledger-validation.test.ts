@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { validateRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 
@@ -28,11 +29,15 @@ test('ledger records validate closed fields and user-only input', async () => {
  invalid.push(['approval',{spec:'sha256:'+'A'.repeat(64),plan:hash},'spec']);
  for(const field of ['before','after'])invalid.push(['edit',{artifact:'plan',before:hash,after:hash,class:'non-intent',affects:[],rationale:'r',diffRef:'d',[field]:'sha256:'+'A'.repeat(64)},field]);
  invalid.push(['writer',{phase:'finished',task:'t',launch:1,candidate:'A'.repeat(64)},'candidate']);
- for(const [kind,data,field]of invalid){const r=await add(kind,data,{by:'user',quote:'yes'});assert.equal(r.output.reason,'invalid-record');assert.match(r.output.summary,new RegExp(field));}
+ for(const [kind,data,field]of invalid)assert.throws(()=>validateRecord({kind,data,key:'case',by:'user',quote:'yes'}), error=>{assert.equal((error as {reason:string}).reason,'invalid-record');assert.match((error as Error).message,new RegExp(field));return true;});
+ const invalidCli=await add('note',{text:2});assert.equal(invalidCli.exit,1);assert.equal(invalidCli.output.reason,'invalid-record');assert.match(invalidCli.output.summary,/text/);
  for(const kind of ['approval','level','bind','escalation','edit','ruling','note']){
  const data:Record<string,object>={approval:{spec:hash,plan:hash},level:{level:'low'},bind:{spec:'s',plan:'p'},escalation:{id:'i',state:'open',summary:'s'},edit:{artifact:'plan',before:hash,after:hash,class:'non-intent',affects:[],rationale:'r',diffRef:'d'},ruling:{subject:'s',ruling:'r',rationale:'r'},note:{text:'n'}};
- assert.equal((await add(kind,data[kind]!,{key:undefined,by:'user',quote:'yes'})).output.reason,'missing-key');
+ assert.throws(()=>validateRecord({kind,data:data[kind]!,by:'user',quote:'yes'}),{reason:'missing-key'});
  }
- for(const level of ['xhigh','max'])assert.equal((await add('level',{level},{by:'user',quote:' '})).output.reason,'user-only');
+ for(const level of ['xhigh','max'])assert.throws(()=>validateRecord({kind:'level',data:{level},key:'level',by:'user',quote:' '}),{reason:'user-only'});
+ const missingKey=await call({kind:'note',data:{text:'n'},by:'orchestrator'});assert.equal(missingKey.exit,1);assert.equal(missingKey.output.reason,'missing-key');
+ const userOnly=await add('level',{level:'max'},{by:'user',quote:' '});assert.equal(userOnly.exit,1);assert.equal(userOnly.output.reason,'user-only');
+ const accepted=await add('note',{text:'persisted'});assert.equal(accepted.exit,0);assert.equal(JSON.parse(fs.readFileSync(path.join(f.session,'ledger.jsonl'),'utf8')).data.text,'persisted');
  }finally{f.cleanup();}
 });

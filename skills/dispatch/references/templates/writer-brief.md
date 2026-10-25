@@ -7,7 +7,7 @@ Read the governing spec whole: `{{specPath}}` ({{specHash}}).
 Governing plan: `{{planPath}}` ({{planHash}}).
 
 1. For each criterion with `RED:`, write failing tests first and run its RED command to observe the failures. Use its generated command under RED capture commands when present.
-2. Implement the task until each Verify command and each contract command passes. If a needed path is outside scope, or a plan detail is wrong or infeasible, report the evidence to the orchestrator. Keep plan edits with the orchestrator.
+2. Classify intermediate step, helper and branch-permutation checks as transient in isolated declared host-runner paths. Justify durable tests under the canonical quality bar below; local coverage is optional implementation feedback. Run full modified logical test files and known impacted consumers before aggregate checks. Implement the task until each Verify command and each contract command passes. If a needed path is outside scope, or a plan detail is wrong or infeasible, report the evidence to the orchestrator. Keep plan edits with the orchestrator.
 3. Return a short report: status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; one-line summary; changed files; commands run with results; observed RED failures; concerns.
 
 ## Shared plan context

@@ -62,3 +62,5 @@ test('toolkit public entry completes a verified writer delivery and standalone r
     assert.equal(f.launches().length, 3);
   } finally { f.cleanup(); }
 });
+
+test('completed run preserves transient history',async()=>{const {transientRepo,captureIntegrationReview,transientTarget}=await import('./helpers/toolkit-repo.ts');const r=await transientRepo();try{captureIntegrationReview(r);assert.equal((await r.run(['worktree','prune'])).output.ok,true);assert.equal((await r.run(['verify','run','--final'])).output.ok,true);assert.equal((await r.run(['worktree','deliver'])).output.ok,true);const report=await r.run(['report','complete']);assert.equal(report.output.ok,true);assert.match(fs.readFileSync(path.join(r.session,report.value.path),'utf8'),/historical pre-prune evidence via validated pruning/);assert.equal(fs.existsSync(path.join(r.root,transientTarget)),false);}finally{r.cleanup();}});

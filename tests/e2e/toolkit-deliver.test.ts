@@ -129,3 +129,5 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
 });
+
+it('delivery refuses unverified transient pruning',async()=>{const r=await toolkitRepo();try {await r.run(['verify','run']); const file=path.join(r.root,'work.plan.md');fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));assert.equal((await r.run(['worktree','deliver'])).output.reason,'pruning-required');}finally{r.cleanup();}});

@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
-import { foldLedger, latest, levelGate, withLedger } from './ledger.ts';
+import { foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { fanOut, resolveSlots, type SlotOutcome, type Validation } from './fanout.ts';
 import { parseReport } from './domain/report.ts';
@@ -20,8 +20,8 @@ import { LEVELS, type Level } from './types.ts';
 import { ToolError } from './output.ts';
 import { redGaps } from './red.ts';
 
-type Capture = {spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; target: ReviewTarget};
+type Capture = {artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
+type Round = {round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget};
 function read<T>(file: string): T | null {
   try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
@@ -31,7 +31,7 @@ function atomic(file: string, value: unknown) {
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
   finally {fs.rmSync(temp, {force: true});}
 }
-const same = (round: Round, capture: Capture) => round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target);
+const same = (round: Round, capture: Capture) => round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const splitPaths = (text: string) => text.split('\0').filter(Boolean);
 
@@ -141,7 +141,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
     }
     const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head, '--', ...exclusion]));
-    return {spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
+    return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
 
   return withLockFile(path.join(directory, 'claim'), 'review', deps, 0, async () => {
@@ -177,7 +177,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const target = captured.target as {base: string; head: string};
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
-      const value: Round = {round: n, generation, cap, level, roster: [...roster.targets, ...roster.reserves], scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target};
+      const value: Round = {round: n, generation, cap, level, roster: [...roster.targets, ...roster.reserves], scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifacts?{artifacts:captured.artifacts}:{})};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);

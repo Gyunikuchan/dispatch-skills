@@ -1,3 +1,5 @@
+import { pruneTransition } from './prune.ts';
+import { hasTransient } from './plan-view.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,7 +79,10 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     }
   }
   const checkRows = checks(plan);
-  const statusRows = criterionStatuses(fold, checkRows, current);
+  let transition;
+  let invalidPruning=false;
+  if(hasTransient(plan)) {try{transition=await pruneTransition(ctx,fold,plan,true);}catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;invalidPruning=true;}}
+  const statusRows = invalidPruning?checkRows.map(c=>({criterion:c.criterion,state:'missing' as const,reason:'pruning or final verification required'})):criterionStatuses(fold, checkRows, current,transition);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
   const deliveredAtHead = Boolean(delivered && head && delivered.data['to'] === head);
   const planTaskIds = new Set(plan.tasks.map((task) => task.id));

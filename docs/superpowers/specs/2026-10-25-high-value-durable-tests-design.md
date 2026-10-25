@@ -6,26 +6,46 @@
 
 ---
 
-## 1. Problem Statement
+## 1. Context & Origin
 
-Test suites easily accumulate low-value tests: trivial field assertions, mirror checks of simple pass-through logic, and fine-grained unit checks written solely to chase branch/line coverage metrics. These tests increase suite runtime and maintenance friction without defending against plausible, high-severity defects.
+This design originated from an evaluation of how Dispatch writers practice Test-Driven Development (TDD) and manage test lifecycle:
 
-Furthermore, while Dispatch supports `Retain: transient` in planning, transient tests currently rely on manual post-review trimming guidance rather than a deterministic lifecycle, allowing transient tests to inadvertently leak into permanent repository test suites. Additionally, `.agents/skills/optimise-tests` historically treated line coverage preservation as a hard gate, actively preventing agents from pruning low-value tests.
+1. **Red-Green vs. Refactor:**
+   - Dispatch task writers follow a strict **Red-Green** protocol (writing failing tests first to capture observed `RED:` failures, then implementing code until `Verify` passes).
+   - An explicit, unconstrained "Refactor" phase is intentionally omitted from the writer brief to avoid known LLM failure modes: scope creep beyond assigned task paths, speculative over-engineering (violating YAGNI/KISS), and diff churn.
+   - Post-integration cleanup is driven by multi-agent code reviews (`/dispatch review --kind code`) rather than an unreviewed post-task refactor step.
 
----
-
-## 2. Objectives & Principles
-
-1. **High-Value Durability Standard:** A durable test must earn its retention by protecting against plausible high-severity defects (contract breaks, state corruption, data loss, security violations, or core protocol flows).
-2. **No Trivial Spec Testing:** Trivial, mechanical, or self-evident requirements (e.g., cosmetic formatting, pass-through getters, default fallback constants) must not have dedicated durable regression tests.
-3. **Coverage Demoted from Retention:** Code coverage percentage is explicitly removed as a heuristic or gating metric for durable test quality. Dropping coverage when pruning low-value tests is intentional and healthy.
-4. **Coverage Bounded to Implementation TDD:** Test coverage remains a valid local exploration tool for writers during TDD implementation, but any tests created primarily for implementation-branch coverage must be marked `Retain: transient`.
-5. **Deterministic Pruning in Dispatch:** Transient tests created during implementation must be deterministically pruned by Dispatch after code review passes and before delivery to the caller checkout.
-6. **Optimise-Tests Repurposed for Pruning:** `.agents/skills/optimise-tests/` is decoupled from coverage gating, allowing autonomous writers to prune low-value and leaked transient tests.
+2. **The Test Bloat Problem:**
+   - Without a clear distinction between ephemeral TDD checks and permanent regression tests, test suites accumulate low-value tests: fine-grained branch permutations, mirror assertions of trivial pass-through logic, and tests written solely to satisfy line/branch coverage metrics.
+   - While Dispatch supports `Retain: transient` in planning, transient tests previously relied on manual post-review trimming guidance, allowing intermediate test scaffolding to leak into permanent test suites.
+   - Furthermore, `.agents/skills/optimise-tests` historically treated line-coverage preservation as a gating barrier, preventing agents from deleting low-signal tests.
 
 ---
 
-## 3. Detailed Design
+## 2. User Intent & Governing Decisions
+
+Through collaborative design, the following binding decisions were established:
+
+1. **High-Value Durability Bar:**
+   - Tests are retained as durable if and only if they defend against plausible high-severity defects: consumer-facing contract breakage, state corruption, data loss, security boundaries, or broken protocol transitions.
+2. **No 1:1 REQ-to-Test Mapping (Forego Trivial Specs):**
+   - Not every requirement or specification item warrants a dedicated test. Simple, mechanical, or self-evident requirements (e.g., cosmetic formatting, pass-through wrappers, default fallback constants) should be foregone rather than bloating the regression suite.
+3. **Coverage Demoted from Retention:**
+   - Code coverage percentage is explicitly rejected as a heuristic or gate for durable test quality.
+   - Dropping coverage percentage is recognized as an acceptable—and often intentional—consequence of pruning low-signal, high-maintenance tests.
+4. **Coverage Bounded to Implementation TDD:**
+   - Coverage remains a useful local feedback tool for the writer *during TDD implementation* to discover missed branches while working through RED/GREEN.
+   - However, any tests written primarily to satisfy implementation branch coverage must be classified as `Retain: transient` rather than retained permanently.
+5. **Universal Application (Shipped Skills, Not AGENTS.md):**
+   - Standards must be integrated into shipped product skill files (`skills/dispatch/references/templates/quality-bar.md`, `plan.md`, `verbs/implement.md`) and `.agents/skills/optimise-tests/`, rather than local repo rules (`AGENTS.md`), ensuring all users of `dispatch` benefit.
+6. **Deterministic Pruning in Dispatch:**
+   - Transient test files (`*.transient.test.ts`) must be deterministically deleted by Dispatch after review passes and before caller delivery.
+7. **Overhaul of `/optimise-tests`:**
+   - Decouple `/optimise-tests` from coverage gating, empowering it to prune low-value and leaked transient tests across existing test suites.
+
+---
+
+## 3. Detailed Architecture & Workflow
 
 ### Section A: Quality Bar & Plan Conventions (`skills/dispatch/references/templates/`)
 

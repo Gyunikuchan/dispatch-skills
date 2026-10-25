@@ -37,3 +37,13 @@ export function checks(plan: ParsedPlan): Check[] {
   rows.push({criterion:'contract',commands:plan.verification.automated.filter(c=>!listed.has(c))});
   return rows.map(row=>({...row,commandDigest:commandDigest(row)}));
 }
+
+export const hasTransient = (plan: ParsedPlan) => plan.criteria.some(c=>c.retain==='transient');
+export function transientTargets(plan: ParsedPlan): string[] {
+  return [...new Set(plan.criteria.filter(c=>c.retain==='transient').flatMap(c=>c.tests))].sort();
+}
+export function finalChecks(plan: ParsedPlan): Check[] {
+  const rows=plan.criteria.map(c=>({criterion:'final:'+c.id,commands:c.verify.filter(v=>c.retain!=='transient'||v.final).map(v=>v.command)}));
+  rows.push({criterion:'final:contract',commands:checks(plan).find(c=>c.criterion==='contract')!.commands});
+  return rows.filter(row=>row.commands.length).map(row=>({...row,commandDigest:commandDigest(row)}));
+}

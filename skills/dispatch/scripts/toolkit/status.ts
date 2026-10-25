@@ -1,3 +1,6 @@
+import { pruneTransition } from './prune.ts';
+import { hasTransient } from './plan-view.ts';
+import { criterionStatuses, eligibility } from './evidence.ts';
 import { currentHashes, foldLedger, gate, latest } from './ledger.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +10,6 @@ import {checks} from './plan-view.ts';
 import {writerStates} from './writers.ts';
 import {integrationRecord} from './integration.ts';
 import {gitOk,headTree,testedTree} from './git.ts';
-import {eligibility} from './evidence.ts';
 
 export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps) {
   const fold = foldLedger(session);
@@ -40,6 +42,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
     }
     const writers=plan ? writerStates(fold,plan.tasks.map(task=>task.id),relative=>observations.get(relative)!) : unavailable;
     let integration: object|null=null;
+    let evidenceStatuses: import('./evidence.ts').CriterionStatus[]=[];
     let criteria: string[] | typeof unavailable=plan ? checks(plan).map(check=>check.criterion) : unavailable;
     if(opened) {
       const cwd=path.resolve(session,opened.data['path']); const exists=fs.existsSync(cwd);
@@ -49,9 +52,16 @@ export async function statusReport(session: string, repositoryRoot: string, deps
       const conflict=pending ? fold.records.findLast(record=>record.kind==='integrate' && record.data['phase']==='conflict' && record.seq>started!.seq)?.data ?? null : null;
       const delivered=fold.records.findLast(record=>record.kind==='integrate' && record.data['phase']==='delivered');
       integration={path:opened.data['path'],branch:opened.data['branch'],head,state:exists?'present':'missing',pendingConflict:conflict,undelivered:head!==null && head!==(delivered?.data['to']??opened.data['base']),closed:fold.records.some(record=>record.kind==='integrate' && record.data['phase']==='closed' && record.seq>opened.seq)};
-      if(exists && plan) criteria=eligibility(fold,checks(plan),{headTree:await headTree(deps,cwd),testedTree:await testedTree(deps,session,cwd)}).filter(row=>row.state==='missing').map(row=>row.criterion);
+      if(exists && plan) {
+        try {
+          const transition=hasTransient(plan)?await pruneTransition({session,manifest:{repositoryRoot} as import('../lib/session.ts').Manifest,deps,args:[],values:{}},fold,plan):null;
+          const tree={headTree:await headTree(deps,cwd),testedTree:await testedTree(deps,session,cwd)};
+          evidenceStatuses=criterionStatuses(fold,checks(plan),tree,transition);
+          criteria=(hasTransient(plan)?evidenceStatuses:eligibility(fold,checks(plan),tree)).filter(row=>row.state==='missing').map(row=>row.criterion);
+        } catch {criteria=checks(plan).map(c=>c.criterion);}
+      }
     }
-    sections={writers,integration,criteria};
+    sections={writers,integration,criteria,criterionStatuses:evidenceStatuses};
   }
   return {
     level, bound, current, approved: latest(fold, 'approval')?.data ?? {},

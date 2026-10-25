@@ -45,7 +45,7 @@ function statusTable(statuses: readonly Status[], state: Status['state']): strin
   const out = ['| SC | Evidence |', '| --- | --- |'];
   for (const row of rows) {
     let evidence = 'no eligible evidence';
-    if (row.state === 'verified') evidence = row.evidence ?? 'verified evidence';
+    if (row.state === 'verified') evidence = (row.reason?.startsWith('historical pre-prune') && row.evidence ? '[source evidence]('+row.evidence+')' : row.evidence ?? 'verified evidence')+(row.reason ? '; '+row.reason : '');
     if (row.state === 'manual') evidence = `User evidence: ${row.evidence ?? 'not supplied'}; quote: ${row.quote ?? ''}`;
     if (row.state === 'waived') evidence = `Reason: ${row.reason ?? ''}; quote: ${row.quote ?? ''}`;
     out.push(`| ${cell(row.criterion)} | ${cell(evidence)} |`);

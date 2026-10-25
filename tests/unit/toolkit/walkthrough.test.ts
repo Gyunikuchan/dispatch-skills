@@ -11,7 +11,7 @@ test('walkthrough rendering', async () => {
     planPath: 'plans/report.plan.md',
     delivered: { integrated: 2, total: 3, to: 'abcdef1234567890', branch: 'main' },
     statuses: [
-      { criterion: 'verified-first', state: 'verified' as const, evidence: 'evidence/first.json' },
+      { criterion: 'verified-first', state: 'verified' as const, evidence: 'evidence/first.json', reason: 'historical pre-prune evidence via validated pruning; source tree source; final evidence final.json' },
       { criterion: 'verified-second', state: 'verified' as const, evidence: 'evidence/second.json' },
       { criterion: 'manual-result', state: 'manual' as const, seq: 3, quote: 'manual | quote\n<!-- x -->', evidence: 'manual/proof.md' },
       { criterion: 'waived-result', state: 'waived' as const, seq: 4, quote: 'waiver quote', reason: 'accepted exception' },
@@ -37,6 +37,8 @@ test('walkthrough rendering', async () => {
     findingsPaths: [{ review: 'review-alpha', path: '.state/reviews/review-alpha/findings.json' }],
   };
   const rendered = renderWalkthrough(view);
+  assert.match(rendered,/\[source evidence\]\(evidence\/first.json\)/);
+  assert.match(rendered,/historical pre-prune evidence via validated pruning; source tree source; final evidence final.json/);
   const section = (heading: string, nextHeading: string) => rendered.slice(rendered.indexOf(heading), rendered.indexOf(nextHeading));
 
   assert.ok(rendered.includes('> **Delivered:** 2 of 3 tasks integrated; delivered abcdef123456 to main'));

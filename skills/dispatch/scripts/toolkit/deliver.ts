@@ -1,8 +1,11 @@
+import { loadPlan, hasTransient, checks } from './plan-view.ts';
+import { pruneTransition } from './prune.ts';
+import { criterionStatuses } from './evidence.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger } from './ledger.ts';
-import { git, gitOk, changedPaths, testedTree } from './git.ts';
+import { git, gitOk, changedPaths, testedTree, headTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { terminalWorktrees, launches, candidateRef, abandonedRef } from './writers.ts';
 import { pending, reason, result, refuse } from './integrate.ts';
@@ -14,6 +17,12 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const active=pending(tx.fold); if(active)refuse('integration-pending',active.data['task']);
     const opened=integrationRecord(tx.fold); if(!opened)refuse('no-integration');
     const cwd=path.resolve(ctx.session,opened.data['path']),dest=opened.data['dest'] as {path:string;branch:string};
+    const plan=loadPlan(ctx.session,ctx.manifest);
+    if(hasTransient(plan)) {
+      const transition=await pruneTransition(ctx,tx.fold,plan,true);
+      const current={headTree:await headTree(ctx.deps,cwd),testedTree:await testedTree(ctx.deps,ctx.session,cwd)};
+      if(criterionStatuses(tx.fold,checks(plan),current,transition).some(r=>(transition!.transient.includes(r.criterion)||transition!.final.some(c=>c.criterion==='final:'+r.criterion))&&r.state!=='verified'))refuse('final-checks-required');
+    }
     const to=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     const last=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered' && r.data['dest'].path===dest.path && r.data['dest'].branch===dest.branch);
     const from=(last?.data['to'] ?? opened.data['base']) as string;
@@ -39,6 +48,10 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
       await check(from,paths);
       await tx.append({kind:'integrate',by:'tool',data:{phase:'deliver-started',dest,from,to}});
       await ctx.deps.hook?.('deliver:before-ff');
+      if(hasTransient(plan)) {
+        await pruneTransition(ctx,tx.fold,plan,true);
+        if(await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])!==to)refuse('prune-transition-stale');
+      }
       const merged=await git(ctx.deps,dest.path,['merge','--ff-only',to]);
       if(merged.exit) {
         if(/local changes.*overwritten|untracked working tree files.*overwritten|would be overwritten/is.test(merged.stderr))refuse('caller-dirty');

@@ -62,11 +62,25 @@ Arguments: `worktree abort <task> --session <session> --reason <reason>`.
 Result path: preserved candidate and abandoned state.
 Refusals: blank reason, wrong-task, no-candidate or already-integrated. Obtain user authority before discarded accepted work.
 
+### worktree prune
+
+Arguments: `worktree prune --session <session>`.
+Result path: declared targets and source/result commits, or an idempotent completed result.
+Refusals: unsafe-transient-target, unsafe-integration, missing-final-command, transient-command-dependency, integration-pending, prune-unintegrated-tasks, prune-open-writers, integration-dirty, prune-prechecks-required, prune-review-required or prune-transition-stale. No-transient plans keep existing verification and delivery behavior.
+
+Run after all tasks integrate, checks pass and code review of the exact committed integration HEAD is complete. Review must inspect retained durable or FINAL coverage; explicit command-path checks cannot prove opaque runner or glob semantics. Settle command corrections, rerun checks and re-review before pruning. At least one nonempty FINAL command is required even with a durable Covered by criterion. A projected command that explicitly names a deletion target blocks pruning.
+
+The tool preflights the whole declared set before recording: only tracked NEW transient Tests may be deleted. It refuses support files, durable sharing, baseline files, path escapes, case collisions, links and directories. It rechecks containment before each unlink. Preflight refusal deletes nothing. A later failure retains already completed declared deletions for recovery; this is not an atomic filesystem transaction.
+
+The integrate prune-started record binds artifact hashes, exact reviewed commit/tree, target list and command projections. pruned adds the pure-deletion commit/tree. Retry the same call after interruption: only the recorded deletions may be missing or dirty; unrelated edits or stale identities block recovery. Keep the old pruning records and evidence.
+
+For a post-prune artifact correction, preserve edited artifact bytes and all evidence; delivery refuses the stale transition. In an otherwise clean integration worktree, restore only absent declared targets from the recorded source commit, then commit that restoration with worktree commit. Reverify and re-review the corrected artifact tuple before a new prune attempt. Preserve unrelated work and old records.
+
 ### worktree deliver
 
 Arguments: `worktree deliver --session <session>`.
 Result path: from/to commits and delivered boolean.
-Refusals: integration-pending, no-integration, caller-moved, caller-dirty or integration-dirty. Preserve caller changes and inspect collision paths.
+Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, pruning-required, prune-transition-stale or final-checks-required. Transient plans require absent targets and successful final-tree checks before caller mutation. Preserve caller changes and inspect collision paths.
 
 ### worktree close
 
@@ -100,9 +114,11 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 
 ### verify run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`.
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract] [--final]`.
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
 Refusals: unknown criterion, invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+
+After pruning, --final requires a validated current transition and runs every non-transient command, transient FINAL commands and contract checks on the committed pruned tree. Check identities are final:<criterion> and final:contract, with digests of their exact arrays. Empty executable rows are omitted. With --final, --criteria selects these final: identities; omission runs every projected row. A failed rerun invalidates an earlier final success. Historical transient evidence keeps its original source tree and full pre-prune digest; it verifies only through the exact recorded pure-deletion transition plus every successful final row. Durable evidence must describe the final tree. Manual completion and waivers do not establish final verification. Rendered status cites historical and final evidence separately.
 
 ### ledger append
 
@@ -176,7 +192,7 @@ data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent
 
 ### evidence
 
-data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. User-only manual records are separate.
+data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path, optional artifacts tuple. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. User-only manual records are separate.
 
 ### writer
 
@@ -184,7 +200,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {dest,from,to}; delivered {dest,to}; closed {reason}. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {dest,from,to}; delivered {dest,to}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

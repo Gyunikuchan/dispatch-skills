@@ -379,3 +379,17 @@ test('review recurrence normal post-append movement closes stale escalation befo
     assert.deepEqual([...latest.values()],['resolved']);
   }finally{f.cleanup();}
 });
+
+test('bound code review supersedes unrecorded plan and design edits during native continuation',async()=>{
+ for(const artifact of ['plan','design']) {
+  const f=await fixture();try{
+   const source=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 � File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');fs.writeFileSync(f.plan,source);
+   const design=f.artifact('work.design.md','# Design\n## Boundaries\nBefore.\n');await f.add('bind',{spec:'mission.spec.md',plan:'work.plan.md',design:'work.design.md'});
+   const head='a'.repeat(40);await f.add('integrate',{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base:head,dest:{path:f.root,branch:'main'}});await f.add('integrate',{phase:'done',task:'T1',commit:head});
+   f.deps.run=async argv=>({exit:0,stdout:argv[1]==='diff'?'src/file.ts\0':head,stderr:''});f.config(true);f.deps.liveness={};f.deps.orchestrator={platform:'codex',model:'native'} as typeof f.deps.orchestrator;
+   const first=await f.call('code','integration');assert.equal(first.output.reason,'native-pending');const dir=path.join(f.session,'.state/reviews/code-integration/round-1');const before=JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8'));
+   fs.appendFileSync(artifact==='plan'?f.plan:design,'\n## Revision\nAfter.\n');for(const slot of first.value.pending)fs.writeFileSync(slot.replyPath,CLEAN);
+   const second=await f.call('code','integration');assert.equal(second.output.reason,'native-pending');const after=JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8'));assert.equal(after.generation,2);assert.notEqual(after.artifacts[artifact],before.artifacts[artifact]);assert.deepEqual(after.target,before.target);assert.ok(second.value.pending.every((slot:{replyPath:string})=>slot.replyPath.includes('gen-2')));
+  }finally{f.cleanup();}
+ }
+});
