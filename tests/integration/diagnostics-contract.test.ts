@@ -18,7 +18,8 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.match(instruction, /Exclude repository, toolchain, and user-work issues/);
   assert.match(instruction, /Fixes must hold on any repository and machine/);
   assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
-  assert.ok(read('SKILL.md').includes('.state/retro.json'));
+  assert.ok(!read('SKILL.md').includes('.state/retro.json'));
+  assert.ok(read('SKILL.md').includes('returned `instructions`'));
 });
 
 test('phase prose completes the report before cleaning owned worktrees', () => {

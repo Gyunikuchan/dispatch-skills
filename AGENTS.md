@@ -10,6 +10,7 @@ The `dispatch` skill should support high-confidence development across native ag
 - **Native collaboration:** Preserve each platform's native reasoning loop and permitted tools while standardizing routing, evidence, and handoffs.
 - **Evidence and intent:** Treat delegate findings as claims. Check them against governing intent, repository rules, and actual artifacts; resolve findings with evidence rather than vote counts.
 - **Lean context:** Keep always-loaded contracts and initial briefs focused. Disclose detail when needed, retain logs and evidence in linked artifacts, and prefer deterministic enforcement over recurring prose.
+- **Diagnostics:** Capture actionable metrics to find defects and improvement opportunities. Minimize token overhead when disabled; load diagnostic instructions and collect agent-authored observations only when enabled.
 - **Informed handoffs:** At each handoff to or from an agent, provide the objective, relevant decisions and rationale, constraints, current state, next action, and evidence the recipient needs to act or review. Link to supporting artifacts for detail.
 - **Structural least privilege:** Keep provider delegates read-only and scope native writes explicitly. See `skills/dispatch/references/providers.md`; independently check submitted changes before acceptance.
 - **Recoverable autonomy:** Automate routine progress within approved scope. Preserve work and durable evidence, recover without duplicate effects, and escalate unresolved blockers or intent decisions.

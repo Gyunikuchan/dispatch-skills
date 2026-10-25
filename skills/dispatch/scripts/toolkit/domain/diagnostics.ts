@@ -39,6 +39,7 @@ export type InvocationFacts = {
  */
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 export type RunFacts = {
+  timingScope?: 'tool-calls';
   version?: string; build?: string; os?: string; host?: string; verb?: string; level?: string; pins?: string;
   config?: Record<string, unknown>; outcome?: string;
   /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
@@ -271,6 +272,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       ...opt('effectId', match(/^[a-z0-9-]+(?:\.[a-z0-9-]+){0,15}$/)(fault['effectId'])), cls: token(fault['cls']) ?? DASH, ...opt('hostWaitMs', millis(fault['hostWaitMs'])),
       ...opt('waitBy', (['user', 'host'] as const).find((by) => by === fault['waitBy'])), ...opt('driverMs', millis(fault['driverMs'])),
     }),
+    ...(r['timingScope'] === 'tool-calls' ? {timingScope:'tool-calls' as const} : {}),
     phases: list(r['phases']).filter(record).map((p) => ({
       key: phaseKey(p['key']) ?? '', name: PHASE_NAMES.find((name) => name === p['name']) ?? DASH, ...opt('outcome', token(p['outcome'])),
       ...opt('wallMs', millis(p['wallMs'])), ...opt('driverMs', millis(p['driverMs'])), ...opt('hostMs', millis(p['hostMs'])), ...opt('userMs', millis(p['userMs'])),
@@ -491,6 +493,7 @@ export function renderDiagnostics(input: readonly RunFacts[]): { text: string; f
     `- Runs: ${runs.length} · wall time: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
     `- Provider CLI measured tokens: ${usageSummary(invocations)} · launch coverage ${coverage(invocations)}`,
     `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`} · orchestrator frame exposure ${bytes === undefined ? DASH : `~${num(Math.ceil(bytes / 4))}`}`,
+    ...(runs.some(run => run.timingScope === 'tool-calls') ? ['- Timing scope: summed measured tool-call durations; concurrent calls can overlap. Host reasoning, user wait, native/writer usage and work before enablement are unavailable.'] : []),
     '- Full conversation totals are unavailable: provider measurements cover reported launches only; frame exposure is not full orchestrator usage.',
     `- Host retro: ${collected.length ? `${sum(collected.map((r) => r.values.length))} accepted · ${sum(collected.map((r) => r.rejected))} rejected` : 'not collected'}`,
     '', 'Top findings:', '',

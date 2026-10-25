@@ -82,3 +82,23 @@ test('dispatch entry distinguishes quota preconditions from filesystem faults', 
     assert.equal(f.output().reason, 'usage');
   } finally { f.cleanup(); }
 });
+
+
+test('session instructions disclose diagnostics only when enabled', async () => {
+  for (const enabled of [false,true]) {
+    const f = sessionFixture();
+    try {
+      fs.mkdirSync(path.join(f.root,'.git'));
+      const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
+      fs.writeFileSync(path.join(skill,'config.jsonc'), JSON.stringify({diagnostics:enabled}));
+      const deps = {...f.deps,skillRoot:skill,cwd:()=>f.root};
+      assert.equal(await entry.main(['session','init','--objective','test'],deps),0);
+      const value = JSON.parse(f.lines[0]!);
+      if (enabled) assert.match(value.instructions,/references\/diagnostics\.md/);
+      else assert.equal('instructions' in value,false);
+      f.lines.length=0;
+      assert.equal(await entry.main(['session','reactivate','--session-dir',value.path],deps),0);
+      assert.equal('instructions' in JSON.parse(f.lines[0]!),enabled);
+    } finally {f.cleanup();}
+  }
+});

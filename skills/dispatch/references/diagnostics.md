@@ -1,6 +1,6 @@
-# Dispatch retro
+# Dispatch diagnostics
 
-The orchestrator must write a JSON array to `<session>/.state/retro.json` before report completion; `[]` means no friction. Name up to 20 Dispatch instruction, driver or routing defects beyond measured time, tokens, failures and rounds.
+When session output enables diagnostics, the orchestrator must write a JSON array to `<session>/.state/retro.json` before report completion; `[]` means no friction. Name up to 20 Dispatch instruction, driver or routing defects beyond measured time, tokens, failures and rounds.
 
 Each item is `{id,component,category,evidence,impact,proposedFix}`.
 - `id`: unique, 1-48 chars of A-Za-z0-9_-.

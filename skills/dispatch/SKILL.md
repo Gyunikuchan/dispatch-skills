@@ -11,7 +11,7 @@ Parse `[level] [(pins)] [verb:] argument`; default `ask`. Verbs are `ask`, `desi
 
 Pick and report the level. Preserve explicit levels; `xhigh` and `max` require user selection. Levels select roster, rounds and approval need. Use configured models and efforts exactly; provider configuration owns roster selection.
 
-Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
+Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path and follow any returned `instructions`. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
 
 ## Tool loop
 
@@ -21,7 +21,7 @@ Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action
 2. Author and lint the required design or plan; resolve parse errors. Review against the spec, adjudicate findings and apply accepted fixes under [review rules](references/review-rules.md).
 3. Obtain the applicable approval tuple under the [Decision Frame](references/decision-frame.md).
 4. Implement scoped tasks with native writers, then verify the integrated tree. Inspect failed checks and repair within scope. Review code and verify again after fixes.
-5. Write retro observations to `<session>/.state/retro.json` per [diagnostics](references/diagnostics.md). Run `report complete`; after success run `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifact paths.
+5. Run `report complete`; after success run `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifact paths.
 
 For `native-pending`, read each `promptPath`, launch the configured native slot, write its output to `replyPath`, and rerun the same tool call. Preserve running handles; wait on completion or material blockers. [Providers](references/providers.md) owns slot and fallback rules.
 

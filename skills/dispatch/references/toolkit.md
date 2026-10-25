@@ -196,7 +196,7 @@ These commands use --session-dir rather than --session and run before tool calls
 
 ### session init
 
-`session init --objective "<objective>" [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>}; summary is at most 1024 UTF-8 bytes. Read manifest.json for session identity. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
+`session init --objective "<objective>" [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>}; summary is at most 1024 UTF-8 bytes. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
 
 ### session reactivate
 

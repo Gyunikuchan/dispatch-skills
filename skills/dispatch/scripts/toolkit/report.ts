@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig } from '../lib/config.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { criterionStatuses, type CriterionStatus } from './evidence.ts';
 import { git, gitOk, headTree, testedTree } from './git.ts';
@@ -9,7 +8,7 @@ import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
 import { ToolError } from './output.ts';
-import { readReviews, sessionFacts, writeDiagnostics } from './diagnostics.ts';
+import { diagnosticsEnabled, readReviews, optionalDiagnostics } from './diagnostics.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import type { LedgerRecord } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
@@ -215,29 +214,6 @@ export async function reportFacts(ctx: HandlerContext): Promise<ReportFacts> {
   return materialize(ctx, await capture(ctx, foldLedger(ctx.session)));
 }
 
-export function diagnosticsEnabled(skillRoot: string): boolean {
-  let candidateSeen = false;
-  const read = (file: string): string | null => {
-    try {
-      const contents = fs.readFileSync(file, 'utf8');
-      candidateSeen = true;
-      return contents;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      candidateSeen = true;
-      throw error;
-    }
-  };
-  try {
-    const value = loadConfig(skillRoot, read).config['diagnostics'];
-    if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
-    return value === true;
-  } catch (error) {
-    if (!candidateSeen) return false;
-    throw new ToolError(2, 'config-invalid', error instanceof Error ? error.message : String(error));
-  }
-}
-
 function writeWalkthrough(session: string, stem: string, text: string): string {
   const output = path.join(session, stem + '.walkthrough.md');
   const temporary = output + '.' + crypto.randomUUID() + '.tmp';
@@ -277,7 +253,7 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
   const writeDiagnosticsEnabled = diagnosticsEnabled(ctx.deps.skillRoot);
   const facts = await reportFacts(ctx);
   const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view));
-  if (writeDiagnosticsEnabled) writeDiagnostics(ctx.session, sessionFacts(ctx.session, facts.fold, 'report render'));
+  const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviationCount = facts.edits.length + facts.unplannedPaths.length;
@@ -285,7 +261,7 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
     ok: true,
     exit: 0,
     summary: `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}`,
-    value: { ...resultValue(facts, ctx.session, walkthroughPath), diagnostics: writeDiagnosticsEnabled ? path.join(ctx.session, 'diagnostics.md') : null },
+    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
   };
 }
 
@@ -323,7 +299,7 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
   const facts = await materialize(ctx, captured.snapshot);
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
   const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view));
-  if (diagnostics) writeDiagnostics(ctx.session, sessionFacts(ctx.session, facts.fold, 'report complete'));
+  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviationCount = facts.edits.length + facts.unplannedPaths.length;
@@ -331,6 +307,6 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
     ok: true,
     exit: 0,
     summary: `complete: walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}`,
-    value: { ...resultValue(facts, ctx.session, walkthroughPath), diagnostics: diagnostics ? path.join(ctx.session, 'diagnostics.md') : null },
+    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
   };
 }

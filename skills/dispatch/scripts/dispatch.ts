@@ -9,6 +9,7 @@ import { H } from './policy/quota.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
 import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { capSummary } from './toolkit/output.ts';
+import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
 export type EntryDeps = CliDeps & { cwd?: () => string };
 
@@ -41,7 +42,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
     const dir = command.action === 'init'
       ? initializeSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
       : reactivateSession(path.resolve(flag('session-dir')!), repo);
-    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: dir });
+    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: dir, ...diagnosticInstructions(deps.skillRoot) });
     return 0;
   } catch (error) {
     const usage = error instanceof UsageError;

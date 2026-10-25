@@ -122,15 +122,9 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
     assert.deepEqual(facts.rejectedEvents, []);
     const invocations = [...facts.invocations].sort((left, right) => `${left.phase}:${left.slot}:${left.outcome}`.localeCompare(`${right.phase}:${right.slot}:${right.outcome}`));
     assert.deepEqual(invocations.map(({phase, slot, outcome, launched, surface}) => ({phase, slot, outcome, launched, surface})), [
-      {phase: 'review-alpha', slot: 'agy[0]', outcome: 'timeout', launched: true, surface: 'cli'},
-      {phase: 'review-alpha', slot: 'claude[0]', outcome: 'config', launched: true, surface: 'cli'},
-      {phase: 'review-alpha', slot: 'claude[0]', outcome: 'ok', launched: true, surface: 'cli'},
-      {phase: 'review-alpha', slot: 'codex[0]', outcome: 'native-pending', launched: false, surface: 'native'},
-      {phase: 'review-alpha', slot: 'copilot[0]', outcome: 'ok', launched: true, surface: 'cli'},
-      {phase: 'review-beta', slot: 'agy[0]', outcome: 'not-found', launched: true, surface: 'cli'},
-      {phase: 'review-beta', slot: 'claude[0]', outcome: 'timeout', launched: true, surface: 'cli'},
+      {phase:'review-alpha',slot:'codex[0]',outcome:'native-pending',launched:false,surface:'native'},
     ]);
-    assert.ok(facts.invocations.every((invocation) => invocation.provider === 'unavailable' && invocation.model === 'unavailable'));
+    assert.equal(invocations[0]?.provider,'codex');
 
     const outputPath = writeDiagnostics(fixture.session, facts);
     assert.equal(path.basename(outputPath), 'diagnostics.md');
@@ -192,4 +186,112 @@ test('review JSON errors identify malformed round, findings, and slot files', as
       fixture.cleanup();
     }
   }
+});
+
+
+test('enabled toolkit diagnostics retain attempts, normalized usage, time and reserve identity without replay duplication', async () => {
+  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const {sessionFacts} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+  const f = sessionFixture();
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), '{"diagnostics":true}');
+    f.deps.skillRoot = skill;
+    let now = 0;
+    f.deps.clock = () => now;
+    f.deps.delegate = async (provider, request, mode) => {
+      now += 1200;
+      const outcome = provider === 'claude' ? {status:'fail' as const, cls:'auth' as const, detail:'private failure'}
+        : {status:'ok' as const, text:'private answer', sessionId:null, resume:null};
+      return {outcome, invocations:[{provider, model:request.model, effort:request.effort, mode,
+        launched:true, durationMs:1200, outcome:outcome.status === 'ok' ? 'ok' : 'auth',
+        usage:{input:100, cacheRead:40, output:10, scope:'invocation', provenance:'private provenance', inputSemantics:'includes-cache', actualModels:['actual-model']}}]};
+    };
+    f.deps.handler = async ({deps}) => {
+      const value = await fanOut({dir:path.join(f.session, '.state', 'ask'), slots:[
+        {...rosterSlot('claude[0]', 'claude'), index:0},
+        {...rosterSlot('copilot[0]', 'copilot', {reserve:true}), index:0},
+      ], prompt:'private question', validate:() => ({ok:true})}, deps);
+      return {ok:true, exit:0, summary:'done', value};
+    };
+    for (let i=0; i<2; i++) {
+      f.lines.length = 0;
+      assert.equal(await main(['ask','run','--session',f.session], f.deps), 0);
+    }
+    const facts = sessionFacts(f.session, {records:[], lastSeq:0, torn:null}, 'complete');
+    assert.deepEqual(facts.invocations.map(i => [i.provider,i.model,i.outcome,i.durationMs,i.usage?.input,i.usage?.cacheRead,i.usage?.output]), [
+      ['claude','model-a','auth',1200,60,40,10], ['copilot','model-a','ok',1200,60,40,10],
+    ]);
+    assert.deepEqual(facts.invocations.map(i => i.reportedModels), [['actual-model'],['actual-model']]);
+    assert.equal(facts.phases.reduce((n,p) => n+(p.wallMs ?? 0),0), 2400);
+    const dir = path.join(f.session,'.state','diagnostics');
+    const bytes = fs.readdirSync(dir).map(file => fs.readFileSync(path.join(dir,file),'utf8')).join('');
+    assert.doesNotMatch(bytes, /private|promptPath|logPath|sessionId/);
+  } finally {f.cleanup();}
+});
+
+test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O cannot change a result', async () => {
+  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+  for (const enabled of [false,true]) {
+    const f = sessionFixture();
+    try {
+      const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
+      fs.writeFileSync(path.join(skill,'config.jsonc'), JSON.stringify({diagnostics:enabled}));
+      f.deps.skillRoot = skill;
+      if (enabled) {
+        fs.mkdirSync(path.join(f.session,'.state'), {recursive:true});
+        fs.writeFileSync(path.join(f.session,'.state','diagnostics'), 'blocked');
+      }
+      f.deps.handler = async ({deps}) => {
+        assert.equal(deps.delegate === f.deps.delegate, !enabled);
+        return {ok:false,exit:4,reason:'native-pending',summary:'pending',value:{pending:[]}};
+      };
+      assert.equal(await main(['review','run','--session',f.session],f.deps),4);
+      assert.equal(f.output().reason,'native-pending');
+      assert.doesNotMatch(f.lines[0]!, /diagnostic|retro/);
+      if (!enabled) assert.equal(fs.existsSync(path.join(f.session,'.state','diagnostics')),false);
+    } finally {f.cleanup();}
+  }
+});
+
+
+test('diagnostics keep durable attempts across a later crash and exclude cumulative or unlaunched usage', async () => {
+  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+  const {sessionFacts, writeDiagnostics} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+  const f = sessionFixture();
+  try {
+    const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill,'config.jsonc'), '{"diagnostics":true}');
+    f.deps.skillRoot=skill;
+    let now=0; f.deps.clock=()=>now;
+    f.deps.delegate=async () => {
+      now+=1500;
+      return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[
+        {provider:'codex',model:'first',effort:'high',mode:'cli',launched:false,outcome:'config',usage:{input:90,output:10,scope:'invocation',provenance:'test',inputSemantics:'uncached'}},
+        {provider:'codex',model:'second',effort:'high',mode:'cli',launched:true,outcome:'ok',durationMs:1500,usage:{input:90,output:10,scope:'session-cumulative',provenance:'test',inputSemantics:'uncached'}},
+      ]};
+    };
+    f.deps.handler=async({deps})=>{
+      await deps.delegate('codex',{promptPath:'unused',model:'second',effort:'high',sandbox:true,schemaPath:null,resume:null,cwd:f.root,timeoutMs:10000,outputCapBytes:1024,attachments:[],logPath:'codex[0].log',briefPath:'unused'},'cli');
+      const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'running');
+      assert.equal(facts.invocations.length,2,'attempts persisted before handler completion');
+      throw new Error('after durable slot boundary');
+    };
+    assert.equal(await main(['review','run','example.plan.md','--session',f.session],f.deps),2);
+    const dir=path.join(f.session,'.state','diagnostics');
+    fs.writeFileSync(path.join(dir,'corrupt.json'),'{invalid');
+    const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'fault');
+    assert.equal(facts.invocations.length,2);
+    assert.ok(facts.invocations.every(i=>i.usage===undefined));
+    assert.deepEqual(facts.invocations.map(i=>[i.model,i.mode,i.effort,i.launched]),[
+      ['first','cli','high',false],['second','cli','high',true],
+    ]);
+    assert.equal(facts.phases[0]?.name,'plan review');
+    assert.equal(facts.phases[0]?.outcome,'fault');
+    const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
+    assert.match(report,/launch coverage 0\/1/);
+    assert.match(report,/Timing scope: summed measured tool-call durations/);
+  } finally {f.cleanup();}
 });

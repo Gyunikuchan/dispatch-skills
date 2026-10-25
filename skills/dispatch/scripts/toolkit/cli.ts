@@ -26,6 +26,7 @@ import { statusReport } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
+import { observeTool } from './diagnostics.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
@@ -183,15 +184,19 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   } catch (error) {
     return print({ ok: false, summary: error instanceof Error ? error.message : String(error), path: null, reason: 'usage', exit: 1 });
   }
+  const kind = typeof parsed.values['kind'] === 'string' ? parsed.values['kind']
+    : parsed.positionals[2]?.endsWith('.plan.md') ? 'plan' : parsed.positionals[2]?.endsWith('.design.md') ? 'design' : undefined;
+  const observation = tool === 'report' ? undefined : observeTool(session, tool, action, kind, deps);
   let outcome: HandlerResult;
   try {
     outcome = await (deps.handler ?? handlers[tool + ' ' + action]!)({
-      session, manifest, args: parsed.positionals.slice(2), values: parsed.values, deps,
+      session, manifest, args: parsed.positionals.slice(2), values: parsed.values, deps: observation?.deps ?? deps,
     });
   } catch (error) {
     const fault = error instanceof ToolError ? error : new ToolError(2, 'fault', error instanceof Error ? error.message : String(error));
     outcome = { ok: false, summary: fault.message, reason: fault.reason, exit: fault.exit, value: { reason: fault.reason, message: fault.message } };
   }
+  observation?.finish(outcome);
   try {
     const resultPath = (deps.writeResult ?? writeResult)(session, tool, action, outcome.value);
     const reason = outcome.reason ?? (outcome.ok && (tool === 'ask' || tool === 'review') ? 'complete' : undefined);

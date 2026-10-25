@@ -67,6 +67,8 @@ In `diagnostics.md`, `—` marks an unavailable value, not zero. Current toolkit
 
 When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Elapsed intervals can include work, pauses and scheduling; they do not establish active reasoning time or usage-reset duration.
 
-While diagnostics is on, report completion writes the retrospective. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, follow the returned instructions to write retrospective observations before report completion. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+
+Toolkit diagnostics retain sanitized per-attempt provider/model, effort, mode, launch outcome, duration and reported usage in `.state/diagnostics/`. Reports show review convergence and summed tool-call durations; concurrent calls can overlap. Host reasoning, user wait, native/writer usage and work before enablement remain unavailable. Session-cumulative usage is excluded to avoid double counting. Diagnostic capture and report failures leave workflow results unchanged. Captures can be incomplete after interruption or diagnostic storage failure.
 
 For setup and routing, see [Configure Dispatch](configuration.md). For session files and verification, see [Workspaces and results](concepts.md).

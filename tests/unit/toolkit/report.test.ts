@@ -176,6 +176,7 @@ test('report render diagnostics false and absent config do not write diagnostics
       const result = await invoke(f, 'report', 'render');
       assert.equal(result.exit, 0);
       assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), false);
+      assert.equal('diagnostics' in JSON.parse(fs.readFileSync(result.output.path!, 'utf8')),false);
       await completeFixture(f);
       const complete = await invoke(f, 'report', 'complete');
       assert.equal(complete.exit, 0, complete.output.summary);
@@ -207,4 +208,20 @@ test('report render does not fall through after a higher-precedence config read 
     assert.equal(result.output.reason, 'config-invalid');
     assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), false);
   } finally { f.cleanup(); }
+});
+
+
+test('diagnostic report write failure preserves completion and omits an uncreated artifact', async () => {
+  const f=await fixture(1);
+  try {
+    fs.writeFileSync(path.join(f.skillRoot,'config.local.jsonc'),'{"diagnostics":true}');
+    await completeFixture(f);
+    fs.mkdirSync(path.join(f.session,'diagnostics.md'));
+    const result=await invoke(f,'report','complete');
+    assert.equal(result.exit,0,result.output.summary);
+    assert.equal(result.output.ok,true);
+    const value=JSON.parse(fs.readFileSync(result.output.path!,'utf8'));
+    assert.equal('diagnostics' in value,false);
+    assert.ok(fs.existsSync(path.join(f.session,'report.walkthrough.md')));
+  } finally {f.cleanup();}
 });
