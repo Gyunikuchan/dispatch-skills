@@ -269,5 +269,3 @@ test('report complete low session accepts bound evidence and a user contract wai
     assert.equal(foldLedger(f.session).records.some((record) => record.kind === 'approval'), false);
   } finally { f.cleanup(); }
 });
-
-test('completion requires verified pruned delivery',async()=>{const f=await fixture(1);try{const file=path.join(f.root,'report.plan.md');fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));const state=gitState(f.session);await integrate(f,state);await evidenceForPlan(f,TREE_A);await deliver(f,HEAD_A);const completed=await invoke(f,'report','complete');assert.equal(completed.output.reason,'criteria-unmet');}finally{f.cleanup();}});

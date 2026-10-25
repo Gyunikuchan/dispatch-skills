@@ -1,3 +1,4 @@
+import { ToolError } from './output.ts';
 import { pruneTransition } from './prune.ts';
 import { hasTransient } from './plan-view.ts';
 import { criterionStatuses, eligibility } from './evidence.ts';
@@ -54,10 +55,12 @@ export async function statusReport(session: string, repositoryRoot: string, deps
       integration={path:opened.data['path'],branch:opened.data['branch'],head,state:exists?'present':'missing',pendingConflict:conflict,undelivered:head!==null && head!==(delivered?.data['to']??opened.data['base']),closed:fold.records.some(record=>record.kind==='integrate' && record.data['phase']==='closed' && record.seq>opened.seq)};
       if(exists && plan) {
         try {
-          const transition=hasTransient(plan)?await pruneTransition({session,manifest:{repositoryRoot} as import('../lib/session.ts').Manifest,deps,args:[],values:{}},fold,plan):null;
           const tree={headTree:await headTree(deps,cwd),testedTree:await testedTree(deps,session,cwd)};
-          evidenceStatuses=criterionStatuses(fold,checks(plan),tree,transition);
-          criteria=(hasTransient(plan)?evidenceStatuses:eligibility(fold,checks(plan),tree)).filter(row=>row.state==='missing').map(row=>row.criterion);
+          let transition;
+          try{transition=hasTransient(plan)?await pruneTransition({session,manifest:{repositoryRoot} as import('../lib/session.ts').Manifest,deps,args:[],values:{}},fold,plan):null;}
+          catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;evidenceStatuses=checks(plan).map(check=>({criterion:check.criterion,state:'missing',reason:error.reason}));}
+          if(!evidenceStatuses.length)evidenceStatuses=criterionStatuses(fold,checks(plan),tree,transition);
+          criteria=(hasTransient(plan)?evidenceStatuses:eligibility(fold,checks(plan),tree)).filter(row=>row.state!=='verified').map(row=>row.criterion);
         } catch {criteria=checks(plan).map(c=>c.criterion);}
       }
     }

@@ -144,3 +144,18 @@ test('final evidence cannot reuse an older success after a failed rerun',async()
  assert.equal(criterionStatuses(fold([{...rows[0]!,artifacts:{spec:'changed',plan:'p'}},rows[1]!]),[check],current,transition)[0]!.state,'missing');
  const durable={...check,criterion:'SC2'};assert.equal(criterionStatuses(fold([{...rows[0]!,criterion:'SC2',tree:'target',before:'target',after:'target'},rows[1]!]),[durable],current,{...transition,transient:[]})[0]!.state,'missing');
 });
+
+
+test('pruned review-only criteria retain validated historical evidence without an empty final row',async()=>{
+ const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+ const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,index)=>({seq:index+1,key:String(index),kind:'evidence',by:'tool',at:'',data}))});
+ const check={criterion:'SC2',commands:[],commandDigest:'review'},final={criterion:'final:contract',commands:['retained'],commandDigest:'retained'},artifacts={spec:'s',plan:'p'};
+ const source={criterion:'SC2',commandDigest:'review',tree:'source',before:'source',after:'source',clean:true,exit:0,artifacts,path:'review-source.json'};
+ const target={criterion:'final:contract',commandDigest:'retained',tree:'target',before:'target',after:'target',clean:true,exit:0,artifacts};
+ const transition={sourceTree:'source',tree:'target',pre:[check],final:[final],transient:['SC1'],sourceSeq:2,artifacts};
+ const current={headTree:'target',testedTree:'target'};
+ const status=(rows:Record<string,unknown>[],patch={})=>criterionStatuses(fold(rows),[check],current,{...transition,...patch})[0]!;
+ assert.equal(status([source,target]).state,'verified');assert.equal(status([source,target]).evidence,'review-source.json');assert.match(status([source,target]).reason!,/historical pre-prune/);
+ for(const rows of [[source],[{...source,exit:1},target],[{...source,artifacts:{spec:'changed'}},target],[source,{...target,exit:1}],[target]])assert.equal(status(rows).state,'missing');
+ assert.equal(status([source,target],{sourceSeq:1}).state,'missing');assert.equal(status([source,target],{tree:'other'}).state,'missing');
+});

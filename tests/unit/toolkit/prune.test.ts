@@ -11,7 +11,7 @@ const fold=(data:Record<string,unknown>[]):Fold=>({records:data.map((d,i)=>({kin
 const done={phase:'done',task:'T1',commit:'head'};
 test('pruning rejects unsafe declarations',()=>{
  assert.deepEqual(validateTargets(plan()),['test/step.transient.test.js']);
- for(const file of ['../outside','/outside','C:/outside','test/../outside','test/helpers/step.js','test/mock.test.js','test/step\\escape.js']){const p=plan();Object.assign(p.criteria[0]!,{tests:[file]});p.changes[0]!.path=file;assert.throws(()=>validateTargets(p),{reason:'unsafe-transient-target'});}
+ for(const file of ['../outside','/outside','C:/outside','test/../outside','test/helpers/step.js','test/step\\escape.js']){const p=plan();Object.assign(p.criteria[0]!,{tests:[file]});p.changes[0]!.path=file;assert.throws(()=>validateTargets(p),{reason:'unsafe-transient-target'});}
  const p=plan();(p.criteria as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanCriterion[]).push({...p.criteria[0]!,id:'SC2',tests:['test/STEP.transient.test.js']});(p.changes as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanChange[]).push({...p.changes[0]!,path:'test/STEP.transient.test.js'});assert.throws(()=>validateTargets(p),{reason:'unsafe-transient-target'});
  const collision=plan();(collision.changes as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanChange[]).push({...collision.changes[0]!,path:'test/STEP.transient.test.js'});assert.throws(()=>validateTargets(collision),{reason:'unsafe-transient-target'});
  const shared=plan();(shared.criteria as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanCriterion[]).push({...shared.criteria[0]!,id:'SC2',retain:'durable'});assert.throws(()=>validateTargets(shared),{reason:'unsafe-transient-target'});
@@ -38,3 +38,10 @@ test('pruning preflights FINAL commands before any effects',()=>{
 });
 
 test('pruning refuses a newer finished candidate that has not integrated',()=>{const f=fold([done]);f.records.push({seq:2,key:'launch',at:'',kind:'writer',by:'tool',data:{phase:'launched',task:'T1',path:'writer',base:{commit:'head',seq:0,taskSection:'hash'}}},{seq:3,key:'finish',at:'',kind:'writer',by:'tool',data:{phase:'finished',task:'T1',launch:1,candidate:'new'}});assert.throws(()=>prunePreconditions(f,plan(),true,true),{reason:'prune-unintegrated-tasks'});});
+
+
+test('pruning preserves declared support files and permits descriptive test filenames',()=>{
+ const p=plan(),file='tests/transient-prune-helper.test.ts',support='tests/helpers/shared.ts';p.criteria[0]!.tests=[file,support];p.criteria[0]!.changes=[file,support];p.changes[0]!.path=file;
+ (p.changes as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanChange[]).push({...p.changes[0]!,path:support,action:'MODIFY'});
+ assert.deepEqual(validateTargets(p),[file]);
+});

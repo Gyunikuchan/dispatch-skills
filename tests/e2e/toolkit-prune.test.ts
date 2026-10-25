@@ -70,3 +70,29 @@ test('accepted fixes require a fresh review of the exact integration HEAD',async
  const finding={id:'R1-F001',severity:'MUST',locus:target+':L1',defect:'Incorrect intermediate assertion',requiredChange:'Fix the assertion',sources:['reviewer'],scope:'in'};review(r,1,[finding]);await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'accept',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'The intermediate assertion is wrong'}},r.deps);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');
  fs.writeFileSync(path.join(r.integration,target),'fixed assertion\n');assert.equal((await r.run(['worktree','commit','--reason','fix accepted assertion'])).output.ok,true);assert.equal((await r.run(['verify','run'])).output.ok,true);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');review(r,2);assert.equal((await r.run(['worktree','prune'])).output.ok,true);
 }finally{r.cleanup();}});
+
+
+test('completion requires verified pruned delivery',async()=>{
+ const support='tests/helpers/shared.ts';
+ const source=transientPlanSource.replace('| none | SC1 |','| none | SC1, SC2 |').replace('## Success Criteria','#### [NEW] '+support+'\n- Purpose: retained shared helper.\n\n## Success Criteria').replace('  - Changes: '+target,'  - Changes: '+target+', '+support).replace('  - Tests: '+target,'  - Tests: '+target+', '+support).replace('## Verification Plan','- [SC2] Coverage review\n  - Changes: '+support+'\n  - Evidence: review\n  - Review: inspect retained coverage\n\n## Verification Plan');
+ const r=await prepared(source,{[support]:'retained helper\n'});try{
+  const skill=path.join(r.session,'stub-skill');fs.mkdirSync(skill);fs.cpSync(path.join(r.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
+  fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'stub'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));r.deps.skillRoot=skill;r.deps.liveness={claude:true};r.deps.orchestrator=null;
+  r.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
+  const produced=await r.run(['review','run','integration','--kind','code']);assert.equal(produced.output.ok,true,JSON.stringify(produced));
+  assert.equal((await r.run(['worktree','prune'])).output.ok,true);assert.equal(fs.existsSync(path.join(r.integration,target)),false);assert.equal(fs.readFileSync(path.join(r.integration,support),'utf8'),'retained helper\n');
+  assert.equal((await r.run(['report','complete'])).output.reason,'criteria-unmet');
+  await appendRecord(r.session,{kind:'manual-complete',by:'user',quote:'reviewed manually',key:'manual-step',data:{criterion:'SC1',evidence:'manual review'}},r.deps);
+  const waiting=await r.run(['status','show']);assert.ok(waiting.value.criteria.includes('SC1'));assert.equal(waiting.value.criterionStatuses.find((row:{criterion:string})=>row.criterion==='SC1').state,'manual');
+  assert.equal((await r.run(['verify','run','--final'])).output.ok,true);const rows=foldLedger(r.session).records.filter(row=>row.kind==='evidence');assert.equal(rows.some(row=>row.data['criterion']==='final:SC2'),false);
+  assert.equal((await r.run(['worktree','deliver'])).output.ok,true);const completed=await r.run(['report','complete']);assert.equal(completed.output.ok,true,JSON.stringify(completed));assert.equal(completed.value.statuses.find((row:{criterion:string})=>row.criterion==='SC2').state,'verified');
+ }finally{r.cleanup();}
+});
+
+test('pruning accepts a session ancestor alias while preserving owned-path link guards',async()=>{
+ const r=await prepared();const alias=r.root+'-alias';try{
+  review(r);fs.symlinkSync(r.root,alias,process.platform==='win32'?'junction':'dir');
+  const lines:string[]=[];const {main}=await import('../../skills/dispatch/scripts/toolkit/cli.ts');const exit=await main(['worktree','prune','--session',path.join(alias,path.basename(r.session))],{...r.deps,stdout:line=>lines.push(line)});assert.equal(exit,0,lines.join('\n'));assert.equal(fs.existsSync(path.join(r.integration,target)),false);
+  const held=path.join(r.session,'held-integration');fs.renameSync(r.integration,held);try{fs.symlinkSync(held,r.integration,process.platform==='win32'?'junction':'dir');assert.equal((await r.run(['worktree','prune'])).output.reason,'unsafe-integration');}finally{if(process.platform==='win32')fs.rmdirSync(r.integration);else fs.unlinkSync(r.integration);fs.renameSync(held,r.integration);}
+ }finally{if(fs.existsSync(alias)){if(process.platform==='win32')fs.rmdirSync(alias);else fs.unlinkSync(alias);}r.cleanup();}
+});

@@ -956,6 +956,7 @@ function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonl
   const durable = new Set(criteria.filter((criterion) => criterion.retain === 'durable').flatMap((criterion) => criterion.changes));
   for (const criterion of criteria) {
     if (criterion.retain !== 'transient') continue;
+    if(criterion.tests.length && criterion.tests.every(isTestSupportPath))out.push(lint('transient-test-path',criterion.retainLine ?? criterion.line,`Criterion ${criterion.id} needs at least one non-support transient test file.`));
     for (const path of criterion.tests.filter((file) => !isTestSupportPath(file))) {
       const fail = (reason: string) => out.push(lint('transient-test-path', criterion.retainLine ?? criterion.line, `Criterion ${criterion.id} transient test ${path} ${reason}`));
       const action = actions.get(path);

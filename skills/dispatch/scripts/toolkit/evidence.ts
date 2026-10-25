@@ -46,7 +46,7 @@ export function criterionStatuses(fold: Fold, checks: readonly Check[], current:
   const allFinal=prune && current && current.headTree===prune.tree && verifiedStage(fold,prune.final,current,prune.artifacts);
   return checks.filter(check=>!prune || check.criterion!=='contract' || check.commands.length).map((check) => {
     const projected=prune?.final.find(c=>c.criterion==='final:'+check.criterion);
-    const historical=prune?.transient.includes(check.criterion);
+    const historical=prune && (prune.transient.includes(check.criterion) || !check.commands.length);
     const original=prune?.pre.find(c=>c.criterion===check.criterion && c.commandDigest===check.commandDigest);
     const evidence = prune ? allFinal && (historical ? original && verifiedStage(history,[original],source!,prune.artifacts) && eligibleEvidence(history,original,source!,true) : projected && current && eligibleEvidence(fold,projected,current)) : current && eligibleEvidence(fold,check,current);
     if (evidence) {

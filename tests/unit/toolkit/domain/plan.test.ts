@@ -973,3 +973,9 @@ test('warns when transient coverage names a durable criterion without FINAL veri
  const result=okPlan(source);assert.ok(result.warnings.some(w=>w.code==='transient-coverage'&&w.message.includes('plan-level')));
  assert.equal(okPlan(transient('  - Retain: transient\n  - Covered by: SC2\n')).warnings.some(w=>w.code==='transient-coverage'),false);
 });
+
+
+test('transient tests require a non-support test target',()=>{
+ const source=isolated.replaceAll('tests/fetch.transient.test.ts','tests/fixtures/fetch.json');
+ assert.equal(transientPathDefects(source).length,1);
+});

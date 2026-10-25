@@ -5,6 +5,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import type { Fold } from './ledger.ts';
 import { withLedger, latest, currentHashes, gate } from './ledger.ts';
 import { checks, finalChecks, hasTransient, loadPlan, transientTargets } from './plan-view.ts';
+import { isTestSupportPath } from './domain/plan.ts';
 import type { ParsedPlan } from './domain/types.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { parseReport } from './domain/report.ts';
@@ -34,7 +35,7 @@ export function validateTargets(plan:ParsedPlan):string[] {
        lower.has(file.toLowerCase())) refuse('unsafe-transient-target');
     lower.add(file.toLowerCase());
     if([...plan.changes.map(change=>change.path),...plan.criteria.flatMap(criterion=>[...criterion.tests,...criterion.changes])].some(declared=>declared.toLowerCase()===file.toLowerCase()&&declared!==file))refuse('unsafe-transient-target');
-    if(/(?:^|[\/._-])(helpers?|fixtures?|mocks?|support|utils?)(?:[\/._-]|$)/i.test(file)  ||
+    if(isTestSupportPath(file)  ||
        !plan.changes.some(c=>c.path===file &&
       c.action==='NEW')  ||
        plan.changes.some(c=>c.path===file &&
@@ -89,14 +90,17 @@ function physical(root:string,file:string,absent:boolean):boolean {
 async function owned(ctx:HandlerContext,fold:Fold) {
   const opened=integrationRecord(fold);
     if(!opened)refuse('no-integration');
-  const boundary=path.join(fs.realpathSync(ctx.session),'.state/worktrees'),cwd=path.resolve(ctx.session,opened.data['path']);
+  const root=fs.realpathSync(ctx.session),boundary=path.join(root,'.state/worktrees'),logical=path.resolve(root,opened.data['path']);
+  const cwd=fs.existsSync(logical)?fs.realpathSync(logical):logical;
   const relative=path.relative(boundary,cwd);
   if(!relative ||
       relative.startsWith('..') ||
       path.isAbsolute(relative) ||
       !fs.existsSync(cwd) ||
-      fs.realpathSync(cwd)!==cwd)refuse('unsafe-integration');
-  const registered=(await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','list','--porcelain'])).split(/\r?\n/).filter(l=>l.startsWith('worktree ')).map(l=>path.resolve(l.slice(9)));
+      path.isAbsolute(path.relative(root,logical)))refuse('unsafe-integration');
+  let component=root;
+  for(const part of path.relative(root,logical).split(path.sep)){component=path.join(component,part);if(fs.lstatSync(component).isSymbolicLink())refuse('unsafe-integration');}
+  const registered=(await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','list','--porcelain'])).split(/\r?\n/).filter(l=>l.startsWith('worktree ')).map(l=>fs.existsSync(l.slice(9))?fs.realpathSync(l.slice(9)):path.resolve(l.slice(9)));
   if(!registered.includes(cwd) ||
       await gitOk(ctx.deps,cwd,['symbolic-ref','--short','HEAD'])!==opened.data['branch'])refuse('unsafe-integration');
   return {cwd,opened};
