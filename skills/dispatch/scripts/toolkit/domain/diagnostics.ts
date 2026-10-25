@@ -1,3 +1,4 @@
+import type { FailureClass } from '../types.ts';
 
 // Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
 // The caller supplies captured facts; this module applies heuristics without reading session state.
@@ -5,8 +6,10 @@
 // SECTION: Types
 
 const PHASE_NAMES = ['plan', 'plan review', 'implementation', 'code review', 'design', 'design review', 'integration review', 'ask'] as const;
+
 /** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
+
 /** Review phases carry the review machine's convergence result (findings re-raised across rounds, any escalation) and the resolved round `cap`. */
 export type Phase = { key: string; name: typeof PHASE_NAMES[number]; outcome?: string; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
@@ -22,17 +25,29 @@ export const CATEGORIES = {
 export type Category = keyof typeof CATEGORIES;
 
 export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+
 /** `input` is canonical uncached input; `models` holds per-model counters when the provider reports them. */
 export type Usage = ModelUsage & { models?: Record<string, ModelUsage> };
 
-/** Phases are disjoint: their wall times sum to the run's wall time. */
+/** Tool-call durations can overlap; they do not measure session elapsed time. */
 export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
+
 /** One launch attempt (`phase` is a phase key; `outcome` is `ok` or a failure class). Estimated rows carry attested or derived figures. */
+export type DiagnosticEvent = {
+  subject: string; slot: string; provider?: string; model?: string; attempt: number; targetSlot?: string;
+} & (
+  {kind:'validation'; outcome:string; surface:'cli'|'native'} |
+  {kind:'routing'; cls?:FailureClass; state:'next-model'|'next-mode'|'reserve'|'native-fallback'|'stop'} |
+  {kind:'native'; state:'pending'|'completed'|'invalid'; replay?: boolean} |
+  {kind:'slot'; cls?:FailureClass; state:'done'|'native'|'failed'; replay?: boolean}
+);
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[];
   estimated?: boolean; tokens?: number; slot?: string;
+  routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'; subject?: string; attempt?: number; targetSlot?: string;
 };
+
 /**
  * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
  * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
@@ -40,28 +55,34 @@ export type InvocationFacts = {
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 export type RunFacts = {
   timingScope?: 'tool-calls';
+  capture?: {state:'opened'|'completed'; start:number; end?:number; storageFailed?:number};
+  retroState?: 'missing'|'unreadable'|'malformed'|'invalid'|'empty'|'collected';
+  collection?: {completed?:number; partial?:number; corrupt?:number; unreadable?:number; incomplete?:number; storageFailed?:number};
+  provenance?: {version?:string; build?:string; config?:Record<string,unknown>}[];
+  rejectedTools?: {tool:string; action:string; cls:string}[];
+  relaunches?: number;
   version?: string; build?: string; os?: string; host?: string; verb?: string; level?: string; pins?: string;
   config?: Record<string, unknown>; outcome?: string;
   /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
   fault?: { effectId?: string; cls: string; hostWaitMs?: number; waitBy?: 'user' | 'host'; driverMs?: number };
   phases: PhaseFacts[];
-  hostGaps: { await: string; ms: number }[];
   invocations: InvocationFacts[];
   reviews: ReviewFacts[];
-  rejectedEvents: { eventType: string; reason: string }[];
-  repairs?: number; admissionDefects?: number; orchestratorBytes?: number;
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
 };
+
 export type RetroObservation = { id: string; component: string; category: Category; evidence: string; impact: string; proposedFix: string };
+
 /** `source` is a heuristic id (`H1`…) or `retro`. */
 export type Finding = { source: string; run?: number; id?: string; category: Category; component: string; evidence: string; impact: string; proposedFix: string };
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
-export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, hostGapMs: 600_000 } as const;
+export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
 export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
+
 /** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
@@ -107,78 +128,20 @@ const millis = (v: unknown): number | undefined => typeof v === 'number' && Numb
 const opt = <K extends string, V>(key: K, value: V | undefined) => (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 
 /** One-line host or validator text, or undefined when empty, oversized, or carrying a prohibited locator. */
+
 function safeText(v: unknown): string | undefined {
   if (typeof v !== 'string' || !v.trim() || Buffer.byteLength(v) > DIAGNOSTIC_LIMITS.fieldBytes || !locatorFree(v)) return undefined;
   return v.replace(/\s+/g, ' ').trim();
 }
+
 function componentOf(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
   const relative = v.replace(/^skills\/dispatch\//, '');
   return COMPONENTS.has(relative) ? relative : undefined;
 }
+
 function categoryOf(v: unknown): Category | undefined {
   return Object.entries(CATEGORIES).find(([key, label]) => v === key || v === label)?.[0] as Category | undefined;
-}
-
-// SECTION: Rejection reasons
-
-/** Bounded classes for a rejected host event; validator text echoes submitted values and keys, so only the class renders. */
-export const REJECTION_CLASSES = ['malformed-json', 'effect-pending', 'unknown-type', 'wrong-await', 'unexpected-field', 'invalid-value', 'state-check'] as const;
-// Record-validation field names (toolkit/records.ts); a name missing here only truncates a rendered path.
-const EVENT_FIELDS: ReadonlySet<string> = new Set((
-  'type path slots rulings clusters tasks task attempt signature handle model effort substitution envelopePath kind reason tokens durationMs '
-  + 'criteria waiver answer artifact evidence observations by quote noticeId afterHash action rationale evidenceIds evaluatedLevel gateScopeHash '
-  + 'choice request ruling requestId source baseArtifactHash writerRationale delta proposedArtifactHash affectedTasks affectedIncrements paths '
-  + 'obligations commands finalCommands phaseDuties increments id prerequisites acceptance title changes verify command final '
-  + 'tests red preExisting redException testRationale review enforcementInfeasibility planHash objective invariants approvedPaths commandMappings '
-  + 'baselineEvidence phaseObligations writer remainingIncrements design status exit inputFingerprint priority outcome dependencies hash fields '
-  + 'slot sourceKey outputPath mapping configuredModel launcherModel launcherEffort provider clusterId affectedPaths fix dependsOn verification '
-  + 'severity decision selected ids hotfix mode rootCause status briefHash detail need notify notice delta current proposed target amendment external '
-  + 'changeDispositions observationId retain refresh expectedHash reconciliation retained changed added retired intentChanged dependencyChanged compensating '
-  + 'retire disposition round revision scope afterHash beforeHash phase pendingId rawDeltaRef pathCount suggestedRelevance suggestedEvidence '
-  + 'boundarySeq effectId descriptorHash checkpoint protocolRevision codecVersion epoch oldRuntime newRuntime prefixHash sha256 bytes seq reason'
-).split(' '));
-const MAX_SEGMENTS = 8;
-
-/** `event` plus allowlisted names and indexes; the first other segment renders as `*` and ends the path. */
-function fieldPath(head: string): string | undefined {
-  if (!head.startsWith('event')) return undefined;
-  const out = ['event'];
-  const segment = /\.([^.[\]]+)|\[(\d{1,6})\]/y;
-  segment.lastIndex = 'event'.length;
-  while (segment.lastIndex < head.length) {
-    const at = segment.lastIndex, part = segment.exec(head);
-    if (!part || out.length > MAX_SEGMENTS || (part[1] !== undefined && !EVENT_FIELDS.has(part[1]))) {
-      if (at === 'event'.length && head[at] !== '.' && head[at] !== '[') return undefined;
-      out.push('.*');
-      break;
-    }
-    out.push(part[1] === undefined ? `[${part[2]}]` : `.${part[1]}`);
-  }
-  return out.length > 1 ? out.join('') : undefined;
-}
-
-/**
- * Reduces a validator or machine rejection to `<class>` or `<class> at <field path>`; never echoes a value or an
- * arbitrary key. Idempotent, so the collector and the renderer may both apply it.
- */
-export function rejectionReason(v: unknown): string {
-  if (typeof v !== 'string') return 'state-check';
-  const [, prior = '', priorPath] = /^([a-z-]+)(?: at (event\S*))?$/.exec(v) ?? [];
-  if ((REJECTION_CLASSES as readonly string[]).includes(prior)) {
-    const path = priorPath === undefined ? undefined : fieldPath(priorPath);
-    return path ? `${prior} at ${path}` : prior;
-  }
-  const unexpected = v.endsWith(': unexpected field');
-  const cls = /^event: expected JSON object, got malformed JSON$/.test(v) ? 'malformed-json'
-    : /^event: effect \S+ is pending;/.test(v) ? 'effect-pending'
-    : /^event\.type: [A-Z][A-Z0-9_]* is not accepted at await [a-z]+;/.test(v) ? 'wrong-await'
-    : v.startsWith('event.type: expected ') ? 'unknown-type'
-    : unexpected ? 'unexpected-field'
-    : v.includes(': expected ') ? 'invalid-value' : 'state-check';
-  const split = v.indexOf(': ');
-  const path = fieldPath(unexpected ? v.slice(0, -': unexpected field'.length) : split < 0 ? '' : v.slice(0, split));
-  return path ? `${cls} at ${path}` : cls;
 }
 
 // SECTION: Usage
@@ -196,6 +159,7 @@ function counters(v: unknown): ModelUsage | undefined {
   }
   return out;
 }
+
 function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
   const base = counters(v);
   if (!base || !record(v)) return undefined;
@@ -206,15 +170,19 @@ function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
   if (parts.length && parts.length <= 8 && parts.every(([name, part]) => name && part)) out.models = Object.fromEntries(parts.map(([name, part]) => [name!, canonical(part!)]));
   return out;
 }
+
 /** Canonical counters: `input` excludes cache reads, so providers that count them inside input (Codex) compare equally. */
+
 export function normalizeUsage(raw: unknown, inputSemantics: 'includes-cache' | 'uncached'): Usage | undefined {
   return usageOf(raw, inputSemantics === 'includes-cache');
 }
+
 const total = (u: ModelUsage) => u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + u.output;
-const measured = (i: InvocationFacts): Usage | undefined => i.estimated ? undefined : i.usage;
+const measured = (i: InvocationFacts): Usage | undefined => i.estimated || i.surface !== 'cli' || !i.launched ? undefined : i.usage;
 const estimate = (i: InvocationFacts): number | undefined => !i.estimated ? undefined : i.tokens ?? (i.usage ? total(i.usage) : undefined);
 const sum = (values: readonly (number | undefined)[]): number | undefined => values.some((v) => v !== undefined) ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : undefined;
 type Totals = { input: number; output: number; cacheRead?: number; cacheWrite?: number; all: number };
+
 function totals(usages: readonly ModelUsage[]): Totals | undefined {
   if (!usages.length) return undefined;
   return { input: sum(usages.map((u) => u.input))!, output: sum(usages.map((u) => u.output))!, ...opt('cacheRead', sum(usages.map((u) => u.cacheRead))), ...opt('cacheWrite', sum(usages.map((u) => u.cacheWrite))), all: sum(usages.map(total))! };
@@ -223,7 +191,9 @@ function totals(usages: readonly ModelUsage[]): Totals | undefined {
 // SECTION: Gates
 
 /** Gates host retro items: at most `DIAGNOSTIC_LIMITS.observations`, valid id, dispatch-owned component, known category, bounded locator-free text. */
-export function retroObservations(value: unknown): { values: RetroObservation[]; rejected: number } {
+
+export function retroObservations(value: unknown): { state: 'invalid'|'empty'|'collected'; values: RetroObservation[]; rejected: number } {
+  if (!Array.isArray(value)) return {state:'invalid',values:[],rejected:0};
   const items = list(value);
   const values: RetroObservation[] = [];
   let rejected = Math.max(0, items.length - DIAGNOSTIC_LIMITS.observations);
@@ -234,7 +204,7 @@ export function retroObservations(value: unknown): { values: RetroObservation[];
     if (!id || values.some((v) => v.id === id) || !component || !category || !evidence || !impact || !proposedFix) { rejected++; continue; }
     values.push({ id, component, category, evidence, impact, proposedFix });
   }
-  return { values, rejected };
+  return { state:items.length?'collected':'empty', values, rejected };
 }
 
 function configValue(v: unknown, depth: number): unknown {
@@ -245,6 +215,7 @@ function configValue(v: unknown, depth: number): unknown {
   if (record(v)) return Object.fromEntries(Object.entries(v).filter(([key]) => /^[A-Za-z0-9_-]{1,40}$/.test(key) && locatorFree(key)).slice(0, 32).map(([key, item]) => [key, configValue(item, depth + 1)]));
   return DASH;
 }
+
 function invocationOf(v: unknown): InvocationFacts[] {
   if (!record(v)) return [];
   const reported = list(v['reportedModels']).map(modelName).filter((m): m is string => !!m).slice(0, 8);
@@ -252,11 +223,19 @@ function invocationOf(v: unknown): InvocationFacts[] {
     phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
     ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
     surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
+    ...opt('routingOutcome',(['next-model','next-mode','reserve','native-fallback','stop'] as const).find(x=>x===v['routingOutcome'])),
+    ...opt('slotState',(['done','native','failed'] as const).find(x=>x===v['slotState'])),
+    ...opt('validationOutcome',token(v['validationOutcome'])),
+    ...opt('nativeState',(['pending','completed','invalid'] as const).find(x=>x===v['nativeState'])),
+    ...opt('subject',match(/^[a-f0-9]{16}$/)(v['subject'])), ...opt('attempt',count(v['attempt'])),
+    ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
     ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
   }];
 }
+
 /** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
+
 export function sanitizeFacts(run: RunFacts): RunFacts {
   const r: Record<string, unknown> = record(run) ? run : {};
   // A dispatch content hash, exempt from the long-hex locator rule; only its 12-character prefix renders.
@@ -264,6 +243,15 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
   const config = record(r['config']) ? Object.fromEntries(CONFIG_KEYS.filter((key) => (r['config'] as Record<string, unknown>)[key] !== undefined).map((key) => [key, configValue((r['config'] as Record<string, unknown>)[key], 0)])) : undefined;
   const fault = record(r['fault']) ? r['fault'] : undefined;
   return {
+    ...opt('capture',record(r['capture']) && (r['capture']['state']==='opened'||r['capture']['state']==='completed') ? {
+      state:r['capture']['state'] as 'opened'|'completed',start:millis(r['capture']['start'])??0,
+      ...opt('end',millis(r['capture']['end'])),...opt('storageFailed',count(r['capture']['storageFailed']))} : undefined),
+    ...opt('retroState',(['missing','unreadable','malformed','invalid','empty','collected'] as const).find(x=>x===r['retroState'])),
+    ...opt('collection',record(r['collection']) ? Object.fromEntries(['completed','partial','corrupt','unreadable','incomplete','storageFailed'].flatMap(k=>{const n=count((r['collection'] as Record<string,unknown>)[k]);return n===undefined?[]:[[k,Math.min(1_000_000,n)]];})) : undefined),
+    ...opt('provenance',Array.isArray(r['provenance']) ? r['provenance'].slice(0,100).filter(record).map(p=>{const clean=sanitizeFacts({...p,phases:[],invocations:[],reviews:[]});return { ...opt('version',clean.version),...opt('build',clean.build),...opt('config',clean.config)};}) : undefined),
+    ...opt('rejectedTools',Array.isArray(r['rejectedTools']) ? r['rejectedTools'].slice(0,1000).filter(record).flatMap(v=>{
+      const cls=['invalid-input','invalid-record','approval-stale','key-conflict','user-only'].find(x=>x===v['cls']),tool=token(v['tool']),action=token(v['action']);return cls&&tool&&action?[{tool,action,cls}]:[];}) : undefined),
+    ...opt('relaunches',count(r['relaunches'])===undefined?undefined:Math.min(1_000_000,count(r['relaunches'])!)),
     ...opt('version', match(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,32})?$/)(r['version'])), ...opt('build', build?.slice(0, 12)),
     ...opt('os', token(r['os'])), ...opt('host', token(r['host'])),
     ...opt('verb', VERBS.find((v) => v === r['verb'])), ...opt('level', LEVELS.find((v) => v === r['level'])),
@@ -277,7 +265,6 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       key: phaseKey(p['key']) ?? '', name: PHASE_NAMES.find((name) => name === p['name']) ?? DASH, ...opt('outcome', token(p['outcome'])),
       ...opt('wallMs', millis(p['wallMs'])), ...opt('driverMs', millis(p['driverMs'])), ...opt('hostMs', millis(p['hostMs'])), ...opt('userMs', millis(p['userMs'])),
     })),
-    hostGaps: list(r['hostGaps']).filter(record).flatMap((g) => { const ms = millis(g['ms']); return ms === undefined ? [] : [{ await: token(g['await']) ?? DASH, ms }]; }),
     invocations: list(r['invocations']).flatMap(invocationOf),
     reviews: list(r['reviews']).filter(record).flatMap((v): ReviewFacts[] => {
       const round = count(v['round']), cap = count(v['cap']);
@@ -291,8 +278,6 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         ...opt('cap', cap !== undefined && cap <= DIAGNOSTIC_THRESHOLDS.maxRoundCap ? cap : undefined),
       }];
     }),
-    rejectedEvents: list(r['rejectedEvents']).filter(record).map((e) => ({ eventType: match(/^[A-Z][A-Z0-9_]{0,47}$/)(e['eventType']) ?? DASH, reason: rejectionReason(e['reason']) })),
-    ...opt('repairs', count(r['repairs'])), ...opt('admissionDefects', count(r['admissionDefects'])), ...opt('orchestratorBytes', count(r['orchestratorBytes'])),
     ...opt('observations', r['observations']),
   };
 }
@@ -305,7 +290,11 @@ const pct = (share: number) => `${Math.round(share * 100)}%`;
 const num = (n: number | undefined) => n === undefined ? DASH : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const tally = (values: readonly string[]) => [...new Set(values)].map((v) => `${v} ×${values.filter((x) => x === v).length}`).join(', ');
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const phaseName = (run: RunFacts, key: string | undefined) => run.phases.find((p) => p.key === key)?.name ?? DASH;
+const phaseName = (run: RunFacts, key: string | undefined) => {
+  const name=run.phases.find(p=>p.key===key)?.name??DASH;
+  return key&&/^review-[a-f0-9]{16}$/.test(key)?`${name} · subject ${key.slice(7)}`:name;
+};
+
 function groups<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
   const out = new Map<string, T[]>();
   for (const item of items) out.set(key(item), [...(out.get(key(item)) ?? []), item]);
@@ -321,25 +310,24 @@ const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'context-overflow': ['scripts/toolkit/prompts.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
 };
-const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the delegate's last output and consider replacing the model or provider."] as const;
-const AWAIT_COMPONENTS: Record<string, string> = {
-  author: 'references/templates/plan.md', native: 'references/providers.md', rule: 'references/review-rules.md', fix: 'references/verbs/implement.md',
-  write: 'references/templates/writer-brief.md', evidence: 'references/verbs/implement.md', retro: 'references/diagnostics.md',
-};
 
-/** Deterministic findings (H1–H6, H8, H9) for one run, in severity order. */
+const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the delegate's last output and consider replacing the model or provider."] as const;
+
+/** Deterministic findings (H1–H5, H8, H9) for one run, in severity order. */
+
 export function heuristics(run: RunFacts): Finding[] {
   const T = DIAGNOSTIC_THRESHOLDS;
   const out: Finding[] = [];
   const add = (source: string, category: Category, component: string, evidence: string, impact: string, proposedFix: string) => out.push({ source, category, component, evidence, impact, proposedFix });
   const cli = run.invocations.filter((i) => i.surface === 'cli');
   // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
-  const failed = cli.filter((i) => i.outcome !== 'ok');
+  const failed = cli.filter((i) => i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok'));
+  const failureClass = (i:InvocationFacts) => i.outcome !== 'ok' ? i.outcome : i.validationOutcome!;
   const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
-  const bySlot = count((i) => `${i.phase}|${i.slot ?? ''}`);
+  const bySlot = count((i) => `${i.subject??i.phase}|${i.slot ?? ''}`);
   const byProvider = count((i) => i.provider);
-  const wasted = failed.filter((i) => (i.slot !== undefined && (bySlot.get(`${i.phase}|${i.slot}`) ?? 0) >= 2) || (byProvider.get(i.provider) ?? 0) >= 2);
-  for (const [cls, items] of groups(wasted, (i) => i.outcome)) {
+  const wasted = failed.filter((i) => (i.slot !== undefined && (bySlot.get(`${i.subject??i.phase}|${i.slot}`) ?? 0) >= 2) || (byProvider.get(i.provider) ?? 0) >= 2);
+  for (const [cls, items] of groups(wasted, failureClass)) {
     const [component, fix] = FAILURE_FIXES[cls] ?? DEFAULT_FIX;
     const spent = sum(items.map((i) => i.durationMs));
     add('H1', 'correctness', component, `\`${cls}\`: ${items.length} of ${plural(cli.length, 'CLI attempt')} failed (${tally(items.map((i) => i.provider))})${spent === undefined ? '' : `, ${formatDuration(spent)} of driver time`}.`, 'Failed attempts delay the wave and trigger retries or cascade launches.', fix);
@@ -382,26 +370,22 @@ export function heuristics(run: RunFacts): Finding[] {
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
     if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
-  const gap = run.hostGaps.reduce<{ await: string; ms: number } | undefined>((a, g) => g.ms > (a?.ms ?? -1) ? g : a, undefined);
-  if (gap && gap.ms > T.hostGapMs) add('H6', 'speed', AWAIT_COMPONENTS[gap.await] ?? 'SKILL.md', `Longest elapsed host-await gap: \`${gap.await}\` await took ${formatDuration(gap.ms)} (${plural(run.hostGaps.length, 'non-user await')}).`, 'Elapsed gaps can include work, pauses and scheduling; internal activity is unknown.', `Use activity evidence for the \`${gap.await}\` await before attributing the gap or proposing a timing fix.`);
-  if (run.rejectedEvents.length) {
-    const reasons = run.rejectedEvents.slice(0, 3).map((e) => `"${e.reason.length > 120 ? `${e.reason.slice(0, 119)}…` : e.reason}"`).join('; ');
-    add('H8', 'correctness', 'scripts/toolkit/records.ts', `${plural(run.rejectedEvents.length, 'host event')} rejected (${tally(run.rejectedEvents.map((e) => e.eventType))}): ${reasons}.`, 'Each rejection costs a host turn and a resend.', 'Return the expected event shape with a minimal valid example in the rejection, and show the same example in the frame reply template.');
-  }
-  if (run.repairs) add('H9', 'correctness', 'references/templates/writer-brief.md', `${plural(run.repairs, 'implementation repair attempt')}.`, 'Each repair relaunches a writer and repeats verification.', 'Put the failed check and its acceptance rule in the task brief before the first attempt.');
-  if (run.admissionDefects) add('H9', 'correctness', 'scripts/toolkit/writers.ts', `${plural(run.admissionDefects, 'admission defect')}.`, 'Each defect rejects a writer result and costs another attempt.', 'Check envelope fields deterministically and return the exact failing field so the writer fixes it in one attempt.');
+  if (run.rejectedTools?.length) add('H8','correctness','scripts/toolkit/records.ts',`${plural(run.rejectedTools.length,'toolkit operation')} rejected (${tally(run.rejectedTools.map(e=>e.tool+' '+e.action+': '+e.cls))}).`,'Rejected operations can require another host turn.','Return the allowed input shape and current preconditions with the rejection.');
+  if (run.relaunches) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');
   return bySeverity(out);
 }
 
 // SECTION: Rendering
 
 /** `1h 4m 12s` | `45s` | `<1s`; unavailable renders `—`. */
+
 export function formatDuration(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return DASH;
   if (ms < 1000) return '<1s';
   const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h ? `${h}h ${m}m ${s % 60}s` : m ? `${m}m ${s % 60}s` : `${s}s`;
 }
+
 // Only a `<` that could open a tag, comment, or declaration is escaped, so `<1s` stays readable.
 const md = (text: string) => text.replace(/<(?=[A-Za-z/!?])/g, '&lt;');
 const cell = (text: string) => md(text).replace(/\|/g, '\\|');
@@ -411,10 +395,12 @@ const unique = (values: readonly string[]) => [...new Set(values)].join(', ') ||
 const clip = (text: string, max: number) => Array.from(text).length > max ? `${Array.from(text).slice(0, max - 1).join('')}…` : text;
 const sourceOf = (f: Finding) => f.source === 'retro' ? `host retro \`${f.id ?? DASH}\`` : f.source;
 const summaryLine = (f: Finding) => md(`${CATEGORIES[f.category]} · \`${f.component}\` · ${clip(f.evidence, 160)} (${f.source === 'retro' ? 'host retro' : f.source})`);
+
 function coverage(items: readonly InvocationFacts[]): string {
   const launched = items.filter((i) => i.surface === 'cli' && i.launched);
   return launched.length ? `${launched.filter((i) => measured(i)).length}/${launched.length}` : DASH;
 }
+
 function usageSummary(items: readonly InvocationFacts[]): string {
   const t = totals(items.flatMap((i) => measured(i) ?? []));
   return t ? `${num(t.all)} (input ${num(t.input)} · cache read ${num(t.cacheRead)} · cache write ${num(t.cacheWrite)} · output ${num(t.output)})` : DASH;
@@ -427,7 +413,7 @@ function overview(runs: readonly RunFacts[]): string[] {
     const label = `${index + 1} · ${run.verb ?? DASH} · ${run.level ?? DASH}`;
     const line = (phase: string, outcome: string | undefined, timing: readonly (number | undefined)[], items: readonly InvocationFacts[]) =>
       lines.push(row([label, phase, outcome ?? DASH, ...timing.map(formatDuration), String(items.length), ...tokenCells(totals(items.flatMap((i) => measured(i) ?? []))), coverage(items)]));
-    for (const p of run.phases) line(p.name, p.outcome, [p.wallMs, p.driverMs, p.hostMs, p.userMs], run.invocations.filter((i) => i.phase === p.key));
+    for (const p of run.phases) line(phaseName(run,p.key), p.outcome, [p.wallMs, p.driverMs, p.hostMs, p.userMs], run.invocations.filter((i) => i.phase === p.key));
     const unmatched = run.invocations.some((i) => !run.phases.some((p) => p.key === i.phase));
     if (run.phases.length !== 1 || unmatched) line('all phases', run.outcome, (['wallMs', 'driverMs', 'hostMs', 'userMs'] as const).map((k) => sum(run.phases.map((p) => p[k]))), run.invocations);
     if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; ${run.fault.waitBy === 'user' ? 'user' : 'host'} wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
@@ -460,18 +446,26 @@ function appendix(runs: readonly RunFacts[]): string[] {
       const all = i.estimated ? estimate(i) : usage?.all;
       const provider = i.surface === 'native' ? `${i.provider} (native)` : i.mode && i.mode !== 'cli' ? `${i.provider} (${i.mode})` : i.provider;
       const model = i.reportedModels?.length ? `${i.model} (reported: ${i.reportedModels.join(', ')})` : i.model;
-      lines.push(row([String(index + 1), phaseName(run, i.phase), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.launched ? i.outcome : `${i.outcome} (not launched)`]));
+      const review=/^review-[a-f0-9]{16}$/.test(i.phase);
+      const ordinal=i.attempt!==undefined&&i.attempt>0?i.attempt:undefined;
+      const identity=i.subject?(review?` · attempt ${i.subject}/${ordinal??DASH}`:` · subject ${i.subject} · attempt ${ordinal??DASH}`):ordinal===undefined?'':` · attempt ${ordinal}`;
+      lines.push(row([String(index + 1), phaseName(run, i.phase)+identity+(i.slot?' · slot '+i.slot:''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.surface==='native' ? `native ${i.nativeState??(i.outcome==='ok'?'completed':i.outcome==='native-pending'?'pending':'unavailable')}` : `${i.outcome}${i.validationOutcome?' · validation '+i.validationOutcome:''}${i.routingOutcome?' · routing '+i.routingOutcome:''}${i.slotState?' · slot '+i.slotState:''}${i.launched?'':' (not launched)'}`]));
     }
   });
   lines.push('');
   runs.forEach((run, index) => {
     lines.push(`Run ${index + 1}: verb ${run.verb ?? DASH}, level ${run.level ?? DASH}, pins ${run.pins ?? DASH}, outcome ${run.outcome ?? DASH}.`, '');
-    if (run.config && Object.keys(run.config).length) lines.push('```json', JSON.stringify(run.config, null, 2), '```', '');
+    for(const snapshot of run.provenance??[{version:run.version,build:run.build,config:run.config}]) {
+      if(!snapshot.version&&!snapshot.build&&!snapshot.config)lines.push('Provenance: unknown historical implementation and configuration.','');
+      lines.push(`Provenance: dispatch ${snapshot.version??DASH} · build ${snapshot.build??DASH}.`,'');
+      if(snapshot.config&&Object.keys(snapshot.config).length)lines.push('```json',JSON.stringify(snapshot.config,null,2),'```','');
+    }
   });
   return [...lines, '</details>', ''];
 }
 
 /** Renders the session report from every run's facts; compaction drops the Appendix, then lower-severity findings. */
+
 export function renderDiagnostics(input: readonly RunFacts[]): { text: string; findings: number; top?: string } {
   const runs = input.map(sanitizeFacts);
   const retro = runs.map((run) => run.observations === undefined ? undefined : retroObservations(run.observations));
@@ -481,21 +475,21 @@ export function renderDiagnostics(input: readonly RunFacts[]): { text: string; f
   ]));
   const invocations = runs.flatMap((run) => run.invocations);
   const estimated = sum(invocations.map(estimate));
-  const bytes = sum(runs.map((run) => run.orchestratorBytes));
   const collected = retro.filter((r) => r !== undefined);
   const head = [
     '# Dispatch diagnostics', '',
     'Review before sharing. This report holds dispatch-owned data only: no user source, objective, repository paths, or identities. Proposed fixes are unverified.', '',
     '`—` marks an unavailable value; `~` marks an estimate excluded from measured totals.', '',
     '## Summary', '',
-    `- Build: ${unique(runs.map((run) => `dispatch ${run.version ?? DASH} · build ${run.build ?? DASH}`))}`,
+    `- Build: ${unique(runs.flatMap(run=>(run.provenance??[{version:run.version,build:run.build}]).map(p=>`dispatch ${p.version??DASH} · build ${p.build??DASH}`)))}`,
     `- Host: ${unique(runs.map((run) => run.host ?? DASH))} · OS: ${unique(runs.map((run) => run.os ?? DASH))}`,
-    `- Runs: ${runs.length} · wall time: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
+    `- Runs: ${runs.length} · measured duration: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
     `- Provider CLI measured tokens: ${usageSummary(invocations)} · launch coverage ${coverage(invocations)}`,
-    `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`} · orchestrator frame exposure ${bytes === undefined ? DASH : `~${num(Math.ceil(bytes / 4))}`}`,
+    `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`}`,
     ...(runs.some(run => run.timingScope === 'tool-calls') ? ['- Timing scope: summed measured tool-call durations; concurrent calls can overlap. Host reasoning, user wait, native/writer usage and work before enablement are unavailable.'] : []),
-    '- Full conversation totals are unavailable: provider measurements cover reported launches only; frame exposure is not full orchestrator usage.',
-    `- Host retro: ${collected.length ? `${sum(collected.map((r) => r.values.length))} accepted · ${sum(collected.map((r) => r.rejected))} rejected` : 'not collected'}`,
+    '- Full conversation totals are unavailable: provider measurements cover reported CLI launches only. Full collection coverage is unavailable. Total storage loss can be unobservable.',
+    `- Host retro: ${unique(runs.map((run,index)=>run.retroState??retro[index]?.state??'missing'))} · ${sum(collected.map(r=>r.values.length))??0} accepted · ${sum(collected.map(r=>r.rejected))??0} rejected`,
+    `- Collection health: ${runs.some(r=>Object.entries(r.collection??{}).some(([key,n])=>key!=='completed'&&n>0))?'partial':runs.some(r=>(r.collection?.completed??0)>0)?'complete for observed captures':'unknown'} · corrupt ${num(sum(runs.map(r=>r.collection?.corrupt)))} · unreadable ${num(sum(runs.map(r=>r.collection?.unreadable)))} · incomplete ${num(sum(runs.map(r=>r.collection?.incomplete)))} · storage-failed ${num(sum(runs.map(r=>r.collection?.storageFailed)))}`,
     '', 'Top findings:', '',
     ...(findings.length ? findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`) : ['- none']), '',
     ...overview(runs),

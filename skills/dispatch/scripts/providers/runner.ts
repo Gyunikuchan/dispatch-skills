@@ -336,7 +336,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     }
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
-    try { usage = !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
+    try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
     invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };

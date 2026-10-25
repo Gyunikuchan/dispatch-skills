@@ -53,7 +53,7 @@ Dispatch does not commit, push, or open a pull request. You decide when and how 
 
 ## Optional session diagnostics
 
-When `diagnostics` is on, report completion writes `diagnostics.md` from the session ledger, current review results and host retro notes. It reports review rounds, outcomes, findings and available measurements. Missing timing and token values appear as `—`; current toolkit review results do not retain provider usage counters for this report.
+When `diagnostics` is on, report completion writes `diagnostics.md` from session captures, the ledger, current review results and host retro notes. Captured CLI attempts retain reported provider usage. Native timing and usage, and unsupported measurements, remain unavailable as `—`. The report shows review rounds, outcomes, findings and collection limits.
 
 The host records Dispatch instruction, driver or routing friction through the [retro format](../diagnostics.md). Findings cover Dispatch's own behavior. Proposed fixes are unverified.
 

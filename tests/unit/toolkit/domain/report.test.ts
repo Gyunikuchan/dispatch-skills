@@ -197,7 +197,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CATEGORIES, COMPONENTS, formatDuration, heuristics, normalizeUsage, rejectionReason, renderDiagnostics, retroObservations, sanitizeFacts,
+  CATEGORIES, COMPONENTS, DIAGNOSTIC_LIMITS, formatDuration, heuristics, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts,
   type Finding, type InvocationFacts, type RunFacts, type Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
@@ -214,7 +214,7 @@ const bare = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => {
 const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
   version: '0.7.1', build: 'ab'.repeat(32), os: 'windows', host: 'claude', verb: 'review', level: 'medium', outcome: 'complete',
   phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000, driverMs: 45_000, hostMs: 60_000, userMs: 400 }],
-  hostGaps: [], invocations: [invocation()], reviews: [], rejectedEvents: [], ...overrides,
+  invocations: [invocation()], reviews: [], ...overrides,
 });
 const observation = (overrides: Record<string, unknown> = {}) => ({
   id: 'o1', component: 'scripts/toolkit/records.ts', category: 'instruction-clarity',
@@ -222,6 +222,45 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
+test('diagnostics render one subject per phase cell and bound observed collection coverage', () => {
+ const subject='1234567890abcdef';
+ const generations=['1111222233334444','aaaabbbbccccdddd'];
+ const text=render([facts({phases:[{key:'review-'+subject,name:'code review'}],invocations:[
+  invocation({phase:'review-'+subject,subject:generations[0]!,attempt:1,slot:'codex[0]'}),
+  invocation({phase:'review-'+subject,subject:generations[0]!,attempt:2,slot:'codex[0]'}),
+  invocation({phase:'review-'+subject,subject:generations[1]!,attempt:1,slot:'codex[0]'}),
+ ]})]);
+ for(const line of text.split('\n').filter(line=>line.startsWith('|')&&line.includes('subject')))assert.equal(line.match(/subject /g)?.length,1,line);
+ for(const identity of [`${generations[0]}/1`,`${generations[0]}/2`,`${generations[1]}/1`])assert.ok(text.includes(`subject ${subject} · attempt ${identity} · slot codex[0]`),identity);
+ const ask=render([facts({phases:[{key:'ask',name:'ask'}],invocations:[invocation({phase:'ask',subject:generations[0]!,attempt:3,slot:'codex[0]'})]})]);
+ assert.ok(ask.includes(`ask · subject ${generations[0]} · attempt 3 · slot codex[0]`));
+ assert.match(text,/Full collection coverage is unavailable/);
+ assert.equal(sanitizeFacts(facts({collection:{completed:9_000_000}})).collection?.completed,1_000_000);
+});
+test('diagnostics distinguish invalid retro native completion and unavailable coverage', () => {
+  for (const observations of [{}, null, 'bad']) {
+    assert.equal((retroObservations(observations) as {state?: string}).state, 'invalid');
+    assert.match(render([facts({observations})]), /Host retro: invalid/);
+  }
+  assert.match(render([facts({observations: []})]), /Host retro: empty/);
+  for (const retroState of ['missing','malformed','unreadable'] as const) assert.match(render([facts({retroState})]), new RegExp(`Host retro: ${retroState}`));
+  const text=render([facts({invocations:[bare({surface:'native',launched:false,nativeState:'completed',outcome:'ok',subject:'a'.repeat(16),attempt:0}),bare({surface:'native',launched:false,nativeState:'pending',outcome:'native-pending',attempt:0})]})]);
+  assert.match(text,/native completed/); assert.match(text,/native pending/);
+  assert.doesNotMatch(text,/attempt 0\b|\/0\b/);
+  assert.doesNotMatch(text,/ok \(not launched\)/);
+  assert.match(text,/launch coverage —/);
+  assert.match(render([facts({invocations:[invocation({usage:{input:0,output:0}})]})]),/measured tokens: 0 /);
+  const semantic=render([facts({invocations:[invocation({slot:'codex[0]',validationOutcome:'schema'}),invocation({slot:'codex[0]',validationOutcome:'schema'})]})]);
+  assert.match(semantic,/`schema`: 2 of 2 CLI attempts failed/);
+  assert.match(semantic,/ok · validation schema/);
+});
+
+test('diagnostics render collection health and provenance within privacy limits', () => {
+  const text=render([facts({collection:{corrupt:2,incomplete:1,storageFailed:1},provenance:[{version:'1.2.3',build:'ab'.repeat(32),config:{diagnostics:true,'api-key':'secret-canary','read-delegates':{codex:{model:'/home/canary/model'}}}}]})]);
+  assert.match(text,/Collection health: partial/); assert.match(text,/corrupt 2/);assert.match(text,/incomplete 1/);assert.match(text,/storage-failed 1/);
+  assert.match(text,/dispatch 1\.2\.3 · build abababababab/);assert.match(text,/Total storage loss can be unobservable/);
+  assert.doesNotMatch(text,/canary|api-key|secret/);assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
+});
 const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
 function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
   assert.ok(finding, 'finding expected');
@@ -257,7 +296,7 @@ test('diagnostics report: renders wall driver host and user wait columns', () =>
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
-  assert.match(text, /^- Runs: 1 · wall time: 1h 2m 3s$/m);
+  assert.match(text, /^- Runs: 1 · measured duration: 1h 2m 3s$/m);
 });
 
 test('diagnostics report: renders input cache-read cache-write output tokens', () => {
@@ -274,12 +313,11 @@ test('diagnostics report: renders unavailable as dash', () => {
   })]);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), text);
   assert.ok(text.includes('| claude | all models | — | — | — | — | 0/1 |'), text);
-  assert.match(text, /orchestrator frame exposure —/);
+  assert.match(text, /native and write —/);
 });
 
 test('diagnostics report: excludes estimates from measured totals', () => {
   const text = render([facts({
-    orchestratorBytes: 4000,
     invocations: [
       invocation(),
       bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, tokens: 5000 }),
@@ -287,9 +325,9 @@ test('diagnostics report: excludes estimates from measured totals', () => {
     ],
   })]);
   assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-  assert.match(text, /^- Estimated, excluded from measured totals: native and write ~15,000 · orchestrator frame exposure ~1,000$/m);
+  assert.match(text, /^- Estimated, excluded from measured totals: native and write ~15,000$/m);
   assert.ok(text.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
-  assert.ok(text.includes('| ~5,000 | ok |'), text);
+  assert.ok(text.includes('| ~5,000 | native completed |'), text);
 });
 
 // SECTION: Heuristics, severity, and model attribution
@@ -298,26 +336,18 @@ test('elapsed waits and partial usage remain explicit', () => {
   const usage = normalizeUsage({ input: 3000, cacheRead: 2000, output: 40, reasoning: 20 }, 'includes-cache');
   assert.ok(usage);
   const run = facts({
-    hostGaps: [{ await: 'rule', ms: 7_271_110 }],
-    orchestratorBytes: 4000,
     invocations: [
       invocation({ usage }),
       bare({ provider: 'claude', outcome: 'timeout' }),
       bare({ surface: 'native', mode: 'native', estimated: true }),
     ],
   });
-  const gap = assertShape(only(heuristics(run), 'H6')[0], 'speed');
-  assert.match(gap.evidence, /elapsed host-await gap/i);
-  assert.match(gap.evidence, /2h 1m 11s/);
-  assert.match(gap.impact, /work, pauses and scheduling/);
-  assert.match(gap.proposedFix, /evidence/);
-  assert.doesNotMatch(gap.evidence + gap.impact, /active reasoning|reset duration|host turn/);
   const text = render([run]);
   assert.match(text, /Provider CLI measured tokens: 3,040 \(input 1,000 · cache read 2,000 · cache write — · output 40\) · launch coverage 1\/2/);
-  assert.match(text, /native and write — · orchestrator frame exposure ~1,000/);
+  assert.match(text, /native and write —/);
   assert.match(text, /Full conversation totals are unavailable/);
-  assert.match(text, /frame exposure is not full orchestrator usage/);
-  assert.ok(text.includes('| — | ok |'), 'unattested native usage stays unavailable');
+
+  assert.ok(text.includes('| — | native completed |'), 'unattested native usage stays unavailable');
   const quota = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' })] })), 'H1')[0]!;
   assert.match(quota.proposedFix, /another model alias/);
   assert.doesNotMatch(quota.proposedFix, /each model has its own quota/);
@@ -349,29 +379,15 @@ test('diagnostics report: heuristic H4 fires for cache read share', () => {
   assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
 });
 
-test('diagnostics report: heuristic H6 fires for host gap', () => {
-  const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'native', ms: 60_000 }, { await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
-  assert.equal(finding.component, 'references/review-rules.md');
-  assert.match(finding.evidence, /`rule` await took 10m 0s \(2 non-user awaits\)/);
-});
 
-test('diagnostics report: heuristic H8 fires for rejected host events', () => {
-  const finding = assertShape(only(heuristics(facts({ rejectedEvents: [{ eventType: 'RULINGS', reason: 'rulings[0].verdict: expected accept or reject' }] })), 'H8')[0], 'correctness');
-  assert.match(finding.evidence, /1 host event rejected \(RULINGS ×1\): "rulings\[0\]\.verdict: expected accept or reject"/);
-});
 
-test('diagnostics report: heuristic H9 fires for repairs and admission defects', () => {
-  const findings = only(heuristics(facts({ repairs: 2, admissionDefects: 1 })), 'H9');
-  assert.match(assertShape(findings.find((f) => /repair/.test(f.evidence)), 'correctness').evidence, /2 implementation repair attempts/);
-  assert.match(assertShape(findings.find((f) => /admission/.test(f.evidence)), 'correctness').evidence, /1 admission defect\./);
-});
 
 test('diagnostics report: heuristic boundaries stay silent', () => {
   const even = invocation({ usage: { input: 1000, cacheRead: 1000, output: 0 } });
   const run = facts({
     invocations: [even, { ...even, provider: 'claude' }],
     reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 1 }, { phase: 'review', round: 2, accepted: 1, rejected: 1 }],
-    hostGaps: [{ await: 'rule', ms: 600_000 }], rejectedEvents: [], repairs: 0, admissionDefects: 0,
+    rejectedTools: [], relaunches: 0,
   });
   assert.deepEqual(heuristics(run), []);
   assert.deepEqual(heuristics(facts()), []);
@@ -381,14 +397,13 @@ test('diagnostics report: orders findings by severity', () => {
   const run = facts({
     invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
     reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
-    hostGaps: [{ await: 'write', ms: 900_000 }],
     observations: [observation()],
   });
   const order = Object.keys(CATEGORIES);
   const categories = heuristics(run).map((f) => order.indexOf(f.category));
   assert.deepEqual([...categories].sort((a, b) => a - b), categories);
   const headings = [...render([run]).matchAll(/^### \d+\. ([^·]+) ·/gm)].map((m) => m[1]!.trim());
-  assert.deepEqual([...new Set(headings)], ['Correctness / protocol', 'Token economy', 'Speed', 'Review convergence', 'Instruction clarity']);
+  assert.deepEqual([...new Set(headings)], ['Correctness / protocol', 'Token economy', 'Review convergence', 'Instruction clarity']);
 });
 
 test('diagnostics amendment convergence H2 stays silent within and beyond the known cap', () => {
@@ -470,12 +485,7 @@ test('heuristic precision H5 needs three metered invocations and a share above t
   assert.match(assertShape(findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 18,100 of 24,780 measured tokens \(73%\)/);
 });
 
-test('heuristic precision H6 makes no driver-repeat claim', () => {
-  const finding = assertShape(only(heuristics(facts({ hostGaps: [{ await: 'rule', ms: 600_001 }] })), 'H6')[0], 'speed');
-  assert.match(finding.impact, /internal activity is unknown/);
-  assert.match(finding.proposedFix, /activity evidence for the `rule` await/);
-  assert.doesNotMatch(`${finding.impact} ${finding.proposedFix}`, /driver/);
-});
+
 
 test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
   const codex = normalizeUsage({ input: 1000, cacheRead: 300, cacheWrite: 0, output: 50 }, 'includes-cache');
@@ -522,12 +532,12 @@ test('retro observations: rejects more than twenty observations', () => {
   const result = retroObservations(ids.map((id) => observation({ id })));
   assert.deepEqual(result.values.map((v) => v.id), ids.slice(0, 20));
   assert.equal(result.rejected, 1);
-  assert.deepEqual(retroObservations([]), { values: [], rejected: 0 });
+  assert.deepEqual(retroObservations([]), { state:'empty', values: [], rejected: 0 });
 });
 
 test('retro observations: rejects foreign component', () => {
   for (const component of ['src/app.ts', 'core/frame.ts', '../dispatch/scripts/toolkit/records.ts', 'skills/dispatch-plan/SKILL.md', 'README.md']) {
-    assert.deepEqual(retroObservations([observation({ component })]), { values: [], rejected: 1 }, component);
+    assert.deepEqual(retroObservations([observation({ component })]), { state:'collected', values: [], rejected: 1 }, component);
   }
   assert.equal(retroObservations([observation({ component: 'skills/dispatch/scripts/toolkit/records.ts' })]).values[0]?.component, 'scripts/toolkit/records.ts');
   // NOTE: the legacy allowlist mirrors shipped files outside the independent toolkit.
@@ -601,7 +611,7 @@ test('retro observations: rejects locators in ids models and config', () => {
       observations: [observation({ id: locator })],
     })]);
     assert.ok(!text.includes(locator), `${locator} withheld:\n${text}`);
-    assert.match(text, /- Host retro: 0 accepted · 1 rejected/, 'observation id');
+    assert.match(text, /- Host retro: collected · 0 accepted · 1 rejected/, 'observation id');
     assert.match(text, /code review: 1 round; 1 finding re-raised across rounds \(R1-F001\); deadlock escalation\./, 'review ids');
     assert.ok(text.includes('— (reported: gpt-6-sol)'), 'model and reported-model keys');
     assert.ok(text.includes('| codex | — (configured) | 10 | — | — | 1 | — |'), 'usage.models keys drop the per-model split');
@@ -633,33 +643,10 @@ test('diagnostics report: never renders resume objective or absolute paths', () 
   } as unknown as RunFacts;
   const { text } = renderDiagnostics([run]);
   assert.doesNotMatch(text, /canary/i);
-  assert.ok(text.includes('2 host events rejected (RULINGS ×1, — ×1): "state-check"; "state-check".'), text);
-  assert.match(text, /- Host retro: 1 accepted · 2 rejected/);
+  assert.doesNotMatch(text,/host event/);
+  assert.match(text, /- Host retro: collected · 1 accepted · 2 rejected/);
 });
 
-test('diagnostics report: reduces rejection reasons to class and allowlisted path', () => {
-  const cases: [unknown, string][] = [
-    ['event: expected JSON object, got malformed JSON', 'malformed-json'],
-    ['event: effect root.handoff.1 is pending; send without --event to resume it', 'effect-pending'],
-    ['event.type: expected one of AUTHORED|RULINGS, got "CANARY_TYPE"', 'unknown-type at event.type'],
-    ['event.type: RULINGS is not accepted at await author; expected AUTHORED|REVISE', 'wrong-await at event.type'],
-    ['event.slots[0].tokens: expected non-negative integer, got "private project objective"', 'invalid-value at event.slots[0].tokens'],
-    ['event.CANARY_KEY: unexpected field', 'unexpected-field at event.*'],
-    ['event.rulings.canary key: b: expected object, got "canary"', 'invalid-value at event.rulings.*'],
-    ['event.answer.R1-F001: expected { ruling: accept|reject|downgrade, quote: <user words>, fix? }', 'invalid-value at event.answer.*'],
-    ['event.answer: canary-id was not offered', 'state-check at event.answer'],
-    ['Approval requires user attribution, quote, and the current governed hash.', 'state-check'],
-    ['eventual canary: expected nothing', 'invalid-value'],
-    [undefined, 'state-check'],
-  ];
-  for (const [raw, reduced] of cases) {
-    assert.equal(rejectionReason(raw), reduced, String(raw));
-    assert.equal(rejectionReason(reduced), reduced, `idempotent: ${reduced}`);
-  }
-  assert.equal(rejectionReason('invalid-value at event.canary.path'), 'invalid-value at event.*', 'a reduced path is gated again');
-  assert.equal(rejectionReason('canary-class at event.path'), 'state-check', 'an unknown class never renders');
-  for (const [raw] of cases) assert.ok(!/canary|private/i.test(rejectionReason(raw)), String(raw));
-});
 
 test('absorbed single failure emits no H1', () => {
   const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
@@ -684,10 +671,3 @@ test('repeated failures emit actionable H1', () => {
     assert.doesNotMatch(finding.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
   }
 });
-
-test('long host-await advice requires activity evidence', () => {
-  const [finding] = only(heuristics(facts({ hostGaps: [{ await: 'evidence', ms: 600_001 }] })), 'H6');
-  assert.match(finding!.proposedFix, /activity evidence for the `evidence` await/);
-  assert.match(finding!.proposedFix, /before attributing the gap/);
-});
-

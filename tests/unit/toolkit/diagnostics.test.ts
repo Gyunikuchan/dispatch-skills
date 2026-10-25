@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,6 +11,127 @@ const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), {recursive: true});
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
+
+test('diagnostic storage failure preserves durable attempts and reports one bounded failure', async t => {
+ const {observeTool,sessionFacts}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const f=sessionFixture();try{
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  f.deps.delegate=async()=>({outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[{provider:'claude',model:'m',effort:null,mode:'cli',launched:true,outcome:'ok'}]});
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  const dir=path.join(f.session,'work');await observer.deps.delegate('claude',{logPath:path.join(dir,'logs','claude[0].log')} as never,'cli');
+  const directory=path.join(f.session,'.state','diagnostics'),file=path.join(directory,fs.readdirSync(directory)[0]!);
+  const previous=fs.readFileSync(file);const rename=fs.renameSync,write=fs.writeFileSync;
+  t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(String(to)===file)throw new Error('rename failure');return rename(from,to);}) as typeof fs.renameSync);
+  t.mock.method(fs,'writeFileSync',((target:fs.PathOrFileDescriptor,...args:unknown[])=>{if(String(target)===file){write(file,'{partial');throw new Error('partial write');}return (write as (...args:any[])=>void)(target,...args);}) as typeof fs.writeFileSync);
+  observer.deps.diagnostics!({kind:'routing',state:'stop',subject:dir,slot:'claude[0]',provider:'claude',model:'m',attempt:1});
+  assert.deepEqual(fs.readFileSync(file),previous,'failed optional update cannot truncate the durable capture');
+  const fold={records:[],lastSeq:0,torn:null};let facts=sessionFacts(f.session,fold,'complete');
+  assert.equal(facts.invocations.length,1);assert.equal(facts.collection?.storageFailed,1);
+  t.mock.restoreAll();observer.finish({ok:true,exit:0,summary:'done',value:null});facts=sessionFacts(f.session,fold,'complete');
+  assert.equal(facts.invocations.length,1);assert.equal(facts.collection?.storageFailed,1,'capture and marker describe one storage failure');
+ }finally{t.mock.restoreAll();f.cleanup();}
+});
+
+test('diagnostics persist unlaunched failures and CLI fallback consequences independently', async () => {
+ const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+ const f=sessionFixture();try{
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  f.deps.modes=()=>[];
+  const first=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  await fanOut({dir:path.join(f.session,'unlaunched'),slots:[rosterSlot('claude[0]','claude'),rosterSlot('codex[0]','codex',{native:true})],prompt:'question',validate:()=>({ok:true})},first.deps);
+  first.finish({ok:false,exit:4,reason:'native-pending',summary:'pending',value:null});
+  const fold={records:[],lastSeq:0,torn:null};let facts=sessionFacts(f.session,fold,'pending');
+  const unlaunched=facts.invocations.find(i=>i.surface==='cli');
+  assert.equal(unlaunched?.outcome,'not-found');assert.equal(unlaunched.launched,false);assert.equal(unlaunched.routingOutcome,'stop');assert.equal(unlaunched.slotState,'failed');assert.equal(unlaunched.usage,undefined);assert.equal(unlaunched.durationMs,undefined);
+  assert.equal(facts.invocations.filter(i=>i.slot==='codex[0]').length,1,'configured native work does not fabricate a CLI row');
+  f.deps.modes=()=>['cli'];
+  const cooldown=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  await fanOut({dir:path.join(f.session,'cooldown'),slots:[rosterSlot('copilot[0]','copilot')],prompt:'question',validate:()=>({ok:true}),quota:{schemaVersion:1,policyVersion:1,decidedAt:0,decisions:[{key:{provider:'copilot',model:'model-a',mode:'cli'},generation:null,skipped:true,reason:'quota-cooldown'}]}},cooldown.deps);
+  cooldown.finish({ok:false,exit:2,reason:'ask-failed',summary:'failed',value:null});
+  const skipped=sessionFacts(f.session,fold,'pending').invocations.find(i=>i.provider==='copilot');
+  assert.equal(skipped?.outcome,'quota');assert.equal(skipped?.launched,false);assert.equal(skipped?.routingOutcome,'stop');assert.equal(skipped?.slotState,'failed');
+  f.deps.modes=()=>['cli'];f.deps.orchestrator={platform:'claude',model:null};
+  f.deps.delegate=async()=>({outcome:{status:'fail',cls:'auth',detail:'private'},invocations:[{provider:'claude',model:'model-a',effort:null,mode:'cli',launched:true,outcome:'auth',durationMs:10}]});
+  const second=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  await fanOut({dir:path.join(f.session,'fallback'),slots:[rosterSlot('claude[0]','claude')],prompt:'question',validate:()=>({ok:true})},second.deps);
+  second.finish({ok:false,exit:4,reason:'native-pending',summary:'pending',value:null});
+  facts=sessionFacts(f.session,fold,'pending');
+  const cli=facts.invocations.find(i=>i.launched);assert.equal(cli?.routingOutcome,'native-fallback');assert.equal(cli?.slotState,'native');
+  assert.ok(facts.invocations.some(i=>i.surface==='native'&&i.subject===cli?.subject&&i.nativeState==='pending'));
+  assert.ok(facts.invocations.filter(i=>i.surface==='native').every(i=>i.slotState===undefined));
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/not-found.*routing stop.*slot failed.*not launched/);assert.match(report,/auth.*routing native-fallback.*slot native/);
+ }finally{f.cleanup();}
+});
+
+test('diagnostics distinguish healthy observed captures from absent and damaged collection', async () => {
+ const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const f=sessionFixture();try{
+  const fold={records:[],lastSeq:0,torn:null};const render=()=>fs.readFileSync(writeDiagnostics(f.session,sessionFacts(f.session,fold,'complete')),'utf8');
+  assert.match(render(),/Collection health: unknown/);
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;assert.match(render(),/Collection health: partial/);
+  observer.finish({ok:true,exit:0,summary:'done',value:null});assert.match(render(),/Collection health: complete for observed captures/);
+  assert.equal(sessionFacts(f.session,fold,'complete').collection?.completed,1);
+  fs.writeFileSync(path.join(f.session,'.state','diagnostics','bad.json'),'{bad');assert.match(render(),/Collection health: partial/);
+ }finally{f.cleanup();}
+});
+
+test('diagnostics aggregate subjects provenance and partial collection deterministically', async () => {
+ const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const f=sessionFixture();try {
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);f.deps.skillRoot=skill;
+  const fold={records:[],lastSeq:0,torn:null};let now=0;f.deps.clock=()=>now;
+  for(const [version,concurrency] of [['1.2.3',2],['1.2.4',3]] as const){
+   fs.writeFileSync(path.join(skill,'SKILL.md'),'skill '+version);writeJson(path.join(skill,'skill-hashes.json'),{$version:version});writeJson(path.join(skill,'config.jsonc'),{diagnostics:true,'write-concurrency':concurrency});
+   const o=observeTool(f.session,'ask','run',undefined,f.deps)!;now+=1000;o.finish({ok:concurrency===2,exit:concurrency===2?0:4,reason:'native-pending',summary:'done',value:null});
+  }
+  const directory=path.join(f.session,'.state','diagnostics');const files=fs.readdirSync(directory);
+  const captures=files.map(file=>JSON.parse(fs.readFileSync(path.join(directory,file),'utf8')));
+  assert.deepEqual(captures.map(c=>c.version).sort(),['1.2.3','1.2.4']);assert.notEqual(captures[0].build,captures[1].build);
+  for(const capture of captures) {
+    const contentHash=crypto.createHash('sha256').update('skill '+capture.version).digest('hex');
+    const build=crypto.createHash('sha256').update(JSON.stringify([['SKILL.md',contentHash]])).digest('hex').slice(0,12);
+    assert.equal(capture.build,build,'stored build measures the collecting tree');
+  }
+  const nativeDir=path.join(f.session,'.state','asks','subject','attempt-1');
+  for(const state of ['pending','completed','completed'] as const){
+    const o=observeTool(f.session,'ask','run',undefined,f.deps)!;
+    o.deps.diagnostics!({kind:'native',subject:nativeDir,slot:'codex[0]',provider:'codex',model:'m',attempt:state==='pending'?1:0,state,replay:state==='completed'});
+    o.finish({ok:true,exit:0,summary:'done',value:null});
+  }
+  fs.writeFileSync(path.join(directory,'corrupt.json'),'{bad');writeJson(path.join(directory,'invalid.json'),null);writeJson(path.join(directory,'open.json'),{phases:[],invocations:[],reviews:[],capture:{state:'opened',start:0}});
+  saveRound({session:f.session,review:'code-alpha',round:1,roster:[rosterSlot('codex[0]','codex',{native:true})],outcomes:[{slot:'codex[0]',state:'done'}],findings:[finding('F1',{recurrence:{of:'F0'}})]});
+  saveRound({session:f.session,review:'plan-beta',round:1,roster:[],outcomes:[],findings:[]});
+  const broken=path.join(f.session,'.state','reviews','bad','round-1','round.json');fs.mkdirSync(path.dirname(broken),{recursive:true});fs.writeFileSync(broken,'{bad');
+  const facts=sessionFacts(f.session,fold,'complete');
+  assert.equal(facts.provenance?.length,3);assert.deepEqual(facts.provenance?.filter(p=>p.version).map(p=>[p.version,p.config?.['write-concurrency']]).sort(),[['1.2.3',2],['1.2.4',3]]);
+  assert.ok((facts.collection?.corrupt??0)>=3);assert.equal(facts.collection?.incomplete,1);
+  assert.equal(facts.phases.find(p=>p.name==='ask')?.outcome,'mixed');
+  assert.equal(facts.phases.find(p=>p.name==='ask')?.wallMs,2000);
+  assert.equal(facts.invocations.filter(i=>i.surface==='native').length,2,'native replay and later completion share one logical slot');
+  assert.ok(facts.invocations.filter(i=>i.surface==='native').every(i=>i.nativeState==='completed'&&!i.launched&&!i.usage));
+  assert.equal(facts.retroState,'missing');writeJson(path.join(f.session,'.state','retro.json'),{});assert.equal(sessionFacts(f.session,fold,'complete').retroState,'invalid');
+  fs.rmSync(path.join(f.session,'.state','retro.json'));fs.mkdirSync(path.join(f.session,'.state','retro.json'));assert.equal(sessionFacts(f.session,fold,'complete').retroState,'unreadable');
+  assert.equal(facts.invocations.find(i=>i.surface==='native')?.nativeState,'completed');
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/code review/);assert.match(report,/plan review/);assert.match(report,/subject [a-f0-9]{16}/);assert.match(report,/unknown historical/);
+  for(let i=0;i<files.length;i++)fs.renameSync(path.join(directory,files[i]!),path.join(directory,'shuffled-'+(files.length-i)+'.json'));
+  assert.deepEqual(sessionFacts(f.session,fold,'complete').phases,facts.phases);
+ }finally{f.cleanup();}
+});
+
+test('diagnostics detect toolkit rejection and writer relaunch evidence', async () => {
+ const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const f=sessionFixture();try{
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  for(const reason of ['native-pending','approval-required','invalid-record'])observeTool(f.session,'record','append',undefined,f.deps)!.finish({ok:false,exit:4,reason,summary:'private',value:null});
+  const records=[['A','launched','one'],['B','launched','two'],['A','launched','three']].map(([task,phase,key],n)=>({seq:n+1,key:key!,at:'2026-01-01T00:00:00Z',kind:'writer',by:'tool',data:{task,phase,path:key,base:{commit:'a'.repeat(40),seq:0,taskSection:'sha256:'+'b'.repeat(64)}}}));
+  const fold={records:records.slice(0,2),lastSeq:2,torn:null} as Fold;
+  assert.equal(sessionFacts(f.session,fold,'complete').relaunches,0);
+  fold.records=records;fold.lastSeq=3;const facts=sessionFacts(f.session,fold,'complete');assert.equal(facts.relaunches,1);assert.deepEqual(facts.rejectedTools,[{tool:'record',action:'append',cls:'invalid-record'}]);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.match(report,/1 writer relaunch/);assert.doesNotMatch(report,/defective writer|private/);
+ }finally{f.cleanup();}
+});
 
 const rosterSlot = (slot: string, provider: string, options: {native?: boolean; reserve?: boolean} = {}) => ({
   slot, provider, index: 0, native: options.native ?? false, reserve: options.reserve ?? false, model: 'model-a',
@@ -113,16 +235,16 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
 
     const facts = sessionFacts(fixture.session, fold, 'pass');
     assert.deepEqual(facts.reviews, [
-      {phase: 'review-alpha', round: 1, cap: 4, accepted: 1, rejected: 1},
-      {phase: 'review-alpha', round: 2, cap: 4, accepted: 0, rejected: 0, reraised: ['F001', 'F002']},
+      {phase: facts.reviews[0]!.phase, round: 1, cap: 4, accepted: 1, rejected: 1},
+      {phase: facts.reviews[0]!.phase, round: 2, cap: 4, accepted: 0, rejected: 0, reraised: ['F001', 'F002']},
     ]);
     assert.deepEqual(facts.observations, observations);
-    assert.deepEqual(facts.phases, []);
-    assert.deepEqual(facts.hostGaps, []);
-    assert.deepEqual(facts.rejectedEvents, []);
+    assert.equal(facts.phases.length,2);
+    assert.ok(facts.phases.every(p=>p.name==='code review'));
+    assert.deepEqual(facts.rejectedTools, []);
     const invocations = [...facts.invocations].sort((left, right) => `${left.phase}:${left.slot}:${left.outcome}`.localeCompare(`${right.phase}:${right.slot}:${right.outcome}`));
     assert.deepEqual(invocations.map(({phase, slot, outcome, launched, surface}) => ({phase, slot, outcome, launched, surface})), [
-      {phase:'review-alpha',slot:'codex[0]',outcome:'native-pending',launched:false,surface:'native'},
+      {phase:facts.reviews[0]!.phase!,slot:'codex[0]',outcome:'native-pending',launched:false,surface:'native'},
     ]);
     assert.equal(invocations[0]?.provider,'codex');
 
@@ -130,7 +252,7 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
     assert.equal(path.basename(outputPath), 'diagnostics.md');
     const report = fs.readFileSync(outputPath, 'utf8');
     assert.ok(report.startsWith('# Dispatch diagnostics'));
-    assert.match(report, /Host retro: 1 accepted · 1 rejected/);
+    assert.match(report, /Host retro: collected · 1 accepted · 1 rejected/);
     assert.match(report, /Review convergence/);
     assert.match(report, /F001/);
 
@@ -138,7 +260,7 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
     const malformedRetroFacts = sessionFacts(fixture.session, fold, 'pass');
     assert.equal('observations' in malformedRetroFacts, false);
     const malformedRetroPath = writeDiagnostics(fixture.session, malformedRetroFacts);
-    assert.match(fs.readFileSync(malformedRetroPath, 'utf8'), /Host retro: not collected/);
+    assert.match(fs.readFileSync(malformedRetroPath, 'utf8'), /Host retro: malformed/);
 
     const emptyRounds = readReviews(empty.session);
     const emptyFacts = sessionFacts(empty.session, {records: [], lastSeq: 0, torn: null}, 'pass');
@@ -146,7 +268,7 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
     assert.deepEqual(emptyFacts.reviews, []);
     assert.deepEqual(emptyFacts.invocations, []);
     const emptyPath = writeDiagnostics(empty.session, emptyFacts);
-    assert.match(fs.readFileSync(emptyPath, 'utf8'), /Host retro: not collected/);
+    assert.match(fs.readFileSync(emptyPath, 'utf8'), /Host retro: missing/);
   } finally {
     fixture.cleanup();
     empty.cleanup();
@@ -294,4 +416,20 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
     assert.match(report,/launch coverage 0\/1/);
     assert.match(report,/Timing scope: summed measured tool-call durations/);
   } finally {f.cleanup();}
+});
+
+test('diagnostics preserve exception attempts and durable capture boundaries', async () => {
+ const {observeTool}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+ const f=sessionFixture();try {
+ const skill=path.join(f.root,'skill');fs.mkdirSync(skill);fs.writeFileSync(path.join(skill,'config.jsonc'),'{"diagnostics":true}');f.deps.skillRoot=skill;
+ const error=Object.assign(new Error('private error'),{invocations:[{provider:'claude',model:'m',mode:'cli',launched:true,outcome:'ok'}]});
+ f.deps.delegate=async()=>{throw error;};const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+ const directory=path.join(f.session,'.state','diagnostics');assert.equal(fs.readdirSync(directory).length,1);
+ await assert.rejects(observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli'),e=>e===error);
+ const read=()=>JSON.parse(fs.readFileSync(path.join(directory,fs.readdirSync(directory)[0]!),'utf8'));
+ assert.equal(read().invocations.length,1);assert.equal(read().capture.state,'opened');
+ observer.finish({ok:false,exit:2,reason:'invalid-input',summary:'private',value:null});
+ assert.equal(read().capture.state,'completed');assert.deepEqual(read().rejectedTools,[{tool:'ask',action:'run',cls:'invalid-input'}]);
+ assert.doesNotMatch(JSON.stringify(read()),/private/);
+ }finally{f.cleanup();}
 });

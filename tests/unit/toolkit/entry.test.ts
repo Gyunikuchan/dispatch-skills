@@ -94,7 +94,11 @@ test('session instructions disclose diagnostics only when enabled', async () => 
       const deps = {...f.deps,skillRoot:skill,cwd:()=>f.root};
       assert.equal(await entry.main(['session','init','--objective','test'],deps),0);
       const value = JSON.parse(f.lines[0]!);
-      if (enabled) assert.match(value.instructions,/references\/diagnostics\.md/);
+      if (enabled) {
+        assert.match(value.instructions,/references\/diagnostics\.md/);
+        assert.ok(!value.instructions.includes(f.root));
+        assert.ok(Buffer.byteLength(value.instructions) <= 2048);
+      }
       else assert.equal('instructions' in value,false);
       f.lines.length=0;
       assert.equal(await entry.main(['session','reactivate','--session-dir',value.path],deps),0);

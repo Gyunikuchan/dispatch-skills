@@ -26,11 +26,13 @@ import { statusReport } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
+import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { observeTool } from './diagnostics.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  diagnostics?: (event: DiagnosticEvent) => void;
   delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
   modes: (provider: ProviderId) => readonly ModeId[];
   orchestrator: Orchestrator | null;

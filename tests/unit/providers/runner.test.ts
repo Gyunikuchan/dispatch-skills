@@ -259,3 +259,19 @@ test('active delegate is not idle while output keeps arriving', async () => {
   const done = await run;
   assert.equal(done.result?.timedOut, false);
 });
+
+test('diagnostics usage parsing is opt-in and result-neutral', async () => {
+  for(const scenario of ['disabled','enabled','throw','resume','truncated','retry'] as const) {
+    let calls=0;
+    const spec={...claude,parse:(out:ProcessResult,launch:Parameters<typeof claude.parse>[1])=>scenario==='retry'&&launch.effort?{status:'fail' as const,cls:'config' as const,detail:'unsupported',retryWithoutEffort:true}:claude.parse(out,launch),usage:()=>{calls++;if(scenario==='throw')throw new Error('parser');return {input:3,output:2,inputSemantics:'uncached' as const,scope:'invocation' as const,provenance:'fixture'};}};
+    const h=harness(posix), pending=runDelegate(spec,{...req,collectUsage:scenario!=='disabled',resume:scenario==='resume'?'resume-id':null,effort:scenario==='retry'?'high':null},'cli',h.ports);
+    await flush();
+    h.finish(scenario==='retry'?ok({exit:1,stderrTail:'unknown option --effort'}):ok({truncated:scenario==='truncated'}));
+    if(scenario==='retry'){await flush();await flush();h.finish(ok());}
+    const result=await pending;
+    assert.equal(calls,['disabled','resume','truncated'].includes(scenario)?0:scenario==='retry'?2:1,scenario);
+    assert.equal(result.outcome.status,scenario==='truncated'?'fail':'ok',scenario);
+    if(scenario==='enabled')assert.equal(result.invocations[0]?.usage?.input,3);
+    if(scenario==='throw')assert.equal(result.invocations[0]?.usage,undefined);
+  }
+});

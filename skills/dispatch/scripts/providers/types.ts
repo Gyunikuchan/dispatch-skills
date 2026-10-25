@@ -14,6 +14,7 @@ export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
 export type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
 
 export type DelegateRequest = {
+  collectUsage?: boolean;
   promptPath: string;
   model: string | null;
   effort: string | null;

@@ -18,6 +18,7 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.match(instruction, /Exclude repository, toolchain, and user-work issues/);
   assert.match(instruction, /Fixes must hold on any repository and machine/);
   assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
+  for (const term of ['valid empty', 'missing', 'unreadable', 'malformed', 'non-array', 'workflow gate']) assert.ok(instruction.includes(term), term);
   assert.ok(!read('SKILL.md').includes('.state/retro.json'));
   assert.ok(read('SKILL.md').includes('returned `instructions`'));
 });
@@ -31,5 +32,9 @@ test('diagnostics retain privacy and measurement guidance', () => {
   const legacy = [/replyTransport/, /\{\s*v\s*:\s*1\s*,\s*event/, /capture\.json/, /pending-(?:\d+|N)\.json/, /capture\.lock/, /diagnostics\.render\.lock/];
   assert.deepEqual(scanOverlay().filter(f => f.path.startsWith('skills/dispatch/')).flatMap(f => legacy.filter(re => re.test(f.text)).map(re => f.path + ': ' + re.source)), []);
   const human = read('references/readme/troubleshooting.md');
-  for (const term of ['unavailable value, not zero', 'Measured totals exclude `~` figures', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it']) assert.ok(human.includes(term), term);
+  const concepts = read('references/readme/concepts.md');
+  assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
+  assert.ok(concepts.includes('Native timing and usage'));
+  assert.ok(!concepts.includes('do not retain provider usage counters'));
+  for (const term of ['unavailable value, not zero', 'Measured totals exclude `~` figures', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
 });

@@ -11,6 +11,7 @@ import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome } from '../providers/types.ts';
 import type { CliDeps } from './cli.ts';
 import type { RosterSlot } from './domain/types.ts';
+import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import type { Level } from './types.ts';
 
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
@@ -54,6 +55,12 @@ function atomic(file: string, value: unknown): void {
 }
 
 export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOutcome[]> {
+  const ordinals=new Map<string,number>();
+  const emit=(slot:RosterSlot,event:Omit<DiagnosticEvent,'subject'|'slot'|'provider'|'model'|'attempt'> & Record<string,unknown>)=>{
+    if(!deps.diagnostics)return;
+    try {deps.diagnostics({...event,subject:input.dir,slot:slot.slot,provider:slot.provider,
+      model:typeof slot.model==='string'?slot.model:undefined,attempt:ordinals.get(slot.slot)??0} as DiagnosticEvent);}catch{}
+  };
   const all = Array.isArray(input.slots) ? input.slots as readonly RosterSlot[] :
     [...(input.slots as Roster).targets, ...(input.slots as Roster).reserves];
   const targets = all.filter(slot => !slot.reserve);
@@ -81,11 +88,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     return slot;
   };
   const fileOf = (slot: RosterSlot) => path.join(input.dir, 'slots', name(slot.slot) + '.json');
-  const native = (slot: RosterSlot): SlotOutcome => ({slot: slot.slot, state: 'native',
+  const native = (slot: RosterSlot): SlotOutcome => {emit(slot,{kind:'native',state:'pending'});return {slot: slot.slot, state: 'native',
     promptPath: path.join(input.dir, 'prompts', name(slot.slot) + '.md'),
-    replyPath: path.join(input.dir, 'replies', name(slot.slot) + '.md')});
+    replyPath: path.join(input.dir, 'replies', name(slot.slot) + '.md')};};
   const save = async (slot: RosterSlot, outcome: SlotOutcome) => {
     atomic(fileOf(slot), outcome);
+    emit(slot,{kind:'slot',state:outcome.state,...(outcome.state==='failed'?{cls:outcome.cls}:{})});
     await deps.hook?.('fanout:after-slot');
     return outcome;
   };
@@ -107,6 +115,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       if (decision?.skipped) failure = {ok:false,cls:'quota',reason:'skipped-quota: quota-cooldown'};
       else {
         const logPath = path.join(input.dir,'logs',name(slot.slot) + '.log');
+        ordinals.set(slot.slot,(ordinals.get(slot.slot)??0)+1);
         const result = await deps.delegate(provider, {
           promptPath,model,effort:slot.effort ?? null,sandbox:slot.sandbox ?? true,schemaPath:null,resume:null,cwd,
           timeoutMs:remaining,outputCapBytes:10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
@@ -115,6 +124,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         },mode);
         if(result.outcome.status === 'ok') {
           const checked = input.validate(result.outcome.text);
+          emit(slot,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
           if(checked.ok) return {slot:slot.slot,state:'done',text:checked.text ?? result.outcome.text};
           failure = checked;
         } else {
@@ -124,6 +134,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         }
       }
       const cascade = next(failure.cls,position,config);
+      emit(slot,{kind:'routing',state:cascade.kind==='terminal'?'stop':cascade.kind,cls:failure.cls});
       if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;continue;}
       return {slot:slot.slot,state:'failed',cls:failure.cls,reason:failure.reason};
     }
@@ -137,6 +148,8 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     catch(error) {if((error as NodeJS.ErrnoException).code !== 'ENOENT')throw error;}
     if(saved?.state === 'native' && fs.existsSync(saved.replyPath)) {
       const text=fs.readFileSync(saved.replyPath,'utf8'), checked=input.validate(text);
+      emit(slot,{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
+      emit(slot,{kind:'native',state:checked.ok?'completed':'invalid',replay:true});
       if(checked.ok) saved={slot:slot.slot,state:'done',text:checked.text ?? text};
       else {
         let suffix=1;while(fs.existsSync(saved.replyPath+'.invalid-'+suffix))suffix++;
@@ -149,18 +162,20 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   }
   const results = await Promise.allSettled(targets.map(async slot => {
     const saved=savedOutcomes.get(slot.slot);
-    if(saved)return saved;
+    if(saved){emit(slot,{kind:'slot',state:saved.state,replay:true});return saved;}
     const promptPath = path.join(input.dir,'prompts',name(slot.slot)+'.md');
     fs.writeFileSync(promptPath,typeof input.prompt === 'string' ? input.prompt : input.prompt(slot),{mode:0o600});
     let outcome=await voice(slot,promptPath);
     if(outcome.state === 'failed') {
       const cascade=next(outcome.cls,{model:0,mode:0},{slot:slot.slot,platform:slot.provider,models:[],modes:[],modeCascadeOn:[]},
         {orchestratorPlatform:deps.orchestrator?.platform ?? null,reserveAvailable:pool.current.used.length === 0 && reserves.length > 0 && deps.clock()<deadline});
+      emit(slot,{kind:'routing',state:cascade.kind==='terminal'?'stop':cascade.kind,cls:outcome.cls});
       if(cascade.kind === 'reserve') {
         const taken=takeReserve(pool.current,slot.slot,outcome.reason);pool.current=taken.pool;
         const reserve=reserves.find(entry=>entry.slot===taken.reserve);
         if(reserve) {
           const substitute=await voice(reserve,promptPath);
+          emit(reserve,{kind:'slot',state:substitute.state,targetSlot:slot.slot,...(substitute.state==='failed'?{cls:substitute.cls}:{})});
           outcome=substitute.state === 'native' ? native(slot) : {...substitute,slot:slot.slot};
         }
       } else if(cascade.kind === 'native-fallback')outcome=native(slot);

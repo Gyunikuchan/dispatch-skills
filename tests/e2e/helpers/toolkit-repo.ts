@@ -24,9 +24,9 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   const level = async (value='low') => appendRecord(session,{kind:'level',by:'orchestrator',key:'level:' + foldLedger(session).lastSeq,data:{level:value}},deps);
   const edit = async (data: object) => appendRecord(session,{kind:'edit',by:'orchestrator',key:'edit:' + foldLedger(session).lastSeq,data},deps);
   const run = async (args: string[], hook?: CliDeps['hook']) => { const lines: string[]=[]; const exit=await main([...args,'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };
-  const spawned = (args: string[]) => spawnSync(process.execPath,[path.resolve('skills/dispatch/scripts/toolkit/cli.ts'),...args,'--session',session],{encoding:'utf8',windowsHide:true});
-  const concurrent = (args: string[]) => new Promise<{exit:number; output:any; value:any}>((resolve,reject)=>{
-    const child=spawn(process.execPath,[path.resolve('skills/dispatch/scripts/toolkit/cli.ts'),...args,'--session',session],{windowsHide:true});
+  const spawned = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => spawnSync(process.execPath,[entry,...args,'--session',session],{encoding:'utf8',windowsHide:true,env:env ?? process.env});
+  const concurrent = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => new Promise<{exit:number; output:any; value:any}>((resolve,reject)=>{
+    const child=spawn(process.execPath,[entry,...args,'--session',session],{windowsHide:true,env:env ?? process.env});
     let stdout=''; let stderr=''; child.stdout.on('data',b=>stdout+=b); child.stderr.on('data',b=>stderr+=b); child.on('error',reject);
     child.on('close',exit=>{try {const lines=stdout.trim().split(/\r?\n/); assert.equal(lines.length,1,stderr); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); resolve({exit:exit??1,output,value:JSON.parse(fs.readFileSync(output.path,'utf8'))});} catch(error){reject(error);}});
   });

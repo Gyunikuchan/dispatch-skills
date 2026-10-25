@@ -211,11 +211,17 @@ test('report render does not fall through after a higher-precedence config read 
 });
 
 
-test('diagnostic report write failure preserves completion and omits an uncreated artifact', async () => {
+test('diagnostics damage cannot suppress successful report completion', async () => {
   const f=await fixture(1);
   try {
     fs.writeFileSync(path.join(f.skillRoot,'config.local.jsonc'),'{"diagnostics":true}');
     await completeFixture(f);
+    fs.writeFileSync(path.join(f.session,'.state','retro.json'),'{bad');
+    fs.mkdirSync(path.join(f.session,'.state','diagnostics'),{recursive:true});
+    fs.writeFileSync(path.join(f.session,'.state','diagnostics','broken.json'),'{bad');
+    const rendered=await invoke(f,'report','render');assert.equal(rendered.exit,0);
+    assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/Collection health: partial/);
+    fs.rmSync(path.join(f.session,'diagnostics.md'));
     fs.mkdirSync(path.join(f.session,'diagnostics.md'));
     const result=await invoke(f,'report','complete');
     assert.equal(result.exit,0,result.output.summary);

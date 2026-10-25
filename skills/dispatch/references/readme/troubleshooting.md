@@ -63,12 +63,14 @@ Doctor checks Node, configuration, available executables, resolved targets and w
 
 ## Understand diagnostics coverage
 
-In `diagnostics.md`, `—` marks an unavailable value, not zero. Current toolkit reports derive invocation outcomes and review rounds from session results; they do not reconstruct provider timing or token usage from removed engine journals. Missing measurements do not establish full conversation totals.
+In `diagnostics.md`, `—` marks an unavailable value, not zero. Captured CLI attempts include execution and semantic validation outcomes, routing, duration and reported usage. Native slots show pending or completed status, including fallback; their timing and usage remain unavailable. Missing measurements do not establish full conversation totals.
 
-When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Elapsed intervals can include work, pauses and scheduling; they do not establish active reasoning time or usage-reset duration.
+When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Summed tool-call durations can overlap; intervals can include work, pauses and scheduling and do not establish active reasoning time. Host reasoning, user wait, writer usage and work before enablement remain unavailable. Session-cumulative usage is excluded to avoid double counting.
 
-While diagnostics is on, follow the returned instructions to write retrospective observations before report completion. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, follow the returned retrospective instructions before report completion. A valid empty array records no observed friction; missing, unreadable, malformed and invalid input remain distinct collection states. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
 
-Toolkit diagnostics retain sanitized per-attempt provider/model, effort, mode, launch outcome, duration and reported usage in `.state/diagnostics/`. Reports show review convergence and summed tool-call durations; concurrent calls can overlap. Host reasoning, user wait, native/writer usage and work before enablement remain unavailable. Session-cumulative usage is excluded to avoid double counting. Diagnostic capture and report failures leave workflow results unchanged. Captures can be incomplete after interruption or diagnostic storage failure.
+Captures in `.state/diagnostics/` retain sanitized implementation version/content identity and effective configuration snapshots from collection time. Distinct snapshots remain separate; historical unknown identity stays unknown. Reports retain valid captures when others are discarded as corrupt or unreadable, and show partial or interrupted collection. No findings does not prove complete collection or absence of defects. Total storage loss can also prevent its failure marker from being stored and is unobservable.
+
+Supported rejection and writer relaunch evidence can indicate rework; it does not establish a defective writer or its cause. Diagnostic capture and report failures leave workflow results unchanged. Keep the session folder to inspect retained captures and resume; missing measurements cannot be reconstructed from the report.
 
 For setup and routing, see [Configure Dispatch](configuration.md). For session files and verification, see [Workspaces and results](concepts.md).
