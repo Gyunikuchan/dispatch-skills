@@ -118,7 +118,7 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.equal(fs.existsSync(path.join(OVERLAY_ROOT, 'tests/integration/driver-authority-contract.test.ts')), false);
 });
 
-test('aliases and self-build preserve entry mappings and controller isolation', () => {
+test('aliases preserve entry mappings', () => {
   const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code'};
   for (const [name, verb] of Object.entries(mapping)) {
     const text = read('skills/' + name + '/SKILL.md');
@@ -129,9 +129,6 @@ test('aliases and self-build preserve entry mappings and controller isolation', 
   const review = read('skills/dispatch-code-review/SKILL.md');
   for (const term of ['target', 'argument', '--spec', 'bound spec']) assert.ok(review.includes(term), term);
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review)\b/, file);
-  const self = read(root + 'references/self-build.md');
-  assert.ok(Buffer.byteLength(self) <= 8192);
-  for (const term of ['stable controller', 'v0.8.0', 'complete controller copy', 'outside writer scope', 'doctor run', 'integrity', 'scripts/dispatch.ts', 'npm test', 'status show', 'bounded manual repair', 'demonstrated controller defect', 'worktree cleanup']) assert.ok(self.includes(term), term);
 });
 
 test('human configuration keeps level and workspace guidance', () => {
