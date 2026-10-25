@@ -30,7 +30,9 @@ test('phase prose completes the report before cleaning owned worktrees', () => {
 
 test('diagnostics retain privacy and measurement guidance', () => {
   const legacy = [/replyTransport/, /\{\s*v\s*:\s*1\s*,\s*event/, /capture\.json/, /pending-(?:\d+|N)\.json/, /capture\.lock/, /diagnostics\.render\.lock/];
-  assert.deepEqual(scanOverlay().filter(f => f.path.startsWith('skills/dispatch/')).flatMap(f => legacy.filter(re => re.test(f.text)).map(re => f.path + ': ' + re.source)), []);
+  const dispatchRoot = path.join(OVERLAY_ROOT, 'skills/dispatch');
+  const files = scanOverlay(dispatchRoot).map(f => ({ ...f, path: 'skills/dispatch/' + f.path }));
+  assert.deepEqual(files.flatMap(f => legacy.filter(re => re.test(f.text)).map(re => f.path + ': ' + re.source)), []);
   const human = read('references/readme/troubleshooting.md');
   const concepts = read('references/readme/concepts.md');
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));

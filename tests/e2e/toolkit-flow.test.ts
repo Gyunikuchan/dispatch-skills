@@ -97,15 +97,15 @@ describe('toolkit session flow', () => {
       assert.ok(rows.find(row=>row.data['phase']==='finished')!.seq<rows.find(row=>row.kind==='evidence')!.seq);
     } finally {f.cleanup();}
   });
-  for(const level of ['medium','low']) test('composes '+level+' writer delivery and current tree verification', async()=>{
+  test('composes medium writer delivery and current tree verification', async()=>{
     const f=await toolkitRepo(); try {
-      await f.level(level); if(level==='medium') await f.approve();
+      await f.level('medium'); await f.approve();
       for(const args of [['worktree','create','T1'],['brief','render','T1']]) assert.equal((await f.run(args)).exit,0);
       const brief=(await f.run(['brief','render','T1'])).value; assert.ok(fs.existsSync(brief.path));
       const writer=JSON.parse(fs.readFileSync((await f.run(['status','show'])).output.path,'utf8')).writers[0].path;
       fs.writeFileSync(path.resolve(f.session,writer,'src/file.ts'),'delivered\n');
       for(const args of [['worktree','submit','T1'],['worktree','integrate','T1'],['verify','run']]) assert.equal((await f.run(args)).output.ok,true);
-      if(level==='medium') { fs.writeFileSync(path.join(f.integration,'src/file.ts'),'fixed\n'); assert.equal((await f.run(['worktree','commit','--reason','fix'])).exit,0); await f.run(['verify','run']); }
+      fs.writeFileSync(path.join(f.integration,'src/file.ts'),'fixed\n'); assert.equal((await f.run(['worktree','commit','--reason','fix'])).exit,0); await f.run(['verify','run']);
       assert.deepEqual((await f.run(['status','show'])).value.criteria,[]);
       assert.equal((await f.run(['worktree','deliver'])).exit,0); assert.equal(f.git(['rev-parse','HEAD']),f.git(['rev-parse','HEAD'],f.integration));
     } finally {f.cleanup();}

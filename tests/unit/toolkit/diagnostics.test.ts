@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { observeTool, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -13,7 +16,6 @@ const writeJson = (file: string, value: unknown) => {
 };
 
 test('diagnostic storage failure preserves durable attempts and reports one bounded failure', async t => {
- const {observeTool,sessionFacts}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
  const f=sessionFixture();try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   f.deps.delegate=async()=>({outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[{provider:'claude',model:'m',effort:null,mode:'cli',launched:true,outcome:'ok'}]});
@@ -33,8 +35,6 @@ test('diagnostic storage failure preserves durable attempts and reports one boun
 });
 
 test('diagnostics persist unlaunched failures and CLI fallback consequences independently', async () => {
- const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
- const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
  const f=sessionFixture();try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   f.deps.modes=()=>[];
@@ -65,7 +65,6 @@ test('diagnostics persist unlaunched failures and CLI fallback consequences inde
 });
 
 test('diagnostics distinguish healthy observed captures from absent and damaged collection', async () => {
- const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
  const f=sessionFixture();try{
   const fold={records:[],lastSeq:0,torn:null};const render=()=>fs.readFileSync(writeDiagnostics(f.session,sessionFacts(f.session,fold,'complete')),'utf8');
   assert.match(render(),/Collection health: unknown/);
@@ -78,7 +77,6 @@ test('diagnostics distinguish healthy observed captures from absent and damaged 
 });
 
 test('diagnostics aggregate subjects provenance and partial collection deterministically', async () => {
- const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
  const f=sessionFixture();try {
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);f.deps.skillRoot=skill;
   const fold={records:[],lastSeq:0,torn:null};let now=0;f.deps.clock=()=>now;
@@ -121,7 +119,6 @@ test('diagnostics aggregate subjects provenance and partial collection determini
 });
 
 test('diagnostics detect toolkit rejection and writer relaunch evidence', async () => {
- const {observeTool,sessionFacts,writeDiagnostics}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
  const f=sessionFixture();try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   for(const reason of ['native-pending','approval-required','invalid-record'])observeTool(f.session,'record','append',undefined,f.deps)!.finish({ok:false,exit:4,reason,summary:'private',value:null});
@@ -174,7 +171,6 @@ function saveRound(input: {
 }
 
 test('session diagnostics include producer rounds, invocations, and gated retro findings', async () => {
-  const {readReviews, sessionFacts, writeDiagnostics} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
   const fixture = sessionFixture();
   const empty = sessionFixture();
   try {
@@ -276,7 +272,6 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
 });
 
 test('review JSON errors identify malformed round, findings, and slot files', async () => {
-  const {readReviews} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
   const malformedFile = [
     (session: string) => {
       const file = path.join(session, '.state', 'reviews', 'round-review', 'round-1', 'round.json');
@@ -312,9 +307,6 @@ test('review JSON errors identify malformed round, findings, and slot files', as
 
 
 test('enabled toolkit diagnostics retain attempts, normalized usage, time and reserve identity without replay duplication', async () => {
-  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const {sessionFacts} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
   const f = sessionFixture();
   try {
     const skill = path.join(f.root, 'skill');
@@ -355,7 +347,6 @@ test('enabled toolkit diagnostics retain attempts, normalized usage, time and re
 });
 
 test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O cannot change a result', async () => {
-  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
   for (const enabled of [false,true]) {
     const f = sessionFixture();
     try {
@@ -380,8 +371,6 @@ test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O
 
 
 test('diagnostics keep durable attempts across a later crash and exclude cumulative or unlaunched usage', async () => {
-  const {main} = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
-  const {sessionFacts, writeDiagnostics} = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
   const f = sessionFixture();
   try {
     const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
@@ -419,7 +408,6 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
 });
 
 test('diagnostics preserve exception attempts and durable capture boundaries', async () => {
- const {observeTool}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
  const f=sessionFixture();try {
  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);fs.writeFileSync(path.join(skill,'config.jsonc'),'{"diagnostics":true}');f.deps.skillRoot=skill;
  const error=Object.assign(new Error('private error'),{invocations:[{provider:'claude',model:'m',mode:'cli',launched:true,outcome:'ok'}]});

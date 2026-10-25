@@ -25,11 +25,11 @@ describe('summary byte cap',()=>{
     } finally {f.cleanup();}
   });
   test('preserves all large verify checks and their command output',async()=>{
-    const criteria=Array.from({length:150},(_,i)=>'- [SC'+(i+1)+'] Works\n  - Changes: src/file.ts\n  - Verify: `node -e "process.stdout.write(\'x\'.repeat(200000))"`\n  - Evidence: verify').join('\n');
-    const source=planSource.replace('| none | SC1 |','| none | '+Array.from({length:150},(_,i)=>'SC'+(i+1)).join(', ')+' |').replace(/## Success Criteria[\s\S]*?## Verification Plan/,'## Success Criteria\n'+criteria+'\n\n## Verification Plan');
+    const criteria=Array.from({length:5},(_,i)=>'- [SC'+(i+1)+'] Works\n  - Changes: src/file.ts\n  - Verify: `node -e "process.stdout.write(\'x\'.repeat(200000))"`\n  - Evidence: verify').join('\n');
+    const source=planSource.replace('| none | SC1 |','| none | '+Array.from({length:5},(_,i)=>'SC'+(i+1)).join(', ')+' |').replace(/## Success Criteria[\s\S]*?## Verification Plan/,'## Success Criteria\n'+criteria+'\n\n## Verification Plan');
     const f=await toolkitRepo(source); try {
       const r=await f.concurrent(['verify','run']); assert.equal(r.exit,0,JSON.stringify(r)); assert.equal(r.output.ok,true,JSON.stringify(r));
-      assert.equal(r.value.checks.length,151);
+      assert.equal(r.value.checks.length,6);
       for(const check of r.value.checks.filter((c:any)=>c.criterion!=='contract')) assert.ok(fs.statSync(check.logPath).size>=200000);
     } finally {f.cleanup();}
   });

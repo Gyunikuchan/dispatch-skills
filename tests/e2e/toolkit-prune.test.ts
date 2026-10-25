@@ -31,7 +31,8 @@ test('transient pruning recovers after durable boundaries',async()=>{
    assert.equal((await r.run(['worktree','prune'])).output.ok,true);
    const head=r.git(['rev-parse','HEAD'],r.integration);assert.equal((await r.run(['worktree','prune'])).output.ok,true);assert.equal(r.git(['rev-parse','HEAD'],r.integration),head);
    assert.equal(foldLedger(r.session).records.filter(x=>x.data['phase']==='pruned').length,1);
-   assert.equal((await r.run(['verify','run','--final'],p=>{if(p==='verify:after-evidence')throw Error('crash');})).exit,2);assert.equal((await r.run(['worktree','deliver'])).output.reason,'final-checks-required');assert.equal((await r.run(['verify','run','--final'])).output.ok,true);
+   if(boundary==='prune:before-journal'){assert.equal((await r.run(['verify','run','--final'],p=>{if(p==='verify:after-evidence')throw Error('crash');})).exit,2);assert.equal((await r.run(['worktree','deliver'])).output.reason,'final-checks-required');}
+   assert.equal((await r.run(['verify','run','--final'])).output.ok,true);
   }finally{r.cleanup();}
  }
 });

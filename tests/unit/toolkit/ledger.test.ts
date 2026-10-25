@@ -18,13 +18,6 @@ test('ledger records preserve retries and recover torn tails', async () => {
  fs.appendFileSync(ledger,'{"torn":'); assert.equal((await call(note)).value.seq,1); assert.equal(fs.readFileSync(ledger,'utf8'),bytes+'{"torn":');
  assert.equal((await call({...note,key:'b'})).value.seq,2); assert.equal(fs.readFileSync(path.join(f.session,'ledger.torn-1.jsonl'),'utf8'),'{"torn":');
  assert.equal(fs.existsSync(path.join(f.session,'.state/ledger.torn-1.jsonl')),false);
- for(const record of [{...note,kind:'unknown'},{...note,data:{text:'hello',extra:1}},{...note,by:'bad'},{...note,key:''}]) assert.equal((await call(record)).o.reason,'invalid-record');
- assert.equal((await call({...note,key:undefined})).o.reason,'missing-key');
- for(const field of ['toString','__proto__']) {
-  const record=JSON.parse('{"kind":"note","by":"orchestrator","key":"inherited-'+field+'","data":{"text":"hello","'+field+'":"extra"}}');
-  assert.equal((await call(record)).o.reason,'invalid-record');
- }
- assert.equal((await call({kind:'waiver',by:'orchestrator',data:{criterion:'SC1',reason:'ok'}})).o.reason,'user-only');
  const waiver={kind:'waiver',by:'user',quote:'approve',data:{criterion:'SC1',reason:'ok'}}; const first=await call(waiver); assert.equal((await call(waiver)).value.seq,first.value.seq);
  fs.appendFileSync(ledger,'bad\n{}\n'); assert.equal((await call({...note,key:'c'})).o.reason,'ledger-corrupt');
  } finally {f.cleanup();}

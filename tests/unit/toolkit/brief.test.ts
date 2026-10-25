@@ -51,31 +51,59 @@ const CAPTURE_PLAN = PLAN
 
 const sharedFixture = sessionFixture();
 const bindings = new Map<boolean, string>();
+const cachedHashes = new Map<boolean, ReturnType<typeof currentHashes>>();
+const tornPath = path.join(sharedFixture.session, 'ledger.torn-1.jsonl');
+const designPath = path.join(sharedFixture.root, 'strategy.design.md');
+const ledgerPath = path.join(sharedFixture.session, 'ledger.jsonl');
+sharedFixture.artifact('mission.spec.md', '# Mission\n## Requirements\n### REQ-1 — Works\n');
+let cachedQuality: string | null = null;
+const getQuality = (root: string) => cachedQuality ??= fs.readFileSync(path.join(root, 'references/templates/quality-bar.md'), 'utf8');
+let cachedWriterTemplate: string | null = null;
+const getWriterTemplate = (root: string) => cachedWriterTemplate ??= fs.readFileSync(path.join(root, 'references/templates/writer-brief.md'), 'utf8');
 after(() => sharedFixture.cleanup());
 
 async function fixture(design = false, source = PLAN) {
   const f = {...sharedFixture, cleanup: () => {}};
   // Reset scenario state while retaining the same physical session and templates.
-  fs.rmSync(path.join(f.session, 'ledger.jsonl'), {force: true});
-  fs.rmSync(path.join(f.session, 'ledger.torn-1.jsonl'), {force: true});
-  fs.rmSync(path.join(f.root, 'strategy.design.md'), {force: true});
+  if (fs.existsSync(tornPath)) fs.unlinkSync(tornPath);
+  if (design) {
+    if (!fs.existsSync(designPath)) f.artifact('strategy.design.md', '# Strategy\n');
+  } else if (fs.existsSync(designPath)) {
+    fs.unlinkSync(designPath);
+  }
   delete f.deps.hook;
   f.lines.length = 0;
-  f.artifact('mission.spec.md', '# Mission\n## Requirements\n### REQ-1 — Works\n');
   const planPath = f.artifact('work.plan.md', source);
-  if (design) f.artifact('strategy.design.md', '# Strategy\n');
-  let key = 0;
-  const add = (kind: string, data: object, extra: object = {}) => appendRecord(f.session, {kind, key: 'record-' + key++, by: 'orchestrator', data, ...extra}, f.deps);
-  const ledgerPath = path.join(f.session, 'ledger.jsonl');
   const binding = bindings.get(design);
+  let key = binding ? 1 : 0;
+  let lastSeq = key;
+  const add = async (kind: string, data: object, extra: object = {}) => {
+    lastSeq++;
+    const record = {
+      seq: lastSeq,
+      at: new Date(f.deps.clock()).toISOString(),
+      kind,
+      key: 'record-' + key++,
+      by: 'orchestrator',
+      data,
+      ...extra,
+    };
+    fs.appendFileSync(ledgerPath, JSON.stringify(record) + '\n');
+    return record;
+  };
   if (binding) {
     fs.writeFileSync(ledgerPath, binding);
     key = 1;
   } else {
+    if (fs.existsSync(ledgerPath)) fs.unlinkSync(ledgerPath);
     await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
     bindings.set(design, fs.readFileSync(ledgerPath, 'utf8'));
   }
-  const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+  let hashes = source === PLAN ? cachedHashes.get(design) : undefined;
+  if (!hashes) {
+    hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    if (source === PLAN) cachedHashes.set(design, hashes);
+  }
   const approve = () => add('approval', hashes, {by: 'user', quote: 'Approved'});
   const launch = (task = 'T1') => add('writer', {phase: 'launched', task, path: `.state/worktrees/${task}-1`, base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}});
   let processes = 0;
@@ -203,7 +231,7 @@ describe('writer brief', () => {
       const payload = captureData(captureCommand(captureSection(brief)));
       assert.match(payload.data.command, /node first-red/);
       assert.doesNotMatch(payload.data.command, /node poison-red/);
-      const quality = fs.readFileSync(path.join(f.deps.skillRoot, 'references/templates/quality-bar.md'), 'utf8');
+      const quality = getQuality(f.deps.skillRoot);
       for (const name of ['shared', 'code']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
         assert.ok(brief.includes(name === 'shared' ? body.replace('the outcome envelope and verification protocol', 'verification requirements') : body));
@@ -291,7 +319,7 @@ describe('writer brief', () => {
       const result = await f.call();
       assert.equal(result.exit, 0);
       const brief = fs.readFileSync(result.value.path, 'utf8');
-      const template = fs.readFileSync(path.join(f.deps.skillRoot, 'references', 'templates', 'writer-brief.md'), 'utf8');
+      const template = getWriterTemplate(f.deps.skillRoot);
       const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
       const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
       assert.ok(template.includes('{{redCapture}}'));

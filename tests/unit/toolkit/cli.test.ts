@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test } from 'node:test';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 describe('toolkit CLI contract', () => {
   test('usage errors print one line without a result path', async () => {
-    const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
     const f = sessionFixture();
     try {
       for (const args of [['unknown', 'run'], ['lint', 'unknown'], ['lint', 'run'], ['lint', 'run', '--session', f.root]]) {
@@ -22,8 +23,6 @@ describe('toolkit CLI contract', () => {
     } finally { f.cleanup(); }
   });
   test('handlers persist success refusals and unexpected faults', async () => {
-    const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
-    const { ToolError } = await import('../../../skills/dispatch/scripts/toolkit/output.ts');
     const f = sessionFixture();
     try {
       for (const [reason, exit] of [['invalid-input', 1], ['invalid-record', 1], ['user-only', 1], ['missing-key', 1], ['approval-stale', 1], ['key-conflict', 2], ['ledger-corrupt', 2], ['fault', 2], ['lock-held', 3], ['lint-errors', 4]] as const) {
@@ -46,7 +45,6 @@ describe('toolkit CLI contract', () => {
     } finally { f.cleanup(); }
   });
   test('output write failure reports fault without a path', async () => {
-    const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
     const f = sessionFixture();
     try {
       assert.equal(await main(['lint', 'run', '--session', f.session], { ...f.deps,

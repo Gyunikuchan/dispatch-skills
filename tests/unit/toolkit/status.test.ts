@@ -1,10 +1,36 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { sessionFixture } from './helpers/session.ts';
+import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
+
+function sessionFixture() {
+  const root = path.join(path.parse(os.tmpdir()).root, 'status-' + crypto.randomUUID());
+  const cleanup = memoryNodeFs(root);
+  const session = path.join(root, '.scratch/dispatch-skills/20261023T0000Z-test');
+  fs.mkdirSync(session, { recursive: true });
+  fs.writeFileSync(path.join(session, 'manifest.json'), JSON.stringify({
+    schemaVersion: 1, folderName: path.basename(session), sessionId: 'test', safeSessionId: 'test', repositoryRoot: fs.realpathSync(root),
+  }));
+  const lines: string[] = [];
+  const deps: CliDeps = {
+    run: async () => { throw new Error('Unit tests must not spawn processes'); },
+    delegate: async () => { throw new Error('Unscripted delegate'); },
+    modes: () => ['cli'], orchestrator: null, liveness: { claude: true, agy: true, codex: true, copilot: true, opencode: true },
+    stdout: (line) => lines.push(line), env: {}, clock: () => 0,
+    sleep: async () => {}, pid: 42, host: 'test-host', isAlive: () => false,
+    skillRoot: path.resolve('skills/dispatch'),
+  };
+  return {
+    root, session, lines, deps, cleanup,
+    artifact: (name: string, source: string) => { const file = path.join(root, name); fs.writeFileSync(file, source); return file; },
+    output: () => { if (lines.length !== 1) throw new Error('Expected one output line'); return JSON.parse(lines[0]!) as { ok: boolean; summary: string; path: string | null; reason?: string }; },
+  };
+}
 
 test('status report exposes bindings approval gate open escalations and torn tail without locking', async () => {
   const f = sessionFixture();
@@ -44,18 +70,86 @@ test('status report exposes bindings approval gate open escalations and torn tai
   } finally { f.cleanup(); }
 });
 
-test('recovery status refuses transient success without a validated transition',async()=>{const PLAN=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');const {fakeGit}=await import('./helpers/fake-git.ts');const f=sessionFixture();try{
- f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN.replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
- const cwd=path.join(f.session,'.state/worktrees/integration');fs.mkdirSync(cwd,{recursive:true});const head='a'.repeat(40),tree='b'.repeat(40);f.deps.run=fakeGit({session:f.session,head,tree,testedTree:tree,changes:[],calls:[]});await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base:head,dest:{path:f.root,branch:'main'}}},f.deps);
- await main(['status','show','--session',f.session],f.deps);const value=JSON.parse(fs.readFileSync(f.output().path!,'utf8'));assert.ok(value.criteria.includes('SC1'));assert.deepEqual(value.criterionStatuses.map((row:{state:string;reason:string})=>[row.state,row.reason]),[['missing','pruning-required'],['missing','pruning-required']]);
-}finally{f.cleanup();}});
+test('recovery status refuses transient success without a validated transition', async () => {
+  const PLAN = [
+    '# Work',
+    '## Task Map',
+    '| ID | Title | Outcome | Prerequisites | Criteria |',
+    '| --- | --- | --- | --- | --- |',
+    '| T1 | File | Works | none | SC1 |',
+    '## Proposed Changes',
+    '### T1 \u2014 File',
+    '#### [NEW] src/file.ts',
+    '- Purpose: behavior.',
+    '## Success Criteria',
+    '- [SC1] Works',
+    '  - Changes: src/file.ts',
+    '  - Verify: `node check`',
+    '  - Evidence: verify',
+    '## Verification Plan',
+    '### Automated Tests',
+    '- `node contract`',
+  ].join('\n');
+  const { fakeGit } = await import('./helpers/fake-git.ts');
+  const f = sessionFixture();
+  try {
+    f.artifact('mission.spec.md', 'mission');
+    f.artifact('work.plan.md', PLAN.replace('  - Evidence: verify', '  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));
+    await appendRecord(f.session, { kind: 'bind', by: 'tool', key: 'bind', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
+    const cwd = path.join(f.session, '.state/worktrees/integration');
+    fs.mkdirSync(cwd, { recursive: true });
+    const head = 'a'.repeat(40), tree = 'b'.repeat(40);
+    f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
+    await appendRecord(f.session, { kind: 'integrate', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
+    await main(['status', 'show', '--session', f.session], f.deps);
+    const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    assert.ok(value.criteria.includes('SC1'));
+    assert.deepEqual(value.criterionStatuses.map((row: { state: string; reason: string }) => [row.state, row.reason]), [['missing', 'pruning-required'], ['missing', 'pruning-required']]);
+  } finally { f.cleanup(); }
+});
 
-
-test('status retains missing automated criteria for manual completions and waivers',async()=>{const PLAN=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');const {fakeGit}=await import('./helpers/fake-git.ts');
- for(const kind of ['manual-complete','waiver']){const f=sessionFixture();try{
-  f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN);await appendRecord(f.session,{kind:'bind',key:'bind',by:'tool',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
-  const cwd=path.join(f.session,'.state/worktrees/integration');fs.mkdirSync(cwd,{recursive:true});const head='a'.repeat(40),tree='b'.repeat(40);f.deps.run=fakeGit({session:f.session,head,tree,testedTree:tree,changes:[],calls:[]});await appendRecord(f.session,{kind:'integrate',key:'opened',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base:head,dest:{path:f.root,branch:'main'}}},f.deps);
-  await appendRecord(f.session,{kind,key:kind,by:'user',quote:'accepted',data:{criterion:'SC1',...(kind==='waiver'?{reason:'accepted risk'}:{evidence:'reviewed'})}},f.deps);
-  await main(['status','show','--session',f.session],f.deps);const value=JSON.parse(fs.readFileSync(f.output().path!,'utf8'));assert.ok(value.criteria.includes('SC1'),JSON.stringify(value));assert.equal(value.criterionStatuses.find((row:{criterion:string})=>row.criterion==='SC1').state,kind==='waiver'?'waived':'manual');
- }finally{f.cleanup();}}
+test('status retains missing automated criteria for manual completions and waivers', async () => {
+  const PLAN = [
+    '# Work',
+    '## Task Map',
+    '| ID | Title | Outcome | Prerequisites | Criteria |',
+    '| --- | --- | --- | --- | --- |',
+    '| T1 | File | Works | none | SC1, SC2 |',
+    '## Proposed Changes',
+    '### T1 \u2014 File',
+    '#### [NEW] src/file.ts',
+    '- Purpose: behavior.',
+    '## Success Criteria',
+    '- [SC1] Works',
+    '  - Changes: src/file.ts',
+    '  - Verify: `node check`',
+    '  - Evidence: verify',
+    '- [SC2] Also works',
+    '  - Changes: src/file.ts',
+    '  - Verify: `node check2`',
+    '  - Evidence: verify2',
+    '## Verification Plan',
+    '### Automated Tests',
+    '- `node contract`',
+  ].join('\n');
+  const { fakeGit } = await import('./helpers/fake-git.ts');
+  const f = sessionFixture();
+  try {
+    f.artifact('mission.spec.md', 'mission');
+    f.artifact('work.plan.md', PLAN);
+    await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'tool', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
+    const cwd = path.join(f.session, '.state/worktrees/integration');
+    fs.mkdirSync(cwd, { recursive: true });
+    const head = 'a'.repeat(40), tree = 'b'.repeat(40);
+    f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
+    await appendRecord(f.session, { kind: 'integrate', key: 'opened', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
+    await appendRecord(f.session, { kind: 'manual-complete', key: 'manual-complete', by: 'user', quote: 'accepted', data: { criterion: 'SC1', evidence: 'reviewed' } }, f.deps);
+    await appendRecord(f.session, { kind: 'waiver', key: 'waiver', by: 'user', quote: 'accepted', data: { criterion: 'SC2', reason: 'accepted risk' } }, f.deps);
+    await main(['status', 'show', '--session', f.session], f.deps);
+    const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    assert.ok(value.criteria.includes('SC1'), JSON.stringify(value));
+    assert.ok(value.criteria.includes('SC2'), JSON.stringify(value));
+    assert.equal(value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state, 'manual');
+    assert.equal(value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC2').state, 'waived');
+  } finally { f.cleanup(); }
 });

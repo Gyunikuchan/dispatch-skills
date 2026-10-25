@@ -88,19 +88,21 @@ describe('toolkit delivery and cleanup',()=>{
       assert.equal(r.git(['diff','--name-only']),'work.spec.md');
     }finally{r.cleanup();}
   });
-  for(const mode of ['tracked','untracked','before','after','crash-edit','moved']) it('preserves caller bytes on refused '+mode+' delivery',async()=>{
-    const {r}=await prepared(); try {
-      const file=path.join(r.root,mode==='untracked'?'src/new.ts':'src/file.ts');
-      if(mode==='tracked')fs.writeFileSync(file,'caller\n');
-      if(mode==='untracked') { fs.writeFileSync(path.join(r.integration,'src/new.ts'),'new\n'); await r.run(['worktree','commit','--reason','add file']); fs.writeFileSync(file,'caller\n'); }
-      if(mode==='moved')r.git(['commit','--allow-empty','-m','outside']);
-      if(mode==='crash-edit'){await r.run(['worktree','deliver'],p=>{if(p==='deliver:after-ff')throw new Error('crash');}); fs.writeFileSync(file,'caller\n');}
-      const before=fs.readFileSync(file,'utf8');
-      const delivered=await r.run(['worktree','deliver'],p=>{if((mode==='before' && p==='deliver:before-ff')||(mode==='after' && p==='deliver:after-ff'))fs.writeFileSync(file,'caller\n');});
-      assert.equal(delivered.exit,4); assert.equal(delivered.output.reason,mode==='moved'?'caller-moved':'caller-dirty');
-      assert.equal(fs.readFileSync(file,'utf8'),mode==='before'||mode==='after'?'caller\n':before); assert.equal(rows(r,'delivered').length,0);
-      if(['tracked','untracked','moved'].includes(mode))assert.equal(rows(r,'deliver-started').length,0);
-    }finally{r.cleanup();}
+  it('preserves caller bytes on refused tracked delivery', async () => {
+    for (const mode of ['tracked', 'untracked', 'before', 'after', 'crash-edit', 'moved']) {
+      const { r } = await prepared(); try {
+        const file = path.join(r.root, mode === 'untracked' ? 'src/new.ts' : 'src/file.ts');
+        if (mode === 'tracked') fs.writeFileSync(file, 'caller\n');
+        if (mode === 'untracked') { fs.writeFileSync(path.join(r.integration, 'src/new.ts'), 'new\n'); await r.run(['worktree', 'commit', '--reason', 'add file']); fs.writeFileSync(file, 'caller\n'); }
+        if (mode === 'moved') r.git(['commit', '--allow-empty', '-m', 'outside']);
+        if (mode === 'crash-edit') { await r.run(['worktree', 'deliver'], p => { if (p === 'deliver:after-ff') throw new Error('crash'); }); fs.writeFileSync(file, 'caller\n'); }
+        const before = fs.readFileSync(file, 'utf8');
+        const delivered = await r.run(['worktree', 'deliver'], p => { if ((mode === 'before' && p === 'deliver:before-ff') || (mode === 'after' && p === 'deliver:after-ff')) fs.writeFileSync(file, 'caller\n'); });
+        assert.equal(delivered.exit, 4); assert.equal(delivered.output.reason, mode === 'moved' ? 'caller-moved' : 'caller-dirty');
+        assert.equal(fs.readFileSync(file, 'utf8'), mode === 'before' || mode === 'after' ? 'caller\n' : before); assert.equal(rows(r, 'delivered').length, 0);
+        if (['tracked', 'untracked', 'moved'].includes(mode)) assert.equal(rows(r, 'deliver-started').length, 0);
+      } finally { r.cleanup(); }
+    }
   });
   it('keeps open writers and undelivered integration work until close',async()=>{
     const r=await toolkitRepo(); try {
@@ -110,16 +112,18 @@ describe('toolkit delivery and cleanup',()=>{
       await r.run(['worktree','close','--reason','stop']); await r.run(['worktree','cleanup']); assert.ok(!fs.existsSync(r.integration)); assert.ok(r.git(['branch','--list','dispatch/test/integration']));
     }finally{r.cleanup();}
   });
-  for(const mode of ['submitted-edit','abandoned-edit','ignored-writer','ignored-delivered','ignored-closed','dirty-delivered'])it('keeps unpreserved '+mode+' bytes',async()=>{
-    const {r,writer}=await prepared(); try {
-      if(mode==='abandoned-edit') { await r.run(['worktree','create','T1']); await r.run(['worktree','abandon','T1','--reason','discard']); }
-      let file: string;
-      if(mode==='submitted-edit'||mode==='abandoned-edit'){file=path.join(mode==='abandoned-edit'?path.join(r.session,'.state/worktrees/T1-2'):writer,'src/file.ts'); fs.writeFileSync(file,'kept\n');}
-      else if(mode==='ignored-writer'){file=path.join(writer,'ignored'); fs.writeFileSync(file,'kept\n');}
-      else {await r.run(['worktree','deliver']); if(mode==='ignored-closed')await r.run(['worktree','close','--reason','stop']); file=path.join(r.integration,mode==='dirty-delivered'?'src/file.ts':'ignored'); fs.writeFileSync(file,'kept\n');}
-      const cleaned=await r.run(['worktree','cleanup']); assert.equal(cleaned.exit,0); assert.equal(fs.readFileSync(file,'utf8'),'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
-      if(mode==='dirty-delivered')assert.ok(r.git(['branch','--list','dispatch/test/integration']));
-    }finally{r.cleanup();}
+  it('keeps unpreserved submitted-edit bytes', async () => {
+    for (const mode of ['submitted-edit', 'abandoned-edit', 'ignored-writer', 'ignored-delivered', 'ignored-closed', 'dirty-delivered']) {
+      const { r, writer } = await prepared(); try {
+        if (mode === 'abandoned-edit') { await r.run(['worktree', 'create', 'T1']); await r.run(['worktree', 'abandon', 'T1', '--reason', 'discard']); }
+        let file: string;
+        if (mode === 'submitted-edit' || mode === 'abandoned-edit') { file = path.join(mode === 'abandoned-edit' ? path.join(r.session, '.state/worktrees/T1-2') : writer, 'src/file.ts'); fs.writeFileSync(file, 'kept\n'); }
+        else if (mode === 'ignored-writer') { file = path.join(writer, 'ignored'); fs.writeFileSync(file, 'kept\n'); }
+        else { await r.run(['worktree', 'deliver']); if (mode === 'ignored-closed') await r.run(['worktree', 'close', '--reason', 'stop']); file = path.join(r.integration, mode === 'dirty-delivered' ? 'src/file.ts' : 'ignored'); fs.writeFileSync(file, 'kept\n'); }
+        const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(file, 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
+        if (mode === 'dirty-delivered') assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
+      } finally { r.cleanup(); }
+    }
   });
   it('removes abandoned launches and rejected candidates after close',async()=>{
     const r=await toolkitRepo(); try {

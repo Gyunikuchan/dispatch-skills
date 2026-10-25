@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import { initializeSession } from '../../skills/dispatch/scripts/lib/session.ts';
 import { publishQuotaFailure, readQuotaState, reprobeQuota } from '../../skills/dispatch/scripts/lib/quota-store.ts';
 import { H, quotaSnapshot } from '../../skills/dispatch/scripts/policy/quota.ts';
@@ -42,11 +42,11 @@ function setup() {
     }
   };
   const quotaDir = () => path.join(sessionDir, '.state', 'quota', crypto.createHash('sha256').update(JSON.stringify([key.provider, key.model, key.mode])).digest('hex'));
-  return { root, repo, sessionDir, options, capture, subprocess, cli, quotaDir, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, repo, sessionDir, options, capture, subprocess, cli, quotaDir, cleanup: () => { try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* Windows locked handle */ } } };
 }
 
-test('quota state survives sessions and reprobe races', async (t) => {
-  await t.test('complete observations survive another process and remain isolated to their session', async () => {
+describe('quota state survives sessions and reprobe races', () => {
+  test('complete observations survive another process and remain isolated to their session', async () => {
     const f = setup();
     try {
       const generation = f.capture().generations[0]!.generation;
@@ -61,7 +61,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       assert.equal(records.includes('prompt'), false);
     } finally { f.cleanup(); }
   });
-  await t.test('same bucket publication coalesces and unrelated keys and buckets survive', async () => {
+  test('same bucket publication coalesces and unrelated keys and buckets survive', async () => {
     const f = setup();
     try {
       const generation = f.capture().generations[0]!.generation;
@@ -82,7 +82,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       assert.equal(fs.readdirSync(path.join(f.sessionDir, '.state', 'quota')).every((name) => /^[a-f0-9]{64}$/.test(name)), true);
     } finally { f.cleanup(); }
   });
-  await t.test('old bucket volume cannot hide valid current and previous bucket evidence', () => {
+  test('old bucket volume cannot hide valid current and previous bucket evidence', () => {
     const f = setup();
     try {
       const generation = f.capture().generations[0]!.generation;
@@ -98,7 +98,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       assert.equal(f.capture([key], 100 * H + 1).snapshot.decisions[0]!.skipped, true);
     } finally { f.cleanup(); }
   });
-  await t.test('concurrent reprobes and late completions cannot revive an old generation', async () => {
+  test('concurrent reprobes and late completions cannot revive an old generation', async () => {
     const f = setup();
     try {
       const old = f.capture().generations[0]!.generation;
@@ -117,7 +117,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       assert.equal(f.capture([key], now + 2).snapshot.decisions[0]!.skipped, false);
     } finally { f.cleanup(); }
   });
-  await t.test('malformed oversized unsupported and future records use normal routing', () => {
+  test('malformed oversized unsupported and future records use normal routing', () => {
     for (const corrupt of ['{', 'x'.repeat(8193), JSON.stringify({ schemaVersion: 2 })]) {
       const f = setup();
       try {
@@ -140,7 +140,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       } finally { f.cleanup(); }
     }
   });
-  await t.test('linked state and records cannot redirect reads or writes', () => {
+  test('linked state and records cannot redirect reads or writes', () => {
     for (const locus of ['.state', 'quota', 'key', 'generation', 'observation']) {
       const f = setup();
       try {
@@ -162,7 +162,7 @@ test('quota state survives sessions and reprobe races', async (t) => {
       } finally { f.cleanup(); }
     }
   });
-  await t.test('invalid arguments unowned sessions and I/O failures cannot create quota writes', async () => {
+  test('invalid arguments unowned sessions and I/O failures cannot create quota writes', async () => {
     const f = setup();
     try {
       for (const [provider, mode] of [['unknown', 'cli'], ['codex', 'unknown']]) {
