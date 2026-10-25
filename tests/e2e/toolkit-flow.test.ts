@@ -180,14 +180,12 @@ test('captured RED command preserves raw output and status and its report clears
     assert.equal(rendered.exit, 0);
     const brief = fs.readFileSync(rendered.value.path, 'utf8');
     const command = commandFrom(brief);
-    const {bootstrap, data} = commandData(command);
+    const {data} = commandData(command);
     const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
     assert.ok(data.command.endsWith(quotedPath), 'test path is quoted for the shell used by spawnSync');
     assert.equal(data.cwd, worktree);
     assert.equal(data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
     assert.equal(data.criterion, 'SC1');
-    assert.match(bootstrap, /spawnSync/);
-    assert.match(bootstrap, /encoding:\s*['"]buffer['"]/);
     assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
     assert.doesNotMatch(command, /[$%]/);
 
@@ -201,6 +199,40 @@ test('captured RED command preserves raw output and status and its report clears
     assert.deepEqual(fs.readFileSync(path.join(logDir, 'SC1.stdout')), Buffer.from('raw stdout'));
     assert.deepEqual(fs.readFileSync(path.join(logDir, 'SC1.stderr')), Buffer.from('raw stderr'));
     assert.equal(JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')).status, 7);
+
+    const outer = /^(node -e ".*") ([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
+    assert.ok(outer, 'generated wrapper has a reusable bootstrap and encoded input');
+    const below = 1024 * 1024 - 1;
+    const at = 1024 * 1024;
+    const above = 1024 * 1024 + 1;
+    const boundaries = [
+      {name: 'stdout below', stdout: below, stderr: 0},
+      {name: 'stderr below', stdout: 0, stderr: below},
+      {name: 'stdout at', stdout: at, stderr: 0},
+      {name: 'stderr at', stdout: 0, stderr: at},
+      {name: 'stdout above', stdout: above, stderr: 0},
+      {name: 'stderr above', stdout: 0, stderr: above},
+      {name: 'both above', stdout: above, stderr: above},
+    ];
+    const boundaryFailures: string[] = [];
+    for (const boundary of boundaries) {
+      const childCommand = `node -e "const fs=require('node:fs');fs.writeSync(1,Buffer.alloc(${boundary.stdout},165));fs.writeSync(2,Buffer.alloc(${boundary.stderr},90));process.exit(7)"`;
+      const input = Buffer.from(JSON.stringify({...data, command: childCommand}), 'utf8').toString('base64url');
+      const invoked = spawnSync(`${outer[1]} ${outer[2]} ${input}`, {
+        cwd: f.root, shell: true, encoding: 'buffer', windowsHide: true, maxBuffer: 4 * 1024 * 1024,
+      });
+      const expectedStdout = Buffer.alloc(boundary.stdout, 165);
+      const expectedStderr = Buffer.alloc(boundary.stderr, 90);
+      if (invoked.error) boundaryFailures.push(`${boundary.name}: wrapper error ${invoked.error.message}`);
+      if (invoked.status !== 7) boundaryFailures.push(`${boundary.name}: wrapper status ${invoked.status}, expected 7`);
+      if (!invoked.stdout?.equals(expectedStdout)) boundaryFailures.push(`${boundary.name}: replayed stdout bytes differ`);
+      if (!invoked.stderr?.equals(expectedStderr)) boundaryFailures.push(`${boundary.name}: replayed stderr bytes differ`);
+      if (!fs.readFileSync(path.join(logDir, 'SC1.stdout')).equals(expectedStdout)) boundaryFailures.push(`${boundary.name}: captured stdout bytes differ`);
+      if (!fs.readFileSync(path.join(logDir, 'SC1.stderr')).equals(expectedStderr)) boundaryFailures.push(`${boundary.name}: captured stderr bytes differ`);
+      const exit = JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')) as {status: number | null; signal: string | null; error: string | null};
+      if (exit.status !== 7 || exit.signal !== null || exit.error !== null) boundaryFailures.push(`${boundary.name}: exit metadata ${JSON.stringify(exit)}`);
+    }
+    assert.deepEqual(boundaryFailures, [], boundaryFailures.join('\n'));
 
     const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
     assert.ok(brief.includes(reportPath));

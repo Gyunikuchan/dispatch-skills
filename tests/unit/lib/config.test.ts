@@ -39,7 +39,8 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
 
 const minimal = { 'read-delegates': { codex: { targets: [{ low: { model: 'm' } }] } } };
 
-test('write-concurrency validates positive integers and defaults to 1', () => {
+test('write-concurrency validates positive integers and accepts omission', () => {
+  assert.deepEqual(validateConfig(minimal), []);
   assert.deepEqual(validateConfig({ ...minimal, 'write-concurrency': 3 }), []);
   for (const value of [0, -1, 1.5, '2', true]) {
     assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);

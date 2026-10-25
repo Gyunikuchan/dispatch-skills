@@ -68,18 +68,18 @@ export type PlanCriterion = {
   title: string;
   line: number;
   changes: readonly string[];
-  /** Declared `Tests:` paths, a subset of `changes`; RED capture expansion and brief rendering read these. */
+  /** Declared `Tests:` paths, a subset of `changes`; RED capture and brief rendering use these. */
   tests: readonly string[];
   verify: readonly PlanCommand[];
   evidence: EvidenceClass | null;
   preExisting: boolean | null;
   redException: string | null;
-  /** Focused failing-test command from `RED:`; `{files}` expands to RED-MATRIX test paths. Null on a red criterion downgrades its evidence to verify. */
+  /** Focused failing-test command from `RED:`; `{files}` expands to declared `Tests:` paths. A missing command downgrades red evidence to verify. */
   red: string | null;
   testRationale: string | null;
   review: string | null;
   enforcementInfeasibility: string | null;
-  /** `transient` tests are trimmed after the final review; `coveredBy` names the durable SC# or FINAL gate that keeps the behaviour covered. */
+  /** Retention choice for declared tests; a transient criterion's `coveredBy` names its durable SC# or FINAL gate. */
   retain: 'durable' | 'transient';
   coveredBy: string | null;
 };

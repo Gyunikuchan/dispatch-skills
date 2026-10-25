@@ -378,7 +378,7 @@ const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 // Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/i;
 export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
-// Lint hint only: paths under these segments look like support files, so transient naming and `undeclared-test-path` skip them; trim never uses path shape.
+// Lint hint only: paths under these segments look like support files, so transient naming and `undeclared-test-path` checks skip them.
 const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//i;
 /** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` and transient naming lints; a RED stage that changes or needs it must still list it in `Tests:`. */
 export const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
@@ -933,7 +933,7 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   if (covered !== undefined) { current.coveredBy = covered.replace(/`/g, '').trim().toUpperCase() || null; current.coveredLine = entry.line; }
 }
 
-/** Transient tests are trimmed after the final review, so a durable criterion or the FINAL gate must keep covering the behaviour. */
+/** A durable criterion or the FINAL gate keeps the behaviour covered beyond a transient test's intermediate step. */
 function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: readonly string[], out: LintDefect[]): void {
   const byId = new Map(criteria.map((criterion) => [criterion.id, criterion]));
   for (const criterion of criteria) {
@@ -949,7 +949,7 @@ function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: re
   }
 }
 
-/** Trim is file-level, so a transient test must live in a [NEW] transient-named file that no durable criterion lists; support-shaped paths are exempt as a hint, and a file shared with a durable criterion is never trimmed. */
+/** Transient tests belong in a [NEW], transient-named file that no durable criterion lists; support-shaped paths are exempt from the naming lint as a hint. */
 function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonly PlanChange[], out: LintDefect[]): void {
   const actions = new Map(changes.map((change) => [change.path, change.action]));
   const durable = new Set(criteria.filter((criterion) => criterion.retain === 'durable').flatMap((criterion) => criterion.changes));
@@ -965,7 +965,7 @@ function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonl
   }
 }
 
-/** A test-like Changes path outside every `Tests:` gets no RED, trim, or envelope handling, so the author declares it or confirms it is not a test. */
+/** A test-like Changes path outside every `Tests:` cannot feed RED capture or transient-test checks, so the author declares it or confirms it is not a test. */
 function lintUndeclaredTestPaths(criteria: readonly Criterion[], out: LintDefect[]): void {
   const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
   const warned = new Set<string>();

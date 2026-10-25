@@ -213,8 +213,6 @@ describe('writer brief', () => {
       assert.equal(payload.data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
       assert.ok(payload.data.command.includes(quotedPath));
       assert.ok(!payload.data.command.includes('src/first.ts'), 'Changes paths do not become {files}');
-      assert.match(payload.bootstrap, /spawnSync/);
-      assert.match(payload.bootstrap, /encoding:\s*['"]buffer['"]/);
       assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
       assert.doesNotMatch(command, /[$%]/);
     } finally { f.cleanup(); }

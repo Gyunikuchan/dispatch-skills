@@ -1,6 +1,6 @@
 
-// Pure diagnostics retrospective: per-run facts in, a severity-ordered, shareable Markdown report out.
-// The core collector derives the facts from session journals; nothing here reads ports or files.
+// Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
+// The caller supplies captured facts; this module applies heuristics without reading session state.
 
 // SECTION: Types
 
