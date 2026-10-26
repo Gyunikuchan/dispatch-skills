@@ -10,7 +10,7 @@ import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts
 import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 
 const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
-const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results') => JSON.stringify({status:'FINDINGS',findings:[{severity:'SHOULD',tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
+const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results', severity = 'SHOULD') => JSON.stringify({status:'FINDINGS',findings:[{severity,tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
 const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
 async function fixture(bound=true) {
   // A shallow virtual root avoids physical ancestor probes in quota-path validation.
@@ -293,6 +293,25 @@ test('review rounds exclusive claim and late native replies stay isolated',async
     const third=await n.call();assert.equal(third.output.reason,'native-pending');assert.equal(n.read(1,'round.json').generation,2);
     assert.ok(third.value.pending.every((slot:{replyPath:string})=>slot.replyPath.includes('gen-2')));
   } finally {n.cleanup();}
+});
+
+test('accepted MUST fixes extend the round cap until a round has none',async()=>{
+  const f=await fixture();
+  try {
+    let severity='MUST', step=0;
+    f.deps.delegate=async(provider,request,mode)=>{f.launches.push({provider,request,mode});return {outcome:{status:'ok',text:report('§ Work','Defect '+step,severity),resume:null,sessionId:null},invocations:[]};};
+    const round=async(ruling:string)=>{
+      step++; assert.equal((await f.call()).exit,0);
+      await f.add('ruling',{subject:'review:plan-work.plan:R'+step+'-F001',ruling,rationale:'Resolution'});
+      fs.appendFileSync(f.plan,'\n## Fix '+step+'\nChanged.\n');
+    };
+    await round('accepted'); await round('rejected');
+    assert.equal((await f.call()).output.reason,'round-cap');
+    await f.add('ruling',{subject:'review:plan-work.plan:R2-F001',ruling:'accepted',rationale:'Fixed after all'});
+    severity='SHOULD'; await round('accepted');
+    assert.match(f.output().summary,/round 3\/2/);
+    assert.equal((await f.call()).output.reason,'round-cap');
+  }finally{f.cleanup();}
 });
 
 test('review recurrence requires accepted earlier ruling and changed target',async()=>{

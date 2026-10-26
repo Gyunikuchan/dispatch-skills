@@ -149,7 +149,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const last = numbers.at(-1) ?? 0;
     const completed = last > 0 && fs.existsSync(path.join(directory, 'round-' + last, 'findings.json'));
     const n = completed ? last + 1 : last || 1;
-    if (n > cap) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
+    if (n > cap) {
+      // MUST has no cap (ADR 0005 D4): an accepted MUST fix earns a round; recurrence escalations bound the loop.
+      const previous = read<FindingsValue>(path.join(directory, 'round-' + (n - 1), 'findings.json'));
+      const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
+      const fixed = previous?.findings.some(finding => finding.severity === 'MUST' &&
+        rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted');
+      if (!fixed) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
+    }
     const dir = path.join(directory, 'round-' + n);
     fs.mkdirSync(dir, {recursive: true});
     const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
