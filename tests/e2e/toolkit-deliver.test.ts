@@ -17,7 +17,9 @@ const caller=(r:Repo)=>({head:r.git(['rev-parse','HEAD']),branch:r.git(['symboli
 const cat=(r:Repo,spec:string)=>{const t=spawnSync('git',['cat-file','-t',spec],{cwd:r.root,encoding:'utf8'});if(t.status)return null;const type=t.stdout.trim();return type==='blob'?spawnSync('git',['cat-file','blob',spec],{cwd:r.root}).stdout:type;};
 function assertMatchesSource(r:Repo,from:string,source:string){const names=r.git(['diff','--name-only','--no-renames','-z',from,source]).split('\0').filter(Boolean);assert.ok(names.length>=6,names.join());
  for(const name of names){const want=cat(r,source+':'+name),file=path.join(r.root,name);if(want===null)assert.equal(fs.existsSync(file),false,name);else if(want==='tree')assert.ok(fs.statSync(file).isDirectory(),name);else{assert.ok(fs.statSync(file).isFile(),name);assert.deepEqual(fs.readFileSync(file),want,name);}}}
-describe('toolkit delivery and cleanup',()=>{
+// Cases use independent repositories, so run them concurrently and name the failing case.
+const each=(modes:string[],fn:(mode:string)=>Promise<void>)=>Promise.all(modes.map(mode=>fn(mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});})));
+describe('toolkit delivery and cleanup',{concurrency:true},()=>{
  it('uncommitted delivery restores the verified tree as unstaged changes and retains the source ref',async()=>{const {r,writer}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);fs.writeFileSync(path.join(r.root,'keep.txt'),'dirty keep');fs.writeFileSync(path.join(r.root,'scratch'),'scratch');fs.writeFileSync(path.join(r.root,'ignored'),'ignored');
  const before=caller(r);const first=await r.run(['worktree','deliver']);assert.equal(first.exit,0,JSON.stringify(first));
@@ -40,7 +42,7 @@ describe('toolkit delivery and cleanup',()=>{
  assert.equal(rows(r,'delivered')[0]!.data['noop'],true);assert.equal((await r.run(['worktree','deliver'])).value.delivered,false);assert.equal(rows(r,'delivered').length,1);
  assert.equal((await r.run(['worktree','cleanup'])).exit,0);assert.equal(r.git(['rev-parse',ref]),source);assert.equal(r.git(['branch','--list','dispatch/test/integration']),'');}finally{r.cleanup();}});
  it('uncommitted safety refuses overlapping caller state and keeps the caller unchanged',async()=>{
- for(const mode of ['tracked-edit','untracked','ignored','ancestor','descendant','staged','intent-to-add','moved','other-branch','late-edit','late-index','late-untracked','sparse','gitlink']){const {r}=await prepared();try{
+ await each(['tracked-edit','untracked','ignored','ancestor','descendant','staged','intent-to-add','moved','other-branch','late-edit','late-index','late-untracked','sparse','gitlink'],async mode=>{const {r}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const w=r.integration;
  if(mode==='gitlink'){fs.mkdirSync(path.join(w,'sub'));r.git(['update-index','--add','--cacheinfo','160000,'+from+',sub'],w);r.git(['commit','-m','gitlink'],w);}
  else{
@@ -63,23 +65,23 @@ describe('toolkit delivery and cleanup',()=>{
  const after=caller(r);assert.equal(after.head,before.head);assert.equal(after.branch,before.branch);if(!mode.startsWith('late-'))assert.deepEqual(after,before);
  if(mode==='tracked-edit')assert.deepEqual(fs.readFileSync(file),Buffer.from('caller'));if(mode==='late-edit')assert.equal(fs.readFileSync(file,'utf8'),'late');void srcBytes;
  assert.equal(rows(r,'delivered').length,0,mode);
- }finally{r.cleanup();}}
+ }finally{r.cleanup();}});
  });
  it('uncommitted safety preserves unrelated dirty and untracked files byte for byte',async()=>{const {r}=await prepared();try{
  await change(r);const dirty=Buffer.from([1,2,0,255,13,10]);fs.writeFileSync(path.join(r.root,'keep.txt'),dirty);fs.writeFileSync(path.join(r.root,'extra-untracked'),'u');
  const result=await r.run(['worktree','deliver']);assert.equal(result.exit,0,JSON.stringify(result));assert.deepEqual(fs.readFileSync(path.join(r.root,'keep.txt')),dirty);assert.equal(fs.readFileSync(path.join(r.root,'extra-untracked'),'utf8'),'u');assert.equal(r.git(['diff','--cached','--name-only']),'');
  assert.match(r.git(['status','--porcelain']),/^ M keep\.txt$/m);}finally{r.cleanup();}});
  it('uncommitted recovery resumes every durable boundary to the same caller state',async()=>{
- for(const boundary of ['after-preserve','after-started','before-apply','after-apply','after-delivered']){const {r}=await prepared();try{
+ await each(['after-preserve','after-started','before-apply','after-apply','after-delivered'],async boundary=>{const {r}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);let fired=0;
  const crash=await r.run(['worktree','deliver'],p=>{if(p==='deliver:'+boundary){fired++;throw Error('injected '+boundary);}});assert.equal(fired,1,JSON.stringify(crash));assert.equal(crash.exit,2);
  const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,boundary+JSON.stringify(retry));assert.equal(retry.value.delivered,boundary!=='after-delivered');
  assertMatchesSource(r,from,source);assert.equal(r.git(['rev-parse','HEAD']),from);assert.equal(r.git(['rev-parse',ref]),source);assert.equal(rows(r,'deliver-started').length,1);assert.equal(rows(r,'delivered').length,1);
  assert.equal((await r.run(['worktree','deliver'])).value.delivered,false);assert.equal(rows(r,'delivered').length,1);
- }finally{r.cleanup();}}
+ }finally{r.cleanup();}});
  });
  it('uncommitted recovery completes a partly applied tree and refuses a path edited since',async()=>{
- for(const mode of ['partial','edited']){const {r}=await prepared();try{
+ await each(['partial','edited'],async mode=>{const {r}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);
  const crash=await r.run(['worktree','deliver'],p=>{if(p!=='deliver:before-apply')return;
   // Simulate Git interrupted mid-write: a mixed set of delivered paths already at source, including both directory/file swaps.
@@ -89,10 +91,10 @@ describe('toolkit delivery and cleanup',()=>{
  assert.equal(crash.exit,2,JSON.stringify(crash));
  if(mode==='edited'){fs.writeFileSync(path.join(r.root,'src/file.ts'),'user edit');const before=caller(r);const refused=await r.run(['worktree','deliver']);assert.equal(refused.exit,4,JSON.stringify(refused));assert.equal(refused.output.reason,'caller-dirty');assert.match(JSON.stringify(refused.output),/src\/file\.ts/);assert.deepEqual(caller(r),before);assert.equal(fs.readFileSync(path.join(r.root,'src/file.ts'),'utf8'),'user edit');assert.equal(rows(r,'delivered').length,0);}
  else{const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,JSON.stringify(retry));assertMatchesSource(r,from,source);assert.equal(r.git(['rev-parse','HEAD']),from);assert.equal(r.git(['diff','--cached','--name-only']),'');}
- }finally{r.cleanup();}}
+ }finally{r.cleanup();}});
  });
  it('uncommitted recovery blocks conflicting refs, unfinished squash or legacy starts and changed sources',async()=>{
- for(const mode of ['conflicting-ref','squash-start','legacy-start','other-source','changed-completed']){const {r}=await prepared();try{const from=r.git(['rev-parse','HEAD']);const source=r.git(['rev-parse','HEAD'],r.integration);const dest={path:r.root,branch:r.git(['symbolic-ref','--short','HEAD'])};
+ await each(['conflicting-ref','squash-start','legacy-start','other-source','changed-completed'],async mode=>{const {r}=await prepared();try{const from=r.git(['rev-parse','HEAD']);const source=r.git(['rev-parse','HEAD'],r.integration);const dest={path:r.root,branch:r.git(['symbolic-ref','--short','HEAD'])};
  if(mode==='conflicting-ref')r.git(['update-ref',ref,from]);
  if(mode==='squash-start')await appendRecord(r.session,{kind:'integrate',by:'tool',data:{phase:'deliver-started',mode:'squash',dest,from,to:source,source}},r.deps);
  if(mode==='legacy-start')await appendRecord(r.session,{kind:'integrate',by:'tool',data:{phase:'deliver-started',dest,from,to:source}},r.deps);
@@ -101,7 +103,7 @@ describe('toolkit delivery and cleanup',()=>{
  const before=caller(r),bytes=fs.readFileSync(path.join(r.root,'src/file.ts'));const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,4,mode+JSON.stringify(retry));assert.equal(retry.output.reason,'recovery-blocked');assert.deepEqual(caller(r),before);assert.deepEqual(fs.readFileSync(path.join(r.root,'src/file.ts')),bytes);
  if(mode==='conflicting-ref')assert.equal(r.git(['rev-parse',ref]),from);
  await r.run(['worktree','cleanup']);assert.ok(fs.existsSync(r.integration));assert.ok(r.git(['branch','--list','dispatch/test/integration']));
- }finally{r.cleanup();}}
+ }finally{r.cleanup();}});
  });
   it('keeps open writers and undelivered integration work until close',async()=>{
     const r=await toolkitRepo(); try {
@@ -112,7 +114,7 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
   it('keeps unpreserved submitted-edit bytes', async () => {
-    for (const mode of ['submitted-edit', 'ignored-closed', 'dirty-delivered']) {
+    await each(['submitted-edit', 'ignored-closed', 'dirty-delivered'], async mode => {
       const { r, writer } = await prepared(); try {
         let file: string;
         if (mode === 'submitted-edit') { file = path.join(writer, 'src/file.ts'); fs.writeFileSync(file, 'kept\n'); }
@@ -120,7 +122,7 @@ describe('toolkit delivery and cleanup',()=>{
         const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(file, 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
         if (mode === 'dirty-delivered') assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
       } finally { r.cleanup(); }
-    }
+    });
   });
   it('removes abandoned launches and rejected candidates after close',async()=>{
     const r=await toolkitRepo(); try {

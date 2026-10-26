@@ -49,6 +49,27 @@ test('toolkit worktree review excludes unignored session state and preserves com
   } finally { f.cleanup(); }
 });
 
+test('toolkit worktree review snapshots a gitignored session without failing on its exclusion', async () => {
+  const f = await toolkitRepo();
+  try {
+    const top = path.relative(f.root, f.session).split(path.sep)[0]!;
+    fs.writeFileSync(path.join(f.root, '.gitignore'), top + '/\n');
+    f.git(['add', '.gitignore']); f.git(['commit', '-qm', 'ignore session']);
+    fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'changed code\n');
+    const skill = path.join(f.session, 'native-skill');
+    fs.mkdirSync(skill); fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } }));
+    f.deps.skillRoot = skill;
+    f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
+    f.deps.liveness = {};
+    const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+    assert.equal(result.output.reason, 'native-pending', JSON.stringify(result.output));
+    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree').digest('hex');
+    const target = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', slug, 'round-1/round.json'), 'utf8')).target;
+    assert.deepEqual(f.git(['diff', '--name-only', target.base + '..' + target.head]).split(/\r?\n/), ['src/file.ts']);
+  } finally { f.cleanup(); }
+});
+
 const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 test('toolkit code review reports missing evidence without admission gates and tracks changed targets',async()=>{
     const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria')); try {

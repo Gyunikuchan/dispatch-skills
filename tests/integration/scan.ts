@@ -15,14 +15,15 @@ export type FileTable = readonly FileEntry[];
 
 const TEXT_EXTENSIONS = new Set(['.ts', '.mjs', '.js', '.json', '.md', '.jsonc']);
 
-export function scanOverlay(root = OVERLAY_ROOT): FileEntry[] {
+// Path-only callers pass `withText: false` to skip reads that dominate the per-file budget under load.
+export function scanOverlay(root = OVERLAY_ROOT, withText = true): FileEntry[] {
   const out: FileEntry[] = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { if (!['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(entry.name)) walk(full); continue; }
       const rel = path.relative(root, full).replace(/\\/g, '/');
-      out.push({ path: rel, text: TEXT_EXTENSIONS.has(path.extname(entry.name)) ? fs.readFileSync(full, 'utf8') : '' });
+      out.push({ path: rel, text: withText && TEXT_EXTENSIONS.has(path.extname(entry.name)) ? fs.readFileSync(full, 'utf8') : '' });
     }
   };
   walk(root);

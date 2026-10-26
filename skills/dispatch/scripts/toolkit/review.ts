@@ -112,7 +112,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         base = await revision('HEAD');
         const relative = path.relative(fs.realpathSync(cwd), fs.realpathSync(session)).split(path.sep).join('/');
         const inside = relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative);
-        if (inside && relative) exclusion = [':(top,exclude,literal)' + relative];
+        // NOTE: git add exits 1 when an exclude pathspec names an ignored path; ignored sessions need no exclusion.
+        if (inside && relative && (await git(deps, cwd, ['check-ignore', '-q', '--', relative])).exit) exclusion = [':(top,exclude,literal)' + relative];
         const directory = path.join(session, '.state/tmp');
         fs.mkdirSync(directory, {recursive: true});
         const index = path.join(directory, crypto.randomUUID() + '.index');

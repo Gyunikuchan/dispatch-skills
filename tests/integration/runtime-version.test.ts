@@ -14,7 +14,7 @@ export function checkRuntimeVersion(files: FileTable): string[] {
 }
 
 test('shipped code has no .mjs or nested package.json', () => {
-  assert.deepEqual(checkRuntimeVersion(scanOverlay()), []);
+  assert.deepEqual(checkRuntimeVersion(scanOverlay(undefined, false)), []);
 });
 
 test('legacy JavaScript and nested packages identify the runtime rule and corrective action', () => {
