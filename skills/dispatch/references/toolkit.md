@@ -155,7 +155,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 ### lint run
 
 Arguments: `lint run <artifact> --session <session>`.
-Result path: artifact kind/hash, parse errors and warnings.
+Result path: artifact kind/hash, parse errors and warnings. The reported hash is the formatting-tolerant canonical artifact hash that approval, edit and gate records use; formatting-only rewrites keep it.
 Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
 
 ## Ledger records

@@ -92,6 +92,9 @@ node skills/dispatch/scripts/dispatch.ts doctor --level high
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
+> Exclude installed skill directories from host formatters and linters (for example, with ignore files). Integrity tolerates common Markdown formatting (whitespace, table layout, emphasis markers, heading spacing, fence style) and all JSON formatting. List marker, numbering and indentation changes, and any `.ts` rewrite, fail the integrity check. Artifact hashes tolerate the same Markdown formatting.
+
+> [!NOTE]
 > Dispatch requests OS sandboxing by default where a provider and execution mode support it. Doctor reports when sandboxing is unsupported. Setting `sandbox: false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they are not the same boundary. Antigravity uses plan mode as its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch user guide, workflow choices, configuration, and troubleshooting.

@@ -5,14 +5,44 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalMarkdown } from './canonical-markdown.ts';
+
 export const MANIFEST_NAME = 'skill-hashes.json';
 const SCRIPT_EXTENSION = /\.ts$/;
 const REFERENCE_EXTENSION = /\.(?:md|json)$/;
+const MARKDOWN_EXTENSION = /\.md$/;
+const JSON_EXTENSION = /\.json$/;
 
 export const hashFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
-// Manifest hashes ignore CRLF vs LF: `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF.
-const hashSkillFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file, 'utf8').replaceAll('\r\n', '\n')).digest('hex');
+const sha256 = (text: string): string => crypto.createHash('sha256').update(text).digest('hex');
+
+// SECTION: skill file hashing
+
+// Key-sorted re-serialization so JSON key order and whitespace do not change the hash.
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${sortedJson(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+// NOTE: unparseable JSON hashes as CRLF-normalized text so it still drifts deterministically.
+const jsonForm = (text: string): string => {
+  try { return sortedJson(JSON.parse(text)); } catch { return text.replaceAll('\r\n', '\n'); }
+};
+
+// Markdown and JSON formatter rewrites are not meaning changes, so they hash canonically. `.ts` stays exact
+// (CRLF-normalized only) because whitespace there can be meaningful and must not be hidden by a formatter.
+// `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF, so CRLF always normalizes to LF.
+function hashSkillFile(file: string): string {
+  const text = fs.readFileSync(file, 'utf8');
+  if (MARKDOWN_EXTENSION.test(file)) return sha256(canonicalMarkdown(text));
+  if (JSON_EXTENSION.test(file)) return sha256(jsonForm(text));
+  return sha256(text.replaceAll('\r\n', '\n'));
+}
 
 const forward = (value: string): string => value.split(path.sep).join('/');
 

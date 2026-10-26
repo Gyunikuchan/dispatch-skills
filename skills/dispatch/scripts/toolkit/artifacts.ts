@@ -4,6 +4,7 @@ import path from 'node:path';
 import { governedPlanText } from './domain/plan.ts';
 import { governedDesignText } from './domain/design.ts';
 import { governedSpecText } from './domain/spec.ts';
+import { canonicalMarkdown } from '../lib/canonical-markdown.ts';
 
 export type ArtifactKind = 'spec' | 'plan' | 'design';
 export function artifactKind(file: string): ArtifactKind | null {
@@ -12,7 +13,7 @@ export function artifactKind(file: string): ArtifactKind | null {
 }
 export function artifactHash(kind: ArtifactKind, source: string): string {
   const governed = { spec: governedSpecText, plan: governedPlanText, design: governedDesignText }[kind](source);
-  return 'sha256:' + crypto.createHash('sha256').update(governed).digest('hex');
+  return 'sha256:' + crypto.createHash('sha256').update(canonicalMarkdown(governed)).digest('hex');
 }
 export function readArtifact(root: string, relative: string): string | null {
   try {

@@ -45,7 +45,7 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 
 ## Field notes
 
-- Location and identity: the spec lives at `<session>/<slug>.spec.md`, one per session. Its hash is `sha256` of the raw file bytes; Parent pins use that hash.
+- Location and identity: the spec lives at `<session>/<slug>.spec.md`, one per session. Its hash is the canonical hash that `lint run` reports; it ignores formatting-only differences, and Parent pins use that hash.
 - Required sections by run level: `low` requires Intent & Problem, Requirements, Non-goals, and Constraints. `medium` and above also require Background, Decisions, Discussion Record, and Open Questions. Present sections follow the template order; an out-of-order section is a `section-order` defect.
 - IDs: headings under Requirements are `### REQ-<n> — <title>`; under Decisions, `### DEC-<n> — <title>`. Numbering starts at 1 with no gaps or duplicates. Plan, criterion, increment, and finding IDs (`T<n>`, `SC<n>`, `I<nn>`, `R<n>`, `R<n>-F<n>`) are forbidden as headings there; prose may cite them.
 - Each REQ has at least one `- Acceptance:` bullet.

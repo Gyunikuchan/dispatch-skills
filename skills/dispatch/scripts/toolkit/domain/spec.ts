@@ -24,7 +24,7 @@ export function requiredSpecSections(level: Level): readonly string[] {
   return level === 'low' ? LOW_SECTIONS : SPEC_SECTION_ORDER;
 }
 
-/** Hashing input: the raw source; design Parent pins already hash spec bytes unchanged. */
+/** Governed text is the raw source; `artifactHash` canonicalizes it before hashing. */
 export function governedSpecText(source: string): string {
   return source;
 }

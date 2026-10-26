@@ -40,3 +40,44 @@ test('integrity accepts a skill checked out with CRLF line endings against an LF
   fs.writeFileSync(path.join(skill, 'scripts', 'a.ts'), 'export {};\r\nexport const x = 1;\r\n');
   assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
 });
+
+const SKILL_FILES: Record<string, string> = {
+  'SKILL.md': '# skill\n\nUse *emphasis* here.\n',
+  'scripts/a.ts': 'export {};\n',
+  'references/guide.md': 'Use the plan.\n\n| a | b |\n| - | - |\n| c | d |\n',
+  'references/data.json': '{"b": 1, "a": [1, 2]}\n',
+  'references/broken.json': '{"a": 1,}\n',
+};
+
+function skillWith(files: Record<string, string>): string {
+  const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
+  for (const [relative, contents] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(skill, relative)), { recursive: true });
+    fs.writeFileSync(path.join(skill, relative), contents);
+  }
+  return skill;
+}
+
+test('integrity tolerates formatting-only markdown and json rewrites', () => {
+  const skill = skillWith(SKILL_FILES);
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '#  skill  \r\n\r\nUse _emphasis_ here.   \r\n');
+  fs.writeFileSync(path.join(skill, 'references', 'guide.md'), 'Use the plan.\n\na | b\n--- | ---\nc | d\n');
+  fs.writeFileSync(path.join(skill, 'references', 'data.json'), '{\n  "a": [\n    1,\n    2\n  ],\n  "b": 1\n}\n');
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+});
+
+test('integrity drift reports ts whitespace and markdown or json meaning changes', () => {
+  const cases: Array<[file: string, changed: string]> = [
+    ['scripts/a.ts', 'export  {};\n'],
+    ['references/guide.md', 'Use the plans.\n\n| a | b |\n| - | - |\n| c | d |\n'],
+    ['references/data.json', '{"b": 1, "a": [1, 3]}\n'],
+    ['references/broken.json', '{"a": 2,}\n'],
+  ];
+  for (const [file, changed] of cases) {
+    const skill = skillWith(SKILL_FILES);
+    fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+    fs.writeFileSync(path.join(skill, file), changed);
+    assert.deepEqual(checkIntegrity(skill), { status: 'drift', violations: [file] }, file);
+  }
+});

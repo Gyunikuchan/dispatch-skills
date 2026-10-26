@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
-import { appendRecord, queryLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, currentHashes, foldLedger, gate, latest, queryLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 test('ledger bindings approvals and input filters preserve validation and retries', async () => {
  const {currentHashes,foldLedger,latest}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
@@ -41,4 +41,44 @@ test('ledger bindings approvals and input filters preserve validation and retrie
  fs.writeFileSync(input,'bad');f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),1);
  const ledger=path.join(f.session,'ledger.jsonl');const bytes=fs.readFileSync(ledger,'utf8');const first=JSON.parse(bytes.split('\n')[0]!);fs.appendFileSync(ledger,JSON.stringify(first)+'\n');const corrupt=fs.readFileSync(ledger,'utf8');await assert.rejects(add('note',{text:'n'}),{reason:'ledger-corrupt'});assert.equal(fs.readFileSync(ledger,'utf8'),corrupt);
  }finally{f.cleanup();}
+});
+
+test('approval survives formatting-only artifact rewrites and refuses meaning changes', async () => {
+  const f = sessionFixture();
+  try {
+    const names = { spec: 's.spec.md', plan: 'p.plan.md', design: 'd.design.md' } as const;
+    const kinds = ['spec', 'plan', 'design'] as const;
+    const plain = {
+      spec: ['# Formatter Spec', '', '## Intent & Problem', '', 'Keep _approved_ artifacts stable while **formatters** run.', '', '## Requirements', '', '### REQ-1 — Stable hash', '', '- Acceptance: formatting-only rewrites keep the gate allowed.', ''].join('\n'),
+      plan: ['# Formatter Plan', '', '## Task Map', '', '| ID | Title |', '| --- | --- |', '| T1 | Canonical form |', '', '## Tasks', '', '### T1 — Canonical form', '', 'Run the checks before handoff.', '', '```text', 'node --version', '```', ''].join('\n'),
+      design: ['# Formatter Design', '', '## Approach', '', 'Hash canonical Markdown with one shared form.', '', '---', '', '## Architecture & Boundaries', '', '- lib owns the canonical form.', ''].join('\n'),
+    };
+    const formatted = {
+      spec: ['# Formatter Spec', '', '', '## Intent & Problem ##', '', 'Keep *approved* artifacts stable while **formatters** run.  ', '', '', '## Requirements', '', '### REQ-1 — Stable hash', '', '- Acceptance: formatting-only rewrites keep the gate allowed.', ''].join('\n'),
+      plan: ['# Formatter Plan', '', '## Task Map', '', '|ID|Title|', '|---|---|', '|T1|Canonical form|', '', '## Tasks', '', '### T1 — Canonical form', '', 'Run the checks before handoff.', '', '~~~~text', 'node --version', '~~~~', ''].join('\n'),
+      design: ['# Formatter Design', '', '## Approach', '', 'Hash canonical Markdown with one shared form.', '', '***', '', '## Architecture & Boundaries', '', '- lib owns the canonical form.', ''].join('\n'),
+    };
+    const wordChanges = { spec: ['formatters', 'editors'], plan: ['before handoff', 'after handoff'], design: ['lib owns', 'tool owns'] } as const;
+    const verdict = () => {
+      const fold = foldLedger(f.session);
+      return gate(fold, currentHashes(f.root, latest(fold, 'bind')));
+    };
+    for (const kind of kinds) f.artifact(names[kind], plain[kind]);
+    assert.equal((await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'orchestrator', data: names }, f.deps)).seq > 0, true);
+    const approved = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    await appendRecord(f.session, { kind: 'approval', key: 'approval', by: 'user', quote: 'yes', data: approved }, f.deps);
+    assert.deepEqual(verdict(), { allowed: true });
+    for (const kind of kinds) f.artifact(names[kind], formatted[kind]);
+    assert.deepEqual(currentHashes(f.root, latest(foldLedger(f.session), 'bind')), approved);
+    assert.deepEqual(verdict(), { allowed: true });
+    for (const kind of kinds) {
+      const [from, to] = wordChanges[kind];
+      f.artifact(names[kind], formatted[kind].replace(from, to));
+      assert.deepEqual(verdict(), { allowed: false, reason: 'unrecorded-change', artifact: kind });
+      f.artifact(names[kind], formatted[kind]);
+      assert.deepEqual(verdict(), { allowed: true });
+    }
+  } finally {
+    f.cleanup();
+  }
 });
