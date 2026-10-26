@@ -187,3 +187,18 @@ for (const damage of ['broken', 'missing'] as const) {
     } finally { f.cleanup(); }
   });
 }
+
+test('squash status distinguishes source and destination with legacy fallback',async()=>{
+ const {fakeGit}=await import('./helpers/fake-git.ts');const f=sessionFixture();try{
+ f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN);
+ await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
+ const source='a'.repeat(40),to='c'.repeat(40),dest={path:f.root,branch:'main'},relative='.state/worktrees/integration';fs.mkdirSync(path.join(f.session,relative),{recursive:true});
+ const state={session:f.session,head:source,tree:'b'.repeat(40),testedTree:'b'.repeat(40),changes:[],calls:[]};f.deps.run=fakeGit(state);
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'opened',path:relative,branch:'integration',base:'f'.repeat(40),dest}},f.deps);
+ const read=async()=>{f.lines.length=0;assert.equal(await main(['status','show','--session',f.session],f.deps),0);return JSON.parse(fs.readFileSync(f.output().path!,'utf8')).integration;};
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'squash',dest,from:'f'.repeat(40),to,source}},f.deps);
+ assert.equal((await read()).undelivered,false);assert.equal((await read()).source,source);assert.equal((await read()).to,to);
+ state.head=to;assert.equal((await read()).undelivered,true);
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',dest,to}},f.deps);assert.equal((await read()).undelivered,false);
+ }finally{f.cleanup();}
+});

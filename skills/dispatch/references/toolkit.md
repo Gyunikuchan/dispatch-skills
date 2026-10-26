@@ -79,8 +79,16 @@ For a post-prune artifact correction, preserve edited artifact bytes and all evi
 ### worktree deliver
 
 Arguments: `worktree deliver --session <session>`.
-Result path: from/to commits and delivered boolean.
-Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, pruning-required, prune-transition-stale or final-checks-required. Transient plans require absent targets and successful final-tree checks before caller mutation. Preserve caller changes and inspect collision paths.
+Result path: mode (squash), from (original caller base), source (verified integration HEAD), to (final caller commit), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
+Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, pruning-required, prune-transition-stale, final-checks-required or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
+
+Delivery keeps internal writer and integration commits. It creates one final commit with the exact source tree and from as its sole parent, then fast-forwards the caller. The commit message contains Dispatch-Source: <source>. Same-tree delivery records to=from without an empty commit or prepared ref. Transient plans require absent targets and successful final-tree checks before caller mutation.
+
+Require the original caller branch and HEAD and a clean tracked worktree and index, including for no-op delivery. Noncolliding untracked and ignored scratch remains. Delivery refuses equal or ancestor path collisions and uses Git's --no-overwrite-ignore protection. It rechecks branch, HEAD, tracked worktree and index after the pre-fast-forward hook. Preserve changes on refusal; reconcile them before retrying. The final checks and Git advancement are separate operations, so concurrent external edits in that interval remain a race limit.
+
+Preparation retains to in refs/dispatch/<safeSessionId>/delivery-prepared before recording deliver-started. A retained ref or start record permits recovery only if to has sole parent from, the exact source tree and the exact source trailer; both identities must agree when both exist. Retry reuses that commit, including after caller advancement. An interruption before ref retention can leave an unreachable object and retry can recreate it. These boundaries support process-crash recovery; they do not promise power-loss durability.
+
+A completed retry with the same source returns the recorded outcome without checking or changing later caller work. A changed source requires a new run. A conflicting ref, changed pending source or unfinished legacy delivery refuses recovery-blocked. Preserve refs, records and worktrees for manual inspection; do not reset caller work or silently replace the prepared commit. Legacy completed records remain readable, using to as source.
 
 ### worktree close
 
@@ -200,7 +208,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {dest,from,to}; delivered {dest,to}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {mode:'squash',dest,from,to,source}; delivered {mode:'squash',dest,from,to,source}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. Delivery fields `mode`, `from`, `to` and `source` have the meanings above; all three commit fields are Git object IDs. Legacy deliver-started {dest,from,to} and delivered {dest,to} without mode remain readable. Partial or unknown squash fields are invalid. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

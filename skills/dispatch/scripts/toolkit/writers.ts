@@ -63,7 +63,7 @@ export function terminalWorktrees(fold: Fold, observed: Record<string,{head: str
   const integration=integrationRecord(fold);
   const delivered=fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered');
   const closed=fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='closed' && r.seq>(integration?.seq ?? 0));
-  if(integration && (closed || (!all.some(open) && !all.some(r=>r.finished && !completion(fold,r)) && delivered && observed[integration.data['path']]?.head===delivered.data['to']))) terminal.push(integration.data['path']);
+  if(integration && (closed || (!all.some(open) && !all.some(r=>r.finished && !completion(fold,r)) && delivered && observed[integration.data['path']]?.head===(delivered.data['source']??delivered.data['to'])))) terminal.push(integration.data['path']);
   return terminal;
 }
 function taskId(ctx: HandlerContext) {
@@ -77,6 +77,7 @@ const result = (value: unknown): HandlerResult => ({ok:true,value,exit:0,summary
 function refuse(reason: string, message=reason): never { throw new ToolError(4,reason,message); }
 export const candidateRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/candidates/'+task+'-'+launch;
 export const abandonedRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/abandoned/'+task+'-'+launch;
+export const preparedDeliveryRef=(session:string)=>'refs/dispatch/'+session+'/delivery-prepared';
 export async function create(ctx: HandlerContext): Promise<HandlerResult> {
   const {id,section}=taskId(ctx);
   return withLedger(ctx.session,'worktree create',ctx.deps,async tx=>{

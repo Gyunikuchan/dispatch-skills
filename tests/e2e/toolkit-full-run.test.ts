@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { fixture, CLEAN } from '../helpers/e2e.ts';
 import { planSource } from './helpers/toolkit-repo.ts';
 
-test('toolkit public entry completes a verified writer delivery and standalone review', async () => {
+test('squash completion through public entry preserves standalone review', async () => {
   const f = fixture({ responses: [CLEAN, CLEAN, CLEAN] });
   try {
     for (const key of ['cli', 'begin', 'reply', 'rebind', 'initialize']) assert.equal(Object.keys(f).includes(key), false, key);
@@ -52,7 +52,8 @@ test('toolkit public entry completes a verified writer delivery and standalone r
     await tool(['worktree', 'integrate', 'T1']);
     await tool(['verify', 'run']);
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);
-    await tool(['worktree', 'deliver']);
+
+    const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.notEqual(delivered.source,delivered.to);assert.equal(f.git('rev-parse',delivered.to+'^{tree}').trim(),f.git('rev-parse',delivered.source+'^{tree}').trim());assert.equal(f.git('rev-parse','HEAD').trim(),delivered.to);assert.equal(f.git('rev-parse','HEAD^').trim(),delivered.from);
     const report = await tool(['report', 'complete']);
     assert.match(fs.readFileSync(path.resolve(session, report.path), 'utf8'), /Verified[\s\S]*SC1/);
     await tool(['worktree', 'cleanup']);

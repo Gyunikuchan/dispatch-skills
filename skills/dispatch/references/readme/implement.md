@@ -10,6 +10,8 @@ After spec settlement, a plain-language requirement starts with a plan and its r
 
 For each task, the writer inspects the relevant code, adds discriminating tests for the task criteria, and captures the expected failing result (RED) before production edits. Missing or invalid checkpoint evidence and RED/CHECK evidence gaps are reported as concerns; scope, immutable test bytes and GREEN checks still gate acceptance. It then implements the behavior and runs the task checks. Your host agent checks and integrates each result, then Dispatch runs final plan-declared verification and the configured code-review policy, when enabled. Accepted safe findings can be fixed and rechecked within the configured review rounds before Dispatch reports the handoff.
 
+Final delivery creates one squash commit on your caller branch with the verified integration tree. Internal task and fix commits remain separate. Your tracked worktree and index must be clean; noncolliding untracked and ignored scratch can remain. A refusal preserves your work: inspect the result and reconcile the reported conflict before retrying. An interrupted delivery reuses its prepared commit; an already-delivered run returns the recorded result, while further changes need a new run. See [delivery and recovery](../toolkit.md#worktree-deliver).
+
 ### Flow at a glance
 
 ```mermaid

@@ -231,3 +231,10 @@ test('diagnostics damage cannot suppress successful report completion', async ()
     assert.ok(fs.existsSync(path.join(f.session,'report.walkthrough.md')));
   } finally {f.cleanup();}
 });
+
+test('squash report facts expose destination separately from verified source',async()=>{
+ const f=await fixture(1);try{await completeFixture(f);const {appendRecord}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'squash',dest:{path:f.root,branch:'main'},from:'c'.repeat(40),to:'d'.repeat(40),source:HEAD}},f.deps);
+ const result=await invoke(f,'report','render');assert.equal(result.exit,0);const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/source aaaaaaaaaaaa/);assert.match(text,/delivered dddddddddddd/);
+ }finally{f.cleanup();}
+});

@@ -9,7 +9,7 @@ export type WalkthroughView = {
   specPath: string;
   specHash: string;
   planPath: string;
-  delivered: { integrated: number; total: number; to: string | null; branch: string } | null;
+  delivered: { integrated: number; total: number; to: string | null; source?: string | null; branch: string } | null;
   statuses: readonly Status[];
   changes: readonly { action: 'NEW' | 'MODIFY' | 'DELETE'; path: string; owners: readonly Owner[] }[];
   edits: readonly { seq: number; artifact: string; class: string; rationale: string; diffRef: string; affects: readonly string[] }[];
@@ -67,7 +67,7 @@ export function renderWalkthrough(view: WalkthroughView): string {
   const delivered = view.delivered === null
     ? 'not delivered'
     : `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; ${view.delivered.to
-      ? `delivered ${line(view.delivered.to).slice(0, 12)} to ${line(view.delivered.branch)}`
+      ? `delivered ${line(view.delivered.to).slice(0, 12)} to ${line(view.delivered.branch)}${view.delivered.source ? '; source '+line(view.delivered.source).slice(0,12) : ''}`
       : 'not delivered'}`;
   const out = [
     `# ${line(view.title)}`,

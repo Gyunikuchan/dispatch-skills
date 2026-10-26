@@ -31,10 +31,10 @@ describe('writer records', () => {
     assert.equal(state(fold(launch,finished,row(4,'integrate',{phase:'done',task:'T1',commit:'picked'}))),'integrated');
     assert.equal(state(fold(launch,finished,row(4,'integrate',{phase:'abandoned',task:'T1',candidate:'commit'}))),'integration-abandoned');
   });
-  it('marks only completed writer paths and delivered idle integration terminal', async () => {
+  it('squash terminal uses source and retains unfinished writer work', async () => {
     const {terminalWorktrees}=await import('../../../skills/dispatch/scripts/toolkit/writers.ts');
     const opened=row(1,'integrate',{phase:'opened',path:'integration'});
-    const delivered=row(5,'integrate',{phase:'delivered',to:'head'});
+    const delivered=row(5,'integrate',{phase:'delivered',mode:'squash',source:'head',to:'caller'});
     const observed={integration:{head:'head'}};
     assert.deepEqual(terminalWorktrees(fold(opened,launch,delivered),observed),[]);
     const abandoned=row(3,'writer',{phase:'abandoned',task:'T1',launch:1});

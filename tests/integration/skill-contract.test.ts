@@ -89,7 +89,7 @@ test('skill contract documents ledger data and native reply and session contract
     edit: ['artifact', 'before', 'after', 'class', 'affects', 'rationale', 'diffRef'],
     evidence: ['criterion', 'commandDigest', 'tree', 'clean', 'before', 'after', 'exit', 'path'],
     writer: ['phase', 'task', 'launched', 'path', 'base', 'commit', 'taskSection', 'seq', 'finished', 'launch', 'candidate', 'abandoned', 'reason'],
-    integrate: ['phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'from', 'to', 'delivered', 'closed'],
+    integrate: ['phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'squash', 'from', 'source', 'to', 'delivered', 'closed'],
   };
   for (const [kind, names] of Object.entries(fields)) {
     const body = section(ledger, kind);
@@ -170,4 +170,12 @@ test('human manuals retain portable links and unchanged operational guidance', (
   for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
   assert.match(read(root + 'README.md'), /task summaries/);
   assert.match(read(root + 'references/readme/design.md'), /increments in order/);
+});
+
+test('delivery references keep one canonical squash recovery contract', () => {
+  const toolkit=section(read(root+'references/toolkit.md'),'worktree deliver');
+  for(const term of ['sole parent','Dispatch-Source:','delivery-prepared','recovery-blocked','to=from','process-crash','race limit','new run','tracked worktree and index']) assert.ok(toolkit.includes(term),term);
+  for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
+  const concepts=read(root+'references/readme/concepts.md');
+  assert.match(concepts,/one final squash commit/);assert.doesNotMatch(concepts,/transfers only what remains|does not commit/);
 });

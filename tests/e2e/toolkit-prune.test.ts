@@ -71,7 +71,7 @@ test('accepted fixes require a fresh review of the exact integration HEAD',async
 }finally{r.cleanup();}});
 
 
-test('completion requires verified pruned delivery',async()=>{
+test('squash completion requires verified pruned delivery',async()=>{
  const support='tests/helpers/shared.ts';
  const source=transientPlanSource.replace('| none | SC1 |','| none | SC1, SC2 |').replace('## Success Criteria','#### [NEW] '+support+'\n- Purpose: retained shared helper.\n\n## Success Criteria').replace('  - Changes: '+target,'  - Changes: '+target+', '+support).replace('  - Tests: '+target,'  - Tests: '+target+', '+support).replace('## Verification Plan','- [SC2] Coverage review\n  - Changes: '+support+'\n  - Evidence: review\n  - Review: inspect retained coverage\n\n## Verification Plan');
  const r=await prepared(source,{[support]:'retained helper\n'});try{
@@ -84,7 +84,7 @@ test('completion requires verified pruned delivery',async()=>{
   await appendRecord(r.session,{kind:'manual-complete',by:'user',quote:'reviewed manually',key:'manual-step',data:{criterion:'SC1',evidence:'manual review'}},r.deps);
   const waiting=await r.run(['status','show']);assert.ok(waiting.value.criteria.includes('SC1'));assert.equal(waiting.value.criterionStatuses.find((row:{criterion:string})=>row.criterion==='SC1').state,'manual');
   assert.equal((await r.run(['verify','run','--final'])).output.ok,true);const rows=foldLedger(r.session).records.filter(row=>row.kind==='evidence');assert.equal(rows.some(row=>row.data['criterion']==='final:SC2'),false);
-  assert.equal((await r.run(['worktree','deliver'])).output.ok,true);const completed=await r.run(['report','complete']);assert.equal(completed.output.ok,true,JSON.stringify(completed));assert.equal(completed.value.statuses.find((row:{criterion:string})=>row.criterion==='SC2').state,'verified');
+  const delivered=await r.run(['worktree','deliver']);assert.equal(delivered.output.ok,true);assert.equal(delivered.value.source,r.git(['rev-parse','HEAD'],r.integration));assert.notEqual(delivered.value.source,delivered.value.to);assert.equal(r.git(['rev-parse','HEAD^{tree}']),r.git(['rev-parse','HEAD^{tree}'],r.integration));const completed=await r.run(['report','complete']);assert.equal(completed.output.ok,true,JSON.stringify(completed));assert.equal(completed.value.statuses.find((row:{criterion:string})=>row.criterion==='SC2').state,'verified');
  }finally{r.cleanup();}
 });
 

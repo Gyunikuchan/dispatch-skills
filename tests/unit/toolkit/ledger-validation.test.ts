@@ -41,3 +41,15 @@ test('ledger records validate closed fields and user-only input', async () => {
  const accepted=await add('note',{text:'persisted'});assert.equal(accepted.exit,0);assert.equal(JSON.parse(fs.readFileSync(path.join(f.session,'ledger.jsonl'),'utf8')).data.text,'persisted');
  }finally{f.cleanup();}
 });
+
+test('squash records require complete identities and preserve legacy shapes',()=>{
+ const commit='a'.repeat(40),dest={path:'repo',branch:'main'};
+ for(const phase of ['deliver-started','delivered']){
+ const data={phase,mode:'squash',dest,from:commit,to:commit,source:commit};
+ assert.doesNotThrow(()=>validateRecord({kind:'integrate',by:'tool',data}));
+ for(const field of ['from','to','source','mode']){const partial:Record<string,unknown>={...data};delete partial[field];assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:partial}),{reason:'invalid-record'});}
+ for(const field of ['from','to','source'])assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{...data,[field]:'bad'}}),{reason:'invalid-record'});
+ assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{...data,mode:'other'}}),{reason:'invalid-record'});
+ const legacy=phase==='delivered'?{phase,dest,to:commit}:{phase,dest,from:commit,to:commit};assert.doesNotThrow(()=>validateRecord({kind:'integrate',by:'tool',data:legacy}));
+ }
+});

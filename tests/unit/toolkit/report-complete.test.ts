@@ -269,3 +269,12 @@ test('report complete low session accepts bound evidence and a user contract wai
     assert.equal(foldLedger(f.session).records.some((record) => record.kind === 'approval'), false);
   } finally { f.cleanup(); }
 });
+
+test('squash report completion binds source and tolerates later caller history',async()=>{
+ const f=await fixture(1);try{const state=gitState(f.session);await integrate(f,state);await evidenceForPlan(f,TREE_A);
+ await append(f,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'squash',dest:{path:f.root,branch:'main'},from:'f'.repeat(40),to:HEAD_B,source:HEAD_A}});
+ const run=f.deps.run;f.deps.run=async(argv,options)=>options.cwd===f.root?{exit:0,stdout:'9'.repeat(40),stderr:''}:run(argv,options);
+ assert.equal((await invoke(f,'report','complete')).exit,0);
+ state.head=HEAD_B;assert.equal((await invoke(f,'report','complete')).output.reason,'undelivered');
+ }finally{f.cleanup();}
+});

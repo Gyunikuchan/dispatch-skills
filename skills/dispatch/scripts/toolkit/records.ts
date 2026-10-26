@@ -113,6 +113,7 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     const phases = value.kind === 'writer' ? writers : integrations;
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase');
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
+    if(value.kind==='integrate'&&['deliver-started','delivered'].includes(value.data['phase'])&&value.data['mode']==='squash')fields={phase:choice('deliver-started','delivered'),mode:choice('squash'),dest,from:git,to:git,source:git};
   }
   object(value.data, fields!, ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : []);
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {

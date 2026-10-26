@@ -35,7 +35,7 @@ The default concurrency is one. Increasing it lets independent tasks overlap, bu
 
 When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host agent decide what can proceed independently.
 
-After a task finishes, the host agent checks its submitted changes before integrating them. It records setup-only RED failures as concerns, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
+After a task finishes, the host agent checks its submitted changes before integrating them. It records setup-only RED failures as concerns, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes an already-delivered source and returns the same completed outcome. Further source changes require a new run.
 
 ## Session folder
 
@@ -49,7 +49,7 @@ Keep the folder while work is active or may resume. The handoff provides its pat
 
 Verification follows the plan you approved. Dispatch records evidence for the plan's criteria, checks submitted changes, and runs a final review before reporting completed delivery. If a required check fails or a decision is still open, the handoff names that state rather than presenting the work as complete.
 
-Dispatch does not commit, push, or open a pull request. You decide when and how to publish the resulting changes.
+Dispatch keeps internal task and integration commits, then delivers one final squash commit with the verified tree to your caller branch. An unchanged tree adds no caller commit. Dispatch does not push or open a pull request. You decide when and how to publish the resulting commit.
 
 ## Optional session diagnostics
 

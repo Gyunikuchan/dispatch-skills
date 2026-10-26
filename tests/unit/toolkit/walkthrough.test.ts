@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-test('walkthrough rendering', async () => {
+test('squash walkthrough labels source and destination', async () => {
   const { renderWalkthrough } = await import('../../../skills/dispatch/scripts/toolkit/walkthrough.ts');
   const hash = 'a'.repeat(64);
   const view = {
@@ -9,7 +9,7 @@ test('walkthrough rendering', async () => {
     specPath: 'spec/report.spec.md',
     specHash: `sha256:${hash}`,
     planPath: 'plans/report.plan.md',
-    delivered: { integrated: 2, total: 3, to: 'abcdef1234567890', branch: 'main' },
+    delivered: { integrated: 2, total: 3, to: 'abcdef1234567890', source:'123456abcdef7890', branch: 'main' },
     statuses: [
       { criterion: 'verified-first', state: 'verified' as const, evidence: 'evidence/first.json', reason: 'historical pre-prune evidence via validated pruning; source tree source; final evidence final.json' },
       { criterion: 'verified-second', state: 'verified' as const, evidence: 'evidence/second.json' },
@@ -37,6 +37,7 @@ test('walkthrough rendering', async () => {
     findingsPaths: [{ review: 'review-alpha', path: '.state/reviews/review-alpha/findings.json' }],
   };
   const rendered = renderWalkthrough(view);
+  assert.match(rendered,/source 123456abcdef/);
   assert.match(rendered,/\[source evidence\]\(evidence\/first.json\)/);
   assert.match(rendered,/historical pre-prune evidence via validated pruning; source tree source; final evidence final.json/);
   const section = (heading: string, nextHeading: string) => rendered.slice(rendered.indexOf(heading), rendered.indexOf(nextHeading));

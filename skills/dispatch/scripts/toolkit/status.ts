@@ -52,7 +52,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
       const pending=started && !fold.records.some(record=>record.kind==='integrate' && record.seq>started.seq && record.data['task']===started.data['task'] && ['done','abandoned'].includes(record.data['phase']));
       const conflict=pending ? fold.records.findLast(record=>record.kind==='integrate' && record.data['phase']==='conflict' && record.seq>started!.seq)?.data ?? null : null;
       const delivered=fold.records.findLast(record=>record.kind==='integrate' && record.data['phase']==='delivered');
-      integration={path:opened.data['path'],branch:opened.data['branch'],head,state:exists?'present':'missing',pendingConflict:conflict,undelivered:head!==null && head!==(delivered?.data['to']??opened.data['base']),closed:fold.records.some(record=>record.kind==='integrate' && record.data['phase']==='closed' && record.seq>opened.seq)};
+      integration={source:delivered?.data['source']??delivered?.data['to']??null,to:delivered?.data['to']??null,path:opened.data['path'],branch:opened.data['branch'],head,state:exists?'present':'missing',pendingConflict:conflict,undelivered:head!==null && head!==(delivered?.data['source']??delivered?.data['to']??opened.data['base']),closed:fold.records.some(record=>record.kind==='integrate' && record.data['phase']==='closed' && record.seq>opened.seq)};
       if(exists && plan) {
         try {
           const tree={headTree:await headTree(deps,cwd),testedTree:await testedTree(deps,session,cwd)};
