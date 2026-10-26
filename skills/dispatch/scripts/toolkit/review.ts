@@ -169,6 +169,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
     let round = read<Round>(roundFile);
     const current = await capture();
+    if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
     const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {};
     for (let i = 1; i < n; i++) {
       const value = read<FindingsValue>(path.join(directory, 'round-' + i, 'findings.json'));

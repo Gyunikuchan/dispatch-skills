@@ -64,11 +64,11 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     f.config(true);f.deps.liveness={};
     f.deps.orchestrator={platform:'codex',model:'native'} as typeof f.deps.orchestrator;
     const calls:{argv:string[];env:NodeJS.ProcessEnv|undefined}[]=[];
-    let tree='tree-one', feature='feature-id', missing=false, unrelated=false;
+    let tree='tree-one', feature='feature-id', missing=false, unrelated=false, heads:string[]=[], head='head-id';
     f.deps.run=async(argv,options)=>{
       calls.push({argv,env:options.env});
       const op=argv[1];
-      if(op==='rev-parse') return {exit:missing||argv.at(-1)==='T1^{commit}'?1:0,stdout:argv.at(-1)==='HEAD^{commit}'?'head-id':argv.at(-1)==='feature^{commit}'?feature:'main-id',stderr:'unknown revision'};
+      if(op==='rev-parse') return {exit:missing||argv.at(-1)==='T1^{commit}'?1:0,stdout:argv.at(-1)==='HEAD^{commit}'?heads.shift()??head:argv.at(-1)==='feature^{commit}'?feature:'main-id',stderr:'unknown revision'};
       if(op==='merge-base')return {exit:unrelated?1:0,stdout:'ancestor-id',stderr:'no common ancestor'};
       return {exit:0,stdout:op==='write-tree'?tree:op==='commit-tree'?'snapshot-'+tree:op==='diff'?'src.ts\0':'',stderr:''};
     };
@@ -107,6 +107,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     const workDir=fs.readdirSync(path.join(f.session,'.state/reviews')).find(name=>name.startsWith('code-worktree-'))!;
     const moved=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',workDir,'round-2/round.json'),'utf8'));
     assert.deepEqual(moved.target,{base:'head-id',head:'snapshot-tree-three'});assert.equal(moved.generation,2);
+    heads=['fresh-head'];head='moved-head';assert.equal((await call('code','worktree')).output.reason,'target-moved');head='head-id';
     for(const target of ['feat/x','feat-x','main..feature','main'])assert.equal((await call('code',target)).output.reason,'native-pending');
     feature='moved-feature';assert.equal((await call('code','main..feature')).output.reason,'native-pending');
     const rangeDir=fs.readdirSync(path.join(f.session,'.state/reviews')).find(name=>name.startsWith('code-main..feature-'))!;
