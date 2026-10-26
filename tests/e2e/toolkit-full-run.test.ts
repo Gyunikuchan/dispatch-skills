@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { fixture, CLEAN } from '../helpers/e2e.ts';
 import { planSource } from './helpers/toolkit-repo.ts';
 
-test('squash completion through public entry preserves standalone review', async () => {
+test('uncommitted delivery through public entry preserves standalone review', async () => {
   const f = fixture({ responses: [CLEAN, CLEAN, CLEAN] });
   try {
     for (const key of ['cli', 'begin', 'reply', 'rebind', 'initialize']) assert.equal(Object.keys(f).includes(key), false, key);
@@ -53,13 +53,14 @@ test('squash completion through public entry preserves standalone review', async
     await tool(['verify', 'run']);
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);
 
-    const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.notEqual(delivered.source,delivered.to);assert.equal(f.git('rev-parse',delivered.to+'^{tree}').trim(),f.git('rev-parse',delivered.source+'^{tree}').trim());assert.equal(f.git('rev-parse','HEAD').trim(),delivered.to);assert.equal(f.git('rev-parse','HEAD^').trim(),delivered.from);
+    const callerHead=f.git('rev-parse','HEAD').trim();const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.equal('to' in delivered,false);assert.equal(f.git('rev-parse','HEAD').trim(),callerHead);assert.equal(delivered.from,callerHead);assert.equal(fs.readFileSync(path.join(f.repo,'src/a.ts'),'utf8'),'export const value = 2;\n');
     const report = await tool(['report', 'complete']);
     assert.match(fs.readFileSync(path.resolve(session, report.path), 'utf8'), /Verified[\s\S]*SC1/);
     await tool(['worktree', 'cleanup']);
     assert.equal(fs.existsSync(path.resolve(session, writer.path)), false);
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
-    assert.deepEqual((await review(['HEAD~1', '--kind', 'code', '--spec', 'governing.spec.md'])).findings, []);
+    const retried=await tool(['worktree', 'deliver']);assert.equal(retried.delivered,false);assert.equal(retried.source,delivered.source);assert.equal(f.git('rev-parse',delivered.ref).trim(),delivered.source);
+    assert.deepEqual((await review([delivered.from+'..'+delivered.ref, '--kind', 'code', '--spec', 'governing.spec.md'])).findings, []);
     assert.equal(f.launches().length, 3);
   } finally { f.cleanup(); }
 });

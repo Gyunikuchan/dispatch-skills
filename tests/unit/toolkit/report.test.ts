@@ -238,3 +238,11 @@ test('squash report facts expose destination separately from verified source',as
  const result=await invoke(f,'report','render');assert.equal(result.exit,0);const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/source aaaaaaaaaaaa/);assert.match(text,/delivered dddddddddddd/);
  }finally{f.cleanup();}
 });
+
+test('uncommitted consumers render the working-tree delivery from source with its retained ref',async()=>{
+ const f=await fixture(1);try{await completeFixture(f);const {appendRecord}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'uncommitted',dest:{path:f.root,branch:'main'},from:'c'.repeat(40),source:HEAD}},f.deps);
+ const result=await invoke(f,'report','render');assert.equal(result.exit,0);const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+ assert.match(text,/uncommitted changes from source aaaaaaaaaaaa in main working tree; ref refs\/dispatch\/[^\s/]+\/delivered-source/);assert.doesNotMatch(text,/delivered [0-9a-f]{12} to main/);
+ }finally{f.cleanup();}
+});

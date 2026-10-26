@@ -77,7 +77,9 @@ const result = (value: unknown): HandlerResult => ({ok:true,value,exit:0,summary
 function refuse(reason: string, message=reason): never { throw new ToolError(4,reason,message); }
 export const candidateRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/candidates/'+task+'-'+launch;
 export const abandonedRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/abandoned/'+task+'-'+launch;
-export const preparedDeliveryRef=(session:string)=>'refs/dispatch/'+session+'/delivery-prepared';
+export const deliveredSourceRef=(session:string)=>'refs/dispatch/'+session+'/delivered-source';
+// Squash delivery (earlier format) retained its prepared commit here; cleanup still removes it.
+export const legacyPreparedRef=(session:string)=>'refs/dispatch/'+session+'/delivery-prepared';
 export async function create(ctx: HandlerContext): Promise<HandlerResult> {
   const {id,section}=taskId(ctx);
   return withLedger(ctx.session,'worktree create',ctx.deps,async tx=>{

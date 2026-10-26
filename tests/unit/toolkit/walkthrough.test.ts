@@ -101,3 +101,14 @@ test('squash walkthrough labels source and destination', async () => {
   assert.ok(withoutIntegration.includes('## Changes Made\n\nNone.'));
   assert.ok(withoutIntegration.includes('*No reviews conducted yet.*'));
 });
+
+test('uncommitted consumers label the working-tree delivery', async () => {
+  const { renderWalkthrough } = await import('../../../skills/dispatch/scripts/toolkit/walkthrough.ts');
+  const view = {
+    title: 'T', specPath: 's', specHash: 'sha256:' + 'a'.repeat(64), planPath: 'p',
+    delivered: { integrated: 1, total: 1, to: null, source: '123456abcdef7890', branch: 'main', mode: 'uncommitted', ref: 'refs/dispatch/x/delivered-source' },
+    statuses: [], changes: [], edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [], reviewRows: [], findingsPaths: [],
+  };
+  const rendered = renderWalkthrough(view as never);
+  assert.ok(rendered.includes('> **Delivered:** 1 of 1 tasks integrated; uncommitted changes from source 123456abcdef in main working tree; ref refs/dispatch/x/delivered-source'));
+});

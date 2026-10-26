@@ -43,6 +43,17 @@ test('ledger bindings approvals and input filters preserve validation and retrie
  }finally{f.cleanup();}
 });
 
+test('uncommitted records append through the ledger command', async () => {
+ const f=sessionFixture();try{
+ const input=f.artifact('record.json',''),git='a'.repeat(40),dest={branch:'b',path:'p'};
+ for(const [phase,extra] of [['deliver-started',{}],['delivered',{noop:true}]] as const){
+  fs.writeFileSync(input,JSON.stringify({kind:'integrate',by:'tool',key:phase,data:{phase,mode:'uncommitted',dest,from:git,source:git,...extra}}));
+  f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),0,phase);
+ }
+ assert.equal(foldLedger(f.session).records.filter(r=>r.kind==='integrate'&&r.data['mode']==='uncommitted').length,2);
+ }finally{f.cleanup();}
+});
+
 test('approval survives formatting-only artifact rewrites and refuses meaning changes', async () => {
   const f = sessionFixture();
   try {

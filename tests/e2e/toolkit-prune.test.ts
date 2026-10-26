@@ -17,7 +17,7 @@ test('transient pruning preserves caller safety',async()=>{const r=await prepare
  await appendRecord(r.session,{kind:'escalation',by:'tool',key:'open',data:{id:'scope',state:'open',summary:'Scope unresolved'}},r.deps);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');await appendRecord(r.session,{kind:'escalation',by:'tool',key:'resolved',data:{id:'scope',state:'resolved',summary:'Scope settled'}},r.deps);
  const unrelated=path.join(r.integration,'src/file.ts'),bytes=fs.readFileSync(unrelated);const p=await r.run(['worktree','prune']);assert.equal(p.output.ok,true,JSON.stringify(p));assert.equal(fs.existsSync(path.join(r.integration,target)),false);assert.equal(r.git(['rev-parse','HEAD']),caller);assert.deepEqual(fs.readFileSync(unrelated),bytes);
  assert.equal((await r.run(['worktree','deliver'])).output.reason,'final-checks-required');assert.equal((await r.run(['verify','run','--final'])).output.ok,true);
- assert.equal((await r.run(['worktree','deliver'],point=>{if(point==='deliver:before-ff')fs.writeFileSync(unrelated,'late edit');})).output.reason,'prune-transition-stale');assert.equal(r.git(['rev-parse','HEAD']),caller);fs.writeFileSync(unrelated,bytes);
+ assert.equal((await r.run(['worktree','deliver'],point=>{if(point==='deliver:before-apply')fs.writeFileSync(unrelated,'late edit');})).output.reason,'prune-transition-stale');assert.equal(r.git(['rev-parse','HEAD']),caller);fs.writeFileSync(unrelated,bytes);
  assert.equal((await r.run(['worktree','deliver'])).output.ok,true);assert.equal(fs.existsSync(path.join(r.root,target)),false);
  const status=await r.run(['report','complete']);assert.equal(status.output.ok,true,JSON.stringify(status));assert.match(status.value.statuses[0].reason,/historical pre-prune/);
 }finally{r.cleanup();}});
@@ -71,7 +71,7 @@ test('accepted fixes require a fresh review of the exact integration HEAD',async
 }finally{r.cleanup();}});
 
 
-test('squash completion requires verified pruned delivery',async()=>{
+test('uncommitted delivery requires verified pruned delivery',async()=>{
  const support='tests/helpers/shared.ts';
  const source=transientPlanSource.replace('| none | SC1 |','| none | SC1, SC2 |').replace('## Success Criteria','#### [NEW] '+support+'\n- Purpose: retained shared helper.\n\n## Success Criteria').replace('  - Changes: '+target,'  - Changes: '+target+', '+support).replace('  - Tests: '+target,'  - Tests: '+target+', '+support).replace('## Verification Plan','- [SC2] Coverage review\n  - Changes: '+support+'\n  - Evidence: review\n  - Review: inspect retained coverage\n\n## Verification Plan');
  const r=await prepared(source,{[support]:'retained helper\n'});try{
@@ -84,7 +84,7 @@ test('squash completion requires verified pruned delivery',async()=>{
   await appendRecord(r.session,{kind:'manual-complete',by:'user',quote:'reviewed manually',key:'manual-step',data:{criterion:'SC1',evidence:'manual review'}},r.deps);
   const waiting=await r.run(['status','show']);assert.ok(waiting.value.criteria.includes('SC1'));assert.equal(waiting.value.criterionStatuses.find((row:{criterion:string})=>row.criterion==='SC1').state,'manual');
   assert.equal((await r.run(['verify','run','--final'])).output.ok,true);const rows=foldLedger(r.session).records.filter(row=>row.kind==='evidence');assert.equal(rows.some(row=>row.data['criterion']==='final:SC2'),false);
-  const delivered=await r.run(['worktree','deliver']);assert.equal(delivered.output.ok,true);assert.equal(delivered.value.source,r.git(['rev-parse','HEAD'],r.integration));assert.notEqual(delivered.value.source,delivered.value.to);assert.equal(r.git(['rev-parse','HEAD^{tree}']),r.git(['rev-parse','HEAD^{tree}'],r.integration));const completed=await r.run(['report','complete']);assert.equal(completed.output.ok,true,JSON.stringify(completed));assert.equal(completed.value.statuses.find((row:{criterion:string})=>row.criterion==='SC2').state,'verified');
+  const callerHead=r.git(['rev-parse','HEAD']);const delivered=await r.run(['worktree','deliver']);assert.equal(delivered.output.ok,true);assert.equal(delivered.value.source,r.git(['rev-parse','HEAD'],r.integration));assert.equal('to' in delivered.value,false);assert.equal(r.git(['rev-parse','HEAD']),callerHead);assert.equal(fs.readFileSync(path.join(r.root,support),'utf8'),'retained helper\n');assert.equal(fs.existsSync(path.join(r.root,target)),false);const completed=await r.run(['report','complete']);assert.equal(completed.output.ok,true,JSON.stringify(completed));assert.equal(completed.value.statuses.find((row:{criterion:string})=>row.criterion==='SC2').state,'verified');
  }finally{r.cleanup();}
 });
 

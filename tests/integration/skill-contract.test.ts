@@ -172,10 +172,16 @@ test('human manuals retain portable links and unchanged operational guidance', (
   assert.match(read(root + 'references/readme/design.md'), /increments in order/);
 });
 
-test('delivery references keep one canonical squash recovery contract', () => {
+test('uncommitted delivery contract', () => {
   const toolkit=section(read(root+'references/toolkit.md'),'worktree deliver');
-  for(const term of ['sole parent','Dispatch-Source:','delivery-prepared','recovery-blocked','to=from','process-crash','race limit','new run','tracked worktree and index']) assert.ok(toolkit.includes(term),term);
+  for(const term of ['uncommitted','unstaged','delivered-source','caller-dirty','recovery-blocked','unsupported-sparse','unsupported-entry','git restore --source','??','race limit','new run']) assert.ok(toolkit.includes(term),term);
+  const names=['references/toolkit.md','references/verbs/implement.md','references/worktree-cleanup.md','references/readme/concepts.md','references/readme/implement.md'];
   for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
+  for(const name of names){
+    let text=read(root+name);
+    if(name.endsWith('toolkit.md'))text=text.split(/\r?\n/).filter(line=>!/legacy/i.test(line)).join('\n');
+    for(const term of ['squash commit','fast-forward','Dispatch-Source:','delivery-prepared','sole parent','to=from']) assert.ok(!text.includes(term),name+': '+term);
+  }
   const concepts=read(root+'references/readme/concepts.md');
-  assert.match(concepts,/one final squash commit/);assert.doesNotMatch(concepts,/transfers only what remains|does not commit/);
+  assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
 });

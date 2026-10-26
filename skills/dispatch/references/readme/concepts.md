@@ -49,7 +49,7 @@ Keep the folder while work is active or may resume. The handoff provides its pat
 
 Verification follows the plan you approved. Dispatch records evidence for the plan's criteria, checks submitted changes, and runs a final review before reporting completed delivery. If a required check fails or a decision is still open, the handoff names that state rather than presenting the work as complete.
 
-Dispatch keeps internal task and integration commits, then delivers one final squash commit with the verified tree to your caller branch. An unchanged tree adds no caller commit. Dispatch does not push or open a pull request. You decide when and how to publish the resulting commit.
+Dispatch keeps internal task and integration commits, then delivers the verified result into your caller working tree as unstaged changes. It makes no commit and stages nothing; new files show as untracked in `git status`. Review the result with `git diff`, then stage and commit it yourself. Dispatch keeps the verified source at `refs/dispatch/<id>/delivered-source`; restore a file from it with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. Dispatch does not push or open a pull request.
 
 ## Optional session diagnostics
 

@@ -202,3 +202,16 @@ test('squash status distinguishes source and destination with legacy fallback',a
  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',dest,to}},f.deps);assert.equal((await read()).undelivered,false);
  }finally{f.cleanup();}
 });
+
+test('uncommitted consumers report source with a null destination commit',async()=>{
+ const {fakeGit}=await import('./helpers/fake-git.ts');const f=sessionFixture();try{
+ f.artifact('mission.spec.md','mission');f.artifact('work.plan.md',PLAN);
+ await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind',data:{spec:'mission.spec.md',plan:'work.plan.md'}},f.deps);
+ const source='a'.repeat(40),dest={path:f.root,branch:'main'},relative='.state/worktrees/integration';fs.mkdirSync(path.join(f.session,relative),{recursive:true});
+ const state={session:f.session,head:source,tree:'b'.repeat(40),testedTree:'b'.repeat(40),changes:[],calls:[]};f.deps.run=fakeGit(state);
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'opened',path:relative,branch:'integration',base:'f'.repeat(40),dest}},f.deps);
+ await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'uncommitted',dest,from:'f'.repeat(40),source}},f.deps);
+ f.lines.length=0;assert.equal(await main(['status','show','--session',f.session],f.deps),0);const integration=JSON.parse(fs.readFileSync(f.output().path!,'utf8')).integration;
+ assert.equal(integration.source,source);assert.equal(integration.to,null);assert.equal(integration.undelivered,false);
+ }finally{f.cleanup();}
+});

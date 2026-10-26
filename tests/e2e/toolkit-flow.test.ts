@@ -80,7 +80,7 @@ describe('toolkit session flow', () => {
       assert.ok(rows.find(row=>row.data['phase']==='finished')!.seq<rows.find(row=>row.kind==='evidence')!.seq);
     } finally {f.cleanup();}
   });
-  test('squash completion composes medium writer and exact tree verification', async()=>{
+  test('uncommitted delivery composes medium writer and exact tree verification', async()=>{
     const f=await toolkitRepo(); try {
       await f.level('medium'); await f.approve();
       for(const args of [['worktree','create','T1'],['brief','render','T1']]) assert.equal((await f.run(args)).exit,0);
@@ -90,7 +90,7 @@ describe('toolkit session flow', () => {
       for(const args of [['worktree','submit','T1'],['worktree','integrate','T1'],['verify','run']]) assert.equal((await f.run(args)).output.ok,true);
       fs.writeFileSync(path.join(f.integration,'src/file.ts'),'fixed\n'); assert.equal((await f.run(['worktree','commit','--reason','fix'])).exit,0); await f.run(['verify','run']);
       assert.deepEqual((await f.run(['status','show'])).value.criteria,[]);
-      assert.equal((await f.run(['worktree','deliver'])).exit,0); assert.notEqual(f.git(['rev-parse','HEAD']),f.git(['rev-parse','HEAD'],f.integration));assert.equal(f.git(['rev-parse','HEAD^{tree}']),f.git(['rev-parse','HEAD^{tree}'],f.integration));assert.equal(f.git(['rev-list','--parents','-n','1','HEAD']).split(' ').length,2);
+      const callerHead=f.git(['rev-parse','HEAD']); assert.equal((await f.run(['worktree','deliver'])).exit,0); assert.equal(f.git(['rev-parse','HEAD']),callerHead); assert.notEqual(callerHead,f.git(['rev-parse','HEAD'],f.integration)); assert.equal(fs.readFileSync(path.join(f.root,'src/file.ts'),'utf8'),'fixed\n'); assert.equal(f.git(['diff','--cached','--name-only']),'');
     } finally {f.cleanup();}
   });
 });

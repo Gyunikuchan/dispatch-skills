@@ -54,6 +54,22 @@ test('squash records require complete identities and preserve legacy shapes',()=
  }
 });
 
+test('uncommitted records accept exact identities and refuse missing or unknown fields',()=>{
+ const commit='a'.repeat(40),dest={path:'repo',branch:'main'},record=(data:Record<string,unknown>)=>validateRecord({kind:'integrate',by:'tool',data});
+ for(const phase of ['deliver-started','delivered']){
+ const data={phase,mode:'uncommitted',dest,from:commit,source:commit};
+ assert.doesNotThrow(()=>record(data));
+ for(const field of ['from','source','dest']){const partial:Record<string,unknown>={...data};delete partial[field];assert.throws(()=>record(partial),{reason:'invalid-record'});}
+ for(const field of ['from','source'])assert.throws(()=>record({...data,[field]:'bad'}),{reason:'invalid-record'});
+ assert.throws(()=>record({...data,to:commit}),{reason:'invalid-record'});
+ assert.throws(()=>record({...data,extra:true}),{reason:'invalid-record'});
+ if(phase==='delivered'){assert.doesNotThrow(()=>record({...data,noop:true}));assert.throws(()=>record({...data,noop:'yes'}),{reason:'invalid-record'});}
+ else assert.throws(()=>record({...data,noop:true}),{reason:'invalid-record'});
+ }
+ assert.doesNotThrow(()=>record({phase:'delivered',dest,to:commit}));
+ assert.doesNotThrow(()=>record({phase:'deliver-started',mode:'squash',dest,from:commit,to:commit,source:commit}));
+});
+
 test('invalid-record rejections name the field and its expected shape', () => {
   const hash='sha256:'+'a'.repeat(64);
   const cases: [unknown,RegExp][]=[

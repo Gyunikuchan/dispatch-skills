@@ -11,6 +11,7 @@ import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledg
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
 import { ToolError } from './output.ts';
 import { diagnosticsEnabled, readReviews, optionalDiagnostics } from './diagnostics.ts';
+import { deliveredSourceRef } from './writers.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import type { LedgerRecord } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
@@ -201,6 +202,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       source: snapshot.delivered?.data['source'] ?? snapshot.delivered?.data['to'] ?? null,
       to: typeof snapshot.delivered?.data['to'] === 'string' ? snapshot.delivered.data['to'] : null,
       branch: destBranch,
+      ...(snapshot.delivered?.data['mode'] === 'uncommitted' ? {mode: 'uncommitted', ref: deliveredSourceRef(ctx.manifest.safeSessionId)} : {}),
     } : null,
     statuses: snapshot.statuses,
     changes,
