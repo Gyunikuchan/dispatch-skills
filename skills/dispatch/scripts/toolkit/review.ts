@@ -62,7 +62,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   }
   const gitTarget = kind === 'code' && requested !== 'integration' && !taskTarget;
   let slug = (kind === 'code' ? requested : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9._-]/g, '-');
-  if (gitTarget) slug += '-' + crypto.createHash('sha256').update(requested).digest('hex');
+  // Worktree rounds count per HEAD, so a commit starts a new series instead of inheriting an older change's cap.
+  let series = '';
+  if (requested === 'worktree') {
+    const head = await git(deps, manifest.repositoryRoot, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
+    if (head.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD');
+    series = '@' + head.stdout.trim();
+  }
+  if (gitTarget) slug += '-' + crypto.createHash('sha256').update(requested + series).digest('hex');
   if (!slug || slug === '.' || slug === '..') throw new ToolError(1, 'invalid-input', 'Invalid review target');
   const review = kind + '-' + slug;
   const directory = path.join(session, '.state/reviews', review);

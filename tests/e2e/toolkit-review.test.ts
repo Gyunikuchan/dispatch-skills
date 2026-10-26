@@ -31,7 +31,7 @@ test('toolkit worktree review excludes unignored session state and preserves com
     const pending = await run(4);
     assert.equal(pending.output.reason, 'native-pending');
     assert.equal(pending.value.pending.length, 1);
-    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree').digest('hex');
+    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree@' + f.git(['rev-parse', 'HEAD']).trim()).digest('hex');
     const metadata = path.join(f.session, '.state/reviews', slug, 'round-1/round.json');
     const before = JSON.parse(fs.readFileSync(metadata, 'utf8'));
     for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
@@ -46,6 +46,12 @@ test('toolkit worktree review excludes unignored session state and preserves com
     assert.equal(f.git(['show', before.target.head + ':' + path.basename(f.session) + '/tracked.txt']), 'committed session bytes');
     assert.equal(fs.readFileSync(path.join(f.session, 'tracked.txt'), 'utf8'), 'changed session bytes\n');
     assert.equal(fs.readFileSync(path.join(f.session, 'untracked.txt'), 'utf8'), 'untracked session bytes\n');
+    f.git(['add', 'src/file.ts']); f.git(['commit', '-qm', 'reviewed change']);
+    fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'next change\n');
+    assert.equal((await run(4)).output.reason, 'native-pending');
+    const next = 'code-worktree-' + crypto.createHash('sha256').update('worktree@' + f.git(['rev-parse', 'HEAD']).trim()).digest('hex');
+    assert.equal(fs.existsSync(path.join(f.session, '.state/reviews', next, 'round-1/round.json')), true);
+    assert.equal(fs.existsSync(path.join(f.session, '.state/reviews', slug, 'round-2')), false);
   } finally { f.cleanup(); }
 });
 
@@ -68,7 +74,7 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
     f.deps.liveness = {};
     const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal(result.output.reason, 'native-pending', JSON.stringify(result.output));
-    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree').digest('hex');
+    const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree@' + f.git(['rev-parse', 'HEAD']).trim()).digest('hex');
     const target = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', slug, 'round-1/round.json'), 'utf8')).target;
     assert.deepEqual(f.git(['diff', '--name-only', target.base + '..' + target.head]).split(/\r?\n/), ['src/file.ts']);
     assert.equal(f.git(['show', target.head + ':' + path.relative(f.root, f.session).split(path.sep).join('/') + '/tracked.txt']), 'committed session bytes');
