@@ -20,23 +20,6 @@ describe('toolkit status sections', () => {
       const status=await f.run(['status','show']); assert.equal(status.exit,0); assert.equal(status.value.integration.pendingConflict.task,'T1'); assert.deepEqual(status.value.integration.pendingConflict.paths,['src/file.ts']);
     } finally {f.cleanup();}
   });
-  for (const damage of ['broken', 'missing']) test('retains recovery status with ' + damage + ' plan', async () => {
-    const f=await toolkitRepo(); try {
-      await f.level(); await f.run(['worktree','create','T1']);
-      await appendRecord(f.session,{kind:'escalation',key:'blocked',by:'orchestrator',data:{id:'E1',state:'open',summary:'Recovery needed'}},f.deps);
-      const before=(await f.run(['status','show'])).value;
-      const plan=path.join(f.root,'work.plan.md');
-      if(damage==='missing') fs.rmSync(plan); else fs.writeFileSync(plan,'# Broken plan\n');
-      const result=await f.run(['status','show']); assert.equal(result.exit,0,JSON.stringify(result.output));
-      const s=result.value;
-      for(const field of ['level','bound','approved','escalations','recordCount','tornTail']) assert.deepEqual(s[field],before[field],field);
-      assert.deepEqual(s.integration,before.integration); assert.equal(s.integration.state,'present');
-      assert.equal(s.writers.state,'unavailable'); assert.equal(s.criteria.state,'unavailable');
-      assert.ok(s.writers.reason.length>0); assert.equal(s.criteria.reason,s.writers.reason);
-      if(damage==='missing') {assert.equal(s.current.plan,null); assert.match(s.criteria.reason,/unreadable/);} else assert.match(s.criteria.reason,/defect|missing|required|task|section/i);
-      assert.equal(fs.existsSync(path.join(f.session,'.state/lock')),false);
-    } finally {f.cleanup();}
-  });
   test('tracks writer integration evidence dirtiness missing directory and closure without locking', async () => {
     const f=await toolkitRepo(); try {
       const status=async()=>{ const r=await f.run(['status','show']); assert.equal(r.exit,0); assert.equal(fs.existsSync(path.join(f.session,'.state/lock')),false); return r.value; };

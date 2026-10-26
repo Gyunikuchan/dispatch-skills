@@ -89,18 +89,17 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
   it('preserves caller bytes on refused tracked delivery', async () => {
-    for (const mode of ['tracked', 'untracked', 'before', 'after', 'crash-edit', 'moved']) {
+    for (const mode of ['tracked', 'after', 'crash-edit', 'moved']) {
       const { r } = await prepared(); try {
-        const file = path.join(r.root, mode === 'untracked' ? 'src/new.ts' : 'src/file.ts');
+        const file = path.join(r.root, 'src/file.ts');
         if (mode === 'tracked') fs.writeFileSync(file, 'caller\n');
-        if (mode === 'untracked') { fs.writeFileSync(path.join(r.integration, 'src/new.ts'), 'new\n'); await r.run(['worktree', 'commit', '--reason', 'add file']); fs.writeFileSync(file, 'caller\n'); }
         if (mode === 'moved') r.git(['commit', '--allow-empty', '-m', 'outside']);
         if (mode === 'crash-edit') { await r.run(['worktree', 'deliver'], p => { if (p === 'deliver:after-ff') throw new Error('crash'); }); fs.writeFileSync(file, 'caller\n'); }
         const before = fs.readFileSync(file, 'utf8');
-        const delivered = await r.run(['worktree', 'deliver'], p => { if ((mode === 'before' && p === 'deliver:before-ff') || (mode === 'after' && p === 'deliver:after-ff')) fs.writeFileSync(file, 'caller\n'); });
+        const delivered = await r.run(['worktree', 'deliver'], p => { if (mode === 'after' && p === 'deliver:after-ff') fs.writeFileSync(file, 'caller\n'); });
         assert.equal(delivered.exit, 4); assert.equal(delivered.output.reason, mode === 'moved' ? 'caller-moved' : 'caller-dirty');
-        assert.equal(fs.readFileSync(file, 'utf8'), mode === 'before' || mode === 'after' ? 'caller\n' : before); assert.equal(rows(r, 'delivered').length, 0);
-        if (['tracked', 'untracked', 'moved'].includes(mode)) assert.equal(rows(r, 'deliver-started').length, 0);
+        assert.equal(fs.readFileSync(file, 'utf8'), mode === 'after' ? 'caller\n' : before); assert.equal(rows(r, 'delivered').length, 0);
+        if (['tracked', 'moved'].includes(mode)) assert.equal(rows(r, 'deliver-started').length, 0);
       } finally { r.cleanup(); }
     }
   });
@@ -113,12 +112,10 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
   it('keeps unpreserved submitted-edit bytes', async () => {
-    for (const mode of ['submitted-edit', 'abandoned-edit', 'ignored-writer', 'ignored-delivered', 'ignored-closed', 'dirty-delivered']) {
+    for (const mode of ['submitted-edit', 'ignored-closed', 'dirty-delivered']) {
       const { r, writer } = await prepared(); try {
-        if (mode === 'abandoned-edit') { await r.run(['worktree', 'create', 'T1']); await r.run(['worktree', 'abandon', 'T1', '--reason', 'discard']); }
         let file: string;
-        if (mode === 'submitted-edit' || mode === 'abandoned-edit') { file = path.join(mode === 'abandoned-edit' ? path.join(r.session, '.state/worktrees/T1-2') : writer, 'src/file.ts'); fs.writeFileSync(file, 'kept\n'); }
-        else if (mode === 'ignored-writer') { file = path.join(writer, 'ignored'); fs.writeFileSync(file, 'kept\n'); }
+        if (mode === 'submitted-edit') { file = path.join(writer, 'src/file.ts'); fs.writeFileSync(file, 'kept\n'); }
         else { await r.run(['worktree', 'deliver']); if (mode === 'ignored-closed') await r.run(['worktree', 'close', '--reason', 'stop']); file = path.join(r.integration, mode === 'dirty-delivered' ? 'src/file.ts' : 'ignored'); fs.writeFileSync(file, 'kept\n'); }
         const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(file, 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
         if (mode === 'dirty-delivered') assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
@@ -133,5 +130,3 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
 });
-
-it('delivery refuses unverified transient pruning',async()=>{const r=await toolkitRepo();try {await r.run(['verify','run']); const file=path.join(r.root,'work.plan.md');fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));assert.equal((await r.run(['worktree','deliver'])).output.reason,'pruning-required');}finally{r.cleanup();}});

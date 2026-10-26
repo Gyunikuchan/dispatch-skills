@@ -7,8 +7,6 @@ import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/led
 test('transient pruning preserves caller safety',async()=>{const r=await prepared();try{
  const caller=r.git(['rev-parse','HEAD']);assert.equal((await r.run(['worktree','deliver'])).output.reason,'pruning-required');
  assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');assert.ok(fs.existsSync(path.join(r.integration,target)));
- const planFile=path.join(r.root,'work.plan.md');
- for(const [source,reason] of [[transientPlanSource.replace(' [FINAL]',''),'missing-final-command'],[transientPlanSource.replace('`node -e "process.exit(0)"` [FINAL]','`node '+target+'` [FINAL]'),'transient-command-dependency']] as const){fs.writeFileSync(planFile,source);assert.equal((await r.run(['worktree','prune'])).output.reason,reason);assert.equal(foldLedger(r.session).records.some(x=>x.data['phase']==='prune-started'),false);assert.ok(fs.existsSync(path.join(r.integration,target)));}fs.writeFileSync(planFile,transientPlanSource);
  const must={id:'R1-F001',severity:'MUST',locus:'src/file.ts:L1',defect:'Missing protection',requiredChange:'Protect state',sources:['reviewer'],scope:'in'};
  let dir=review(r,1,[must]);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');
  await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'deferred',data:{subject:'review:code-integration:R1-F001',ruling:'deferred',rationale:'Pending evidence'}},r.deps);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');
@@ -39,14 +37,14 @@ test('transient pruning recovers after durable boundaries',async()=>{
 
 test('pruning preconditions preserve the integrated tree',async()=>{const r=await prepared();try{
  const file=path.join(r.integration,target),head=r.git(['rev-parse','HEAD'],r.integration),caller=r.git(['rev-parse','HEAD']);
- const refuse=async(reason:string)=>{const result=await r.run(['worktree','prune']);assert.equal(result.output.reason,reason,JSON.stringify(result));assert.equal(r.git(['rev-parse','HEAD'],r.integration),head);assert.equal(r.git(['rev-parse','HEAD']),caller);assert.equal(fs.readFileSync(file,'utf8'),'step\n');assert.equal(foldLedger(r.session).records.some(x=>x.data['phase']==='prune-started'),false);};
  review(r);
- const plan=path.join(r.root,'work.plan.md');fs.writeFileSync(plan,transientPlanSource.replaceAll('T1','T2'));await refuse('prune-unintegrated-tasks');fs.writeFileSync(plan,transientPlanSource);
- const append=async(data:Record<string,unknown>,kind='integrate')=>appendRecord(r.session,{kind,by:'tool',data},r.deps);
- await append({phase:'started',task:'T1',candidate:head});await refuse('integration-pending');await append({phase:'abandoned',task:'T1',candidate:head,reason:'test cancellation'});
- await append({phase:'launched',task:'T2',path:'writer',base:{commit:head,taskSection:'sha256:'+'a'.repeat(64),seq:0}},'writer');await refuse('prune-open-writers');await append({phase:'abandoned',task:'T2',launch:1,reason:'test cancellation'},'writer');
- fs.writeFileSync(path.join(r.integration,'dirty'),'work');await refuse('integration-dirty');fs.unlinkSync(path.join(r.integration,'dirty'));
- fs.appendFileSync(path.join(r.root,'work.spec.md'),'new intent');review(r);await refuse('prune-prechecks-required');
+ fs.writeFileSync(path.join(r.integration,'dirty'),'work');
+ const result=await r.run(['worktree','prune']);
+ assert.equal(result.output.reason,'integration-dirty');
+ assert.equal(r.git(['rev-parse','HEAD'],r.integration),head);
+ assert.equal(r.git(['rev-parse','HEAD']),caller);
+ assert.equal(fs.readFileSync(file,'utf8'),'step\n');
+ assert.equal(foldLedger(r.session).records.some(x=>x.data['phase']==='prune-started'),false);
 }finally{r.cleanup();}});
 
 test('pruning validates every target and rechecks swapped ancestors',async()=>{

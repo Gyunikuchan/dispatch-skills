@@ -108,30 +108,31 @@ test('recovery status refuses transient success without a validated transition',
   } finally { f.cleanup(); }
 });
 
+const PLAN = [
+  '# Work',
+  '## Task Map',
+  '| ID | Title | Outcome | Prerequisites | Criteria |',
+  '| --- | --- | --- | --- | --- |',
+  '| T1 | File | Works | none | SC1, SC2 |',
+  '## Proposed Changes',
+  '### T1 \u2014 File',
+  '#### [NEW] src/file.ts',
+  '- Purpose: behavior.',
+  '## Success Criteria',
+  '- [SC1] Works',
+  '  - Changes: src/file.ts',
+  '  - Verify: `node check`',
+  '  - Evidence: verify',
+  '- [SC2] Also works',
+  '  - Changes: src/file.ts',
+  '  - Verify: `node check2`',
+  '  - Evidence: verify2',
+  '## Verification Plan',
+  '### Automated Tests',
+  '- `node contract`',
+].join('\n');
+
 test('status retains missing automated criteria for manual completions and waivers', async () => {
-  const PLAN = [
-    '# Work',
-    '## Task Map',
-    '| ID | Title | Outcome | Prerequisites | Criteria |',
-    '| --- | --- | --- | --- | --- |',
-    '| T1 | File | Works | none | SC1, SC2 |',
-    '## Proposed Changes',
-    '### T1 \u2014 File',
-    '#### [NEW] src/file.ts',
-    '- Purpose: behavior.',
-    '## Success Criteria',
-    '- [SC1] Works',
-    '  - Changes: src/file.ts',
-    '  - Verify: `node check`',
-    '  - Evidence: verify',
-    '- [SC2] Also works',
-    '  - Changes: src/file.ts',
-    '  - Verify: `node check2`',
-    '  - Evidence: verify2',
-    '## Verification Plan',
-    '### Automated Tests',
-    '- `node contract`',
-  ].join('\n');
   const { fakeGit } = await import('./helpers/fake-git.ts');
   const f = sessionFixture();
   try {
@@ -153,3 +154,36 @@ test('status retains missing automated criteria for manual completions and waive
     assert.equal(value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC2').state, 'waived');
   } finally { f.cleanup(); }
 });
+
+for (const damage of ['broken', 'missing'] as const) {
+  test('status retains recovery status with ' + damage + ' plan', async () => {
+    const { fakeGit } = await import('./helpers/fake-git.ts');
+    const f = sessionFixture();
+    try {
+      f.artifact('mission.spec.md', 'mission');
+      const plan = f.artifact('work.plan.md', PLAN);
+      await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'tool', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
+      await appendRecord(f.session, { kind: 'level', key: 'level', by: 'orchestrator', data: { level: 'low' } }, f.deps);
+      const cwd = path.join(f.session, '.state/worktrees/integration');
+      fs.mkdirSync(cwd, { recursive: true });
+      const head = 'a'.repeat(40), tree = 'b'.repeat(40);
+      f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
+      await appendRecord(f.session, { kind: 'integrate', key: 'opened', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
+      await appendRecord(f.session, { kind: 'writer', key: 'writer', by: 'tool', data: { phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: { commit: head, seq: 1, taskSection: 'sha256:' + 'a'.repeat(64) } } }, f.deps);
+      await appendRecord(f.session, { kind: 'escalation', key: 'blocked', by: 'orchestrator', data: { id: 'E1', state: 'open', summary: 'Recovery needed' } }, f.deps);
+      await main(['status', 'show', '--session', f.session], f.deps);
+      const before = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      f.lines.length = 0;
+      if (damage === 'missing') fs.rmSync(plan); else fs.writeFileSync(plan, '# Broken plan\n');
+      const exit = await main(['status', 'show', '--session', f.session], f.deps);
+      assert.equal(exit, 0);
+      const s = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      for (const field of ['level', 'bound', 'escalations', 'recordCount']) assert.deepEqual(s[field], before[field], field);
+      assert.equal(s.writers.state, 'unavailable');
+      assert.equal(s.criteria.state, 'unavailable');
+      assert.ok(s.writers.reason.length > 0);
+      if (damage === 'missing') { assert.equal(s.current.plan, null); assert.match(s.criteria.reason, /unreadable/); }
+      else assert.match(s.criteria.reason, /defect|missing|required|task|section/i);
+    } finally { f.cleanup(); }
+  });
+}

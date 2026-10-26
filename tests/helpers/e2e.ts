@@ -25,7 +25,8 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   };
   fs.writeFileSync(path.join(skill, 'config.local.jsonc'), JSON.stringify(config)); hashes(overlay);
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
-  git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+  git('init', '-q');
+  fs.appendFileSync(path.join(repo, '.git/config'), '\n[core]\n\tautocrlf = false\n[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n');
   fs.mkdirSync(path.join(repo, 'src')); fs.writeFileSync(path.join(repo, 'src/a.ts'), 'export const value = 1;\n');
   fs.writeFileSync(path.join(repo, 'governing.spec.md'), SPEC_SOURCE);
   fs.writeFileSync(path.join(repo, '.gitignore'), '.scratch/\n'); git('add', '.'); git('commit', '-qm', 'fixture');

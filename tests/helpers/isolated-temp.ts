@@ -24,6 +24,10 @@ if (!root) {
   root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'dispatch-test-'));
   process.env[TEMP_ROOT_MARKER] = root;
   for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_SESSION_TERMINAL']) delete process.env[key];
+  process.env['GIT_AUTHOR_NAME'] = 'Toolkit Test';
+  process.env['GIT_AUTHOR_EMAIL'] = 'test@example.test';
+  process.env['GIT_COMMITTER_NAME'] = 'Toolkit Test';
+  process.env['GIT_COMMITTER_EMAIL'] = 'test@example.test';
   removeOnExit(root);
 }
 useTemp(root);

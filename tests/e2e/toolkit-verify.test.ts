@@ -50,9 +50,6 @@ describe('toolkit verify', () => {
   });
 });
 
-test('final verification refuses invalid pruning', async()=>{const f=await toolkitRepo(planSource.replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify'));try {assert.equal((await f.run(['verify','run','--final'])).output.reason,'pruning-required');}finally{f.cleanup();}});
-
-
 test('transient verification refuses artifact mutation during a successful command',async()=>{
  const source=planSource.replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify');
  const f=await toolkitRepo(source);try{

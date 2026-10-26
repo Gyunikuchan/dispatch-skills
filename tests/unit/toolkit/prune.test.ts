@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {validateTargets,prunePreconditions,recoveryAllowed,pruneProjection} from '../../../skills/dispatch/scripts/toolkit/prune.ts';
+import {validateTargets,prunePreconditions,recoveryAllowed,pruneProjection,pruneTransition} from '../../../skills/dispatch/scripts/toolkit/prune.ts';
 import {parsePlan} from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 const source=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');
 function parsed(){const result=parsePlan(source);if(!result.ok)throw new Error(JSON.stringify(result.defects));return result.plan;}
@@ -44,4 +44,8 @@ test('pruning preserves declared support files and permits descriptive test file
  const p=plan(),file='tests/transient-prune-helper.test.ts',support='tests/helpers/shared.ts';p.criteria[0]!.tests=[file,support];p.criteria[0]!.changes=[file,support];p.changes[0]!.path=file;
  (p.changes as import('../../../skills/dispatch/scripts/toolkit/domain/types.ts').PlanChange[]).push({...p.changes[0]!,path:support,action:'MODIFY'});
  assert.deepEqual(validateTargets(p),[file]);
+});
+
+test('pruning transition requires a prior pruned phase',async()=>{
+ await assert.rejects(async()=>pruneTransition({} as any,fold([]),plan()),{reason:'pruning-required'});
 });
