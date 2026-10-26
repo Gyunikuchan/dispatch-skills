@@ -54,7 +54,11 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
   try {
     const top = path.relative(f.root, f.session).split(path.sep)[0]!;
     fs.writeFileSync(path.join(f.root, '.gitignore'), top + '/\n');
-    f.git(['add', '.gitignore']); f.git(['commit', '-qm', 'ignore session']);
+    fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'committed session bytes\n');
+    fs.writeFileSync(path.join(f.session, 'deleted.txt'), 'deleted session bytes\n');
+    f.git(['add', '.gitignore']); f.git(['add', '-f', '--', path.relative(f.root, f.session)]); f.git(['commit', '-qm', 'ignore session']);
+    fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'changed session bytes\n');
+    fs.rmSync(path.join(f.session, 'deleted.txt'));
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'changed code\n');
     const skill = path.join(f.session, 'native-skill');
     fs.mkdirSync(skill); fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
@@ -67,6 +71,7 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
     const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree').digest('hex');
     const target = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', slug, 'round-1/round.json'), 'utf8')).target;
     assert.deepEqual(f.git(['diff', '--name-only', target.base + '..' + target.head]).split(/\r?\n/), ['src/file.ts']);
+    assert.equal(f.git(['show', target.head + ':' + path.relative(f.root, f.session).split(path.sep).join('/') + '/tracked.txt']), 'committed session bytes');
   } finally { f.cleanup(); }
 });
 

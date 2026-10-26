@@ -101,7 +101,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
       assert.equal(commit.env!['GIT_'+role+'_DATE'],'1970-01-01T00:00:00Z');
     }
     assert.ok(calls.some(row=>row.argv[1]==='read-tree'&&row.argv[2]==='head-id'));
-    assert.ok(calls.some(row=>row.argv[1]==='add'&&row.argv.at(-1)===':(top,exclude,literal)'+path.relative(fs.realpathSync(f.root),fs.realpathSync(f.session)).split(path.sep).join('/')));
+    assert.ok(calls.some(row=>row.argv[1]==='reset'&&row.argv.at(-1)===':(top,literal)'+path.relative(fs.realpathSync(f.root),fs.realpathSync(f.session)).split(path.sep).join('/')));
     tree='tree-two';assert.equal((await call('code','worktree')).output.reason,'native-pending');
     tree='tree-three';assert.equal((await call('code','worktree')).output.reason,'native-pending');
     const workDir=fs.readdirSync(path.join(f.session,'.state/reviews')).find(name=>name.startsWith('code-worktree-'))!;

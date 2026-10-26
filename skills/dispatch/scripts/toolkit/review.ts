@@ -83,7 +83,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return {spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
     }
     let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
-    let exclusion: string[] = [];
     const revision = async (ref: string) => {
       const result = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
       if (result.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref);
@@ -112,15 +111,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         base = await revision('HEAD');
         const relative = path.relative(fs.realpathSync(cwd), fs.realpathSync(session)).split(path.sep).join('/');
         const inside = relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative);
-        // NOTE: git add exits 1 when an exclude pathspec names an ignored path; ignored sessions need no exclusion.
-        if (inside && relative && (await git(deps, cwd, ['check-ignore', '-q', '--', relative])).exit) exclusion = [':(top,exclude,literal)' + relative];
         const directory = path.join(session, '.state/tmp');
         fs.mkdirSync(directory, {recursive: true});
         const index = path.join(directory, crypto.randomUUID() + '.index');
         const env = {GIT_INDEX_FILE: index};
         try {
           await gitOk(deps, cwd, ['read-tree', base], env);
-          if (!inside || relative) await gitOk(deps, cwd, ['add', '-A', '--', '.', ...exclusion], env);
+          if (!inside || relative) await gitOk(deps, cwd, ['add', '-A', '--', '.'], env);
+          // NOTE: an exclude pathspec makes git add exit 1 when it names an ignored path, so reset the session to HEAD after add.
+          if (inside && relative) await gitOk(deps, cwd, ['reset', '-q', base, '--', ':(top,literal)' + relative], env);
           const tree = await gitOk(deps, cwd, ['write-tree'], env);
           head = await gitOk(deps, cwd, ['commit-tree', tree, '-p', base, '-m', 'dispatch review snapshot'], {
             GIT_AUTHOR_NAME: 'Dispatch Review', GIT_COMMITTER_NAME: 'Dispatch Review',
@@ -141,7 +140,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       }
       summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
     }
-    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head, '--', ...exclusion]));
+    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]));
     return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
 
