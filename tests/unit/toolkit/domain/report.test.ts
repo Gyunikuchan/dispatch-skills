@@ -492,6 +492,8 @@ test('heuristic precision H5 needs three uncached samples and a share above two 
 test('heuristic precision H1 ignores quota-store skips that never launched', () => {
   const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
   assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
+  const [finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
+  assert.match(finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex ×2\), 2m 0s of driver time\./);
 });
 
 test('heuristic precision H9 needs two relaunches', () => {

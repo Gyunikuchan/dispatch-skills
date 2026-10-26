@@ -8,50 +8,44 @@ export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: str
 type Rule = (value: unknown, field: string) => void;
 
 // Naming the expected shape lets the caller correct the record in one turn.
-function invalid(field: string, expected?: string): never {
-  throw new ToolError(1, 'invalid-record', field + ' is invalid' + (expected ? '; expected ' + expected : ''));
+function invalid(field: string, expected: string): never {
+  throw new ToolError(1, 'invalid-record', field + ' is invalid; expected ' + expected);
 }
-const text: Rule = (value, field) => {
-  if (typeof value !== 'string' || !value.trim()) invalid(field, 'a non-blank string');
-};
-const hash: Rule = (value, field) => {
-  if (typeof value !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value)) invalid(field, 'sha256:<64 lowercase hex>');
-};
-const git: Rule = (value, field) => {
-  if (typeof value !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) invalid(field, 'a full 40- or 64-hex Git object id');
-};
-const integer: Rule = (value, field) => {
-  if (!Number.isSafeInteger(value)) invalid(field, 'an integer');
-};
-const seq: Rule = (value, field) => {
-  integer(value, field);
-  if ((value as number) < 0) invalid(field, 'a non-negative integer');
-};
-const launch: Rule = (value, field) => {
-  seq(value, field);
-  if (value === 0) invalid(field, 'a positive ledger seq');
-};
-const choice = (...values: string[]): Rule => (value, field) => {
-  if (!values.includes(value as string)) invalid(field, 'one of ' + values.join(', '));
-};
-const array: Rule = (value, field) => {
-  if (!Array.isArray(value)) invalid(field, 'an array of strings');
-  (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
-};
+const SHAPES = new WeakMap<Rule, string>();
+const shaped = (shape: string, rule: Rule): Rule => (SHAPES.set(rule, shape), rule);
+const shapeOf = (rule: Rule) => SHAPES.get(rule) ?? 'a valid value';
+const check = (shape: string, ok: (value: unknown) => boolean): Rule => shaped(shape, (value, field) => { if (!ok(value)) invalid(field, shape); });
 
+const text = check('a non-blank string', (value) => typeof value === 'string' && !!value.trim());
+const hash = check('sha256:<64 lowercase hex>', (value) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value));
+const git = check('a full 40- or 64-hex Git object id', (value) => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value));
+const integer = check('an integer', (value) => Number.isSafeInteger(value));
+const bool = check('a boolean', (value) => typeof value === 'boolean');
+const string = check('a string', (value) => typeof value === 'string');
+const seq = check('a non-negative integer', (value) => Number.isSafeInteger(value) && (value as number) >= 0);
+const launch = check('a positive ledger seq', (value) => Number.isSafeInteger(value) && (value as number) > 0);
+const choice = (...values: string[]): Rule => check('one of ' + values.join(', '), (value) => values.includes(value as string));
+const array: Rule = shaped('an array of non-blank strings', (value, field) => {
+  if (!Array.isArray(value)) invalid(field, shapeOf(array));
+  (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
+});
+
+const describe = (fields: Record<string, Rule>, optional: string[] = []) => 'an object with ' + Object.keys(fields).map((key) => optional.includes(key) ? key + '?' : key).join(', ');
 function object(value: unknown, fields: Record<string, Rule>, optional: string[] = [], prefix = 'data'): void {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(prefix, 'an object with ' + Object.keys(fields).join(', '));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(prefix, describe(fields, optional));
   const data = value as Record<string, unknown>;
   for (const key of Object.keys(data)) {
     if (!Object.hasOwn(fields, key)) invalid(prefix + '.' + key, 'no such field; allowed: ' + Object.keys(fields).join(', '));
   }
   for (const [key, rule] of Object.entries(fields)) {
     if (Object.hasOwn(data, key)) rule(data[key], prefix + '.' + key);
-    else if (!optional.includes(key)) invalid(prefix + '.' + key, 'a required field');
+    else if (!optional.includes(key)) invalid(prefix + '.' + key, 'required ' + shapeOf(rule));
   }
 }
+const nested = (fields: Record<string, Rule>, optional: string[] = []): Rule => shaped(describe(fields, optional), (value, field) => object(value, fields, optional, field));
 
-const dest: Rule = (value, field) => object(value, { branch: text, path: text }, [], field);
+const dest = nested({ branch: text, path: text });
+const artifacts = nested({ spec: hash, plan: hash, design: hash }, ['design']);
 const shapes: Record<string, Record<string, Rule>> = {
   bind: { spec: text, plan: text, design: text },
   approval: { spec: hash, plan: hash, design: hash },
@@ -66,24 +60,21 @@ const shapes: Record<string, Record<string, Rule>> = {
     class: choice('non-intent', 'intent', 'dependency', 'discard'), affects: array, rationale: text, diffRef: text,
   },
   evidence: {
-    criterion: text, commandDigest: hash, tree: git,
-    clean: (value, field) => { if (typeof value !== 'boolean') invalid(field); },
-    before: git, after: git, exit: integer, path: text, artifacts: (value,field)=>object(value,{spec:hash,plan:hash,design:hash},['design'],field),
+    criterion: text, commandDigest: hash, tree: git, clean: bool,
+    before: git, after: git, exit: integer, path: text, artifacts,
   },
 };
 const writers: Record<string, Record<string, Rule>> = {
-  launched: {
-    task: text, path: text,
-    base: (value, field) => object(value, { commit: git, taskSection: hash, seq }, [], field),
-  },
+  launched: { task: text, path: text, base: nested({ commit: git, taskSection: hash, seq }) },
   finished: { task: text, launch, candidate: git },
   abandoned: { task: text, launch, reason: text },
 };
-const checkRows: Rule = (value, field) => {
-  if(!Array.isArray(value)) invalid(field);
-  for(const row of value as unknown[]) object(row,{criterion:text,commands:array,commandDigest:hash},[],field);
-};
-const pruning = { operation: hash, artifacts: (value:unknown,field:string)=>object(value,{spec:hash,plan:hash,design:hash},['design'],field), from:git, sourceTree:git, targets:array, pre:checkRows, final:checkRows, review:hash };
+const checkRow = { criterion: text, commands: array, commandDigest: hash };
+const checkRows: Rule = shaped('an array of ' + describe(checkRow), (value, field) => {
+  if (!Array.isArray(value)) invalid(field, shapeOf(checkRows));
+  for (const row of value as unknown[]) object(row, checkRow, [], field);
+});
+const pruning = { operation: hash, artifacts, from:git, sourceTree:git, targets:array, pre:checkRows, final:checkRows, review:hash };
 const integrations: Record<string, Record<string, Rule>> = {
   opened: { path: text, branch: text, base: git, dest },
   'prune-started': pruning,
@@ -101,7 +92,7 @@ const integrations: Record<string, Record<string, Rule>> = {
 export function validateRecord(input: unknown, stored = false): RecordInput | LedgerRecord {
   const envelope: Record<string, Rule> = {
     kind: choice(...KINDS), by: choice('user', 'orchestrator', 'tool'),
-    quote: (value, field) => { if (typeof value !== 'string') invalid(field); }, key: text, data: () => {},
+    quote: string, key: text, data: shaped('an object', () => {}),
   };
   if (stored) {
     envelope['seq'] = launch;
@@ -112,7 +103,7 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
   let fields = shapes[value.kind];
   if (value.kind === 'writer' || value.kind === 'integrate') {
     const phases = value.kind === 'writer' ? writers : integrations;
-    if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase');
+    if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
     if(value.kind==='integrate'&&['deliver-started','delivered'].includes(value.data['phase'])&&value.data['mode']==='squash')fields={phase:choice('deliver-started','delivered'),mode:choice('squash'),dest,from:git,to:git,source:git};
   }

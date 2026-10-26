@@ -320,10 +320,10 @@ export function heuristics(run: RunFacts): Finding[] {
   const T = DIAGNOSTIC_THRESHOLDS;
   const out: Finding[] = [];
   const add = (source: string, category: Category, component: string, evidence: string, impact: string, proposedFix: string) => out.push({ source, category, component, evidence, impact, proposedFix });
-  const cli = run.invocations.filter((i) => i.surface === 'cli');
-  // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
   // Quota-store skips never launch, so they cost no driver time and are not attempts.
-  const failed = cli.filter((i) => i.launched && (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok')));
+  const cli = run.invocations.filter((i) => i.surface === 'cli' && i.launched);
+  // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
+  const failed = cli.filter((i) => (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok')));
   const failureClass = (i:InvocationFacts) => i.outcome !== 'ok' ? i.outcome : i.validationOutcome!;
   const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
   const bySlot = count((i) => `${i.subject??i.phase}|${i.slot ?? ''}`);

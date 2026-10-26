@@ -53,3 +53,17 @@ test('squash records require complete identities and preserve legacy shapes',()=
  const legacy=phase==='delivered'?{phase,dest,to:commit}:{phase,dest,from:commit,to:commit};assert.doesNotThrow(()=>validateRecord({kind:'integrate',by:'tool',data:legacy}));
  }
 });
+
+test('invalid-record rejections name the field and its expected shape', () => {
+  const hash='sha256:'+'a'.repeat(64);
+  const cases: [unknown,RegExp][]=[
+    [{kind:'approval',by:'user',quote:'q',data:{plan:hash}},/^data\.spec is invalid; expected required sha256:<64 lowercase hex>$/],
+    [{kind:'level',by:'user',quote:'q',key:'k',data:{level:'huge'}},/^data\.level is invalid; expected one of low, medium, high, xhigh, max$/],
+    [{kind:'writer',by:'tool',data:{phase:'bad'}},/^data\.phase is invalid; expected one of launched, finished, abandoned$/],
+    [{kind:'writer',by:'tool',data:{phase:'launched',task:'t',path:'p'}},/^data\.base is invalid; expected required an object with commit, taskSection, seq$/],
+    [{kind:'evidence',by:'tool',data:{clean:'yes'}},/^data\.criterion is invalid; expected required a non-blank string$/],
+    [{kind:'note',by:'tool',quote:7,data:{text:'t'}},/^record\.quote is invalid; expected a string$/],
+    [{kind:'integrate',by:'tool',data:{phase:'prune-started',operation:hash,artifacts:{spec:hash,plan:hash},from:'a'.repeat(40),sourceTree:'a'.repeat(40),targets:[],pre:{},final:[],review:hash}},/^data\.pre is invalid; expected an array of an object with criterion, commands, commandDigest$/],
+  ];
+  for(const [record,message] of cases)assert.throws(()=>validateRecord(record),(error: Error)=>message.test(error.message),String(message));
+});
