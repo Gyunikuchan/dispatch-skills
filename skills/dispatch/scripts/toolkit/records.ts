@@ -7,46 +7,47 @@ export type LedgerRecord = { seq: number; key: string; at: string; kind: string;
 export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: string };
 type Rule = (value: unknown, field: string) => void;
 
-function invalid(field: string): never {
-  throw new ToolError(1, 'invalid-record', field + ' is invalid');
+// Naming the expected shape lets the caller correct the record in one turn.
+function invalid(field: string, expected?: string): never {
+  throw new ToolError(1, 'invalid-record', field + ' is invalid' + (expected ? '; expected ' + expected : ''));
 }
 const text: Rule = (value, field) => {
-  if (typeof value !== 'string' || !value.trim()) invalid(field);
+  if (typeof value !== 'string' || !value.trim()) invalid(field, 'a non-blank string');
 };
 const hash: Rule = (value, field) => {
-  if (typeof value !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value)) invalid(field);
+  if (typeof value !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value)) invalid(field, 'sha256:<64 lowercase hex>');
 };
 const git: Rule = (value, field) => {
-  if (typeof value !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) invalid(field);
+  if (typeof value !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) invalid(field, 'a full 40- or 64-hex Git object id');
 };
 const integer: Rule = (value, field) => {
-  if (!Number.isSafeInteger(value)) invalid(field);
+  if (!Number.isSafeInteger(value)) invalid(field, 'an integer');
 };
 const seq: Rule = (value, field) => {
   integer(value, field);
-  if ((value as number) < 0) invalid(field);
+  if ((value as number) < 0) invalid(field, 'a non-negative integer');
 };
 const launch: Rule = (value, field) => {
   seq(value, field);
-  if (value === 0) invalid(field);
+  if (value === 0) invalid(field, 'a positive ledger seq');
 };
 const choice = (...values: string[]): Rule => (value, field) => {
-  if (!values.includes(value as string)) invalid(field);
+  if (!values.includes(value as string)) invalid(field, 'one of ' + values.join(', '));
 };
 const array: Rule = (value, field) => {
-  if (!Array.isArray(value)) invalid(field);
+  if (!Array.isArray(value)) invalid(field, 'an array of strings');
   (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
 };
 
 function object(value: unknown, fields: Record<string, Rule>, optional: string[] = [], prefix = 'data'): void {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(prefix);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(prefix, 'an object with ' + Object.keys(fields).join(', '));
   const data = value as Record<string, unknown>;
   for (const key of Object.keys(data)) {
-    if (!Object.hasOwn(fields, key)) invalid(prefix + '.' + key);
+    if (!Object.hasOwn(fields, key)) invalid(prefix + '.' + key, 'no such field; allowed: ' + Object.keys(fields).join(', '));
   }
   for (const [key, rule] of Object.entries(fields)) {
     if (Object.hasOwn(data, key)) rule(data[key], prefix + '.' + key);
-    else if (!optional.includes(key)) invalid(prefix + '.' + key);
+    else if (!optional.includes(key)) invalid(prefix + '.' + key, 'a required field');
   }
 }
 

@@ -231,8 +231,9 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
   collection.storageFailed=Math.min(1_000_000,[...storageFailures.values()].reduce((sum,n)=>sum+n,0));
   collection.partial=Math.min(1_000_000,collection.corrupt+collection.unreadable+collection.incomplete+collection.storageFailed);
   const level=latest(fold,'level')?.data['level'],host=measured.find(row=>row.host)?.host;
+  // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
-    ...(typeof level==='string'?{level}:{}),verb:'session',outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),
+    ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
     retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),

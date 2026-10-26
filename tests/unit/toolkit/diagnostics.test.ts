@@ -126,7 +126,7 @@ test('diagnostics detect toolkit rejection and writer relaunch evidence', async 
   const fold={records:records.slice(0,2),lastSeq:2,torn:null} as Fold;
   assert.equal(sessionFacts(f.session,fold,'complete').relaunches,0);
   fold.records=records;fold.lastSeq=3;const facts=sessionFacts(f.session,fold,'complete');assert.equal(facts.relaunches,1);assert.deepEqual(facts.rejectedTools,[{tool:'record',action:'append',cls:'invalid-record'}]);
-  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.match(report,/1 writer relaunch/);assert.doesNotMatch(report,/defective writer|private/);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.doesNotMatch(report,/writer relaunch/);assert.equal(facts.verb,'implement');assert.equal(sessionFacts(f.session,{...fold,records:[]},'complete').verb,undefined);assert.doesNotMatch(report,/defective writer|private/);
  }finally{f.cleanup();}
 });
 

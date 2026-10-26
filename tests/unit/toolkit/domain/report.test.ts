@@ -474,15 +474,29 @@ test('heuristic precision H3 needs three findings', () => {
   assert.match(assertShape(findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
 });
 
-test('heuristic precision H5 needs three metered invocations and a share above two over n', () => {
+test('heuristic precision H5 needs three uncached samples and a share above two over n', () => {
   const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation()] })), 'H5'), [], 'with two invocations one always holds at least half');
-  // 13,360 of 20,040 tokens is exactly 2/3, the bound for three invocations.
-  const even = invocation({ usage: { input: 4000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
+  // 5,360 of 8,040 uncached tokens is exactly 2/3, the bound for three invocations.
+  const even = invocation({ usage: { input: 5000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
+  const cached = invocation({ usage: { input: 1000, cacheRead: 900_000, output: 40 } });
+  assert.deepEqual(only(heuristics(facts({ invocations: [cached, invocation(), invocation()] })), 'H5'), [], 'cache reads do not make a launch dominate');
+  const zero = invocation({ outcome: 'quota', usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
+  assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation(), zero] })), 'H5'), [], 'zero-usage failures are not samples');
   const findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
   assert.equal(findings.length, 1);
-  assert.match(assertShape(findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 18,100 of 24,780 measured tokens \(73%\)/);
+  assert.match(assertShape(findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/);
+});
+
+test('heuristic precision H1 ignores quota-store skips that never launched', () => {
+  const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
+  assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
+});
+
+test('heuristic precision H9 needs two relaunches', () => {
+  assert.deepEqual(only(heuristics(facts({ relaunches: 1 })), 'H9'), [], 'one relaunch without a cause is not a pattern');
+  assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
 });
 
 

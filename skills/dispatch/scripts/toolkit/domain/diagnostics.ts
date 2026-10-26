@@ -178,6 +178,7 @@ export function normalizeUsage(raw: unknown, inputSemantics: 'includes-cache' | 
 }
 
 const total = (u: ModelUsage) => u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + u.output;
+const uncached = (u: ModelUsage) => u.input + (u.cacheWrite ?? 0) + u.output;
 const measured = (i: InvocationFacts): Usage | undefined => i.estimated || i.surface !== 'cli' || !i.launched ? undefined : i.usage;
 const estimate = (i: InvocationFacts): number | undefined => !i.estimated ? undefined : i.tokens ?? (i.usage ? total(i.usage) : undefined);
 const sum = (values: readonly (number | undefined)[]): number | undefined => values.some((v) => v !== undefined) ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : undefined;
@@ -289,7 +290,7 @@ const bySeverity = <T extends { category: Category }>(items: readonly T[]): T[] 
 const pct = (share: number) => `${Math.round(share * 100)}%`;
 const num = (n: number | undefined) => n === undefined ? DASH : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const tally = (values: readonly string[]) => [...new Set(values)].map((v) => `${v} ×${values.filter((x) => x === v).length}`).join(', ');
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : /(?:s|sh|ch|x)$/.test(word) ? 'es' : 's'}`;
 const phaseName = (run: RunFacts, key: string | undefined) => {
   const name=run.phases.find(p=>p.key===key)?.name??DASH;
   return key&&/^review-[a-f0-9]{16}$/.test(key)?`${name} · subject ${key.slice(7)}`:name;
@@ -321,7 +322,8 @@ export function heuristics(run: RunFacts): Finding[] {
   const add = (source: string, category: Category, component: string, evidence: string, impact: string, proposedFix: string) => out.push({ source, category, component, evidence, impact, proposedFix });
   const cli = run.invocations.filter((i) => i.surface === 'cli');
   // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
-  const failed = cli.filter((i) => i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok'));
+  // Quota-store skips never launch, so they cost no driver time and are not attempts.
+  const failed = cli.filter((i) => i.launched && (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok')));
   const failureClass = (i:InvocationFacts) => i.outcome !== 'ok' ? i.outcome : i.validationOutcome!;
   const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
   const bySlot = count((i) => `${i.subject??i.phase}|${i.slot ?? ''}`);
@@ -354,7 +356,7 @@ export function heuristics(run: RunFacts): Finding[] {
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;
     if (all < T.minSamples || r.rejected / all <= T.rejectedShare) continue;
-    add('H3', 'review-convergence', 'references/templates/review-prompt.md', `${phaseName(run, r.phase)} round ${r.round}: ${r.rejected} of ${plural(all, 'finding')} rejected (${pct(r.rejected / all)}).`, 'Rejected findings cost reviewer tokens and host ruling time without changing the artifact.', 'Put the governing decisions and out-of-scope items in the review prompt so reviewers do not raise settled points.');
+    add('H3', 'review-convergence', 'references/templates/review-prompt.md', `${phaseName(run, r.phase)} round ${r.round}: ${r.rejected} of ${plural(all, 'finding')} rejected (${pct(r.rejected / all)}).`, 'Rejected findings cost reviewer tokens and host ruling time without changing the artifact.', 'Read the rejection rulings; where reviewers misread scope or criteria, state that boundary in the artifact the prompt cites.');
   }
   const metered = run.invocations.filter((i) => measured(i));
   for (const [provider, items] of groups(metered, (i) => i.provider)) {
@@ -363,15 +365,17 @@ export function heuristics(run: RunFacts): Finding[] {
     if (!reporting.length || !input || cacheRead / input >= T.cacheReadShare) continue;
     add('H4', 'token-economy', 'scripts/toolkit/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
   }
-  if (metered.length >= T.minSamples) {
-    const sizes = metered.map((i) => [i, total(i.usage!)] as const);
+  // Cache reads are cheap and dominate long sessions, so rank launches by uncached tokens; zero-usage failures are not samples.
+  const sizes = metered.map((i) => [i, uncached(i.usage!)] as const).filter(([, n]) => n > 0);
+  if (sizes.length >= T.minSamples) {
     const all = sum(sizes.map(([, n]) => n)) ?? 0;
     const [top, n] = sizes.reduce((a, b) => b[1] > a[1] ? b : a);
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
-    if (all && n / all > Math.max(T.invocationShare, 2 / metered.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
+    if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured uncached tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
   if (run.rejectedTools?.length) add('H8','correctness','scripts/toolkit/records.ts',`${plural(run.rejectedTools.length,'toolkit operation')} rejected (${tally(run.rejectedTools.map(e=>e.tool+' '+e.action+': '+e.cls))}).`,'Rejected operations can require another host turn.','Return the allowed input shape and current preconditions with the rejection.');
-  if (run.relaunches) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');
+  // One relaunch without a recorded cause is not a pattern.
+  if ((run.relaunches ?? 0) >= 2) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches!,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');
   return bySeverity(out);
 }
 
