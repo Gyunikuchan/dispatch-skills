@@ -40,7 +40,7 @@
   "scripts/lib/diagnostic-usage.ts": "2bfe766465415394104af8b155cdd65a8bc04b59abdd695d57706d767c2915b5",
   "scripts/lib/fs-ext.ts": "1902efdaa87b3dfaee232aa9ec33cfed3b84e976e05f85863c29c69da316286b",
   "scripts/lib/integrity.ts": "ebedfa57cffafeb9f4b1ff3982e7954e027daca138f8b2fb8857e7dcf2cc2d26",
-  "scripts/lib/node-fs-ext.ts": "849e72b2687ed4e2875978d2c35310f3a3a4734135bc82b38aea9414cfaa94da",
+  "scripts/lib/node-fs-ext.ts": "a3c7f03f43995369f7fade124624977bcaa1c85a09a3b64f584842f81b9a78da",
   "scripts/lib/platform.ts": "dd33a055dbaff808d3ae4193c36f496359dfa148c495412d2c1b6e5fb33ae4c1",
   "scripts/lib/quota-store.ts": "4d077ddc51a690312934a2c118f47261fa2aa1362ca08f74b2b7680ab0f9ce46",
   "scripts/lib/session.ts": "fcd155ebae28807d5a4c7e9f7877a6ad69999a4be4a638cc79702922e99dc133",

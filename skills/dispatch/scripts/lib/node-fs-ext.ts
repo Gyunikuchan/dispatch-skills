@@ -14,6 +14,18 @@ function writeSynced(file: string, text: string): void {
 
 const tempBeside = (file: string): string => path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
 
+// NOTE: Windows refuses a rename onto a file another process briefly holds open (EPERM/EACCES/EBUSY); retry with bounded backoff.
+const TRANSIENT_RENAME = new Set(['EPERM', 'EACCES', 'EBUSY']);
+function renameRetrying(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try { fs.renameSync(from, to); return; } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== 'win32' || !code || !TRANSIENT_RENAME.has(code) || attempt >= 8) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * 2 ** attempt);
+    }
+  }
+}
+
 export const nodeLinkFs: LinkFs = {
   writeTemp(near, text) {
     const temp = tempBeside(near);
@@ -25,7 +37,7 @@ export const nodeLinkFs: LinkFs = {
     const temp = tempBeside(file);
     writeSynced(temp, text);
     try {
-      fs.renameSync(temp, file);
+      renameRetrying(temp, file);
     } catch (error) {
       fs.rmSync(temp, { force: true });
       throw error;
