@@ -37,9 +37,11 @@
     "prepare": "husky",
     "hashes": "node scripts/generate-hashes.ts",
     "typecheck": "tsc -p .",
-    "test": "npm run typecheck && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node --test --test-concurrency=8 --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts \"tests/**/*.test.ts\"",
+    "test": "npm run typecheck && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-concurrency=8 \"tests/{unit,integration,tooling}/**/*.test.ts\"",
     "validate:configs": "node scripts/validate-configs.ts",
-    "commitlint": "commitlint --from=HEAD~1"
+    "commitlint": "commitlint --from=HEAD~1",
+    "test:e2e": "node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-concurrency=4 \"tests/e2e/**/*.test.ts\"",
+    "test:all": "npm test && npm run test:e2e"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",

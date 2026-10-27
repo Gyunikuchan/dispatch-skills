@@ -19,5 +19,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # npm test runs typecheck first, then hash/term checks and the suite.
-      - run: npm test
+      # test:all runs npm test (typecheck, checks, fast suite) then the Git e2e suite.
+      - run: npm run test:all

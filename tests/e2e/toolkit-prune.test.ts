@@ -24,7 +24,8 @@ test('transient pruning preserves caller safety',async()=>{const r=await prepare
  const status=await r.run(['report','complete']);assert.equal(status.output.ok,true,JSON.stringify(status));assert.match(status.value.statuses[0].reason,/historical pre-prune/);
 }finally{r.cleanup();}});
 test('transient pruning recovers after durable boundaries',async()=>{
- for(const boundary of ['prune:before-journal','prune:after-journal','prune:after-delete','prune:after-commit']) {
+ // Boundaries use independent repositories, so recover them concurrently.
+ await Promise.all(['prune:before-journal','prune:after-journal','prune:after-delete','prune:after-commit'].map(async boundary=>{
   const r=await prepared();try{review(r);
    assert.equal((await r.run(['worktree','prune'],p=>{if(p===boundary)throw Error('crash');})).exit,2);
    const unrelated=path.join(r.integration,'new.txt');fs.writeFileSync(unrelated,'unrelated');const refused=await r.run(['worktree','prune']);assert.equal(refused.output.ok,false);assert.equal(fs.readFileSync(unrelated,'utf8'),'unrelated');fs.unlinkSync(unrelated);
@@ -34,7 +35,7 @@ test('transient pruning recovers after durable boundaries',async()=>{
    if(boundary==='prune:before-journal'){assert.equal((await r.run(['verify','run','--final'],p=>{if(p==='verify:after-evidence')throw Error('crash');})).exit,2);assert.equal((await r.run(['worktree','deliver'])).output.reason,'final-checks-required');}
    assert.equal((await r.run(['verify','run','--final'])).output.ok,true);
   }finally{r.cleanup();}
- }
+ }));
 });
 
 test('pruning preconditions preserve the integrated tree',async()=>{const r=await prepared();try{

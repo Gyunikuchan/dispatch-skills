@@ -41,7 +41,7 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 - **Discover:** Read relevant `SKILL.md` files or scripts and inspect the current state before editing.
 - **Bound:** Set the intended outcome, in-scope paths, and checkable completion criteria from the request or approved plan. Keep planning and review proportional to task risk.
 - **Execute:** Apply minimal, focused edits within scope, preserving existing comments and invariants.
-- **Verify:** Run plan Verify commands and `npm test` before completing an edit task. Record evidence for each criterion after the last change; failed or unrun required checks remain open.
+- **Verify:** Run plan Verify commands and `npm test` before completing an edit task; also run `npm run test:e2e` when the change touches toolkit, Git, or subprocess behavior (CI runs `npm run test:all`). Record evidence for each criterion after the last change; failed or unrun required checks remain open.
 - **Handoff:** Use the task-appropriate format below.
 
 ### Implementing plans in this repository

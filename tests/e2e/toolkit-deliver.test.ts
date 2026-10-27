@@ -19,7 +19,7 @@ function assertMatchesSource(r:Repo,from:string,source:string){const names=r.git
  for(const name of names){const want=cat(r,source+':'+name),file=path.join(r.root,name);if(want===null)assert.equal(fs.existsSync(file),false,name);else if(want==='tree')assert.ok(fs.statSync(file).isDirectory(),name);else{assert.ok(fs.statSync(file).isFile(),name);assert.deepEqual(fs.readFileSync(file),want,name);}}}
 // Cases use independent repositories, so run them concurrently and name the failing case.
 const each=(modes:string[],fn:(mode:string)=>Promise<void>)=>Promise.all(modes.map(mode=>fn(mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});})));
-describe('toolkit delivery and cleanup',{concurrency:true},()=>{
+describe('toolkit delivery and cleanup',()=>{
  it('pending MUST rejection blocks caller writes and delivered records until native agreement',async()=>{const {r}=await prepared();try {
   const skill=path.join(r.session,'confirmation-skill');fs.mkdirSync(skill);fs.cpSync(path.join(r.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
   fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}}));
@@ -59,16 +59,17 @@ describe('toolkit delivery and cleanup',{concurrency:true},()=>{
  assert.equal(rows(r,'delivered')[0]!.data['noop'],true);assert.equal((await r.run(['worktree','deliver'])).value.delivered,false);assert.equal(rows(r,'delivered').length,1);
  assert.equal((await r.run(['worktree','cleanup'])).exit,0);assert.equal(r.git(['rev-parse',ref]),source);assert.equal(r.git(['branch','--list','dispatch/test/integration']),'');}finally{r.cleanup();}});
  it('uncommitted safety refuses overlapping caller state and keeps the caller unchanged',async()=>{
- await each(['tracked-edit','untracked','ignored','ancestor','descendant','staged','intent-to-add','moved','other-branch','late-edit','late-index','late-untracked','sparse','gitlink'],async mode=>{const {r}=await prepared();try{
- const from=r.git(['rev-parse','HEAD']);const w=r.integration;
- if(mode==='gitlink'){fs.mkdirSync(path.join(w,'sub'));r.git(['update-index','--add','--cacheinfo','160000,'+from+',sub'],w);r.git(['commit','-m','gitlink'],w);}
- else{
+ // Refusals before deliver-started leave no ledger state, so caller-only modes share one repo and undo between cases; integration-shape and late modes need their own.
+ const integrate=async(r:Repo,mode:string)=>{const from=r.git(['rev-parse','HEAD']),w=r.integration;
+  if(mode==='gitlink'){fs.mkdirSync(path.join(w,'sub'));r.git(['update-index','--add','--cacheinfo','160000,'+from+',sub'],w);r.git(['commit','-m','gitlink'],w);return;}
   if(mode==='descendant'){fs.mkdirSync(path.join(w,'new-file'));fs.writeFileSync(path.join(w,'new-file/child'),'new');}else fs.writeFileSync(path.join(w,'new-file'),'new');
-  fs.writeFileSync(path.join(w,'src/file.ts'),'final\n');assert.equal((await r.run(['worktree','commit','--reason','add'])).exit,0);}
- const file=path.join(r.root,'src/file.ts'),keep=path.join(r.root,'keep.txt');
+  fs.writeFileSync(path.join(w,'src/file.ts'),'final\n');assert.equal((await r.run(['worktree','commit','--reason','add'])).exit,0);};
+ const refuses=async(r:Repo,mode:string)=>{const from=r.git(['rev-parse','HEAD']);
+ const file=path.join(r.root,'src/file.ts'),keep=path.join(r.root,'keep.txt'),exclude=path.join(r.root,'.git/info/exclude');
+ const initial=caller(r),srcBytes=fs.readFileSync(file),keepBytes=fs.readFileSync(keep),excludeBytes=fs.readFileSync(exclude);
  if(mode==='tracked-edit')fs.writeFileSync(file,'caller');
  if(mode==='untracked')fs.writeFileSync(path.join(r.root,'new-file'),'caller');
- if(mode==='ignored'){fs.appendFileSync(path.join(r.root,'.git/info/exclude'),'\nnew-file\n');fs.writeFileSync(path.join(r.root,'new-file'),'caller');}
+ if(mode==='ignored'){fs.appendFileSync(exclude,'\nnew-file\n');fs.writeFileSync(path.join(r.root,'new-file'),'caller');}
  if(mode==='ancestor'){fs.mkdirSync(path.join(r.root,'new-file'));fs.writeFileSync(path.join(r.root,'new-file/child'),'caller');}
  if(mode==='descendant')fs.writeFileSync(path.join(r.root,'new-file'),'caller');
  if(mode==='staged'){fs.writeFileSync(keep,'staged');r.git(['add','keep.txt']);}
@@ -76,13 +77,26 @@ describe('toolkit delivery and cleanup',{concurrency:true},()=>{
  if(mode==='moved')r.git(['commit','--allow-empty','-m','moved']);
  if(mode==='other-branch')r.git(['switch','-c','other']);
  if(mode==='sparse')r.git(['config','core.sparseCheckout','true']);
- const before=caller(r),srcBytes=fs.readFileSync(file);
+ const before=caller(r);
  const result=await r.run(['worktree','deliver'],p=>{if(p!=='deliver:before-apply')return;if(mode==='late-edit')fs.writeFileSync(file,'late');if(mode==='late-index'){fs.writeFileSync(keep,'late');r.git(['add','keep.txt']);}if(mode==='late-untracked')fs.writeFileSync(path.join(r.root,'new-file'),'late');});
  assert.equal(result.exit,4,mode+JSON.stringify(result));assert.equal(result.output.reason,mode==='moved'||mode==='other-branch'?'caller-moved':mode==='sparse'?'unsupported-sparse':mode==='gitlink'?'unsupported-entry':'caller-dirty',mode);
  const after=caller(r);assert.equal(after.head,before.head);assert.equal(after.branch,before.branch);if(!mode.startsWith('late-'))assert.deepEqual(after,before);
- if(mode==='tracked-edit')assert.deepEqual(fs.readFileSync(file),Buffer.from('caller'));if(mode==='late-edit')assert.equal(fs.readFileSync(file,'utf8'),'late');void srcBytes;
+ if(mode==='tracked-edit')assert.deepEqual(fs.readFileSync(file),Buffer.from('caller'));if(mode==='late-edit')assert.equal(fs.readFileSync(file,'utf8'),'late');
  assert.equal(rows(r,'delivered').length,0,mode);
- }finally{r.cleanup();}});
+ if(mode.startsWith('late-')||mode==='descendant'||mode==='gitlink')return;
+ // Undo the caller state so the next shared case starts from the same caller.
+ if(mode==='staged')r.git(['reset','-q','--','keep.txt']);
+ if(mode==='intent-to-add')r.git(['rm','-q','--cached','extra.txt']);
+ if(mode==='moved')r.git(['reset','-q','--soft',from]);
+ if(mode==='other-branch'){r.git(['switch','-q',initial.branch]);r.git(['branch','-q','-D','other']);}
+ if(mode==='sparse')r.git(['config','--unset','core.sparseCheckout']);
+ for(const extra of ['new-file','extra.txt'])fs.rmSync(path.join(r.root,extra),{recursive:true,force:true});
+ fs.writeFileSync(file,srcBytes);fs.writeFileSync(keep,keepBytes);fs.writeFileSync(exclude,excludeBytes);
+ assert.deepEqual(caller(r),initial,mode+' undo');};
+ const shared=async()=>{const {r}=await prepared();try{await integrate(r,'shared');
+  for(const mode of ['tracked-edit','untracked','ignored','ancestor','staged','intent-to-add','moved','other-branch','sparse'])await refuses(r,mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});});
+ }finally{r.cleanup();}};
+ await Promise.all([shared(),each(['descendant','gitlink','late-edit','late-index','late-untracked'],async mode=>{const {r}=await prepared();try{await integrate(r,mode);await refuses(r,mode);}finally{r.cleanup();}})]);
  });
  it('uncommitted safety preserves unrelated dirty and untracked files byte for byte',async()=>{const {r}=await prepared();try{
  await change(r);const dirty=Buffer.from([1,2,0,255,13,10]);fs.writeFileSync(path.join(r.root,'keep.txt'),dirty);fs.writeFileSync(path.join(r.root,'extra-untracked'),'u');

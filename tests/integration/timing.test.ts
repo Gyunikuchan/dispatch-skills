@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isTestSource, scanOverlay, type FileTable } from './scan.ts';
+import path from 'node:path';
+import { isTestSource, OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
 
 /** Justified exceptions as `<overlay path>: <reason>`; raising it is an explicit, reviewed edit. */
 export const ALLOW_TIMING: readonly string[] = [
@@ -26,7 +27,7 @@ export function checkTiming(files: FileTable, allow: readonly string[] = ALLOW_T
 }
 
 test('non-e2e tests contain no sleeps or timing', () => {
-  assert.deepEqual(checkTiming(scanOverlay()), []);
+  assert.deepEqual(checkTiming(scanOverlay(path.join(OVERLAY_ROOT, 'tests')).map((file) => ({ ...file, path: 'tests/' + file.path }))), []);
 });
 
 test('a timing call fails with the rule and the fix unless allowed or e2e', () => {

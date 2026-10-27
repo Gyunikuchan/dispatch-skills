@@ -14,7 +14,7 @@ export function checkTestLayout(files: FileTable): string[] {
 }
 
 test('every test file sits under a known tier', () => {
-  assert.deepEqual(checkTestLayout(scanOverlay()), []);
+  assert.deepEqual(checkTestLayout(scanOverlay(undefined, false)), []);
 });
 
 test('a misplaced test fails with the rule and the fix', () => {
