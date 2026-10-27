@@ -101,3 +101,48 @@ test('walkthrough preserves verification, deviations and user decisions', async 
   assert.ok(withoutIntegration.includes('## Changes Made\n\nNone.'));
   assert.ok(withoutIntegration.includes('*No reviews conducted yet.*'));
 });
+
+test('walkthrough human layout: At a Glance, callouts and collapsed per-file changes', async () => {
+  const { renderWalkthrough } = await import('../../../skills/dispatch/scripts/toolkit/walkthrough.ts');
+  const view = {
+    title: 'Human report', specPath: 'spec.md', specHash: 'sha256:abc', planPath: 'plan.md', delivered: null,
+    statuses: [{ criterion: 'one', state: 'verified' as const, evidence: 'proof.json' }],
+    changes: [
+      { action: 'NEW' as const, path: 'new.ts', owners: [] },
+      { action: 'MODIFY' as const, path: 'change.ts', owners: [] },
+      { action: 'DELETE' as const, path: 'old.ts', owners: [] },
+    ],
+    edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [], reviewRows: [], findingsPaths: [],
+  };
+  const clean = renderWalkthrough(view);
+  assert.equal(clean.match(/^## .+$/m)?.[0], '## At a Glance');
+  assert.ok(clean.includes('- **Delivered:** not delivered\n- **Criteria:** 1/1 satisfied (verified 1 · manual 0 · waived 0 · missing 0)\n- **Changes:** 3 files (1 new · 1 modified · 1 deleted)\n- **Deviations:** 0 recorded edits · 0 unplanned paths\n- **Follow-ups:** 0 open escalations · 0 deferred rulings\n- **Review:** 0 findings (0 open)'));
+  assert.ok(clean.includes('<details>\n<summary>3 files (1 new · 1 modified · 1 deleted)</summary>\n\n#### [NEW] `new.ts`'));
+  assert.ok(clean.includes('#### [DELETE] `old.ts`'));
+  assert.ok(clean.includes('\n</details>\n\n## Verification'));
+  assert.ok(!clean.includes('[!NOTE]') && !clean.includes('[!IMPORTANT]'));
+  const cases = [
+    { patch: { statuses: [{ criterion: 'missing', state: 'missing' as const }] }, text: '1 missing criteria' },
+    { patch: { statuses: [{ criterion: 'manual', state: 'manual' as const, seq: 1, quote: 'yes' }] }, text: '1 manual criteria' },
+    { patch: { statuses: [{ criterion: 'waived', state: 'waived' as const, seq: 1, quote: 'yes' }] }, text: '1 waived criteria' },
+    { patch: { unplannedPaths: ['extra.ts'] }, text: '1 unplanned paths' },
+    { patch: { edits: [{ seq: 1, artifact: 'plan', class: 'clarification', rationale: 'clarified', diffRef: 'edit.patch', affects: [] }] }, text: '1 recorded deviations' },
+    { patch: { deferredRulings: [{ review: 'review', finding: 'finding' }] }, text: '1 deferred rulings' },
+  ];
+  for (const { patch, text } of cases) {
+    const rendered = renderWalkthrough({ ...view, ...patch });
+    assert.equal((rendered.match(/> \[!NOTE\]/g) ?? []).length, 1);
+    assert.ok(rendered.includes(text));
+    assert.ok(!rendered.includes('[!IMPORTANT]'));
+  }
+  const attention = renderWalkthrough({ ...view,
+    openEscalations: [{ id: 'E1', summary: 'Choose' }],
+    reviewRows: [{ review: 'review', id: 'finding', round: 1, severity: 'must', ruling: null, rationale: 'Open' }],
+    statuses: [{ criterion: 'missing', state: 'missing' as const }], unplannedPaths: ['extra.ts'],
+  });
+  assert.equal((attention.match(/> \[!IMPORTANT\]/g) ?? []).length, 1);
+  assert.equal((attention.match(/> \[!NOTE\]/g) ?? []).length, 1);
+  assert.ok(attention.includes('1 open escalations need a user decision.'));
+  assert.ok(attention.includes('- **Review:** 1 findings (1 open)'));
+  assert.ok(attention.includes('1 missing criteria; 1 unplanned paths'));
+});

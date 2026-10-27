@@ -14,6 +14,8 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 - **spec** — Apply IEEE 29148 quality: requirements are unambiguous (one interpretation), consistent, verifiable, complete, feasible, and singular (one requirement per statement; identify non-singular requirements). Check completeness across behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Identify misplaced architecture or execution detail while retaining imposed design constraints. An open question that could change scope, behavior, or risk blocks approval; never invent intent, and route a gap through the user gate.
 
+- **usability** — Open canonical artifacts with At a Glance: short plain-language bullets for what changes, why it matters and how it works. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts. Prefer point form over long prose. Use diagrams only when they explain flow, architecture or data better than text; pair each with a one-line text summary. Put agent detail in `<details>` beneath a plain summary; retain every required field.
+
 ## code
 
 - **spec** — Check the implementation against applicable requirements, decisions, and constraints. Treat ambiguous or contradictory governing text, an unverifiable requirement, or a missing constraint as a spec defect; do not invent intent.

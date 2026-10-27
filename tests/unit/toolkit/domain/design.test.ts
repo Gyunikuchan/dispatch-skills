@@ -23,6 +23,9 @@ const DESIGN = `# Importer design
 > **Risk:** med — touches ingestion
 > **Increments:** 2
 
+## At a Glance
+- Stage the importer.
+
 ## Execution Status
 | ID | State | Summary | Next Action |
 | --- | --- | --- | --- |
@@ -248,4 +251,23 @@ test('approach requirements reject unknown requirement', () => {
   const defects = validateApproachRequirements({ approachRequirements: ['REQ-1', 'REQ-9'] } as never, requirements);
   assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unknown-requirement', 'warning']]);
   assert.match(defects[0]!.message, /REQ-9/);
+});
+
+
+test('design human layout: At a Glance is required first and long paragraphs warn', () => {
+  const glance = '## At a Glance\n- Stage the importer.\n\n';
+  const missing = parseDesign(DESIGN.replace(glance, ''));
+  assert.ok(missing.ok);
+  assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
+  const moved = parseDesign(DESIGN.replace(glance, '').replace('## Approach', glance + '## Approach'));
+  assert.ok(moved.ok);
+  assert.ok(moved.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
+  const source = DESIGN.replace('What.', '\n' + Array(61).fill('word').join(' '));
+  const long = parseDesign(source);
+  assert.ok(long.ok);
+  assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
+  assert.deepEqual(long.design.increments, design.increments);
+  assert.ok(long.design.governedText.includes(glance.trim()));
+  assert.ok(!long.design.governedText.includes('## Execution Status'));
+  assert.ok(!long.design.governedText.includes('## Review Findings & Resolutions'));
 });

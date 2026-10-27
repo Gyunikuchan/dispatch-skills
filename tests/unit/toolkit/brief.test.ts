@@ -334,3 +334,15 @@ describe('writer brief', () => {
     } finally { f.cleanup(); }
   });
 });
+
+test('writer brief keeps task and criterion fields from collapsed plan sections', async () => {
+  const source = PLAN.replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts').replace('### T2 — Second', '</details>\n\n### T2 — Second').replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n').replace('- [SC2]', '  </details>\n\n- [SC2]');
+  const f = await fixture(false, source);
+  try {
+    await f.approve(); await f.launch();
+    const rendered = await f.call();
+    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
+    const markdown = fs.readFileSync(rendered.value.path, 'utf8');
+    for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Verify: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(markdown.includes(text), text);
+  } finally { f.cleanup(); }
+});

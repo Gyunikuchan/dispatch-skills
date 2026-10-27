@@ -10,7 +10,7 @@ export const TASK_MAP_HEADING = '## Task Map';
 
 /** Plan section order after the title and summary box; every section is optional to this lint. */
 export const PLAN_SECTION_ORDER = [
-  '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope',
+  '## At a Glance', '## Background', '## Key Interfaces & Data', '## Key Decisions & Context', '## Constraints', '## Open Questions & Assumptions', '## Out of Scope',
   TASK_MAP_HEADING, '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan',
   '## Rollback & Blast Radius', RESOLUTION_HEADING,
 ] as const;
@@ -46,6 +46,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'criterion-task-changes':
     case 'task-map':
       return 'defect';
+    case 'long-paragraph':
     case 'placeholder':
     case 'ambiguous-command':
     case 'automated-tests-unavailable':
@@ -155,6 +156,26 @@ export function structuralLines(source: string): StructuralLine[] {
     }
     return { line, text: /^\s*>/.test(text) ? '' : text, original, fenced: false };
   });
+}
+
+const isDetailWrapper = (text: string): boolean => /^(?:<details>|<\/details>|<summary>.*<\/summary>)$/.test(text.trim());
+
+export const LONG_PARAGRAPH_WORDS = 60;
+
+/** Count prose only; structural boundaries also stop a preceding paragraph. */
+export function lintLongParagraphs(lines: readonly StructuralLine[]): { line: number; words: number }[] {
+  const out: { line: number; words: number }[] = [];
+  let paragraph: { line: number; words: number } | null = null;
+  const finish = () => { if (paragraph && paragraph.words > LONG_PARAGRAPH_WORDS) out.push(paragraph); paragraph = null; };
+  for (const entry of lines) {
+    const text = entry.text;
+    if (!text.trim() || /^(?:#{1,6}\s|\s*(?:[-*+]\s|\d+[.)]\s|\|))/.test(text) || isDetailWrapper(text)) { finish(); continue; }
+    if (!paragraph && /^\s/.test(text)) continue;
+    if (!paragraph) paragraph = { line: entry.line, words: 0 };
+    paragraph.words += text.trim().split(/\s+/).length;
+  }
+  finish();
+  return out;
 }
 
 export type SectionRange = { start: number; end: number };
@@ -288,8 +309,8 @@ export function placeholderVocabulary(templates: readonly string[]): Placeholder
   const code = new Set<string>();
   for (const text of templates) {
     const body = /^(`{4,})markdown\s*\n([\s\S]*?)\n\1\s*$/m.exec(text.replace(/\r\n/g, '\n'))?.[2] ?? '';
-    for (const token of body.match(TOKEN) ?? []) all.add(token);
-    for (const span of body.match(CODE_SPAN) ?? []) for (const token of span.match(TOKEN) ?? []) code.add(token);
+    for (const token of body.match(TOKEN) ?? []) { if (!/^<\/?(?:details|summary)>$/.test(token)) all.add(token); }
+    for (const span of body.match(CODE_SPAN) ?? []) for (const token of span.match(TOKEN) ?? []) { if (!/^<\/?(?:details|summary)>$/.test(token)) code.add(token); }
   }
   return { all, code };
 }
@@ -426,6 +447,8 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
+  if (!sectionRanges(lines, '## At a Glance').length) out.push(lint('missing-section', null, 'Plan has no ## At a Glance section.'));
+  for (const { line, words } of lintLongParagraphs(lines)) out.push(lint('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
   out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
   for (const entry of lines) if (entry.text.trimEnd() === '## User Review Required') out.push(lint('retired-section', entry.line, 'Move user questions to the governing spec Open Questions.'));
   for (const entry of lines) {
@@ -528,6 +551,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   let malformed = false;
   let inHeader = false;
   body.forEach((entry, offset) => {
+    if (isDetailWrapper(entry.text)) return;
     if (/^###\s/.test(entry.text)) {
       const heading = TASK_HEADING.exec(entry.text);
       inHeader = true;
@@ -572,7 +596,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
     const block: string[] = [];
     for (const next of body.slice(offset + 1)) {
       if (/^#{2,4}\s+/.test(next.text)) break;
-      block.push(next.text);
+      if (!isDetailWrapper(next.text)) block.push(next.text);
     }
     const bullet = (name: string) => block.find((text) => text.match(/^[-*+]\s+(\w+):/)?.[1] === name);
     const command = action === 'GENERATED' ? /^[-*+]\s+Command:\s*`([^`]+)`\s*$/.exec(bullet('Command') ?? '')?.[1]?.trim() ?? null : null;
@@ -714,6 +738,7 @@ function joinTaskMap(sections: readonly DraftTask[], rows: readonly AuthoredTask
 
 /** Task sections keep only task-owned constraints and overlap justifications. */
 function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[]): void {
+  if (isDetailWrapper(entry.text)) return;
   const overlap = OVERLAP_FIELD.exec(entry.text);
   if (overlap) {
     const parts = /^(.+?)\s+[—–-]\s+(\S.*)$/.exec(overlap[1] ?? '');
@@ -817,6 +842,7 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
   let current: Criterion | null = null;
   const finish = () => { if (current) { finishCriterion(current, out); if (current.valid) criteria.push(current); } };
   for (const entry of lines.slice(range.start + 1, range.end)) {
+    if (isDetailWrapper(entry.text)) continue;
     if (entry.text.trim().startsWith('|')) { out.push(lint('criterion-format', entry.line, 'Success Criteria requires detailed [SC#] entries.')); continue; }
     const item = /^(?:[-*+]|\d+[.)])\s+(.+)$/.exec(entry.text)?.[1];
     if (item) { finish(); current = startCriterion(item, entry.line, ids, out); continue; }

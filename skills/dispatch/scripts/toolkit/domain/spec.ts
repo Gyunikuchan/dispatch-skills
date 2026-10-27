@@ -1,18 +1,18 @@
 // Spec parse + lint (governing spec, KD-8). Pure: callers supply the source text.
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';
-import { documentTitle, lintSectionOrder, sectionRanges, structuralLines, type StructuralLine } from './plan.ts';
+import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, sectionRanges, structuralLines, type StructuralLine } from './plan.ts';
 import type { Level } from '../types.ts';
 
 export const SPEC_SECTION_ORDER = [
-  '## Intent & Problem', '## Background', '## Requirements', '## Non-goals', '## Constraints', '## Decisions',
+  '## At a Glance', '## Intent & Problem', '## Background', '## Requirements', '## Non-goals', '## Constraints', '## Decisions',
   '## Discussion Record', '## Open Questions',
 ] as const;
 
-const LOW_SECTIONS: readonly string[] = ['## Intent & Problem', '## Requirements', '## Non-goals', '## Constraints'];
+const LOW_SECTIONS: readonly string[] = ['## At a Glance', '## Intent & Problem', '## Requirements', '## Non-goals', '## Constraints'];
 
 export type SpecDefectCode =
-  | 'missing-section' | 'section-order' | 'missing-requirement' | 'malformed-id' | 'colliding-id' | 'id-sequence' | 'missing-acceptance' | 'duplicate-section';
+  | 'missing-section' | 'section-order' | 'missing-requirement' | 'malformed-id' | 'colliding-id' | 'id-sequence' | 'missing-acceptance' | 'duplicate-section' | 'long-paragraph';
 export type SpecDefect = { code: SpecDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
 export type ParsedSpec = { title: string | null; reqIds: readonly string[]; decIds: readonly string[]; sections: readonly string[] };
 export type SpecResult = { ok: true; spec: ParsedSpec; warnings: SpecDefect[] } | { ok: false; defects: SpecDefect[]; warnings: SpecDefect[] };
@@ -70,6 +70,7 @@ export function parseSpec(source: string, options: { level: Level }): SpecResult
     if (!sectionRanges(lines, heading).length) defects.push(defect('missing-section', null, `Spec at level ${options.level} requires ${heading}.`, heading === '## Requirements'));
   }
   for (const item of lintSectionOrder(lines, SPEC_SECTION_ORDER)) defects.push(defect('section-order', item.line, item.message));
+  for (const { line, words } of lintLongParagraphs(lines)) defects.push(defect('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
   const reqs = lintIds(lines, '## Requirements', 'REQ', defects);
   const decs = lintIds(lines, '## Decisions', 'DEC', defects);
   if (sectionRanges(lines, '## Requirements').length && !reqs.length) defects.push(defect('missing-requirement', null, 'Requirements needs at least one ### REQ-<n> — <title> block.', true));

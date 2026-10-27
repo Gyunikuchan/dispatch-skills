@@ -9,7 +9,7 @@ const DECS = '### DEC-1 — Format (user)\n- Choice: hybrid\n';
 
 function spec(parts: Partial<Record<string, string | null>> = {}, order?: readonly string[]): string {
   const bodies: Record<string, string | null> = {
-    'Intent & Problem': 'Why.', Background: 'Facts.', Requirements: REQS, 'Non-goals': '- none', Constraints: '- portable',
+    'At a Glance': '- Specs explain the work.', 'Intent & Problem': 'Why.', Background: 'Facts.', Requirements: REQS, 'Non-goals': '- none', Constraints: '- portable',
     Decisions: DECS, 'Discussion Record': '- agreed', 'Open Questions': '- none', ...parts,
   };
   const headings = order ?? Object.keys(bodies);
@@ -32,7 +32,7 @@ test('spec lint reports missing sections by level', () => {
 });
 
 test('spec lint: section order reports an out-of-order section', () => {
-  const order = ['Intent & Problem', 'Requirements', 'Background', 'Non-goals', 'Constraints', 'Decisions', 'Discussion Record', 'Open Questions'];
+  const order = ['At a Glance', 'Intent & Problem', 'Requirements', 'Background', 'Non-goals', 'Constraints', 'Decisions', 'Discussion Record', 'Open Questions'];
   assert.deepEqual(codes(spec({}, order)), ['section-order']);
 });
 
@@ -90,4 +90,22 @@ test('spec lint reports duplicated Decisions sections and malformed decision IDs
   const found = codes(source);
   assert.ok(found.includes('duplicate-section'), found.join(','));
   assert.ok(found.includes('malformed-id'), found.join(','));
+});
+
+
+test('spec human layout: At a Glance is required first and long paragraphs warn', () => {
+  for (const level of ['low', 'medium', 'high'] as const) {
+    const missing = parseSpec(spec({ 'At a Glance': null }), { level });
+    assert.ok(missing.ok);
+    assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
+    const moved = spec().replace('## At a Glance\n- Specs explain the work.\n', '').replace('## Background', '## At a Glance\n- Specs explain the work.\n\n## Background');
+    const reordered = parseSpec(moved, { level });
+    assert.ok(reordered.ok);
+    assert.ok(reordered.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
+    const source = spec({ Background: Array(61).fill('word').join(' ') });
+    const long = parseSpec(source, { level });
+    assert.ok(long.ok);
+    assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
+    assert.deepEqual(long.spec.reqIds, ['REQ-1', 'REQ-2']);
+  }
 });

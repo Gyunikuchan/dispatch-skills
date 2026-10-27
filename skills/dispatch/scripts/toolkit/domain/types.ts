@@ -51,7 +51,7 @@ export type LintDefectCode =
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
   | 'execution-status'
   // Shared document structure
-  | 'section-order' | 'unknown-requirement' | 'unsatisfied-requirement';
+  | 'long-paragraph' | 'section-order' | 'unknown-requirement' | 'unsatisfied-requirement';
 
 export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
 

@@ -64,6 +64,12 @@ export function renderWalkthrough(view: WalkthroughView): string {
   const manual = statuses.filter((row) => row.state === 'manual').length;
   const waived = statuses.filter((row) => row.state === 'waived').length;
   const satisfied = verified + manual + waived;
+  const missing = statuses.filter((row) => row.state === 'missing').length;
+  const added = view.changes.filter((change) => change.action === 'NEW').length;
+  const modified = view.changes.filter((change) => change.action === 'MODIFY').length;
+  const deleted = view.changes.filter((change) => change.action === 'DELETE').length;
+  const changeSummary = `${view.changes.length} files (${added} new · ${modified} modified · ${deleted} deleted)`;
+  const openReviews = view.reviewRows.filter((row) => row.ruling === null).length;
   const delivered = view.delivered === null
     ? 'not delivered'
     : view.delivered.source === null
@@ -78,15 +84,36 @@ export function renderWalkthrough(view: WalkthroughView): string {
     `> **Status:** ${satisfied}/${statuses.length} SC satisfied (verified ${verified} · manual ${manual} · waived ${waived})`,
     `> **Deviations:** ${view.edits.length ? `${view.edits.length} recorded` : 'none'}`,
     '',
-    '## Changes Made',
+    '## At a Glance',
+    '',
+    `- **Delivered:** ${delivered}`,
+    `- **Criteria:** ${satisfied}/${statuses.length} satisfied (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing})`,
+    `- **Changes:** ${changeSummary}`,
+    `- **Deviations:** ${view.edits.length} recorded edits · ${view.unplannedPaths.length} unplanned paths`,
+    `- **Follow-ups:** ${view.openEscalations.length} open escalations · ${view.deferredRulings.length} deferred rulings`,
+    `- **Review:** ${view.reviewRows.length} findings (${openReviews} open)`,
     '',
   ];
+  if (view.openEscalations.length) out.push('> [!IMPORTANT]', `> ${view.openEscalations.length} open escalations need a user decision.`, '');
+  const notes = [
+    missing && `${missing} missing criteria`,
+    manual && `${manual} manual criteria`,
+    waived && `${waived} waived criteria`,
+    view.unplannedPaths.length && `${view.unplannedPaths.length} unplanned paths`,
+    view.edits.length && `${view.edits.length} recorded deviations`,
+    view.deferredRulings.length && `${view.deferredRulings.length} deferred rulings`,
+  ].filter(Boolean);
+  if (notes.length) out.push('> [!NOTE]', `> ${notes.join('; ')}. See Verification and Deviations & Follow-ups.`, '');
+  out.push('## Changes Made', '');
+  if (view.changes.length) out.push(`Changed ${view.changes.length} files; expand for file paths and task owners.`, '', '<details>', `<summary>${changeSummary}</summary>`, '');
 
   if (!view.changes.length) out.push('None.', '');
   for (const change of view.changes) {
     const owners = change.owners.map((owner) => `${line(owner.id)} — ${line(owner.title)}`);
     out.push(`#### [${change.action}] ${code(change.path)}`, '', `- Changes: ${owners.length ? owners.join(', ') : 'unplanned'}`, '');
   }
+
+  if (view.changes.length) out.push('</details>', '');
 
   out.push('## Verification', '', '### Verified', ...statusTable(statuses, 'verified'), '',
     '### Manual', ...statusTable(statuses, 'manual'), '',

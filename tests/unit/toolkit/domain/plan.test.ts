@@ -456,7 +456,7 @@ test('new change heading rejects backticked comma-separated paths', () => {
 test('rejected multi-path change heading registers no path', () => {
   // Real headings for both paths follow; registering either from the rejected heading would add duplicate-change-path.
   const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts');
-  assert.deepEqual(defects(source), ['change-heading']);
+  assert.deepEqual(defects(source), ['change-heading', 'missing-section']);
 });
 
 test('rejected sole multi-path heading emits only change-heading', () => {
@@ -978,4 +978,43 @@ test('warns when transient coverage names a durable criterion without FINAL veri
 test('transient tests require a non-support test target',()=>{
  const source=isolated.replaceAll('tests/fetch.transient.test.ts','tests/fixtures/fetch.json');
  assert.equal(transientPathDefects(source).length,1);
+});
+
+test('plan human layout: At a Glance is required and shared sections precede the Task Map', () => {
+  assert.ok(parsePlan(PLAN).warnings.some(row => row.code === 'missing-section'));
+  const source = PLAN.replace('## Key Decisions & Context', '## At a Glance\n- Retry cap.\n\n## Background\n- Context.\n\n## Key Interfaces & Data\n- Contract.\n\n## Key Decisions & Context').replace('## Task Map', '## Constraints\n- Keep API.\n\n## Task Map');
+  const result = parsePlan(source);
+  assert.ok(result.ok);
+  assert.ok(!result.warnings.some(row => ['missing-section', 'section-order'].includes(row.code)));
+  for (const heading of ['At a Glance', 'Key Interfaces & Data', 'Constraints']) assert.ok(result.plan.sharedContext.includes(`## ${heading}`));
+  assert.ok(!result.plan.sharedContext.includes('#### [MODIFY]'));
+  assert.ok(parsePlan(source.replace('## At a Glance', '## Constraints').replace('## Constraints\n- Keep API.', '## At a Glance\n- Keep API.')).warnings.some(row => row.code === 'section-order'));
+});
+
+const collapsed = (source: string) => source
+  .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<details>\n<summary>Retry implementation</summary>\n')
+  .replace('## Success Criteria', '</details>\n\n## Success Criteria')
+  .replace(/(- \[SC\d+\][^\n]*\n)/g, '$1  <details>\n  <summary>Checks</summary>\n\n')
+  .replace('- [SC2]', '  </details>\n\n- [SC2]')
+  .replace('## Verification Plan', '  </details>\n\n## Verification Plan');
+
+test('plan human layout: details wrappers and callouts leave parse results unchanged', () => {
+  const source = collapsed(readable()).replace('## Task Map', '> [!NOTE]\n> User context.\n\n## Task Map');
+  const stripLines = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === 'line' ? undefined : item));
+  const plain = parsed(readable()), wrapped = parsed(source);
+  for (const key of ['tasks', 'changes', 'criteria', 'verification'] as const) assert.deepEqual(stripLines(wrapped[key]), stripLines(plain[key]));
+  const vocabulary = placeholderVocabulary(['````markdown\n<details>\n<summary>Checks</summary>\n<unfilled>\n</details>\n````']);
+  assert.deepEqual(parsePlan(source, { placeholders: vocabulary }).warnings.filter(row => row.code === 'leftover-placeholder'), []);
+  assert.ok(parsePlan(source + '\n<unfilled>', { placeholders: vocabulary }).warnings.some(row => row.code === 'leftover-placeholder'));
+  assert.ok(defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<div>Other HTML</div>')).includes('task-map'));
+});
+
+test('plan human layout: long prose paragraphs warn and structured blocks are exempt', () => {
+  const words = (n: number) => Array(n).fill('word').join(' ');
+  const body = [words(60), `${words(30)}\n${words(31)}`, `- ${words(70)}\n  ${words(70)}`, `| ${words(70)} |`, `\`\`\`\n${words(70)}\n\`\`\``, `> ${words(70)}`, `<details>\n<summary>${words(70)}</summary>\n</details>`, `    ${words(70)}`, `<span>${words(61)}</span>`].join('\n\n');
+  const source = PLAN.replace('## Key Decisions & Context', `## At a Glance\n${body}\n\n## Key Decisions & Context`);
+  const warnings = parsePlan(source).warnings.filter(row => row.code === 'long-paragraph');
+  assert.equal(warnings.length, 2);
+  assert.equal(warnings[0]?.line, source.split('\n').indexOf(words(30)) + 1);
+  assert.ok(warnings.every(row => row.severity === 'warning'));
 });

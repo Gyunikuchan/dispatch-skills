@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { parseDesign } from '../../skills/dispatch/scripts/toolkit/domain/design.ts';
+import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthrough.ts';
 import { parseSpec } from '../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
@@ -14,68 +15,95 @@ const KEPT = [
   'writer-brief.md', 'quality-bar.md',
 ];
 
-test('design template parses under layered lint and preserves executable fields and exclusions', () => {
-  const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
-  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
-  assert.equal((template.match(/^>$/gm) ?? []).length, 4);
-  const order = ['> **TL;DR:**', '## Execution Status', '## Approach', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
-  for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
-  let source = template.split('````markdown\n')[1]!.split('````')[0]!;
-  source = source.replace('<`<spec path>` · sha256:<hex>>', '`governing.spec.md` · sha256:' + 'a'.repeat(64))
-    .replace('<low|med|high>', 'low').replace('<count>', '1')
-    .replace(/\| I02 .*\n/, '').replace(/Next Action: .*\n/, 'Next Action: complete\n');
-  source = source.replace('REQ-<n>', 'REQ-1').replace(/<[^>]+>/g, 'Concrete behavior');
-  const parsed = parseDesign(source);
-  assert.ok(parsed.ok, JSON.stringify(parsed));
-  assert.equal(parsed.design.increments[0]!.id, 'I01');
-  assert.equal(parsed.design.details['I01']!['Outcome'], 'Concrete behavior');
-  assert.ok(!parsed.design.governedText.includes('## Execution Status'));
-  assert.ok(!parsed.design.governedText.includes('## Review Findings & Resolutions'));
-});
-
-test('readable artifact templates: walkthrough hierarchy and ownership match renderer contracts', () => {
-  const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
-  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
-  assert.equal((template.match(/^>$/gm) ?? []).length, 3);
-  assert.match(template, /- #### \[MODIFY\].*\n  - Changes:/);
-  assert.match(template, /\| SC \| Outcome \| Evidence \|/);
-  assert.match(template, /Final gate:/);
-  assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
-});
-
-test('plan template parses under layered lint and preserves executable contracts', () => {
-  const template = readFileSync(new URL('plan.md', root), 'utf8');
-  const order = ['> **TL;DR:**', '## Background', '## Key Decisions & Context', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
-  for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
-  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
-  assert.equal((template.match(/^>$/gm) ?? []).length, 4);
-  assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
-  for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
-  let source = template.split('````markdown\n')[1]!.split('````')[0]!;
-  source = source.replace(/## Background[\s\S]*?(?=## Task Map)/, '## Key Decisions & Context\n- Keep API (user)\n\n');
-  source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Satisfies: REQ-1\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
-  source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
-  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>': '`governing.spec.md` · sha256:' + 'a'.repeat(64), '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
-  for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
-  const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
-  for (const file of paths) source = source.replace('<relative-path>', file);
-  source = source.replace('<relative-path>[, <relative-path>...]', 'src/edit.ts');
-  const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result));
-  const brief = selectTaskBrief(result.plan, 'T1')!;
-  assert.equal(brief.task.summary, 'Keep output usable.');
-  assert.deepEqual(brief.task.constraints, ['Keep API.']);
-  assert.match(brief.changes[1]!.note, /Invariants:.*exception: keep deprecated flag/);
-  assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
-});
-
-test('templates: spec template skeleton lints at low and medium', () => {
-  const template = readFileSync(new URL('spec.md', root), 'utf8').replace(/\r\n/g, '\n');
-  const source = template.split('````markdown\n')[1]!.split('````')[0]!
-    .replace('### REQ-<n> — <title>', '### REQ-1 — Concrete title').replace('### DEC-<n> — <title>', '### DEC-1 — Concrete title');
-  for (const level of ['low', 'medium'] as const) {
-    const result = parseSpec(source, { level });
-    assert.ok(result.ok, `${level}: ${JSON.stringify(result)}`);
+test('readable artifact templates: human layout sections, callouts, details and diagrams', async (t) => {
+  for (const name of ['spec.md', 'design.md', 'plan.md', 'walkthrough.md']) {
+    const template = readFileSync(new URL(name, root), 'utf8');
+    const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
+    assert.equal(skeleton.match(/^## .+$/m)?.[0], '## At a Glance', name);
+    for (const type of ['NOTE', 'IMPORTANT']) assert.ok(template.includes(`[!${type}]`), `${name}: ${type}`);
+    if (name !== 'spec.md') {
+      assert.match(skeleton, /<details>\n<summary>.+<\/summary>\n\n/, name);
+      assert.match(skeleton, /\n\n<\/details>/, name);
+    }
+    if (name === 'plan.md' || name === 'design.md') {
+      assert.match(skeleton, /```mermaid\n/, name);
+      assert.match(skeleton, /Text summary: .+/, name);
+    }
   }
+
+  await t.test('design template parses under layered lint and preserves executable fields and exclusions', () => {
+    const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 4);
+    const order = ['> **TL;DR:**', '## At a Glance', '## Execution Status', '## Approach', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
+    for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
+    let source = template.split('````markdown\n')[1]!.split('````')[0]!;
+    source = source.replace('<`<spec path>` · sha256:<hex>>', '`governing.spec.md` · sha256:' + 'a'.repeat(64))
+      .replace('<low|med|high>', 'low').replace('<count>', '1')
+      .replace(/\| I02 .*\n/, '').replace(/Next Action: .*\n/, 'Next Action: complete\n');
+    source = source.replace('REQ-<n>', 'REQ-1').split('\n').map((line) => /^<\/?(?:details|summary)>/.test(line) ? line : line.replace(/<[^>]+>/g, 'Concrete behavior')).join('\n');
+    const parsed = parseDesign(source);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+    assert.deepEqual(parsed.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), []);
+    assert.equal(parsed.design.increments[0]!.id, 'I01');
+    assert.equal(parsed.design.details['I01']!['Outcome'], 'Concrete behavior');
+    assert.ok(!parsed.design.governedText.includes('## Execution Status'));
+    assert.ok(!parsed.design.governedText.includes('## Review Findings & Resolutions'));
+  });
+
+  await t.test('readable artifact templates: walkthrough hierarchy and ownership match renderer contracts', () => {
+    const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 4);
+    assert.match(template, /#### \[MODIFY\].*\n\n- Changes:/);
+    assert.match(template, /\| SC \| Evidence \|/);
+    const labels = [...template.matchAll(/^- \*\*(Delivered|Criteria|Changes|Deviations|Follow-ups|Review):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(labels, ['Delivered', 'Criteria', 'Changes', 'Deviations', 'Follow-ups', 'Review']);
+    const rendered = renderWalkthrough({ title: 'Example', specPath: 'example.spec.md', specHash: 'a'.repeat(64), planPath: 'example.plan.md', delivered: null, statuses: [], changes: [{ action: 'MODIFY', path: 'src/edit.ts', owners: [] }], edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [], reviewRows: [], findingsPaths: [] });
+    const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
+    assert.deepEqual(headings(template.split('````markdown\n')[1]!.split('````')[0]!), headings(rendered));
+    const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(boxLabels(template), boxLabels(rendered));
+    assert.deepEqual([...rendered.matchAll(/^- \*\*(Delivered|Criteria|Changes|Deviations|Follow-ups|Review):\*\*/gm)].map((match) => match[1]), labels);
+    assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
+  });
+
+  await t.test('plan template parses under layered lint and preserves executable contracts', () => {
+    const template = readFileSync(new URL('plan.md', root), 'utf8');
+    const order = ['> **TL;DR:**', '## At a Glance', '## Background', '## Key Interfaces & Data', '## Key Decisions & Context', '## Constraints', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
+    for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 4);
+    assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
+    for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
+    let source = template.split('````markdown\n')[1]!.split('````')[0]!;
+    source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Satisfies: REQ-1\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
+    source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
+    const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>': '`governing.spec.md` · sha256:' + 'a'.repeat(64), '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
+    for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
+    const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
+    for (const file of paths) source = source.replace('<relative-path>', file);
+    source = source.replace('<relative-path>[, <relative-path>...]', 'src/edit.ts');
+    const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result));
+    assert.deepEqual(result.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), []);
+    const brief = selectTaskBrief(result.plan, 'T1')!;
+    assert.equal(brief.task.summary, 'Keep output usable.');
+    assert.deepEqual(brief.task.constraints, ['Keep API.']);
+    assert.match(brief.changes[1]!.note, /Invariants:.*exception: keep deprecated flag/);
+    assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
+  });
+
+  await t.test('templates: spec template skeleton lints at low and medium', () => {
+    const template = readFileSync(new URL('spec.md', root), 'utf8').replace(/\r\n/g, '\n');
+    const source = template.split('````markdown\n')[1]!.split('````')[0]!
+      .replace('### REQ-<n> — <title>', '### REQ-1 — Concrete title').replace('### DEC-<n> — <title>', '### DEC-1 — Concrete title');
+    for (const level of ['low', 'medium'] as const) {
+      const result = parseSpec(source, { level });
+      assert.ok(result.ok, `${level}: ${JSON.stringify(result)}`);
+      assert.deepEqual(result.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), [], level);
+    }
+  });
+
 });
 
 test('templates: every kept template exists and none are extra', () => {

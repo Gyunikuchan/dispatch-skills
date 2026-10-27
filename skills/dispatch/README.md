@@ -44,6 +44,13 @@ Dispatch organizes work across four canonical document layers:
 - **Plan (Tactics):** Details tactical execution for one coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria, and verification commands.
 - **Walkthrough (Debrief):** Records the post-execution debrief: delivered behavior, file changes, verification evidence, deviations, and review resolutions.
 
+- Read **At a Glance** first for the change, its purpose and how it works. Point-form prose keeps the main facts visible.
+- `> [!NOTE]` marks information you need to know; `> [!IMPORTANT]` marks a decision you must make.
+- Diagrams show flow or architecture, with a one-line text summary for an unrendered view. Mermaid in VS Code needs a preview extension.
+- Expand `<details>` to inspect agent detail, file changes and checks.
+
+Authors and reviewers use the [quality bar's authoring rules](references/templates/quality-bar.md#spec).
+
 ## Before you start
 
 You need Node.js `^22.18 || >=23.6`, at least one supported provider CLI installed and authenticated (Claude Code, Antigravity, GitHub Copilot, OpenCode, or Codex), and an active configuration with a read delegate.

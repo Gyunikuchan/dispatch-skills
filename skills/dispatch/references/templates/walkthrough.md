@@ -7,51 +7,80 @@ Toolkit report tools render these walkthrough fields. See [review rules](../revi
 
 > **Delivered:** <what changed, in one sentence>
 >
-> **Parent:** <plan path, or user request>
+> **Spec:** <spec path> · <spec hash>
 >
-> **Status:** 0/1 SC passing
+> **Plan:** <plan path>
+>
+> **Status:** <satisfied>/<total> SC satisfied (verified <n> · manual <n> · waived <n>)
 >
 > **Deviations:** none
 
-## Context
-- Ask: <original request>
-- Decisions: <choice> (user)
-- Assumptions: <assumption>
-- Out of scope: <excluded item>
-- Focus: <review focus>
+## At a Glance
+- **Delivered:** <same delivered sentence as the summary box>
+- **Criteria:** <satisfied>/<total> satisfied (verified <n> · manual <n> · waived <n> · missing <n>)
+- **Changes:** <n> files (<n> new · <n> modified · <n> deleted)
+- **Deviations:** <n> recorded edits · <n> unplanned paths
+- **Follow-ups:** <n> open escalations · <n> deferred rulings
+- **Review:** <n> findings (<n> open)
 
 ## Changes Made
-- #### [MODIFY] `<relative-path>`
-  - Changes: <what changed in this file>
+
+Changed 1 files; expand for file paths and task owners.
+
+<details>
+<summary>1 files (0 new · 1 modified · 0 deleted)</summary>
+
+#### [MODIFY] `<relative-path>`
+
+- Changes: <task ID> — <task title>
+
+</details>
 
 ## Verification
-| SC | Outcome | Evidence |
-| --- | --- | --- |
-| SC1 | <delivered observable behavior> | <fresh record> |
 
-Final gate: `<command>` exit <status>
+### Verified
+| SC | Evidence |
+| --- | --- |
+| SC1 | <eligible recorded evidence> |
+
+### Manual
+None.
+
+### Waived
+None.
+
+### Missing
+| SC | Evidence |
+| --- | --- |
+| SC2 | no eligible evidence |
 
 ## Deviations & Follow-ups
 None.
 
-## Review Findings & Resolutions
+## User-Attributed Records
 
-Rounds: 1 · Findings: 1 (Fixed 1) · Full log: [<slug>.walkthrough.review-log.md](<slug>.walkthrough.review-log.md)
+None.
+
+## Review Findings & Resolutions
 
 | Review | ID | Round | Severity | Status | Ruling |
 | --- | --- | --- | --- | --- | --- |
-| 1 | R1-F001 | 1 | MUST | Fixed | <first ruling line> |
+| <review ID> | R1-F001 | 1 | MUST | Accepted | <first ruling line> |
+
+Findings: <recorded findings path>
 ````
 
 ## Field notes
 
-- Context: only when Parent is `user request`; omit empty bullets. A plan or design parent already holds the context.
-- Changes Made: every file changed in the session. Note precedence: writer `files[].note`, then the plan's Proposed Changes line, then `+N −M`; review fixes append `fixes <IDs>`.
-- Verification: Evidence is `red→green` plus the command for red criteria, or `<class>; <scenario>; <result>` for verify/review. Plan-less: only the `Final gate:` line, Status `n/a`.
-- Revision Log: `## Revision Log` before Review Findings & Resolutions, only when revisions occurred.
-- Review Findings & Resolutions: rendered by toolkit report tools from recorded findings and rulings. Compact summary line and table; full entries live in the linked review log. Before any review: `*No reviews conducted yet.*` and no log.
-- Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria.
-- Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box is a one-line summary exactly when a `- Deviation:` bullet exists.
+- Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). At a Glance repeats the delivered sentence and reports toolkit counts in the shown order.
+- Callouts: the renderer emits at most one `> [!IMPORTANT]` for open escalations needing a user decision, then at most one `> [!NOTE]` listing missing, manual or waived criteria, unplanned paths, recorded deviations and deferred rulings when present. Callouts sit after At a Glance bullets and contain no machine fields.
+- Collapsed changes: use the rendered file count as `<summary>`. Keep tags on separate lines, with blank lines after `</summary>` and before `</details>` for Markdown rendering. Empty Changes Made is `None.` without wrappers.
 
-- Lead with delivered behavior and verification status. Keep file detail beneath its file entry; preserve existing multiline notes with indented continuations.
-- Retain the Verification table, exact commands and recorded evidence; link evidence only when a recorded artifact exists. Omit optional empty prose within required sections. Use no fixed word limit or second authored summary.
+- Changes Made: every reported path, action and owning task; an unowned path has Changes `unplanned`.
+- Verification: separate Verified, Manual and Waived sections; include Missing only when criteria lack evidence. Each nonempty section holds SC and Evidence columns; an empty section is `None.`.
+- Review Findings & Resolutions: rendered by toolkit report tools from recorded findings and rulings. The table shows review, finding, round, severity, ruling and reason; recorded findings paths follow it. Before any review: `*No reviews conducted yet.*`.
+- Status: verified, manual and waived criteria count as satisfied; missing criteria do not.
+- Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box counts recorded edits. Unplanned paths also appear in this section.
+
+- User-Attributed Records: recorded user decisions, waivers and evidence, or `None.`.
+- Retain the Verification sections and recorded evidence; link evidence only when a recorded artifact exists. Omit optional empty prose within required sections. Use no fixed word limit or second authored summary.

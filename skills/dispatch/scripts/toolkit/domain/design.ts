@@ -2,7 +2,7 @@
 // graph priority belongs to the design machine, not here.
 
 import {
-  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, isFillerNote, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
+  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, isFillerNote, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
   structuralLines, withoutSections, type PlaceholderVocabulary, type StructuralLine,
 } from './plan.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
@@ -12,12 +12,12 @@ const lint = (code: LintDefect['code'], line: number | null, message: string): L
 const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments'];
 export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
-  'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
+  'At a Glance', 'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
   'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',
 ];
 /** Design section order after the title and summary box: status and intent before architecture and increment detail. */
 export const DESIGN_SECTION_ORDER = [
-  EXECUTION_STATUS_HEADING, ...REQUIRED_SECTIONS.map((heading) => `## ${heading}`), RESOLUTION_HEADING,
+  '## At a Glance', EXECUTION_STATUS_HEADING, ...REQUIRED_SECTIONS.filter((heading) => heading !== 'At a Glance').map((heading) => `## ${heading}`), RESOLUTION_HEADING,
 ] as const;
 const INCREMENT_FIELDS = [
   'Outcome', 'Scope', 'Non-scope', 'Observable behavior', 'Affected contracts', 'Validation', 'Rollback boundary', 'Parallel safety',
@@ -185,6 +185,7 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
     if (!sectionRanges(lines, `## ${heading}`).length) defects.push(lint('missing-section', null, `Design requires ## ${heading}.`));
   }
   defects.push(...lintSectionOrder(lines, DESIGN_SECTION_ORDER));
+  for (const { line, words } of lintLongParagraphs(lines)) defects.push(lint('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
   for (const entry of lines) {
     if (entry.text.trimEnd() === '## Context & Intent') defects.push(lint('retired-section', entry.line, 'move intent and problem to the governing spec; keep tactical context in ## Approach'));
     if (entry.text.trimEnd() === '## Goals & Requirements') defects.push(lint('retired-section', entry.line, 'requirements live in the spec as REQ-<n>; map them in ## Approach'));
