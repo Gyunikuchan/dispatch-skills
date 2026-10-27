@@ -4,6 +4,8 @@
 - **Date**: 2026-10-02
 - **Audience**: Maintainers
 
+> Execution mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). The scheduler, receipt, immutable checkpoint and independent RED replay mechanics below are historical. Current writers report observed RED failures; the host inspects evidence and controls sequencing. Delivery now requires an empty caller index and restores unstaged changes. See the [current toolkit contract](../../skills/dispatch/references/toolkit.md).
+
 ## Context
 
 Dispatch plans serve two audiences. People need to understand the outcome and interactions of each piece of work. Native writers need concrete changes, clear authority, relevant context, and independently checkable completion criteria.

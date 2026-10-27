@@ -8,7 +8,7 @@ import { appendRecord, currentHashes, foldLedger, gate, latest, queryLedger } fr
 
 test('ledger bindings approvals and input filters preserve validation and retries', async () => {
  const {currentHashes,foldLedger,latest}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const input=f.artifact('record.json','');let n=0;
  const call=async(record:unknown)=>{f.lines.length=0;fs.writeFileSync(input,JSON.stringify(record));const exit=await main(['ledger','append','--session',f.session,input],f.deps);const output=f.output();return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};};
  const add=(kind:string,data:object,extra:object={})=>appendRecord(f.session,{kind,data,by:'orchestrator',key:'k'+n++,...extra},f.deps);
@@ -44,7 +44,7 @@ test('ledger bindings approvals and input filters preserve validation and retrie
 });
 
 test('uncommitted records append through the ledger command', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const input=f.artifact('record.json',''),git='a'.repeat(40),dest={branch:'b',path:'p'};
  for(const [phase,extra] of [['deliver-started',{}],['delivered',{noop:true}]] as const){
   fs.writeFileSync(input,JSON.stringify({kind:'integrate',by:'tool',key:phase,data:{phase,mode:'uncommitted',dest,from:git,source:git,...extra}}));
@@ -55,7 +55,7 @@ test('uncommitted records append through the ledger command', async () => {
 });
 
 test('approval survives formatting-only artifact rewrites and refuses meaning changes', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const names = { spec: 's.spec.md', plan: 'p.plan.md', design: 'd.design.md' } as const;
     const kinds = ['spec', 'plan', 'design'] as const;

@@ -1,12 +1,12 @@
 # Providers
 
-Use `doctor run` to inspect executable discovery, available modes, level roster, writer configuration and skill integrity. Authenticate outside Dispatch. Configuration is authoritative for model and reasoning effort; pass each resolved value exactly, including max. A host capability mismatch is a named blocker, not permission to substitute a model.
+Use `doctor run` to inspect skill integrity, config validity, selected level and configured writer models. Execution discovers binaries and modes and enforces sandbox support. Authenticate outside Dispatch. Configuration is authoritative for model and reasoning effort; pass each resolved value exactly, including max. A host capability mismatch is a named blocker, not permission to substitute a model.
 
 Provider-specific controls and failure parsing live in [Claude](../scripts/providers/claude.ts), [Antigravity](../scripts/providers/agy.ts), [Copilot](../scripts/providers/copilot.ts), [OpenCode](../scripts/providers/opencode.ts) and [Codex](../scripts/providers/codex.ts).
 
 Read delegates use provider controls, credential stripping, sensitive-file guards, output bounds and timeouts. Supported sandboxes default on. An unsupported sandbox fails the slot; configured sandbox false is an explicit opt-out. Best-effort agent permissions alone do not establish structural read-only access. For OpenCode resolution details see [runtime](../scripts/providers/opencode-runtime.ts).
 
-Configured model and mode combinations cascade on failure; exhausted voices use reserves and native fallback as available. One combination's failure does not exhaust all combinations. Preserve actual failure and coverage evidence.
+Configured model and mode combinations cascade on failure; exhausted voices use reserves and native fallback as available. MUST rejection requests retain the original logical source slot through each fallback. The physical responder and explicit reply remain in the result; only assigned requests can establish confirmation. See [rejection confirmation](review-rules.md#rulings-and-fix-scope). One combination's failure does not exhaust all combinations. Preserve actual failure and coverage evidence.
 
 ## Native slots
 

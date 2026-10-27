@@ -16,6 +16,7 @@ import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import type { LedgerRecord } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
 
+import { loadRejections, applicableReviewIds, type RejectionState } from './confirmations.ts';
 type Current = { headTree: string; testedTree: string };
 type Snapshot = {
   fold: Fold;
@@ -33,6 +34,8 @@ type Snapshot = {
   delivered: LedgerRecord | undefined;
   deliveredAtHead: boolean;
   integrated: number;
+  rejectionConfirmations: RejectionState[];
+  confirmationError: string | undefined;
 };
 type ReportFacts = Snapshot & {
   view: WalkthroughView;
@@ -91,10 +94,13 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     record.kind === 'integrate' && record.data['phase'] === 'done' && typeof record.data['task'] === 'string' &&
       planTaskIds.has(record.data['task']) ? [record.data['task'] as string] : []));
   const planStem = path.basename(planPath).replace(/\.plan\.md$/i, '') || plan.title || 'walkthrough';
+  let rejectionConfirmations:RejectionState[]=[],confirmationError:string|undefined;
+  try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.session,ctx.manifest,fold));}
+  catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
   return {
     fold, bind, plan, planPath, planStem, specPath, specHash,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
-    integrated: integrated.size,
+    integrated: integrated.size,rejectionConfirmations,confirmationError,
   };
 }
 
@@ -115,7 +121,7 @@ function userDataSummary(data: Record<string, unknown>): string {
   catch { return '[unavailable]'; }
 }
 
-function reviewRows(fold: Fold, session: string) {
+function reviewRows(fold: Fold, session: string, confirmations:readonly RejectionState[]) {
   const rows: WalkthroughView['reviewRows'][number][] = [];
   const findingsPaths = new Map<string, string>();
   for (const round of readReviews(session)) {
@@ -128,13 +134,14 @@ function reviewRows(fold: Fold, session: string) {
       const finding = raw as { id: string; severity?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
       const ruling = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
       const rulingValue = ruling?.data['ruling'];
+      const confirmation=confirmations.find(state=>state.request.review===round.review && state.request.finding===finding.id);
       rows.push({
         review: round.review,
         id: finding.id,
         round: round.round,
         severity: typeof finding.severity === 'string' ? finding.severity : 'unknown',
         ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as 'accepted' | 'rejected' | 'duplicate' | 'deferred' : null,
-        rationale: typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : '',
+        rationale: (confirmation && confirmation.state!=='confirmed'?'['+confirmation.state+' reviewer confirmation] ':'')+(typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),
         ...(typeof finding.recurrence?.of === 'string' ? { recurrence: finding.recurrence.of } : {}),
         ...(typeof finding.unresolved?.of === 'string' ? { unresolved: finding.unresolved.of } : {}),
       });
@@ -189,7 +196,13 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     summary: userDataSummary(record.data),
     quote: record.quote ?? '',
   }));
-  const review = reviewRows(snapshot.fold, ctx.session);
+  let review:ReturnType<typeof reviewRows>;
+  try {review=reviewRows(snapshot.fold,ctx.session,snapshot.rejectionConfirmations);}
+  catch(error) {
+    if(!snapshot.confirmationError || !(error instanceof ToolError && error.reason==='review-corrupt'))throw error;
+    snapshot.confirmationError+='; '+error.message;
+    review={rows:[],findingsPaths:[]};
+  }
   const destBranch = String(snapshot.integration?.data['dest']?.branch ?? '');
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
@@ -253,6 +266,7 @@ function resultValue(facts: ReportFacts, session: string, walkthroughPath: strin
     deferredRulings: facts.deferredRulings,
     userRecords: facts.userRecords,
     delivered: facts.view.delivered,
+    rejectionConfirmations:facts.rejectionConfirmations,confirmationError:facts.confirmationError,
   };
 }
 
@@ -268,12 +282,14 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
   return {
     ok: true,
     exit: 0,
-    summary: `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}`,
+    summary: `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}${facts.confirmationError?'; confirmation unavailable: '+facts.confirmationError:''}`,
     value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
   };
 }
 
 function refusal(snapshot: Snapshot): ToolError | null {
+  if(snapshot.confirmationError)return new ToolError(4,'review-confirmation-required',snapshot.confirmationError);
+  if(snapshot.rejectionConfirmations.some(state=>state.state!=='confirmed'))return new ToolError(4,'review-confirmation-required','Rejected MUST findings need explicit reviewer confirmation');
   if (!snapshot.integration || !snapshot.integrationPath) return new ToolError(4, 'no-integration', 'No integration worktree is available');
   const missing = snapshot.statuses.filter((status) => status.state === 'missing').map((status) => status.criterion);
   const dirty = snapshot.current !== null && snapshot.current.testedTree !== snapshot.current.headTree;

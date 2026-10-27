@@ -82,9 +82,10 @@ export function extractJsonText(raw: string): string {
 
 export type ReportFailureKind = 'empty-output' | 'refusal' | 'truncated' | 'uncovered-scope' | 'loose-locus';
 export type ReportFailure = { kind: ReportFailureKind; detail: string };
-export type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean };
+export type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
+export type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
 export type ReportResult =
-  | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: DraftFinding[] }
+  | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: DraftFinding[]; confirmations?: Confirmation[] }
   | { ok: false; failure: ReportFailure };
 
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -119,7 +120,19 @@ export function parseReport(input: ReportInput): ReportResult {
   const record = value as Record<string, unknown>;
   const status = record['status'];
   const items = record['findings'];
-  if (Object.keys(record).sort().join('\0') !== 'findings\0status') return fail('uncovered-scope', 'report fields must be exactly: status, findings');
+  const fields = Object.keys(record).sort().join('\0');
+  if (fields !== 'findings\0status' && fields !== 'confirmations\0findings\0status') return fail('uncovered-scope', 'report fields must be status, findings and optional confirmations');
+  const confirmations: Confirmation[] = [];
+  if (Object.hasOwn(record, 'confirmations')) {
+    if (!Array.isArray(record['confirmations'])) return fail('uncovered-scope', 'confirmations must be an array');
+    for (const item of record['confirmations']) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).sort().join('\0') !== 'decision\0rationale\0requestId') return fail('uncovered-scope', 'confirmation fields must be exactly requestId, decision, rationale');
+      const {requestId, decision, rationale} = item;
+      if (!nonEmpty(requestId) || (decision !== 'agree' && decision !== 'disagree') || !nonEmpty(rationale) || !sanitizeText(rationale) || confirmations.some(reply => reply.requestId === requestId)) return fail('uncovered-scope', 'confirmation needs a unique requestId, explicit decision and rationale');
+      confirmations.push({requestId, decision, rationale: sanitizeText(rationale)});
+    }
+  }
+  if (input.expectedRequestIds && (confirmations.length !== input.expectedRequestIds.length || confirmations.some(reply => !input.expectedRequestIds!.includes(reply.requestId)))) return fail('uncovered-scope', 'each assigned confirmation request requires exactly one explicit reply');
   if ((status !== 'CLEAN' && status !== 'FINDINGS') || !Array.isArray(items)) {
     return fail('uncovered-scope', 'report must carry status CLEAN|FINDINGS and a findings array');
   }
@@ -161,7 +174,7 @@ export function parseReport(input: ReportInput): ReportResult {
   }
   if (status === 'CLEAN' && findings.length) return fail('uncovered-scope', 'CLEAN requires an empty findings array');
   if (status === 'FINDINGS' && !findings.length) return fail('uncovered-scope', 'FINDINGS requires at least one finding');
-  return { ok: true, status, findings };
+  return { ok: true, status, findings, ...(Object.hasOwn(record,'confirmations') ? {confirmations} : {}) };
 }
 
 // SECTION: Matching

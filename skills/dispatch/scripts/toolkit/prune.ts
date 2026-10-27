@@ -1,3 +1,4 @@
+import {loadRejections,applicableReviewIds} from './confirmations.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -16,6 +17,13 @@ import { git, gitOk, headTree, testedTree } from './git.ts';
 import { verifiedStage, type PruneEvidence } from './evidence.ts';
 import { ToolError } from './output.ts';
 function refuse(reason:string):never {throw new ToolError(4,reason,reason);}
+function rejections(ctx:HandlerContext,fold:Fold) {
+  try {return loadRejections(ctx.session,fold,applicableReviewIds(ctx.session,ctx.manifest,fold));}
+  catch(error) {
+    if(error instanceof ToolError && error.reason==='review-confirmation-required')return refuse('prune-review-required');
+    throw error;
+  }
+}
 const digest = (value:unknown)=>'sha256:'+crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 const equal=(a:unknown,b:unknown)=>stableValue(a)===stableValue(b);
 const split=(s:string)=>s.split('\0').filter(Boolean);
@@ -106,6 +114,8 @@ async function owned(ctx:HandlerContext,fold:Fold) {
   return {cwd,opened};
 }
 function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):string {
+  const states=rejections(ctx,fold);
+  if(states.some(state=>state.state!=='confirmed'))refuse('prune-review-required');
   const directory=path.join(ctx.session,'.state/reviews/code-integration');
   let names:string[];try{names=fs.readdirSync(directory).filter(n=>/^round-\d+$/.test(n)).sort((a,b)=>Number(a.slice(6))-Number(b.slice(6)));}catch{refuse('prune-review-required');}
   const rounds=names.map(n=>{
@@ -143,7 +153,7 @@ function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):st
     const ruling=fold.records.findLast(r=>r.kind==='ruling' &&
       r.data['subject']==='review:code-integration:'+finding.id);
     if(!ruling?.data['rationale']?.trim())return false;
-    if(ruling.data['ruling']==='rejected')return true;
+    if(ruling.data['ruling']==='rejected')return finding.severity!=='MUST' || states.some(state=>state.request.review==='code-integration' && state.request.finding===finding.id && state.state==='confirmed');
     if(ruling.data['ruling']==='duplicate') {const original=all.find(f=>f.id!==finding.id &&
       ruling.data['rationale'].includes(f.id));
     return !!original &&
@@ -211,6 +221,7 @@ export async function prune(ctx:HandlerContext):Promise<HandlerResult> {
     const plan=loadPlan(ctx.session,ctx.manifest);
     if(!hasTransient(plan))return {ok:true,exit:0,summary:'No transient tests',value:{pruned:false}};
     const {targets,pre,final}=pruneProjection(plan);
+    if(rejections(ctx,tx.fold).some(state=>state.state!=='confirmed'))refuse('prune-review-required');
     const {cwd,opened}=await owned(ctx,tx.fold);
     const head=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']),tree=await headTree(ctx.deps,cwd);
     const completed=tx.fold.records.findLast(r=>r.kind==='integrate' &&

@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { memoryNodeFs } from '../../../helpers/memory-node-fs.ts';
 import path from 'node:path';
 import type { CliDeps } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
 import type { DelegateRequest, ModeId, ProviderId, RunOutcome } from '../../../../skills/dispatch/scripts/providers/types.ts';
 import { canonicalRepositoryRoot } from '../../../../skills/dispatch/scripts/lib/session.ts';
 
-export function sessionFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-'));
+export function sessionFixture(options: { memory?: boolean } = {}) {
+  const root = options.memory ? path.join(os.tmpdir(), 'toolkit-' + randomUUID()) : fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-'));
+  const restore = options.memory ? memoryNodeFs(root) : null;
   const session = path.join(root, '.scratch', 'dispatch-skills', '20261023T0000Z-test');
   fs.mkdirSync(session,{recursive:true});
   fs.writeFileSync(path.join(session, 'manifest.json'), JSON.stringify({
@@ -33,6 +36,6 @@ export function sessionFixture() {
   const script=(provider:string,model:string,text:string|RunOutcome)=>replies.set(provider+':'+model,typeof text==='string'?{status:'ok',text,resume:null,sessionId:null}:text);
   return { root, session, lines, sleeps, deps, artifact,script,launches,
     output: () => { if (lines.length !== 1) throw new Error('Expected one output line'); return JSON.parse(lines[0]!) as { ok: boolean; summary: string; path: string | null; reason?: string }; },
-    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    cleanup: () => { if (restore) restore(); else fs.rmSync(root, { recursive: true, force: true }); },
   };
 }

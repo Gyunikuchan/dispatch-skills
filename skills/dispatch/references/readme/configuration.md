@@ -14,7 +14,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
-| `phases` | Optional | Review target counts, rounds, consensus, and provider filters |
+| `phases` | Optional | Review target counts, rounds, and provider filters |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
 
@@ -72,16 +72,17 @@ Start with the sample's defaults. Increase breadth or rounds when the work needs
 From the Dispatch skill folder, run:
 
 ```bash
-node scripts/dispatch.ts doctor --level high
+node scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Use `--json` for structured output. Doctor reports configuration problems, resolved targets and order, writer availability, and predicted sandbox support without launching delegates.
+Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity, configuration validity and configured writer models at the selected level. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
 
 If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
 
 ## Sandboxing and provider details
 
-Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. If Doctor or a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
+Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. If a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
 
 For Node.js requirements and supported provider CLIs, see the [repository README](../../../../README.md).
 
@@ -99,6 +100,6 @@ Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. v0.7.x
 
 - `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches your host platform. On other platforms, those targets are skipped.
 - OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
-- Doctor reports resolved provider targets, writer availability, and predicted sandbox support without launching delegates.
+- Doctor reports configured writer models without launching writers; it does not establish native capacity.
 
 </details>

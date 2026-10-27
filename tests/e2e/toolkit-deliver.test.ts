@@ -20,6 +20,23 @@ function assertMatchesSource(r:Repo,from:string,source:string){const names=r.git
 // Cases use independent repositories, so run them concurrently and name the failing case.
 const each=(modes:string[],fn:(mode:string)=>Promise<void>)=>Promise.all(modes.map(mode=>fn(mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});})));
 describe('toolkit delivery and cleanup',{concurrency:true},()=>{
+ it('pending MUST rejection blocks caller writes and delivered records until native agreement',async()=>{const {r}=await prepared();try {
+  const skill=path.join(r.session,'confirmation-skill');fs.mkdirSync(skill);fs.cpSync(path.join(r.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
+  fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}}));
+  r.deps.skillRoot=skill;r.deps.orchestrator={platform:'codex',model:'native'};r.deps.liveness={};
+  const review=()=>r.run(['review','run','integration','--kind','code','--level','low']);
+  const first=await review();assert.equal(first.output.reason,'native-pending');fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{severity:'MUST',tag:'correctness',locus:'src/file.ts:L1',defect:'Unbounded writes',requiredChange:'Bound writes'}]}));
+  assert.equal((await review()).exit,0);
+  await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'reject-delivery',data:{subject:'review:code-integration:R1-F001',ruling:'rejected',rationale:'Captured writes have a bound'}},r.deps);
+  const before=caller(r),bytes=fs.readFileSync(path.join(r.root,'src/file.ts'));
+  const blocked=await r.run(['worktree','deliver']);assert.equal(blocked.output.reason,'review-confirmation-required');assert.deepEqual(caller(r),before);assert.deepEqual(fs.readFileSync(path.join(r.root,'src/file.ts')),bytes);assert.equal(rows(r,'delivered').length,0);assert.equal(rows(r,'deliver-started').length,0);
+  const id='rejection:code-integration:R1-F001';await appendRecord(r.session,{kind:'escalation',by:'tool',key:'delivery-dispute',data:{id,state:'open',summary:'Reviewer disputes rejection'}},r.deps);
+  assert.equal((await r.run(['worktree','deliver'])).output.reason,'review-confirmation-required');assert.deepEqual(caller(r),before);
+  await appendRecord(r.session,{kind:'escalation',by:'orchestrator',key:'delivery-resolution',data:{id,state:'resolved',summary:'User decided the bounded writes evidence must be rechecked'}},r.deps);
+  const confirm=await review();assert.equal(confirm.output.reason,'native-pending');const prompt=fs.readFileSync(confirm.value.pending[0].promptPath,'utf8'),requestId=/Request ID: `([^`]+)`/.exec(prompt)![1]!;
+  fs.writeFileSync(confirm.value.pending[0].replyPath,JSON.stringify({status:'CLEAN',findings:[],confirmations:[{requestId,decision:'agree',rationale:'The captured implementation bounds each write'}]}));assert.equal((await review()).exit,0);
+  assert.equal((await r.run(['worktree','deliver'])).exit,0);assert.equal(rows(r,'delivered').length,1);assert.deepEqual(caller(r),before);
+ }finally{r.cleanup();}});
  it('uncommitted delivery restores the verified tree as unstaged changes and retains the source ref',async()=>{const {r,writer}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);fs.writeFileSync(path.join(r.root,'keep.txt'),'dirty keep');fs.writeFileSync(path.join(r.root,'scratch'),'scratch');fs.writeFileSync(path.join(r.root,'ignored'),'ignored');
  const before=caller(r);const first=await r.run(['worktree','deliver']);assert.equal(first.exit,0,JSON.stringify(first));

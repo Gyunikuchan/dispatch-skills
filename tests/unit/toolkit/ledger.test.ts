@@ -6,7 +6,7 @@ import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 test('ledger records preserve retries and recover torn tails', async () => {
- const f=sessionFixture(); try {
+ const f=sessionFixture({ memory: true }); try {
  const input=f.artifact('record.json','');
  const call=async (record:unknown) => {f.lines.length=0; fs.writeFileSync(input,JSON.stringify(record)); const exit=await main(['ledger','append','--session',f.session,input],f.deps); const o=f.output(); return {exit,o,value:o.path?JSON.parse(fs.readFileSync(o.path,'utf8')):null};};
  const note={kind:'note',by:'orchestrator',key:'a',data:{text:'hello'}};
@@ -24,7 +24,7 @@ test('ledger records preserve retries and recover torn tails', async () => {
 });
 
 test('ledger bind suffixes match their keys while prior retries stay write-free', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const input=f.artifact('record.json','');f.artifact('s.spec.md','spec');f.artifact('p.plan.md','plan');f.artifact('d.design.md','design');
  const append=async(record:object)=>{f.lines.length=0;fs.writeFileSync(input,JSON.stringify(record));return main(['ledger','append','--session',f.session,input],f.deps);};
  const bind={kind:'bind',key:'bind',by:'orchestrator',data:{spec:'s.spec.md',plan:'p.plan.md',design:'d.design.md'}};

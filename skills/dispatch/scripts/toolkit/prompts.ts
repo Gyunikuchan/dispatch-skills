@@ -1,17 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, fillTemplate, qualityBar } from './domain/prompt.ts';
+import { assembleTemplate, fillTemplate, qualityBar, settledSection, type Settled } from './domain/prompt.ts';
+import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import { structuralLines } from './domain/plan.ts';
 
-export type Settled = {id: string; locus: string; defect: string; ruling: string; reason: string};
-
-export function settledSection(settled: readonly Settled[]): string {
-  if (!settled.length) return '';
-  const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;
-  const rows = settled.map(entry => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}`);
-  return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${rows.join('\n')}\n`;
-}
+export { settledSection, type Settled } from './domain/prompt.ts';
 
 function sections(source: string, subsections: boolean): Map<string, string> {
   const sections = new Map<string, string>();
@@ -37,7 +31,7 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; settled?: readonly Settled[];
+  taskSummary?: string; scope: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[];
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
@@ -49,5 +43,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
       'Plan Path': context.planPath ?? 'None', 'Walkthrough Path': 'None', 'Task Summary': context.taskSummary ?? 'Review the selected changes.',
     }),
   };
-  return fillTemplate(template.template, template.variables, values) + settledSection(context.settled ?? []);
+  const requests=context.requests ?? [];
+  const confirmation=requests.length?'\n\n### Pending MUST rejection confirmation\nReview each original claim and the host evidence. Add confirmations to the JSON report: [{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]. Answer every assigned request exactly once. Ordinary findings remain required.\n'+requests.map(request=>`\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nRequired change: ${request.claim.requiredChange}\nHost rejection: ${request.rationale}\n`).join(''):'';
+  return fillTemplate(template.template, template.variables, values) + settledSection(context.settled ?? [])+confirmation;
 }

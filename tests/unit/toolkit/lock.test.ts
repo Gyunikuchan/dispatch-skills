@@ -7,7 +7,7 @@ import { sessionFixture } from './helpers/session.ts';
 
 test('fan-out claim creates parents refuses a live owner and reclaims a dead owner',async()=>{
  const {withLockFile}=await import('../../../skills/dispatch/scripts/toolkit/lock.ts');
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
   const file=path.join(f.session,'.state','reviews','plan','claim');
   assert.equal(await withLockFile(file,'review',f.deps,0,async()=>7),7);
   assert.equal(fs.existsSync(file),false);
@@ -21,7 +21,7 @@ test('fan-out claim creates parents refuses a live owner and reclaims a dead own
 });
 
 test('session lock waits refuses reclaims and releases on failure', async () => {
- const f=sessionFixture();try {
+ const f=sessionFixture({ memory: true });try {
  const state=path.join(f.session,'.state');fs.mkdirSync(state);const lock=path.join(state,'lock');
  const input=f.artifact('r.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'ok'}}));
  const run=async()=>{f.lines.length=0;return main(['ledger','append','--session',f.session,input],f.deps);};
@@ -39,7 +39,7 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
 });
 
 test('session lock skips dead breaker slots without displacing a live breaker', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const state=path.join(f.session,'.state');fs.mkdirSync(state);const lock=path.join(state,'lock');
  const dead=JSON.stringify({pid:999,host:f.deps.host,at:'dead'}),live=JSON.stringify({pid:7,host:f.deps.host,at:'live'});
  fs.writeFileSync(path.join(state,'lock.break'),dead);fs.writeFileSync(path.join(state,'lock.break.1'),live);
@@ -56,7 +56,7 @@ test('session lock skips dead breaker slots without displacing a live breaker', 
 });
 
 test('session lock stale contenders preserve the replacement owner', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const state=path.join(f.session,'.state');fs.mkdirSync(state);const file=path.join(state,'lock');
  fs.writeFileSync(file,JSON.stringify({pid:99,host:f.deps.host,at:'old',tool:'old'}));
  const a=f.artifact('a.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'A'}}));

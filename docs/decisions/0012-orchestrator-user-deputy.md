@@ -4,6 +4,8 @@
 - **Date**: 2026-10-18
 - **Audience**: Maintainers
 
+> Engine mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). Frame and await names below describe the removed engine; the user deputy and decision-frame principles remain in force.
+
 ## Context
 
 Host agents coordinating `dispatch` across native platforms frequently fall into passive message-relay patterns: dumping uncurated delegate claims, asking open-ended questions, or punting verifiable factual checks to the human. This pattern inflates human cognitive load, introduces review fatigue, and directly contradicts the core product objective: *"catch flawed assumptions early and reduce the cost and time of verified delivery while minimizing routine human coordination."*

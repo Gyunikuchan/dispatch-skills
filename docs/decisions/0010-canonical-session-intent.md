@@ -4,6 +4,8 @@
 - **Date**: 2026-10-16
 - **Audience**: Maintainers
 
+> Engine mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). The SPEC_REVISED/SPEC_SETTLED events below describe the removed engine. Current intent revision follows [spec operation](../../skills/dispatch/references/spec-stage.md#revision-protocol).
+
 ## Context
 
 Intent previously lived in chat, optional specs and duplicated design/plan sections. Review context could reduce it to a short flag or commit messages. Authors, writers and reviewers could therefore work from different assumptions. One durable governing document makes requirements, decisions and their rationale available to every participant.

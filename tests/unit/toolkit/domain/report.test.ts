@@ -9,6 +9,15 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
+test('rejected MUST reports require exact explicit requested confirmations', () => {
+  const parse = (confirmations?: unknown) => parseReport({kind:'code',source:'claude[0]',expectedRequestIds:['request-1'],text:JSON.stringify({status:'CLEAN',findings:[],...(confirmations === undefined ? {} : {confirmations})})});
+  assert.equal(parse().ok,false);
+  for (const confirmations of [[],[{requestId:'request-1',decision:'agree',rationale:' '}],[{requestId:'other',decision:'agree',rationale:'Evidence checked'}],[{requestId:'request-1',decision:'agree',rationale:'Evidence checked',extra:true}],[{requestId:'request-1',decision:'agree',rationale:'Evidence checked'},{requestId:'request-1',decision:'agree',rationale:'Evidence checked'}]]) assert.equal(parse(confirmations).ok,false);
+  const result=parse([{requestId:'request-1',decision:'agree',rationale:'Evidence checked'}]);
+  assert.equal(result.ok,true);
+  if(result.ok) assert.equal(result.confirmations?.[0]?.decision,'agree');
+});
+
 const familyTags = [
   'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
   'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',

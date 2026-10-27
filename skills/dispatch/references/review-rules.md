@@ -14,11 +14,19 @@ A settled DEC may resolve an intent claim autonomously: cite it in the rationale
 
 Keep the actual reviewed revision and scope. After edits, choose continued review coverage from changed paths, accepted fixes and disputed claims; do not imply that a previous review covered newer bytes. Preserve earlier findings and rulings. A failed provider or missing coverage remains visible.
 
-Level policy selects roster and round caps. The cap bounds quality rounds, not MUST fixes: after an `accepted` MUST ruling on the last round, rerun the same target; the tool grants a round past the cap. Recurrence escalations stop non-converging loops. A cap-ending SHOULD or CONSIDER fix remains unreviewed until another actual review covers it; do not switch targets or invent coverage to close a finding.
+Level policy selects roster and round caps. The cap bounds quality rounds. An accepted MUST fix or a pending MUST rejection earns continuation past the cap. Recurrence and rejection escalations stop non-converging loops. A cap-ending SHOULD or CONSIDER fix remains unreviewed until another actual review covers it; do not switch targets or invent coverage to close a finding.
 
 ## Rulings and fix scope
 
 Append a ledger `ruling` record with subject `review:<review>:<finding>`, disposition `accepted`, `rejected`, `duplicate` or `deferred`, and evidence-backed rationale. Use the review identifier and finding ID from the result. Reject a repeated settled claim without new evidence by citing the prior ruling.
+
+A rejected MUST remains pending until each original logical source slot, or its configured reserve/native substitute, explicitly agrees with an evidence-backed rationale. For a tool-only finding, use the first non-reserve reviewer in its original saved roster; if none exists, stop with `review-confirmation-required`. The next review sends each slot its own captured requests. Missing, malformed, failed or unattributed replies leave rejection pending; omission from ordinary findings is not agreement. SHOULD and CONSIDER rejections need no confirmation.
+
+A second consecutive explicit disagreement, or a second consecutive completed round past the cap without a valid attributed reply from an assigned source for a pending rejection, opens `rejection:<review>:<finding>` and blocks review launches in that series. Count no-response attempts per original finding and assigned logical source across target and ruling edits. Agreement resets the disagreement count; a valid reply resets only that source's no-response count. Failed replies reset neither count, and target/rationale edits do not resolve escalation.
+
+Escalate through the [Decision Frame](decision-frame.md#review-escalation); retain the user decision evidence in a resolved escalation ledger record before retrying. Resolution re-arms confirmation, retains the disagreement count, and starts a new bounded no-response attempt. The next explicit disagreement can reopen escalation. Accepting the finding for repair removes the rejection obligation.
+
+Pruning, delivery and report completion require confirmed applicable MUST rejections. Bound plan/design and current integration-base reviews retain obligations across content edits and disabled phases. Duplicate rulings cannot close a pending original. Later target edits do not reopen a confirmed unchanged ruling. Rejection of the same finding under a new ruling needs fresh confirmation.
 
 Apply accepted fixes directly within governing scope. Identify every source, test, fixture, helper and generated path needed before editing. Verify fixes and record the resulting evidence. Resolve related findings as a coherent change; dependency ordering must follow actual interfaces.
 

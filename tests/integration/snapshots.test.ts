@@ -17,7 +17,7 @@ export function checkSnapshots(files: FileTable): string[] {
 }
 
 test('snapshots stay confined to the review-prompt golden dir', () => {
-  assert.deepEqual(checkSnapshots(scanOverlay()), []);
+  assert.deepEqual(checkSnapshots(scanOverlay(undefined, false)), []);
 });
 
 test('a snapshot outside the golden dir fails with the rule and the fix', () => {

@@ -6,6 +6,8 @@
   rebuttal-retry fixes), plus spawn traces and CPU profiles of `npm test` on Windows (16 logical
   cores, Node 24)
 
+> Execution mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). The caching and reducer-test implementation below is historical; current tests target toolkit results, ledger records and rendered sections. See the [current toolkit contract](../../skills/dispatch/references/toolkit.md).
+
 ## Context
 
 In the 36-minute run, the time went to:

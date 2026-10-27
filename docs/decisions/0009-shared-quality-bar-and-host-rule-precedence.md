@@ -5,6 +5,8 @@
 - **Audience**: Maintainers
 - **Spec**: `skills/dispatch/references/templates/quality-bar.md`, `skills/dispatch/references/templates/review-prompt.md`, `skills/dispatch/references/templates/write-brief.md`, `skills/dispatch/scripts/domain/prompt.ts`
 
+> Engine mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). Writer checkpoint and frame mechanics below describe the removed engine; shared quality criteria and host-rule precedence remain in force.
+
 ## Context
 
 Native writers and code reviewers applied different code quality standards. The code review prompt carried the quality rules: the existing-equivalent search and tool-enforced-issue skip in `review-prompt-code.md` `## inspection`, and the simplicity order, security and resource list, durable test bar, and plan-ID ban in its `## tags` glosses. The write brief stated conventions in one line: read `AGENTS.md` and report a conflict with the brief under concerns. Writers learned the reviewer's rules only from findings, and each such finding cost a fix round.
@@ -33,7 +35,7 @@ Prompt assembly already had one mechanism: `assembleTemplate(frame, kind)` in `d
 | Plan author and reviewer | shared + plan + code |
 | Design author and reviewer | shared + design |
 
-`domain/prompt.ts` `qualityBar(consumer)` selects these sections for assembled prompts. Author frames name required read sections; authors read them before drafting, including nested authoring. Review kind blocks retain tag vocabulary rather than another criteria copy. The [quality bar](../../skills/dispatch/references/templates/quality-bar.md) owns the criteria and the [author contract](../../skills/dispatch/SKILL.md#await-author) owns required reading. The local [test-optimisation criteria](../../.agents/skills/optimise-tests/references/criteria.md) owns its ledger, coverage dispositions, deletion proof, and packet-specific timing rules and points back to the code bar. [AGENTS.md](../../AGENTS.md) keeps repository-wide test entrypoints, storage guidance, and timing requirements. Spec alignment joins the shared bar; [ADR 0010](0010-canonical-session-intent.md) owns intent semantics. D2/D3's host precedence and safety boundaries remain unchanged.
+`domain/prompt.ts` `qualityBar(consumer)` selects these sections for assembled prompts. Author frames name required read sections; authors read them before drafting, including nested authoring. Review kind blocks retain tag vocabulary rather than another criteria copy. The [quality bar](../../skills/dispatch/references/templates/quality-bar.md) owns the criteria and the [author contract](../../skills/dispatch/SKILL.md#tool-loop) owns required reading. The local [test-optimisation criteria](../../.agents/skills/optimise-tests/references/criteria.md) owns its ledger, coverage dispositions, deletion proof, and packet-specific timing rules and points back to the code bar. [AGENTS.md](../../AGENTS.md) keeps repository-wide test entrypoints, storage guidance, and timing requirements. Spec alignment joins the shared bar; [ADR 0010](0010-canonical-session-intent.md) owns intent semantics. D2/D3's host precedence and safety boundaries remain unchanged.
 
 ## Consequences and trade-offs
 

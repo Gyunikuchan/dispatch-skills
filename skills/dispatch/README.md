@@ -53,7 +53,8 @@ For installation instructions, see the [repository README](../../README.md). Cop
 From the repository root, check your setup with:
 
 ```bash
-node skills/dispatch/scripts/dispatch.ts doctor --level high
+node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
 Questions and reviews use `read-delegates`. Implementation also needs a `write-subagents` entry for the platform running your host agent. See [Configure Dispatch](references/readme/configuration.md).
@@ -113,7 +114,7 @@ Review current or committed work:
 /dispatch review code: main..HEAD
 ```
 
-Without a range, code review covers uncommitted changes. Your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit.
+Without a range, code review covers uncommitted changes. Your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again under the [review rounds policy](references/review-rules.md#review-provenance-and-applicability).
 
 ## Configure routing
 
@@ -129,11 +130,11 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 
 ## Safety and session files
 
-- Read delegates use provider-specific read-only controls and credential stripping. Dispatch requests an OS sandbox where the provider and execution mode support it; Doctor reports unsupported sandboxing. Setting `sandbox: false` opts out of OS isolation, which provider read-only controls do not replace.
+- Read delegates use provider-specific read-only controls and credential stripping. Dispatch requests an OS sandbox where the provider and execution mode support it; provider launches report unsupported sandboxing. Setting `sandbox: false` opts out of OS isolation, which provider read-only controls do not replace.
 - Production changes use a writer configured for the host platform after the plan settles.
 - Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
-- Dispatch does not commit, push, or open a pull request.
+- Dispatch creates internal commits and delivers unstaged changes to your checkout; it does not commit on your branch, push, or open a pull request.
 
 See [Workspaces and results](references/readme/concepts.md) for session files and verification.
 

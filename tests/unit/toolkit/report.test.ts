@@ -46,7 +46,7 @@ function planSource(count = 4): string {
 }
 
 async function fixture(count = 4) {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   const skillRoot = path.join(f.root, 'isolated-skill');
   fs.mkdirSync(skillRoot);
   f.deps.skillRoot = skillRoot;
@@ -138,7 +138,7 @@ test('report render rejects early complete, unbound and positional input cases',
     assert.equal(complete.output.reason, 'no-integration');
     assert.equal(fs.existsSync(path.join(f.session, 'report.walkthrough.md')), false);
 
-    const unbound = sessionFixture();
+    const unbound = sessionFixture({ memory: true });
     try {
       unbound.deps.skillRoot = f.skillRoot;
       const result = await invoke(unbound, 'report', 'render');

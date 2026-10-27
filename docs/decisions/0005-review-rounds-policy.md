@@ -4,6 +4,8 @@
 - **Date**: 2026-09-29
 - **Spec**: the review-rounds section of `skills/dispatch/references/review-rules.md`
 
+> Execution mechanics superseded by [ADR 0013](0013-toolkit-and-ledger.md). Current tools restore independent MUST rejection confirmation, original-slot fallback routing, post-cap continuation and second-disagreement escalation under the [current review rules](../../skills/dispatch/references/review-rules.md). The historical SHOULD threshold, delta-only scope and old engine mechanics below remain superseded. See the [current toolkit contract](../../skills/dispatch/references/toolkit.md).
+
 ## Context
 
 Automated code review runs in rounds. Each round a reviewer raises findings and the orchestrator

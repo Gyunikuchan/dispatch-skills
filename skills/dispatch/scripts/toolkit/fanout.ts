@@ -17,14 +17,14 @@ import type { Level } from './types.ts';
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
 export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string};
 export type SlotOutcome = {slot: string} & (
-  {state: 'done'; text: string} |
+  {state: 'done'; text: string; responder?: {slot: string; provider: string; model: string | null; native: boolean}} |
   {state: 'native'; promptPath: string; replyPath: string; error?: string} |
   {state: 'failed'; cls: FailureClass; reason: string}
 );
 type FanOutInput = {
   dir: string; slots: readonly RosterSlot[] | Roster;
   prompt: string | ((slot: RosterSlot) => string);
-  validate: (text: string) => Validation; cwd?: string;
+  validate: (text: string, logicalSlot: string) => Validation; cwd?: string;
   quota?: ReturnType<typeof quotaSnapshot>;
 };
 
@@ -98,7 +98,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     return outcome;
   };
 
-  const voice = async (slot: RosterSlot, promptPath: string): Promise<SlotOutcome> => {
+  const voice = async (slot: RosterSlot, promptPath: string, logicalSlot = slot.slot): Promise<SlotOutcome> => {
     if (slot.native) return native(slot);
     if (!isProviderId(slot.provider)) return {slot: slot.slot, state:'failed',cls:'config',reason:'Unknown provider ' + slot.provider};
     const provider = slot.provider, modes = deps.modes(provider);
@@ -123,9 +123,9 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
             deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),
         },mode);
         if(result.outcome.status === 'ok') {
-          const checked = input.validate(result.outcome.text);
+          const checked = input.validate(result.outcome.text, logicalSlot);
           emit(slot,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
-          if(checked.ok) return {slot:slot.slot,state:'done',text:checked.text ?? result.outcome.text};
+          if(checked.ok) return {slot:logicalSlot,state:'done',text:checked.text ?? result.outcome.text,responder:{slot:slot.slot,provider,model,native:false}};
           failure = checked;
         } else {
           failure = {ok:false,cls:result.outcome.cls,reason:result.outcome.detail};
@@ -147,10 +147,10 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     try { saved=JSON.parse(fs.readFileSync(file,'utf8')) as SlotOutcome; }
     catch(error) {if((error as NodeJS.ErrnoException).code !== 'ENOENT')throw error;}
     if(saved?.state === 'native' && fs.existsSync(saved.replyPath)) {
-      const text=fs.readFileSync(saved.replyPath,'utf8'), checked=input.validate(text);
+      const text=fs.readFileSync(saved.replyPath,'utf8'), checked=input.validate(text,slot.slot);
       emit(slot,{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
       emit(slot,{kind:'native',state:checked.ok?'completed':'invalid',replay:true});
-      if(checked.ok) saved={slot:slot.slot,state:'done',text:checked.text ?? text};
+      if(checked.ok) saved={slot:slot.slot,state:'done',text:checked.text ?? text,responder:{slot:slot.slot,provider:deps.orchestrator?.platform ?? slot.provider,model:deps.orchestrator?.model ?? null,native:true}};
       else {
         let suffix=1;while(fs.existsSync(saved.replyPath+'.invalid-'+suffix))suffix++;
         fs.renameSync(saved.replyPath,saved.replyPath+'.invalid-'+suffix);
@@ -158,6 +158,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       }
       atomic(file,saved);
     }
+    if(saved?.state === 'done' && !input.validate(saved.text,slot.slot).ok) saved=undefined;
     if(saved && saved.state !== 'failed') savedOutcomes.set(slot.slot,saved);
   }
   const results = await Promise.allSettled(targets.map(async slot => {
@@ -174,7 +175,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         const taken=takeReserve(pool.current,slot.slot,outcome.reason);pool.current=taken.pool;
         const reserve=reserves.find(entry=>entry.slot===taken.reserve);
         if(reserve) {
-          const substitute=await voice(reserve,promptPath);
+          const substitute=await voice(reserve,promptPath,slot.slot);
           emit(reserve,{kind:'slot',state:substitute.state,targetSlot:slot.slot,...(substitute.state==='failed'?{cls:substitute.cls}:{})});
           outcome=substitute.state === 'native' ? native(slot) : {...substitute,slot:slot.slot};
         }

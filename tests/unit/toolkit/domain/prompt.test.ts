@@ -4,6 +4,14 @@ import { test } from 'node:test';
 
 import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
+import {settledSection} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+
+test('rejected MUST prompt context settles only confirmed rejections',()=>{
+ const pending={id:'R1-F001',locus:'§ Work',defect:'Unbounded writes',ruling:'rejected',reason:'Writes have a bound',severity:'MUST'};
+ assert.equal(settledSection([pending]),'');
+ assert.match(settledSection([{...pending,rejectionConfirmed:true}]),/Settled in earlier rounds/);
+ assert.match(settledSection([{...pending,severity:'SHOULD'}]),/R1-F001/);
+});
 
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);
 const golden = new URL('../../../fixtures/review-prompt-golden/', import.meta.url);

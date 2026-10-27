@@ -7,6 +7,30 @@ import {appendRecord,foldLedger} from '../../skills/dispatch/scripts/toolkit/led
 import { CLEAN } from '../helpers/e2e.ts';
 import crypto from 'node:crypto';
 
+test('pending MUST rejection keeps captured Git confirmation identity across native retry and target movement',async()=>{
+ const f=await toolkitRepo();try {
+  const skill=path.join(f.session,'confirmation-skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
+  fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}}));
+  f.deps.skillRoot=skill;f.deps.orchestrator={platform:'codex',model:'native'};f.deps.liveness={};
+  fs.writeFileSync(path.join(f.root,'src/file.ts'),'first captured change\n');
+  const run=()=>f.run(['review','run','worktree','--kind','code','--spec','work.spec.md','--level','low']);
+  const first=await run();assert.equal(first.output.reason,'native-pending');
+  fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{severity:'MUST',tag:'correctness',locus:'src/file.ts:L1',defect:'Writes are unbounded',requiredChange:'Bound the writes'}]}));
+  const finding=await run();assert.equal(finding.exit,0);const saved=JSON.parse(fs.readFileSync(finding.value.path,'utf8'));
+  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-captured',data:{subject:'review:'+saved.review+':R1-F001',ruling:'rejected',rationale:'Captured writes have a bound'}},f.deps);
+  const second=await run();assert.equal(second.output.reason,'native-pending');
+  const oldPrompt=fs.readFileSync(second.value.pending[0].promptPath,'utf8'),oldId=/Request ID: `([^`]+)`/.exec(oldPrompt)![1]!;
+  fs.writeFileSync(second.value.pending[0].replyPath,JSON.stringify({status:'CLEAN',findings:[],confirmations:[{requestId:oldId,decision:'agree',rationale:'The captured writes have a bound'}]}));
+  fs.writeFileSync(path.join(f.root,'src/file.ts'),'new captured change\n');
+  const moved=await run();assert.equal(moved.output.reason,'native-pending');
+  const freshPrompt=fs.readFileSync(moved.value.pending[0].promptPath,'utf8'),freshId=/Request ID: `([^`]+)`/.exec(freshPrompt)![1]!;assert.notEqual(freshId,oldId);
+  assert.equal(fs.existsSync(path.join(path.dirname(finding.value.path),'../round-2/findings.json')),false);
+  fs.writeFileSync(moved.value.pending[0].replyPath,JSON.stringify({status:'CLEAN',findings:[],confirmations:[{requestId:freshId,decision:'agree',rationale:'The new captured writes also have a bound'}]}));
+  const confirmed=await run();assert.equal(confirmed.exit,0,JSON.stringify(confirmed));assert.equal(JSON.parse(fs.readFileSync(confirmed.value.path,'utf8')).confirmations[0].responder.native,true);
+  assert.equal((await run()).output.reason,'round-cap');
+ }finally{f.cleanup();}
+});
+
 test('toolkit worktree review excludes unignored session state and preserves committed session blobs', async () => {
   const f = await toolkitRepo();
   try {

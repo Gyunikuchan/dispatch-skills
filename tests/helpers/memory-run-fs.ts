@@ -73,7 +73,7 @@ export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
     publishExclusive: (file, text) => { if (!managed(file)) return real.publishExclusive(file, text); if (entries.has(key(file))) return false; write(file, Buffer.from(text), true); return true; },
     writeAtomic: (file, text) => { if (managed(file)) write(file, Buffer.from(text)); else real.writeAtomic(file, text); },
     truncate: (file, length) => { if (!managed(file)) real.truncate(file, length); else { const bytes = read(file), next = Buffer.alloc(length); bytes.copy(next); write(file, next); } },
-    remove: file => { if (!managed(file)) real.remove(file); else { const entry = entries.get(key(file)); if (entry?.kind === 'directory') fail('EISDIR', file); entries.delete(key(file)); } },
+    remove: file => { if (!managed(file)) real.remove(file); else { const entry = entries.get(key(file)); if (entry?.kind === 'directory' && [...entries.keys()].some(child => child.startsWith(`${key(file)}${path.sep}`))) fail('ENOTEMPTY', file); entries.delete(key(file)); } },
   };
   ports.fs = overlay;
 }

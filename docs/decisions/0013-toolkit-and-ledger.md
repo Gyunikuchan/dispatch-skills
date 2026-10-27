@@ -6,7 +6,7 @@
 
 ## Context
 
-The frame-per-step driver made protocol recovery and admission checks a large part of delivery. The approved [spec](../../.scratch/dispatch-skills/20261021T1011Z-refactor-dispatch-to-cut-complexity-brit/refactor-the-dispatch-skill-to-be-less-c.spec.md) chooses deterministic tools with orchestrator-owned sequencing (DEC-1, DEC-3–DEC-5). The [design](../../.scratch/dispatch-skills/20261021T1011Z-refactor-dispatch-to-cut-complexity-brit/design-ordered-increments-for-the-dispat.design.md) records AD-1–AD-10. The [I08 comparison](../evaluations/2026-10-dispatch-toolkit-comparison.md) passed its fixed correctness and token rule before legacy deletion.
+The frame-per-step driver made protocol recovery and admission checks a large part of delivery. The refactor chose deterministic tools with orchestrator-owned sequencing (spec DEC-1, DEC-3–DEC-5; design AD-1–AD-10). Its planning artifacts were session-local, not durable repository references. The I08 comparison report is not present in this checkout; this record alone does not establish its correctness or token result.
 
 ## Decision
 

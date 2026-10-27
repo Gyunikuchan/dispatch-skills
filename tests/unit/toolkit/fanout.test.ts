@@ -10,9 +10,24 @@ const slot = (provider: string, model: string | string[] = 'good', reserve = fal
 const validate = (text: string) => text.trim() ? {ok: true as const, text: text.trim()} : {ok: false as const, cls: 'empty-output' as const, reason: 'empty'};
 const quota = {schemaVersion:1 as const,policyVersion:1 as const,decidedAt:0,decisions:[]};
 
+test('rejected MUST validation retains logical source across direct reserve native and replay',async()=>{
+ const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+ const f=sessionFixture({memory:true});try {
+   const seen:string[]=[];const check=(text:string,source:string)=>{seen.push(source);return validate(text);};
+   f.script('claude','good','direct');f.script('opencode','good',{status:'fail',cls:'auth',detail:'unavailable'});f.script('copilot','good','reserve');
+   const dir=path.join(f.session,'confirmation'),slots=[slot('claude'),slot('opencode'),slot('copilot','good',true),slot('codex','good',false,true)];
+   const first=await fanOut({dir,slots,prompt:'confirm',validate:check,quota},f.deps);
+   assert.deepEqual(seen,['claude[0]','opencode[0]']);
+   const reserved=first.find(reply=>reply.slot==='opencode[0]');assert.ok(reserved?.state==='done');assert.equal(reserved.responder?.slot,'copilot[0]');
+   const native=first.find(reply=>reply.state==='native');assert.ok(native?.state==='native');fs.writeFileSync(native.replyPath,'native');
+   seen.length=0;await fanOut({dir,slots,prompt:'confirm',validate:check,quota},f.deps);
+   assert.ok(seen.includes('codex[0]'));assert.ok(seen.includes('opencode[0]'));assert.ok(!seen.includes('copilot[0]'));
+ }finally{f.cleanup();}
+});
+
 test('diagnostics retain terminal routing and unlaunched failure classes', async () => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f=sessionFixture();try {
+  const f=sessionFixture({memory:true});try {
     const events:unknown[]=[];f.deps.diagnostics=e=>{events.push(e);};f.deps.modes=()=>[];
     const result=await fanOut({dir:path.join(f.session,'unlaunched'),slots:[slot('claude')],prompt:'question',validate,quota},f.deps);
     assert.equal(result[0]?.state,'failed');assert.equal(f.launches.length,0);
@@ -26,7 +41,7 @@ test('diagnostics retain terminal routing and unlaunched failure classes', async
 
 test('fan-out launches concurrent slots in roster order and persists before hooks', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture(); try {
+  const f = sessionFixture({memory:true}); try {
     const dir = path.join(f.session, '.state', 'fanout');
     const waiting: (() => void)[] = [];
     f.deps.delegate = async (_provider, request) => {
@@ -71,7 +86,7 @@ test('fan-out cascades validation models modes quota and one reserve', async () 
 
 test('fan-out reruns failed slots and only missing crash outcomes', async () => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f=sessionFixture();try{
+  const f=sessionFixture({memory:true});try{
     const dir=path.join(f.session,'fanout'),slots=[slot('claude'),slot('agy'),slot('codex')];
     f.script('claude','good','one');f.script('agy','good','two');f.script('codex','good',{status:'fail',cls:'auth',detail:'failed'});
     await fanOut({dir,slots,prompt:'question',validate,quota},f.deps);
@@ -86,7 +101,7 @@ test('fan-out reruns failed slots and only missing crash outcomes', async () => 
 
 test('fan-out native fallback rejects invalid replies and promotes valid replies', async () => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f=sessionFixture();try{
+  const f=sessionFixture({memory:true});try{
     f.deps.orchestrator={platform:'claude',model:null};
     f.script('claude','good',{status:'fail',cls:'auth',detail:'failed'});
     const dir=path.join(f.session,'fanout'),slots=[slot('claude'),slot('codex','good',false,true)];
@@ -98,13 +113,13 @@ test('fan-out native fallback rejects invalid replies and promotes valid replies
     assert.equal(fs.existsSync(native.replyPath+'.invalid-1'),true);assert.equal(outcomes[0]!.state,'native');
     fs.writeFileSync(native.replyPath,'valid');
     outcomes=await fanOut({dir,slots,prompt:'question',validate,quota},f.deps);
-    assert.deepEqual(outcomes[0],{slot:'claude[0]',state:'done',text:'valid'});assert.equal(f.launches.length,1);
+    assert.deepEqual(outcomes[0],{slot:'claude[0]',state:'done',text:'valid',responder:{slot:'claude[0]',provider:'claude',model:null,native:true}});assert.equal(f.launches.length,1);
   }finally{f.cleanup();}
 });
 
 test('fan-out native-only roster remains available on its host', async () => {
   const {resolveSlots}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f=sessionFixture();try{
+  const f=sessionFixture({memory:true});try{
     const skillRoot=path.join(f.root,'skill');fs.mkdirSync(skillRoot);
     fs.writeFileSync(path.join(skillRoot,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{medium:{}}]}},phases:{'plan-review':{targets:{medium:1},rounds:{medium:2}}}}));
     f.deps.skillRoot=skillRoot;f.deps.orchestrator={platform:'codex',model:null};f.deps.liveness={codex:false};
@@ -115,21 +130,21 @@ test('fan-out native-only roster remains available on its host', async () => {
 
 test('fan-out validates provider text before done and shares one deadline',async()=>{
  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
- const f=sessionFixture();try{
+ const f=sessionFixture({memory:true});try{
   const budgets:number[]=[];let now=0;f.deps.clock=()=>now;
   f.deps.delegate=async(_provider,request)=>{
    budgets.push(request.timeoutMs);now+=100;
    return {outcome:{status:'ok',text:request.model==='bad'?'':'accepted',resume:null,sessionId:null},invocations:[]};
   };
   const outcomes=await fanOut({dir:path.join(f.session,'validate'),slots:[slot('claude',['bad','good'])],prompt:'question',validate,quota},f.deps);
-  assert.deepEqual(outcomes,[{slot:'claude[0]',state:'done',text:'accepted'}]);
+  assert.deepEqual(outcomes,[{slot:'claude[0]',state:'done',text:'accepted',responder:{slot:'claude[0]',provider:'claude',model:'good',native:false}}]);
   assert.deepEqual(budgets,[1800000,1799900]);
  }finally{f.cleanup();}
 });
 
 test('diagnostics observe validation routing and native replay without changing slots', async () => {
  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
- const f=sessionFixture();try {
+ const f=sessionFixture({memory:true});try {
  const delegate=f.deps.delegate;const events:unknown[]=[];f.deps.diagnostics=e=>{events.push(e);};
  const dir=path.join(f.session,'observed'),slots=[slot('claude','good',false,true)];
  const pending=await fanOut({dir,slots,prompt:'question',validate,quota},f.deps);

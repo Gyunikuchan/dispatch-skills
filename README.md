@@ -85,7 +85,8 @@ Requires Node.js `^22.18 || >=23.6` with native TypeScript stripping and at leas
 Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it, then keep only the models you actually want to use. Check the resulting configuration with:
 
 ```bash
-node skills/dispatch/scripts/dispatch.ts doctor --level high
+node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
 > [!NOTE]
@@ -95,7 +96,7 @@ node skills/dispatch/scripts/dispatch.ts doctor --level high
 > Exclude installed skill directories from host formatters and linters (for example, with ignore files). Integrity tolerates common Markdown formatting (whitespace, table layout, emphasis markers, heading spacing, fence style) and all JSON formatting. List marker, numbering and indentation changes, and any `.ts` rewrite, fail the integrity check. Artifact hashes tolerate the same Markdown formatting.
 
 > [!NOTE]
-> Dispatch requests OS sandboxing by default where a provider and execution mode support it. Doctor reports when sandboxing is unsupported. Setting `sandbox: false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they are not the same boundary. Antigravity uses plan mode as its write boundary.
+> Dispatch requests OS sandboxing by default where a provider and execution mode support it. Provider launches report unsupported sandboxing; Doctor checks integrity and configuration. Setting `sandbox: false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they are not the same boundary. Antigravity uses plan mode as its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch user guide, workflow choices, configuration, and troubleshooting.
 
@@ -144,7 +145,7 @@ Review your working tree or a branch range:
 > [!NOTE]
 > With no range, a dirty tree is reviewed as its uncommitted changes alone — staged, unstaged, and untracked — and your committed branch work is left out. A clean tree has no reviewable changes. Name a range explicitly to review committed changes.
 
-In each review, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
+In each review, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again under the [review rounds policy](skills/dispatch/references/review-rules.md#review-provenance-and-applicability). Disputed or intent-dependent findings can still be escalated to you.
 
 Run the whole loop — spec settlement, plan and review, applicable approvals, implementation and code review:
 
@@ -160,7 +161,7 @@ For work too big for one pass, `design:` creates and reviews an increment graph.
 ```
 
 > [!NOTE]
-> Nothing is ever committed, pushed, or opened as a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
+> Dispatch creates internal task and integration commits, then delivers unstaged changes to your checkout. It does not commit on your branch, push, or open a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
 
 For help resuming interrupted work or upgrading Dispatch, see [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md).
 

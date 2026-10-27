@@ -16,21 +16,23 @@ Refusals: unreadable question, invalid level, level-unapproved, no read delegate
 
 Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`.
 Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots.
-Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, native-pending, target-moved or round-cap. Past the cap, a round runs only when the last round has an accepted MUST finding. A single revision without a merge-base is invalid-input.
+Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
+
+When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
 
 Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion. Worktree round counts are per HEAD commit; a new commit starts a new review.
 
 ### report render
 
 Arguments: `report render --session <session>`.
-Result path: walkthrough path, criterion statuses, deviations, user records, findings and evidence references. Renders the current snapshot without claiming completion.
+Result path: walkthrough path, criterion statuses, deviations, user records, findings, rejection confirmation states and evidence references. Renders the current snapshot without claiming completion.
 Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 
 ### report complete
 
 Arguments: `report complete --session <session>`.
 Result path: completed walkthrough path, criterion statuses, deviations and optional diagnostics path.
-Refusals: no-integration, criteria-unmet or undelivered. Inspect reason and statuses; only a successful result is completion.
+Refusals: review-confirmation-required, no-integration, criteria-unmet or undelivered. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
 
@@ -80,7 +82,9 @@ For a post-prune artifact correction, preserve edited artifact bytes and all evi
 
 Arguments: `worktree deliver --session <session>`.
 Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
-Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, pruning-required, prune-transition-stale, final-checks-required or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
+Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, pruning-required, prune-transition-stale, final-checks-required, review-confirmation-required or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
+
+Pending or escalated applicable MUST rejections refuse delivery before caller writes or a delivered record. The same closure query gates pruning and report completion; see [review rules](review-rules.md#rulings-and-fix-scope).
 
 Delivery makes no caller commit and stages nothing. It restores the verified source tree into the caller working tree as unstaged changes; caller HEAD stays at from. New files appear as untracked (`??`) in `git status`. Internal writer and integration commits stay in the session. Transient plans require absent targets and successful final-tree checks before any caller write. Same-tree delivery writes nothing and records noop.
 
@@ -145,7 +149,7 @@ Refusals: positional arguments or invalid filters.
 ### doctor run
 
 Arguments: `doctor run --session <session> [--level <level>]`.
-Result path: integrity, provider/mode discovery, selected roster and writer configuration.
+Result path: integrity, configuration path/problems, selected level and configured writer models/efforts. Doctor does not probe provider/mode availability, authentication or sandbox support.
 Refusals: positional arguments or invalid configuration. Inspect ok and reason for failed integrity or unavailable capabilities.
 
 ### status show

@@ -8,7 +8,7 @@ Design and plan reviews assess intent first: missing requirements, contradicted 
 
 ## What happens
 
-In every review, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
+In every review, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again under the [review rounds policy](../review-rules.md#review-provenance-and-applicability). Disputed or intent-dependent findings can still be escalated to you.
 
 ### Flow at a glance
 

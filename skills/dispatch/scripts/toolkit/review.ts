@@ -19,9 +19,10 @@ import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
 import { ToolError } from './output.ts';
 import { redGaps } from './red.ts';
+import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 
-type Capture = {artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget};
+type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
+type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget};
 function read<T>(file: string): T | null {
   try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
@@ -31,7 +32,7 @@ function atomic(file: string, value: unknown) {
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
   finally {fs.rmSync(temp, {force: true});}
 }
-const same = (round: Round, capture: Capture) => round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
+const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const splitPaths = (text: string) => text.split('\0').filter(Boolean);
 
@@ -48,7 +49,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const gate = levelGate(fold, level);
   if (!gate.allowed) throw new ToolError(4, gate.reason!, gate.reason!);
   const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
-  if (!cap) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
   const bound = latest(fold, 'bind');
   let taskTarget = false;
@@ -61,7 +61,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
   }
   const gitTarget = kind === 'code' && requested !== 'integration' && !taskTarget;
-  let slug = (kind === 'code' ? requested : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9._-]/g, '-');
   // Worktree rounds count per HEAD, so a commit starts a new series instead of inheriting an older change's cap.
   let series = '';
   if (requested === 'worktree') {
@@ -69,9 +68,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     if (head.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD');
     series = '@' + head.stdout.trim();
   }
-  if (gitTarget) slug += '-' + crypto.createHash('sha256').update(requested + series).digest('hex');
-  if (!slug || slug === '.' || slug === '..') throw new ToolError(1, 'invalid-input', 'Invalid review target');
-  const review = kind + '-' + slug;
+  const review = reviewId(kind,artifact,gitTarget?series:undefined);
+  const rejectionStates=()=>loadRejections(session,foldLedger(session),[review]);
+  const initialRejections=rejectionStates();
+  if(initialRejections.some(state=>state.state==='escalated'))throw new ToolError(4,'escalation-open','Resolve the disputed MUST rejection before another confirmation round');
+  if (!cap && !initialRejections.some(state=>state.state==='pending')) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
   const directory = path.join(session, '.state/reviews', review);
   fs.mkdirSync(directory, {recursive: true});
 
@@ -87,7 +88,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
     if (kind !== 'code') {
       const source = fs.readFileSync(artifact, 'utf8');
-      return {spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
+      return {artifactPath:fs.realpathSync.native(artifact),spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
     }
     let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
     const revision = async (ref: string) => {
@@ -160,9 +161,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // MUST has no cap (ADR 0005 D4): an accepted MUST fix earns a round; recurrence escalations bound the loop.
       const previous = read<FindingsValue>(path.join(directory, 'round-' + (n - 1), 'findings.json'));
       const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
-      const fixed = previous?.findings.some(finding => finding.severity === 'MUST' &&
-        rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted');
-      if (!fixed) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
+      const previousMetadata=read<Round>(path.join(directory,'round-'+(n-1),'round.json'));
+      const fixed = numbers.some(number=>read<FindingsValue>(path.join(directory,'round-'+number,'findings.json'))?.findings.some(finding=>{
+        const ruling=rulings.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id);
+        return finding.severity==='MUST' && ruling?.data['ruling']==='accepted' && (number===n-1 || ruling.seq>(previousMetadata?.startSeq ?? 0));
+      }));
+      if (!fixed && !rejectionStates().some(state=>state.state==='pending')) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
     }
     const dir = path.join(directory, 'round-' + n);
     fs.mkdirSync(dir, {recursive: true});
@@ -170,16 +174,22 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     let round = read<Round>(roundFile);
     const current = await capture();
     if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
-    const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {};
+    const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {}, confirmationRounds:ConfirmationRound[]=[];
     for (let i = 1; i < n; i++) {
       const value = read<FindingsValue>(path.join(directory, 'round-' + i, 'findings.json'));
       const metadata = read<Round>(path.join(directory, 'round-' + i, 'round.json'));
-      if (value && metadata) {prior.push(value); priorTargets[i] = metadata.target;}
+      if (value && metadata) {prior.push(value); priorTargets[i] = metadata.target;confirmationRounds.push({review,metadata,findings:value});}
     }
     const rulingRows = () => foldLedger(session).records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'));
+    const rulingSnapshot=()=>{
+      const rows=rulingRows();
+      return JSON.stringify(prior.flatMap(value=>value.findings.filter(finding=>finding.severity==='MUST').map(finding=>[finding.id,rows.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id)?.seq ?? 0])));
+    };
+    const settledRulings=rulingRows(),settledRejections=rejectionStates();
     const settled: Settled[] = prior.flatMap(value => value.findings.flatMap(finding => {
-      const ruling = rulingRows().findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
-      return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
+      const ruling = settledRulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
+      const state=settledRejections.find(state=>state.request.finding===finding.id);
+      return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, severity:finding.severity,...(state?{rejectionConfirmed:state.state==='confirmed'}:{}),ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
     }));
 
     async function start(generation: number, captured: Capture): Promise<Round> {
@@ -192,7 +202,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const target = captured.target as {base: string; head: string};
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
-      const value: Round = {round: n, generation, cap, level, roster: [...roster.targets, ...roster.reserves], scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifacts?{artifacts:captured.artifacts}:{})};
+      const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
+      const slots=[...roster.targets,...roster.reserves];
+      for(const request of requests)for(const source of request.sourceSlots)if(!slots.some(slot=>slot.slot===source && !slot.reserve)) {
+        const saved=confirmationRounds.flatMap(round=>round.metadata.roster).find(slot=>slot.slot===source);
+        if(!saved)throw new ToolError(4,'review-confirmation-required','Missing original reviewer slot '+source);
+        const existing=slots.findIndex(slot=>slot.slot===source);if(existing>=0)slots.splice(existing,1);
+        slots.push({...saved,reserve:false});
+      }
+      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{})};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -204,6 +222,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (pending) {
         await withLedger(session, 'review supersede', deps, async tx => {
           for (const escalation of pending.escalations) {
+            if(String(escalation.data['id']).startsWith('rejection:'))continue;
             if (!tx.fold.records.some(row => row.key === escalation.key)) continue;
             await tx.append({kind: 'escalation', by: 'tool', key: escalation.key + ':superseded', data: {id: escalation.data['id'], state: 'resolved', summary: 'superseded: target moved'}});
           }
@@ -214,24 +233,26 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     const hadPending = fs.existsSync(pendingFile);
     if (!round) round = await start(1, current);
-    else if (!same(round, current)) {
+    else if (!same(round, current) || (round.rulingSnapshot!==undefined && round.rulingSnapshot!==rulingSnapshot())) {
       await supersede(current);
       if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
     }
     let pending = read<Finalized>(pendingFile);
     if (!pending) {
       const bind = latest(foldLedger(session), 'bind');
-      const prompt = reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round.spec, artifact, scope: round.scope, taskSummary: current.taskSummary,
-        ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled});
-      const validate = (text: string): Validation => {
-        const parsed = parseReport({kind, source: 'validation', text});
+      const requestsBySlot=new Map<string,RejectionRequest[]>();
+      for(const request of round.requests ?? [])for(const slot of request.sourceSlots)requestsBySlot.set(slot,[...(requestsBySlot.get(slot) ?? []),request]);
+      const prompt = (slot:RosterSlot)=>reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary,
+        ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? []});
+      const validate = (text: string,logicalSlot:string): Validation => {
+        const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
         if (parsed.ok) return {ok: true};
         const cls = parsed.failure.kind === 'uncovered-scope' || parsed.failure.kind === 'loose-locus' ? 'refusal' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
       const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd}, deps);
       const captured = await capture();
-      if (!same(round, captured)) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target moved during fan-out');}
+      if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
       if (native.length) return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native}, summary: 'review ' + review + ': ' + native.length + ' native slots pending'};
       if (!replies.some(reply => reply.state === 'done')) throw new ToolError(2, 'review-failed', 'Every review slot failed');
@@ -242,7 +263,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         for (const task of plan.tasks) owners[task.id] = ownedPaths(plan, task.id);
       }
       pending = finalizeRound({review, round: n, generation: round.generation, cap: round.cap, level: round.level, startSeq: round.startSeq, replies,
-        prior, priorTargets, changedSince, owners, rulings: rulingRows(), kind, artifact, target: round.target});
+        prior, priorTargets, changedSince, owners, escalationRecords:foldLedger(session).records.filter(row=>row.kind==='escalation'),rulings: rulingRows(), kind, artifact, target: round.target,requests:round.requests ?? [],confirmationRounds,spec:round.spec,roster:round.roster});
       if (kind === 'code' && !gitTarget) {
         const plan = loadPlan(session, manifest), currentFold = foldLedger(session);
         const bind = latest(currentFold, 'bind')!;
@@ -282,10 +303,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       atomic(pendingFile, pending);
       await deps.hook?.('review:after-pending');
     }
+    if(round.rulingSnapshot!==rulingSnapshot()){await supersede(await capture());throw new ToolError(4,'target-moved','Review ruling moved during finalization');}
     await withLedger(session, 'review finalize', deps, async tx => {for (const escalation of pending!.escalations) await tx.append(escalation);});
     await deps.hook?.('review:after-append');
     const finalCapture = await capture();
-    if (!same(round, finalCapture)) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target moved during finalization');}
+    if (!same(round, finalCapture) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during finalization');}
     fs.renameSync(pendingFile, path.join(dir, 'findings.json'));
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;

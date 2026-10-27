@@ -113,6 +113,8 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"<relative-file>:L<line>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
+When Pending MUST rejection confirmation assigns requests, add `confirmations` to this object. Answer each assigned request exactly once with exactly `requestId`, `decision` (`agree` or `disagree`) and a nonblank evidence-backed `rationale`. Keep ordinary `status` and `findings`. A pending MUST rejection is open until explicit agreement; omission is not confirmation.
+
 Use only the tags above.
 Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
 is `adjacent`.

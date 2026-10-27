@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {transientRepo as prepared,captureIntegrationReview as review,transientTarget as target,toolkitRepo,transientPlanSource} from './helpers/toolkit-repo.ts';
+import {transientRepo as prepared,captureIntegrationReview as captureReview,transientTarget as target,toolkitRepo,transientPlanSource} from './helpers/toolkit-repo.ts';
 import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+const review:typeof captureReview=(r,...args)=>{const dir=captureReview(r,...args),file=path.join(dir,'round.json'),metadata=JSON.parse(fs.readFileSync(file,'utf8'));metadata.spec.path=path.join(r.root,'work.spec.md');fs.writeFileSync(file,JSON.stringify(metadata));return dir;};
 test('transient pruning preserves caller safety',async()=>{const r=await prepared();try{
  const caller=r.git(['rev-parse','HEAD']);assert.equal((await r.run(['worktree','deliver'])).output.reason,'pruning-required');
  assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');assert.ok(fs.existsSync(path.join(r.integration,target)));
@@ -15,6 +16,7 @@ test('transient pruning preserves caller safety',async()=>{const r=await prepare
  const metadataFile=path.join(dir,'round.json'),metadata=fs.readFileSync(metadataFile,'utf8');fs.writeFileSync(metadataFile,metadata.replace('Full review','Partial review'));assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');fs.writeFileSync(metadataFile,metadata);
  const slotFile=path.join(dir,'gen-1/slots/reviewer.json'),slot=fs.readFileSync(slotFile,'utf8');fs.writeFileSync(slotFile,JSON.stringify({slot:'reviewer',state:'failed'}));assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');fs.writeFileSync(slotFile,slot);
  await appendRecord(r.session,{kind:'escalation',by:'tool',key:'open',data:{id:'scope',state:'open',summary:'Scope unresolved'}},r.deps);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');await appendRecord(r.session,{kind:'escalation',by:'tool',key:'resolved',data:{id:'scope',state:'resolved',summary:'Scope settled'}},r.deps);
+ await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'repair',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'Repair accepted and independently reviewed'}},r.deps);r.git(['commit','--allow-empty','-m','Reviewed repair'],r.integration);assert.equal((await r.run(['verify','run'])).output.ok,true);review(r,2);
  const unrelated=path.join(r.integration,'src/file.ts'),bytes=fs.readFileSync(unrelated);const p=await r.run(['worktree','prune']);assert.equal(p.output.ok,true,JSON.stringify(p));assert.equal(fs.existsSync(path.join(r.integration,target)),false);assert.equal(r.git(['rev-parse','HEAD']),caller);assert.deepEqual(fs.readFileSync(unrelated),bytes);
  assert.equal((await r.run(['worktree','deliver'])).output.reason,'final-checks-required');assert.equal((await r.run(['verify','run','--final'])).output.ok,true);
  assert.equal((await r.run(['worktree','deliver'],point=>{if(point==='deliver:before-apply')fs.writeFileSync(unrelated,'late edit');})).output.reason,'prune-transition-stale');assert.equal(r.git(['rev-parse','HEAD']),caller);fs.writeFileSync(unrelated,bytes);

@@ -14,6 +14,7 @@ import { ToolError } from './output.ts';
 const overlaps=(p:string,q:string)=>p===q||p.startsWith(q+'/')||q.startsWith(p+'/');
 const chunks=<T>(items:T[],size=100)=>Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
 
+import { loadRejections, applicableReviewIds } from './confirmations.ts';
 export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','deliver takes no task');
   return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
@@ -52,6 +53,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     if(source===undefined)refuse('no-integration','Integration worktree is missing and no completed delivery is recorded');
     const plan=loadPlan(ctx.session,ctx.manifest);
     const checkSource=async()=>{
+      if(loadRejections(ctx.session,tx.fold,applicableReviewIds(ctx.session,ctx.manifest,tx.fold)).some(state=>state.state!=='confirmed'))refuse('review-confirmation-required');
       if(hasTransient(plan)){
         const transition=await pruneTransition(ctx,tx.fold,plan,true);
         const current={headTree:await headTree(ctx.deps,cwd),testedTree:await testedTree(ctx.deps,ctx.session,cwd)};

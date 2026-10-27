@@ -35,7 +35,7 @@ test('diagnostic storage failure preserves durable attempts and reports one boun
 });
 
 test('diagnostics persist unlaunched failures and CLI fallback consequences independently', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   f.deps.modes=()=>[];
   const first=observeTool(f.session,'ask','run',undefined,f.deps)!;
@@ -65,7 +65,7 @@ test('diagnostics persist unlaunched failures and CLI fallback consequences inde
 });
 
 test('diagnostics distinguish healthy observed captures from absent and damaged collection', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
   const fold={records:[],lastSeq:0,torn:null};const render=()=>fs.readFileSync(writeDiagnostics(f.session,sessionFacts(f.session,fold,'complete')),'utf8');
   assert.match(render(),/Collection health: unknown/);
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
@@ -119,7 +119,7 @@ test('diagnostics aggregate subjects provenance and partial collection determini
 });
 
 test('diagnostics detect toolkit rejection and writer relaunch evidence', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   for(const reason of ['native-pending','approval-required','invalid-record'])observeTool(f.session,'record','append',undefined,f.deps)!.finish({ok:false,exit:4,reason,summary:'private',value:null});
   const records=[['A','launched','one'],['B','launched','two'],['A','launched','three']].map(([task,phase,key],n)=>({seq:n+1,key:key!,at:'2026-01-01T00:00:00Z',kind:'writer',by:'tool',data:{task,phase,path:key,base:{commit:'a'.repeat(40),seq:0,taskSection:'sha256:'+'b'.repeat(64)}}}));
@@ -171,8 +171,8 @@ function saveRound(input: {
 }
 
 test('session diagnostics include producer rounds, invocations, and gated retro findings', async () => {
-  const fixture = sessionFixture();
-  const empty = sessionFixture();
+  const fixture = sessionFixture({ memory: true });
+  const empty = sessionFixture({ memory: true });
   try {
     const a = 'review-alpha';
     const first = [finding('F001'), finding('F002')];
@@ -266,8 +266,8 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
     const emptyPath = writeDiagnostics(empty.session, emptyFacts);
     assert.match(fs.readFileSync(emptyPath, 'utf8'), /Host retro: missing/);
   } finally {
-    fixture.cleanup();
     empty.cleanup();
+    fixture.cleanup();
   }
 });
 
@@ -293,7 +293,7 @@ test('review JSON errors identify malformed round, findings, and slot files', as
   ];
 
   for (const createPath of malformedFile) {
-    const fixture = sessionFixture();
+    const fixture = sessionFixture({ memory: true });
     try {
       const file = createPath(fixture.session);
       fs.writeFileSync(file, '{invalid');
@@ -307,7 +307,7 @@ test('review JSON errors identify malformed round, findings, and slot files', as
 
 
 test('enabled toolkit diagnostics retain attempts, normalized usage, time and reserve identity without replay duplication', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
     fs.mkdirSync(skill);
@@ -371,7 +371,7 @@ test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O
 
 
 test('diagnostics keep durable attempts across a later crash and exclude cumulative or unlaunched usage', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
     fs.writeFileSync(path.join(skill,'config.jsonc'), '{"diagnostics":true}');
@@ -408,7 +408,7 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
 });
 
 test('diagnostics preserve exception attempts and durable capture boundaries', async () => {
- const f=sessionFixture();try {
+ const f=sessionFixture({ memory: true });try {
  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);fs.writeFileSync(path.join(skill,'config.jsonc'),'{"diagnostics":true}');f.deps.skillRoot=skill;
  const error=Object.assign(new Error('private error'),{invocations:[{provider:'claude',model:'m',mode:'cli',launched:true,outcome:'ok'}]});
  f.deps.delegate=async()=>{throw error;};const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;

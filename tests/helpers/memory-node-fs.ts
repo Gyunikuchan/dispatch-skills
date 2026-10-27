@@ -24,6 +24,7 @@ export function memoryNodeFs(root: string): () => void {
   const ports = fakePorts(); memoryRunFs(ports, base);
   const storage = ports.fs;
   storage.mkdir(base, {recursive: true});
+  const directories = new Set<string>([base]);
   const descriptors = new Map<number, string>();
   let next = -1;
   const restores: (() => void)[] = [];
@@ -51,7 +52,12 @@ export function memoryNodeFs(root: string): () => void {
   replace('writeFileSync', (real, file, data, options) => inside(file) ? write(file, data, options) : real(file, data, options));
   replace('appendFileSync', (real, file, data) => inside(file) ? write(file, Buffer.concat([storage.exists(key(file)) ? bytes(file) : Buffer.alloc(0), Buffer.from(data)])) : real(file, data));
   replace('copyFileSync', (real, source, target) => inside(target) ? storage.writeBase64Atomic(key(target), (inside(source) ? bytes(source) : fs.readFileSync(source)).toString('base64')) : real(source, target));
-  replace('mkdirSync', (real, file, options) => inside(file) ? storage.mkdir(key(file), {recursive: !!options?.recursive}) : real(file, options));
+  replace('mkdirSync', (real, file, options) => {
+    if (!inside(file)) return real(file, options);
+    const result = storage.mkdir(key(file), {recursive: !!options?.recursive});
+    for (let dir = key(file); inside(dir); dir = path.dirname(dir)) directories.add(dir);
+    return result;
+  });
   replace('existsSync', (real, file) => inside(file) ? storage.exists(key(file)) : real(file));
   replace('statSync', (real, file) => {
     if (!inside(file)) return real(file);
@@ -65,19 +71,36 @@ export function memoryNodeFs(root: string): () => void {
   realpath.native = ((file: string) => resolve(native, file)) as typeof native;
   replace('readdirSync', (real, file, options) => {
     if (!inside(file)) return real(file, options);
-    if (!storage.exists(key(file))) fail('ENOENT', file);
-    return [...new Set(storage.listFiles(key(file)).map(name => name.split('/')[0]!))];
+    const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file);
+    if (entry.kind !== 'directory') fail('ENOTDIR', file);
+    const names = [...new Set([
+      ...storage.listFiles(key(file)).map(name => name.split('/')[0]!),
+      ...[...directories].filter(dir => dir !== key(file) && path.dirname(dir) === key(file)).map(dir => path.basename(dir)),
+    ])].sort();
+    const encoding = typeof options === 'string' ? options : options?.encoding;
+    return names.map(name => {
+      const encoded = encoding === 'buffer' ? Buffer.from(name) : name;
+      if (!options?.withFileTypes) return encoded;
+      const kind = storage.inspectPath(path.join(key(file), name))?.kind;
+      return {name: encoded, parentPath: file, path: file,
+        isFile: () => kind === 'file', isDirectory: () => kind === 'directory', isSymbolicLink: () => kind === 'symlink',
+        isBlockDevice: () => false, isCharacterDevice: () => false, isFIFO: () => false, isSocket: () => false};
+    });
   });
   replace('renameSync', (real, source, target) => {
     if (!inside(source) || !inside(target)) return real(source, target);
     storage.copyFileAtomic(key(source), key(target)); storage.remove(key(source));
   });
-  replace('unlinkSync', (real, file) => {if (!inside(file)) return real(file); if (!storage.exists(key(file))) fail('ENOENT', file); storage.remove(key(file));});
+  replace('unlinkSync', (real, file) => {if (!inside(file)) return real(file); const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file); if (entry.kind === 'directory') fail('EISDIR', file); storage.remove(key(file));});
   replace('rmSync', (real, file, options) => {
     if (!inside(file)) return real(file, options);
     const entry = storage.inspectPath(key(file));
     if (!entry) {if (!options?.force) fail('ENOENT', file); return;}
-    if (entry.kind === 'directory') throw new Error('Virtual directory removal is not modeled');
+    if (entry.kind === 'directory') {
+      if (!options?.recursive) fail('ERR_FS_EISDIR', file);
+      for (const name of fs.readdirSync(file)) fs.rmSync(path.join(file, name), options);
+      directories.delete(key(file));
+    }
     storage.remove(key(file));
   });
   replace('openSync', (real, file, flags, mode) => {

@@ -29,24 +29,24 @@ Keep the session folder throughout recovery. A new approval or revised plan does
 Ask your host agent to inspect the saved run before resuming it. A compatible driver fix can preserve completed work. For manual recovery, run from the skill folder:
 
 ```text
-node scripts/dispatch.ts rebind --run <dir> --reason "Continue after a compatible driver fix"
-node scripts/dispatch.ts send --run <dir>
+node scripts/dispatch.ts session reactivate --session-dir <session>
+node scripts/dispatch.ts status show --session <session>
 ```
 
-If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
+Read the returned status result, reconcile retained writers and integration state, then resume the next unfinished tool operation. The toolkit has no `rebind` or `send` command. If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
 
-Before upgrading, finish and deliver live old-protocol runs with the version that started them. If that is impossible, preserve their whole folders and ask your host to use the saved work in a new run. An `unsupported-journal-protocol` error requires a new run; there is no automatic migration.
+Before upgrading, finish and deliver live old-protocol runs with the version that started them. If that is impossible, preserve their whole folders and ask your host to use the saved work in a new run. The toolkit cannot replay v0.7.x journals or frames; there is no automatic migration.
 
 ## Run a configuration check
 
 From the Dispatch skill folder:
 
 ```bash
-node scripts/dispatch.ts doctor --level high
-node scripts/dispatch.ts doctor --json
+node scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Doctor checks Node, configuration, available executables, resolved targets and writers, and predicted sandbox support. Use the reported file or provider name to narrow the fix.
+Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems and configured writer models. It does not probe provider executables, authentication, native capacity or sandbox support; inspect provider launch failures for those limits.
 
 ## Common problems
 

@@ -49,7 +49,7 @@ const CAPTURE_PLAN = PLAN
     '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Verify: `node first-check`\n  - RED: `node first-red {files}`\n',
   );
 
-const sharedFixture = sessionFixture();
+const sharedFixture = sessionFixture({ memory: true });
 const bindings = new Map<boolean, string>();
 const cachedHashes = new Map<boolean, ReturnType<typeof currentHashes>>();
 const tornPath = path.join(sharedFixture.session, 'ledger.torn-1.jsonl');

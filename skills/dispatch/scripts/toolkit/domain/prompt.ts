@@ -5,9 +5,10 @@
 
 export type Template = { variables: readonly string[]; template: string };
 
-export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string };
+export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string; severity?: string; rejectionConfirmed?: boolean };
 
 export function settledSection(settled: readonly Settled[], revisions = false): string {
+  settled=settled.filter(entry=>entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
   if (!settled.length) return '';
   const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;
   const rows = settled.map((entry) => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : ''}`);

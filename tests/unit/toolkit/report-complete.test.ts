@@ -48,7 +48,7 @@ function planSource(count = 4): string {
 let eventNumber = 0;
 
 async function fixture(count = 4) {
-  const f = sessionFixture();
+  const f = sessionFixture({memory:true});
   const skillRoot = path.join(f.root, 'isolated-skill');
   fs.mkdirSync(skillRoot);
   fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
@@ -120,6 +120,40 @@ async function deliver(f: ReturnType<typeof sessionFixture>, head: string, dest 
     data: { phase: 'delivered', dest, to: head },
   });
 }
+
+test('pending MUST rejection prevents report completion until attributed agreement', async () => {
+  const f=await fixture(1);try {
+    await integrate(f,gitState(f.session));await evidenceForPlan(f,TREE_A);await deliver(f,HEAD_A);
+    const dir=path.join(f.session,'.state/reviews/plan-report.plan/round-1');fs.mkdirSync(dir,{recursive:true});
+    const metadata={round:1,generation:1,startSeq:0,target:'captured',spec:{path:path.join(f.root,'brief.spec.md'),hash:'original'},artifactPath:path.join(f.root,'report.plan.md'),roster:[{slot:'claude[0]',provider:'claude',index:0,reserve:false,native:false}]};
+    const finding={id:'R1-F001',severity:'MUST',category:'correctness',locus:'§ Work',defect:'Unbounded writes',requiredChange:'Bound writes',sources:['claude[0]'],scope:'in'};
+    fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify(metadata));fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'plan-report.plan',round:1,findings:[finding],failed:[]}));
+    await append(f,{kind:'ruling',by:'orchestrator',key:'rejection-test',data:{subject:'review:plan-report.plan:R1-F001',ruling:'rejected',rationale:'Writes have a bound'}});
+    assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    fs.writeFileSync(path.join(dir,'round.json'),'{invalid');const rendered=await invoke(f,'report','render');assert.equal(rendered.exit,0,JSON.stringify(rendered));assert.match(rendered.output.summary,/confirmation unavailable/);assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify(metadata));
+    await append(f,{kind:'ruling',by:'orchestrator',key:'duplicate-original',data:{subject:'review:plan-report.plan:R1-F001',ruling:'duplicate',rationale:'Same issue as R1-F999'}});
+    assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required','a duplicate ruling cannot discard the pending original rejection');
+    await append(f,{kind:'escalation',by:'tool',key:'open-rejection',data:{id:'rejection:plan-report.plan:R1-F001',state:'open',summary:'Reviewer disputes rejection'}});
+    assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    await append(f,{kind:'escalation',by:'orchestrator',key:'resolved-rejection',data:{id:'rejection:plan-report.plan:R1-F001',state:'resolved',summary:'User asks to recheck bounded write evidence'}});
+    const {loadRejections}=await import('../../../skills/dispatch/scripts/toolkit/confirmations.ts');
+    const request=loadRejections(f.session,foldLedger(f.session),['plan-report.plan'])[0]!.request;
+    const second=path.join(f.session,'.state/reviews/plan-report.plan/round-2');fs.mkdirSync(second);fs.writeFileSync(path.join(second,'round.json'),JSON.stringify({...metadata,round:2,startSeq:foldLedger(f.session).lastSeq,requests:[request]}));
+    const save=(confirmation:any)=>{
+      fs.writeFileSync(path.join(second,'findings.json'),JSON.stringify({review:'plan-report.plan',round:2,findings:[],failed:[],confirmations:[confirmation]}));
+      const slots=path.join(second,'gen-1/slots');fs.mkdirSync(slots,{recursive:true});
+      fs.writeFileSync(path.join(slots,'claude[0].json'),JSON.stringify({slot:'claude[0]',state:'done',responder:confirmation.responder,text:JSON.stringify({status:'CLEAN',findings:[],confirmations:[{requestId:confirmation.requestId,decision:confirmation.decision,rationale:confirmation.replyRationale}]})}));
+    };
+    const reply={...request,sourceSlot:'claude[0]',decision:'agree',replyRationale:'The captured implementation has a bound'};
+    save(reply);assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    save({...reply,responder:{slot:'agy[0]',provider:'agy',model:null,native:false}});assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    save({...reply,replyRationale:' ',responder:{slot:'claude[0]',provider:'claude',model:null,native:false}});assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    fs.writeFileSync(path.join(second,'findings.json'),JSON.stringify({review:'plan-report.plan',round:2,findings:[],failed:[{slot:'claude[0]',state:'failed',cls:'auth',reason:'No reply'}]}));
+    assert.equal((await invoke(f,'report','complete')).output.reason,'review-confirmation-required');
+    save({...reply,responder:{slot:'claude[0]',provider:'claude',model:null,native:false}});
+    assert.equal((await invoke(f,'report','complete')).exit,0);
+  }finally{f.cleanup();}
+});
 
 test('report complete statuses enforces user records and counts unique integrated tasks', async () => {
   const f = await fixture(4);
