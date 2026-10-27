@@ -19,7 +19,7 @@ test('ledger records validate closed fields and user-only input', async () => {
  ['writer',{phase:'bad'},'phase'],['writer',{phase:'toString'},'phase'],['integrate',{phase:'__proto__'},'phase'],['writer',{phase:'finished',task:'t',launch:1,candidate:'bad'},'candidate'],
  ['writer',{phase:'launched',task:'t',path:'p',base:{commit:'bad',taskSection:hash,seq:0}},'commit'],
  ['writer',{phase:'launched',task:'t',path:'p',base:{commit:git,taskSection:'bad',seq:0}},'taskSection'],
- ['integrate',{phase:'deliver-started',dest:{branch:'b',path:'p'},to:git},'from'],['integrate',{phase:'delivered',to:git},'dest'],
+ ['integrate',{phase:'deliver-started',mode:'uncommitted',dest:{branch:'b',path:'p'},source:git},'from'],['integrate',{phase:'delivered',mode:'uncommitted',source:git},'dest'],
  ['integrate',{phase:'opened',path:'p',branch:'b',base:git,dest:{branch:'b'}},'path'],
  ['approval',{spec:'bad',plan:hash},'spec'],['note',{text:2},'text'],
  ];
@@ -42,32 +42,19 @@ test('ledger records validate closed fields and user-only input', async () => {
  }finally{f.cleanup();}
 });
 
-test('squash records require complete identities and preserve legacy shapes',()=>{
- const commit='a'.repeat(40),dest={path:'repo',branch:'main'};
- for(const phase of ['deliver-started','delivered']){
- const data={phase,mode:'squash',dest,from:commit,to:commit,source:commit};
- assert.doesNotThrow(()=>validateRecord({kind:'integrate',by:'tool',data}));
- for(const field of ['from','to','source','mode']){const partial:Record<string,unknown>={...data};delete partial[field];assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:partial}),{reason:'invalid-record'});}
- for(const field of ['from','to','source'])assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{...data,[field]:'bad'}}),{reason:'invalid-record'});
- assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{...data,mode:'other'}}),{reason:'invalid-record'});
- const legacy=phase==='delivered'?{phase,dest,to:commit}:{phase,dest,from:commit,to:commit};assert.doesNotThrow(()=>validateRecord({kind:'integrate',by:'tool',data:legacy}));
- }
-});
-
 test('uncommitted records accept exact identities and refuse missing or unknown fields',()=>{
  const commit='a'.repeat(40),dest={path:'repo',branch:'main'},record=(data:Record<string,unknown>)=>validateRecord({kind:'integrate',by:'tool',data});
  for(const phase of ['deliver-started','delivered']){
  const data={phase,mode:'uncommitted',dest,from:commit,source:commit};
  assert.doesNotThrow(()=>record(data));
- for(const field of ['from','source','dest']){const partial:Record<string,unknown>={...data};delete partial[field];assert.throws(()=>record(partial),{reason:'invalid-record'});}
+ for(const field of ['mode','from','source','dest']){const partial:Record<string,unknown>={...data};delete partial[field];assert.throws(()=>record(partial),{reason:'invalid-record'});}
  for(const field of ['from','source'])assert.throws(()=>record({...data,[field]:'bad'}),{reason:'invalid-record'});
  assert.throws(()=>record({...data,to:commit}),{reason:'invalid-record'});
  assert.throws(()=>record({...data,extra:true}),{reason:'invalid-record'});
  if(phase==='delivered'){assert.doesNotThrow(()=>record({...data,noop:true}));assert.throws(()=>record({...data,noop:'yes'}),{reason:'invalid-record'});}
  else assert.throws(()=>record({...data,noop:true}),{reason:'invalid-record'});
  }
- assert.doesNotThrow(()=>record({phase:'delivered',dest,to:commit}));
- assert.doesNotThrow(()=>record({phase:'deliver-started',mode:'squash',dest,from:commit,to:commit,source:commit}));
+ for(const phase of ['deliver-started','delivered'])for(const mode of ['squash','other'])assert.throws(()=>record({phase,mode,dest,from:commit,source:commit}),{reason:'invalid-record'});
 });
 
 test('invalid-record rejections name the field and its expected shape', () => {

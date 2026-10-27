@@ -80,7 +80,7 @@ export function reviewId(kind: string, artifact: string, gitSeries?: string): st
 }
 const canonical=(file:string)=>{try{return fs.realpathSync.native(file);}catch{return path.resolve(file);}};
 type Selection = ReadonlyMap<string,(metadata:ConfirmationRound['metadata'])=>boolean>;
-export function applicableReviewIds(session:string,manifest:Manifest,fold:Fold): Selection {
+export function applicableReviewIds(manifest:Manifest,fold:Fold): Selection {
   const bind=latest(fold,'bind'), selected=new Map<string,(metadata:ConfirmationRound['metadata'])=>boolean>();
   if(!bind)return selected;
   const spec=canonical(path.resolve(manifest.repositoryRoot,bind.data['spec']));

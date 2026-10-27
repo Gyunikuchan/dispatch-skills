@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { finding, opportunity, report, captured, recordTriage, unchanged, status } from '../helpers/audit-report.ts';
 

@@ -18,7 +18,7 @@ import { verifiedStage, type PruneEvidence } from './evidence.ts';
 import { ToolError } from './output.ts';
 function refuse(reason:string):never {throw new ToolError(4,reason,reason);}
 function rejections(ctx:HandlerContext,fold:Fold) {
-  try {return loadRejections(ctx.session,fold,applicableReviewIds(ctx.session,ctx.manifest,fold));}
+  try {return loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {
     if(error instanceof ToolError && error.reason==='review-confirmation-required')return refuse('prune-review-required');
     throw error;

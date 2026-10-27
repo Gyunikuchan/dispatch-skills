@@ -88,14 +88,14 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   if(hasTransient(plan)) {try{transition=await pruneTransition(ctx,fold,plan,true);}catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;invalidPruning=true;}}
   const statusRows = invalidPruning?checkRows.map(c=>({criterion:c.criterion,state:'missing' as const,reason:'pruning or final verification required'})):criterionStatuses(fold, checkRows, current,transition);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
-  const deliveredAtHead = Boolean(delivered && head && (delivered.data['source'] ?? delivered.data['to']) === head);
+  const deliveredAtHead = Boolean(delivered && head && delivered.data['source'] === head);
   const planTaskIds = new Set(plan.tasks.map((task) => task.id));
   const integrated = new Set(fold.records.flatMap((record) =>
     record.kind === 'integrate' && record.data['phase'] === 'done' && typeof record.data['task'] === 'string' &&
       planTaskIds.has(record.data['task']) ? [record.data['task'] as string] : []));
   const planStem = path.basename(planPath).replace(/\.plan\.md$/i, '') || plan.title || 'walkthrough';
   let rejectionConfirmations:RejectionState[]=[],confirmationError:string|undefined;
-  try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.session,ctx.manifest,fold));}
+  try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
   return {
     fold, bind, plan, planPath, planStem, specPath, specHash,
@@ -212,10 +212,9 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     delivered: snapshot.integration ? {
       integrated: snapshot.integrated,
       total: snapshot.plan.tasks.length,
-      source: snapshot.delivered?.data['source'] ?? snapshot.delivered?.data['to'] ?? null,
-      to: typeof snapshot.delivered?.data['to'] === 'string' ? snapshot.delivered.data['to'] : null,
+      source: snapshot.delivered?.data['source'] ?? null,
       branch: destBranch,
-      ...(snapshot.delivered?.data['mode'] === 'uncommitted' ? {mode: 'uncommitted', ref: deliveredSourceRef(ctx.manifest.safeSessionId)} : {}),
+      ref: deliveredSourceRef(ctx.manifest.safeSessionId),
     } : null,
     statuses: snapshot.statuses,
     changes,

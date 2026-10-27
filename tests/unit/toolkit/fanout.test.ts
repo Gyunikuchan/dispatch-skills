@@ -78,7 +78,7 @@ test('fan-out cascades validation models modes quota and one reserve', async () 
     const observations=fs.readdirSync(quotaDir).flatMap(name=>fs.readdirSync(path.join(quotaDir,name)).filter(file=>file!=='generation.json'));
     assert.equal(observations.length,1);
     f.deps.modes = () => ['cli','desktop'];
-    f.deps.delegate = async (_provider,request,mode) => ({outcome:mode==='cli'?{status:'fail',cls:'quota',detail:'quota'}:{status:'ok',text:'desktop',resume:null,sessionId:null},invocations:[]});
+    f.deps.delegate = async (_provider,_request,mode) => ({outcome:mode==='cli'?{status:'fail',cls:'quota',detail:'quota'}:{status:'ok',text:'desktop',resume:null,sessionId:null},invocations:[]});
     const modes=await fanOut({dir:path.join(f.session,'modes'),slots:[slot('agy')],prompt:'question',validate,quota},f.deps);
     assert.equal(modes[0]!.state === 'done' && modes[0]!.text,'desktop');
   }finally{f.cleanup();}

@@ -84,8 +84,8 @@ const integrations: Record<string, Record<string, Rule>> = {
   done: { task: text, commit: git },
   abandoned: { task: text, candidate: git, reason: text },
   fix: { commit: git, reason: text },
-  'deliver-started': { dest, from: git, to: git },
-  delivered: { dest, to: git },
+  'deliver-started': { mode: choice('uncommitted'), dest, from: git, source: git },
+  delivered: { mode: choice('uncommitted'), dest, from: git, source: git, noop: bool },
   closed: { reason: text },
 };
 
@@ -105,11 +105,8 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     const phases = value.kind === 'writer' ? writers : integrations;
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
-    if(value.kind==='integrate'&&['deliver-started','delivered'].includes(value.data['phase'])&&value.data['mode']==='squash')fields={phase:choice('deliver-started','delivered'),mode:choice('squash'),dest,from:git,to:git,source:git};
-    // Uncommitted delivery names no caller commit; noop marks a same-tree integration.
-    if(value.kind==='integrate'&&['deliver-started','delivered'].includes(value.data['phase'])&&value.data['mode']==='uncommitted')fields={phase:choice('deliver-started','delivered'),mode:choice('uncommitted'),dest,from:git,source:git,...(value.data['phase']==='delivered'?{noop:bool}:{})};
   }
-  const optional = ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind==='integrate' && value.data['phase']==='delivered' && value.data['mode']==='uncommitted' ? ['noop'] : [];
+  const optional = ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');

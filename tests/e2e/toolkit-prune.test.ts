@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {transientRepo as prepared,captureIntegrationReview as captureReview,transientTarget as target,toolkitRepo,transientPlanSource} from './helpers/toolkit-repo.ts';
+import {transientRepo as prepared,captureIntegrationReview as captureReview,transientTarget as target,transientPlanSource} from './helpers/toolkit-repo.ts';
 import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 const review:typeof captureReview=(r,...args)=>{const dir=captureReview(r,...args),file=path.join(dir,'round.json'),metadata=JSON.parse(fs.readFileSync(file,'utf8'));metadata.spec.path=path.join(r.root,'work.spec.md');fs.writeFileSync(file,JSON.stringify(metadata));return dir;};
 test('transient pruning preserves caller safety',async()=>{const r=await prepared();try{
@@ -71,7 +71,6 @@ test('accepted fixes require a fresh review of the exact integration HEAD',async
  const finding={id:'R1-F001',severity:'MUST',locus:target+':L1',defect:'Incorrect intermediate assertion',requiredChange:'Fix the assertion',sources:['reviewer'],scope:'in'};review(r,1,[finding]);await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'accept',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'The intermediate assertion is wrong'}},r.deps);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');
  fs.writeFileSync(path.join(r.integration,target),'fixed assertion\n');assert.equal((await r.run(['worktree','commit','--reason','fix accepted assertion'])).output.ok,true);assert.equal((await r.run(['verify','run'])).output.ok,true);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');review(r,2);assert.equal((await r.run(['worktree','prune'])).output.ok,true);
 }finally{r.cleanup();}});
-
 
 test('uncommitted delivery requires verified pruned delivery',async()=>{
  const support='tests/helpers/shared.ts';

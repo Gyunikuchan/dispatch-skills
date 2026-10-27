@@ -85,7 +85,7 @@ async function completeFixture(f: Awaited<ReturnType<typeof fixture>>, head = HE
   }
   await appendRecord(f.session, {
     kind: 'integrate', by: 'tool', key: 'integrate:delivered',
-    data: { phase: 'delivered', dest, to: head },
+    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
   }, f.deps);
   return state;
 }
@@ -210,7 +210,6 @@ test('report render does not fall through after a higher-precedence config read 
   } finally { f.cleanup(); }
 });
 
-
 test('diagnostics damage cannot suppress successful report completion', async () => {
   const f=await fixture(1);
   try {
@@ -230,13 +229,6 @@ test('diagnostics damage cannot suppress successful report completion', async ()
     assert.equal('diagnostics' in value,false);
     assert.ok(fs.existsSync(path.join(f.session,'report.walkthrough.md')));
   } finally {f.cleanup();}
-});
-
-test('squash report facts expose destination separately from verified source',async()=>{
- const f=await fixture(1);try{await completeFixture(f);const {appendRecord}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
- await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'squash',dest:{path:f.root,branch:'main'},from:'c'.repeat(40),to:'d'.repeat(40),source:HEAD}},f.deps);
- const result=await invoke(f,'report','render');assert.equal(result.exit,0);const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/source aaaaaaaaaaaa/);assert.match(text,/delivered dddddddddddd/);
- }finally{f.cleanup();}
 });
 
 test('uncommitted consumers render the working-tree delivery from source with its retained ref',async()=>{

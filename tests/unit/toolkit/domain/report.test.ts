@@ -388,9 +388,6 @@ test('diagnostics report: heuristic H4 fires for cache read share', () => {
   assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
 });
 
-
-
-
 test('diagnostics report: heuristic boundaries stay silent', () => {
   const even = invocation({ usage: { input: 1000, cacheRead: 1000, output: 0 } });
   const run = facts({
@@ -510,8 +507,6 @@ test('heuristic precision H9 needs two relaunches', () => {
   assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
 });
 
-
-
 test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
   const codex = normalizeUsage({ input: 1000, cacheRead: 300, cacheWrite: 0, output: 50 }, 'includes-cache');
   const claude = normalizeUsage({ input: 700, cacheRead: 300, cacheWrite: 0, output: 50 }, 'uncached');
@@ -565,7 +560,6 @@ test('retro observations: rejects foreign component', () => {
     assert.deepEqual(retroObservations([observation({ component })]), { state:'collected', values: [], rejected: 1 }, component);
   }
   assert.equal(retroObservations([observation({ component: 'skills/dispatch/scripts/toolkit/records.ts' })]).values[0]?.component, 'scripts/toolkit/records.ts');
-  // NOTE: the legacy allowlist mirrors shipped files outside the independent toolkit.
   const shipped = ['SKILL.md', ...['scripts', 'references'].flatMap((dir) => fs.readdirSync(path.join(SKILL_ROOT, dir), { recursive: true })
     .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')))];
   assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
@@ -672,7 +666,6 @@ test('diagnostics report: never renders resume objective or absolute paths', () 
   assert.doesNotMatch(text,/host event/);
   assert.match(text, /- Host retro: collected · 1 accepted · 2 rejected/);
 });
-
 
 test('absorbed single failure emits no H1', () => {
   const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });

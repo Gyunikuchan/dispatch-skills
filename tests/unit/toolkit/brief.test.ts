@@ -3,7 +3,7 @@ import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 const PLAN = `# Scoped work
@@ -234,7 +234,7 @@ describe('writer brief', () => {
       const quality = getQuality(f.deps.skillRoot);
       for (const name of ['shared', 'code']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
-        assert.ok(brief.includes(name === 'shared' ? body.replace('the outcome envelope and verification protocol', 'verification requirements') : body));
+        assert.ok(brief.includes(body));
       }
       for (const text of [path.resolve(f.session, '.state/worktrees/T1-1'), 'mission.spec.md', f.hashes.spec!, 'work.plan.md', f.hashes.plan!, 'Shared gated context 日本語.', '## Task Map', '### T1', 'Preserve the first invariant', 'First implementation detail', 'SC1', 'node first-check', 'node first-red', 'src/first.ts', 'node contract-check', '**intent**', '**correctness**', 'DONE', 'BLOCKED', 'NEEDS_CONTEXT']) assert.ok(brief.includes(text), text);
       assert.match(brief, /read.*whole/i);

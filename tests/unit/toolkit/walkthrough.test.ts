@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-test('squash walkthrough labels source and destination', async () => {
+test('walkthrough preserves verification, deviations and user decisions', async () => {
   const { renderWalkthrough } = await import('../../../skills/dispatch/scripts/toolkit/walkthrough.ts');
   const hash = 'a'.repeat(64);
   const view = {
@@ -9,7 +9,7 @@ test('squash walkthrough labels source and destination', async () => {
     specPath: 'spec/report.spec.md',
     specHash: `sha256:${hash}`,
     planPath: 'plans/report.plan.md',
-    delivered: { integrated: 2, total: 3, to: 'abcdef1234567890', source:'123456abcdef7890', branch: 'main' },
+    delivered: { integrated: 2, total: 3, source:'123456abcdef7890', branch: 'main', ref: 'refs/dispatch/x/delivered-source' },
     statuses: [
       { criterion: 'verified-first', state: 'verified' as const, evidence: 'evidence/first.json', reason: 'historical pre-prune evidence via validated pruning; source tree source; final evidence final.json' },
       { criterion: 'verified-second', state: 'verified' as const, evidence: 'evidence/second.json' },
@@ -42,7 +42,7 @@ test('squash walkthrough labels source and destination', async () => {
   assert.match(rendered,/historical pre-prune evidence via validated pruning; source tree source; final evidence final.json/);
   const section = (heading: string, nextHeading: string) => rendered.slice(rendered.indexOf(heading), rendered.indexOf(nextHeading));
 
-  assert.ok(rendered.includes('> **Delivered:** 2 of 3 tasks integrated; delivered abcdef123456 to main'));
+  assert.ok(rendered.includes('> **Delivered:** 2 of 3 tasks integrated; uncommitted changes from source 123456abcdef in main working tree; ref refs/dispatch/x/delivered-source'));
   assert.ok(rendered.includes(`> **Spec:** spec/report.spec.md · sha256:${hash}`));
   assert.ok(rendered.includes('> **Plan:** plans/report.plan.md'));
   assert.ok(rendered.includes('> **Status:** 4/5 SC satisfied (verified 2 · manual 1 · waived 1)'));
@@ -100,15 +100,4 @@ test('squash walkthrough labels source and destination', async () => {
   assert.ok(withoutIntegration.includes('> **Deviations:** none'));
   assert.ok(withoutIntegration.includes('## Changes Made\n\nNone.'));
   assert.ok(withoutIntegration.includes('*No reviews conducted yet.*'));
-});
-
-test('uncommitted consumers label the working-tree delivery', async () => {
-  const { renderWalkthrough } = await import('../../../skills/dispatch/scripts/toolkit/walkthrough.ts');
-  const view = {
-    title: 'T', specPath: 's', specHash: 'sha256:' + 'a'.repeat(64), planPath: 'p',
-    delivered: { integrated: 1, total: 1, to: null, source: '123456abcdef7890', branch: 'main', mode: 'uncommitted', ref: 'refs/dispatch/x/delivered-source' },
-    statuses: [], changes: [], edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [], reviewRows: [], findingsPaths: [],
-  };
-  const rendered = renderWalkthrough(view as never);
-  assert.ok(rendered.includes('> **Delivered:** 1 of 1 tasks integrated; uncommitted changes from source 123456abcdef in main working tree; ref refs/dispatch/x/delivered-source'));
 });

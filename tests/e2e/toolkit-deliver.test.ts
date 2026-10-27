@@ -110,11 +110,9 @@ describe('toolkit delivery and cleanup',{concurrency:true},()=>{
  else{const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,JSON.stringify(retry));assertMatchesSource(r,from,source);assert.equal(r.git(['rev-parse','HEAD']),from);assert.equal(r.git(['diff','--cached','--name-only']),'');}
  }finally{r.cleanup();}});
  });
- it('uncommitted recovery blocks conflicting refs, unfinished squash or legacy starts and changed sources',async()=>{
- await each(['conflicting-ref','squash-start','legacy-start','other-source','changed-completed'],async mode=>{const {r}=await prepared();try{const from=r.git(['rev-parse','HEAD']);const source=r.git(['rev-parse','HEAD'],r.integration);const dest={path:r.root,branch:r.git(['symbolic-ref','--short','HEAD'])};
+ it('uncommitted recovery blocks conflicting refs, unfinished deliveries and changed sources',async()=>{
+ await each(['conflicting-ref','other-source','changed-completed'],async mode=>{const {r}=await prepared();try{const from=r.git(['rev-parse','HEAD']);const dest={path:r.root,branch:r.git(['symbolic-ref','--short','HEAD'])};
  if(mode==='conflicting-ref')r.git(['update-ref',ref,from]);
- if(mode==='squash-start')await appendRecord(r.session,{kind:'integrate',by:'tool',data:{phase:'deliver-started',mode:'squash',dest,from,to:source,source}},r.deps);
- if(mode==='legacy-start')await appendRecord(r.session,{kind:'integrate',by:'tool',data:{phase:'deliver-started',dest,from,to:source}},r.deps);
  if(mode==='other-source')await appendRecord(r.session,{kind:'integrate',by:'tool',data:{phase:'deliver-started',mode:'uncommitted',dest,from,source:from}},r.deps);
  if(mode==='changed-completed'){assert.equal((await r.run(['worktree','deliver'])).exit,0);fs.writeFileSync(path.join(r.integration,'src/file.ts'),'later');assert.equal((await r.run(['worktree','commit','--reason','later'])).exit,0);}
  const before=caller(r),bytes=fs.readFileSync(path.join(r.root,'src/file.ts'));const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,4,mode+JSON.stringify(retry));assert.equal(retry.output.reason,'recovery-blocked');assert.deepEqual(caller(r),before);assert.deepEqual(fs.readFileSync(path.join(r.root,'src/file.ts')),bytes);

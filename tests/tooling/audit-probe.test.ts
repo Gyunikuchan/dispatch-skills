@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { SPECS } from '../../skills/dispatch/scripts/providers/index.ts';
-import { DEFAULT_CONFIG_PATH, loadAuditConfig, readRun, reserveRun, updateRun, type LimitName, type ProbeRecord } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+import { DEFAULT_CONFIG_PATH, loadAuditConfig } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 // The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
 const probe = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
 
@@ -90,7 +90,6 @@ test('probe cleanup reason: filesystem failures map error codes to known code or
     assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: expectedCode } });
   }
 });
-
 
 test('probe cleanup reason: success retains bounded removal options and no reason', () => {
   const fixture = { dir: path.join(tempDir(), 'fixture') };

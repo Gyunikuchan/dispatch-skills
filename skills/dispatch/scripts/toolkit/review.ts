@@ -159,7 +159,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const n = completed ? last + 1 : last || 1;
     if (n > cap) {
       // MUST has no cap (ADR 0005 D4): an accepted MUST fix earns a round; recurrence escalations bound the loop.
-      const previous = read<FindingsValue>(path.join(directory, 'round-' + (n - 1), 'findings.json'));
       const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
       const previousMetadata=read<Round>(path.join(directory,'round-'+(n-1),'round.json'));
       const fixed = numbers.some(number=>read<FindingsValue>(path.join(directory,'round-'+number,'findings.json'))?.findings.some(finding=>{

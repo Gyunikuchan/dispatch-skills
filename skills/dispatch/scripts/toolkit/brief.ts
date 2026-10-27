@@ -115,8 +115,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   const quality = ['shared', 'code'].map(name => {
     const body = new RegExp('^## ' + name + '\\r?\\n([\\s\\S]*?)(?=^## |$(?![\\s\\S]))', 'm').exec(bar)?.[1]?.trim();
     if (!body) throw new Error('Missing quality section ' + name);
-    // The toolkit has no legacy transport protocol.
-    return name === 'shared' ? body.replace('the outcome envelope and verification protocol', 'verification requirements') : body;
+    return body;
   }).join('\n\n');
   const slots: Record<string, string> = {
     task, worktree,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { before, describe, test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 
-import { load, ARMS, SETTINGS, NOW, readBrief, type Json, fixture, defects, controls, prepared, scenario, ids, high } from '../helpers/audit-calibration.ts';
+import { load, ARMS, SETTINGS, NOW, readBrief, type Json, fixture, defects, controls, prepared, ids, high } from '../helpers/audit-calibration.ts';
 
 test('audit calibration fixture curates four categorized defects and two controls with verified excerpts', async () => {
   const { validateFixture } = await load();
@@ -31,7 +31,6 @@ test('audit calibration prepare rejects malformed fixtures and invalid settings'
 
   assert.throws(() => prepare({ fixture: fixture() as never, workDir: tempDir(), settings: { ...SETTINGS, model: '' }, now: NOW, readBrief }), /model/);
 });
-
 
 describe('prepared audit calibration artifacts', () => {
   let preparedFixture: Awaited<ReturnType<typeof prepared>>;

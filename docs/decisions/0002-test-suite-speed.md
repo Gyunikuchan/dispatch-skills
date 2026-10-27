@@ -59,11 +59,11 @@ A driver step is one short-lived process. Changes made by subagents or the orche
 between steps, so a cache that lives only inside one process cannot go stale because of them. The
 implementation:
 
-- **Legacy `lib/git-root.mjs` (now `skills/dispatch/scripts/effects/git.ts`)**: `showToplevel` and `requireToplevel` replace seven scattered
+- **Historical `lib/git-root.mjs`**: `showToplevel` and `requireToplevel` replace seven scattered
   `rev-parse --show-toplevel` spawns and evidence's `--is-inside-work-tree` probe. Only successful
   lookups are cached: a work-tree root cannot move within a process, but a directory may become a
   repository. A source guard test keeps new `show-toplevel` spawns out of shipped scripts.
-- **Legacy `indexEntries` in `lib/git-state.mjs` (now `skills/dispatch/scripts/effects/git.ts`)**:
+- **Historical `indexEntries` in `lib/git-state.mjs`**:
   - One `ls-files -v --stage -z` call replaces the separate tag and stage listings. A test pins the
     result to the old two-call digest, so fingerprints stored in existing run state stay valid.
   - The result is cached against a SHA-256 hash of the index file's bytes. Any index write changes
@@ -95,12 +95,12 @@ suite's wait time. It was rejected because it weakens what the tests prove:
 - `process.exit` calls and direct console output would have to become return values.
 - A crash or hang would take down the whole test file instead of one child process with a timeout.
 
-## Consequences
+## Historical consequences
 
-- Repository-root lookups and index reads go through the single git module in `effects/`
-  (ADR 0006), which keeps both caching rules: successful toplevel lookups are cached per process,
+- Repository-root lookups and index reads went through the single git module in `effects/`
+  (ADR 0006), which kept both caching rules: successful toplevel lookups are cached per process,
   and index entries are cached by the index file's content hash, never by stat identity or
-  explicit invalidation. Working-tree-dependent reads stay uncached. The source guard test keeps
+  explicit invalidation. Working-tree-dependent reads stay uncached. The source guard test kept
   new `show-toplevel` spawns out of every other module.
 - The remaining gate savings are decided in ADR 0006: verify results are reused only within a run,
   keyed by input fingerprint (D35); a cross-run baseline skip is not adopted.

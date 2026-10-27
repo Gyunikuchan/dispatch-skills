@@ -117,7 +117,7 @@ function gitState(session: string, head = HEAD_A, tree = TREE_A, testedTree = tr
 async function deliver(f: ReturnType<typeof sessionFixture>, head: string, dest = { path: f.root, branch: 'main' }) {
   await append(f, {
     kind: 'integrate', by: 'tool', key: `integrate:delivered:${++eventNumber}`,
-    data: { phase: 'delivered', dest, to: head },
+    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
   });
 }
 
@@ -211,7 +211,7 @@ test('report complete statuses enforces user records and counts unique integrate
     assert.ok(walkthrough.includes(producerPath));
     assert.match(walkthrough, /### Manual[\s\S]*?\| SC3 \| User evidence: manual\/sc3\.md; quote: SC3 completed by hand \|/);
     assert.match(walkthrough, /### Waived[\s\S]*?\| SC2 \| Reason: approved exception; quote: SC2 approved \|/);
-    assert.match(walkthrough, new RegExp(`Delivered:\\*\\* 2 of 4 tasks integrated; delivered ${HEAD_A.slice(0, 12)} to main`));
+    assert.match(walkthrough, new RegExp(`Delivered:\\*\\* 2 of 4 tasks integrated; uncommitted changes from source ${HEAD_A.slice(0, 12)} in main working tree`));
   } finally { f.cleanup(); }
 });
 
@@ -302,15 +302,6 @@ test('report complete low session accepts bound evidence and a user contract wai
     assert.match(walkthrough, /- Deviation: plan edit \(intent\) seq \d+: clarified the acceptance boundary; diff plan-edit\.diff; affects SC1/);
     assert.equal(foldLedger(f.session).records.some((record) => record.kind === 'approval'), false);
   } finally { f.cleanup(); }
-});
-
-test('squash report completion binds source and tolerates later caller history',async()=>{
- const f=await fixture(1);try{const state=gitState(f.session);await integrate(f,state);await evidenceForPlan(f,TREE_A);
- await append(f,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'squash',dest:{path:f.root,branch:'main'},from:'f'.repeat(40),to:HEAD_B,source:HEAD_A}});
- const run=f.deps.run;f.deps.run=async(argv,options)=>options.cwd===f.root?{exit:0,stdout:'9'.repeat(40),stderr:''}:run(argv,options);
- assert.equal((await invoke(f,'report','complete')).exit,0);
- state.head=HEAD_B;assert.equal((await invoke(f,'report','complete')).output.reason,'undelivered');
- }finally{f.cleanup();}
 });
 
 test('uncommitted consumers complete by source and ignore later caller history',async()=>{

@@ -4,15 +4,11 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
-import { SPECS } from '../../skills/dispatch/scripts/providers/index.ts';
 import { DEFAULT_CONFIG_PATH, loadAuditConfig, readRun, reserveRun, updateRun, type LimitName, type ProbeRecord } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 // The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
 const probe = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
 
 // SECTION: Fakes
-
-type Result = { exit: number | null; stdout: string; truncated?: boolean; timedOut?: boolean };
-const limits = () => loadAuditConfig(DEFAULT_CONFIG_PATH).limits;
 
 function fakeClock() {
   let t = 1_000_000;
@@ -22,20 +18,6 @@ function fakeClock() {
     now: () => t,
     every(ms: number, fn: () => void) { const timer = { at: t + ms, fn, live: true }; timers.push(timer); return () => { timer.live = false; }; },
     advance(ms: number) { t += ms; for (const timer of timers) if (timer.live && timer.at <= t) { timer.live = false; timer.fn(); } },
-  };
-}
-
-function fakeProcess(script: (n: number) => Result) {
-  const launches: { argv: readonly string[]; stdin: string | null; capBytes: number }[] = [];
-  return {
-    launches,
-    start(launch: { argv: readonly string[]; stdin: string | null }, io: { logPath: string; capBytes: number }) {
-      launches.push({ argv: launch.argv, stdin: launch.stdin, capBytes: io.capBytes });
-      const r = script(launches.length);
-      fs.writeFileSync(io.logPath, r.stdout);
-      return { pid: 4000 + launches.length, done: Promise.resolve({ exit: r.exit, signal: null, stdout: r.stdout, stdoutPath: io.logPath, stderrTail: '', durationMs: 5, timedOut: r.timedOut ?? false, truncated: r.truncated ?? false }) };
-    },
-    signal() {},
   };
 }
 
@@ -50,38 +32,10 @@ function fakeSpec(extra: Record<string, unknown> = {}) {
   };
 }
 
-function setup(script: (n: number) => Result, spec = fakeSpec(), clock = fakeClock()) {
-  const root = tempDir();
-  const fixture = probe.createFixture(path.join(root, 'repo'), { home: path.join(root, 'home') });
-  const stageDir = path.join(root, 'stage'); fs.mkdirSync(stageDir, { recursive: true });
-  const process = fakeProcess(script);
-  const states: { id: string; lifecycle: string }[] = [];
-  const ctx = {
-    fixture, stageDir, limits: limits(),
-    state: { update: (id: string, record: { lifecycle: string }) => states.push({ id, lifecycle: record.lifecycle }) },
-    ports: { process, clock, specs: { claude: spec }, env: {}, platform: currentPlatform() },
-  };
-  return { ctx, process, clock, fixture, states, stageDir };
-}
-const target = (extra: Record<string, unknown> = {}) => ({ id: 'claude', provider: 'claude', mode: 'cli', binary: 'fake-cli', model: null, effort: null, sandbox: true, aliases: ['cli'], skip: null, ...extra });
-const okReply = (fixture: { nonces: { attached: string; sibling: string } }) => `ATTACHED: ${fixture.nonces.attached}\nSIBLING: ${fixture.nonces.sibling}`;
-
 // SECTION: Selection
 
-const rows = [
-  { provider: 'claude', mode: 'cli', bin: '/bin/claude', reachable: true, detail: '' },
-  { provider: 'claude', mode: 'desktop', bin: '/apps/claude', reachable: true, detail: '' },
-  { provider: 'copilot', mode: 'cli', bin: null, reachable: false, detail: '' },
-];
-const config = { 'read-delegates': { claude: { targets: [{ low: { model: 'small-model', effort: 'low' }, medium: { model: 'mid-model', effort: 'medium' } }] } } };
-
-const READ_ONLY_AGENTS = [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }];
 const RUN = '2026-10-07-0000';
 const probeConfig = { 'read-delegates': { claude: { targets: [{ low: { model: 'small-model', effort: 'low' } }] } } };
-const priorRecord = (extra: Partial<ProbeRecord> = {}): ProbeRecord => ({
-  lifecycle: 'complete', host: 'h', handle: '41', liveness: 'exited', startedAt: '2026-10-07T00:00:00.000Z', deadlineAt: '2026-10-07T00:01:00.000Z',
-  attempts: 1, exitConfirmed: true, capturePath: null, fixturePath: null, outcome: 'pass', cause: null, cleanup: 'complete', ...extra,
-});
 
 type MainOptions = { config?: unknown; previous?: Record<string, ProbeRecord>; modes?: boolean; hang?: boolean; limits?: Partial<Record<LimitName, number>>; args?: string[] };
 

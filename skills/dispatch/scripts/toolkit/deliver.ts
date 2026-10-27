@@ -7,7 +7,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger } from './ledger.ts';
 import { git, gitOk, changedPaths, testedTree, headTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
-import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef, legacyPreparedRef } from './writers.ts';
+import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
 import { pending, reason, result, refuse } from './integrate.ts';
 import { ToolError } from './output.ts';
 
@@ -45,15 +45,14 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
       return rows;
     };
     if(last){
-      const recorded=(last.data['source']??last.data['to']) as string;
+      const recorded=last.data['source'] as string;
       if(source!==undefined&&recorded!==source)blocked('Integration source changed after completed delivery');
-      if(last.data['mode']==='uncommitted')return result({mode:'uncommitted',dest,from:last.data['from'],source:recorded,ref,paths:(await entriesOf(dest.path,recorded)).map(e=>e.path),delivered:false,...(last.data['noop']?{noop:true}:{})});
-      return result({from:last.data['from']??from,to:last.data['to'],source:recorded,mode:last.data['mode']??'legacy',delivered:false,noop:last.data['to']===(last.data['from']??from)});
+      return result({mode:'uncommitted',dest,from:last.data['from'],source:recorded,ref,paths:(await entriesOf(dest.path,recorded)).map(e=>e.path),delivered:false,...(last.data['noop']?{noop:true}:{})});
     }
     if(source===undefined)refuse('no-integration','Integration worktree is missing and no completed delivery is recorded');
     const plan=loadPlan(ctx.session,ctx.manifest);
     const checkSource=async()=>{
-      if(loadRejections(ctx.session,tx.fold,applicableReviewIds(ctx.session,ctx.manifest,tx.fold)).some(state=>state.state!=='confirmed'))refuse('review-confirmation-required');
+      if(loadRejections(ctx.session,tx.fold,applicableReviewIds(ctx.manifest,tx.fold)).some(state=>state.state!=='confirmed'))refuse('review-confirmation-required');
       if(hasTransient(plan)){
         const transition=await pruneTransition(ctx,tx.fold,plan,true);
         const current={headTree:await headTree(ctx.deps,cwd),testedTree:await testedTree(ctx.deps,ctx.session,cwd)};
@@ -67,7 +66,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const noop=(await read(cwd,['rev-parse',source+'^{tree}']))===(await read(cwd,['rev-parse',from+'^{tree}']));
     const entries=await entriesOf(),paths=entries.map(e=>e.path);
     const started=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='deliver-started'&&r.data['dest'].path===dest.path&&r.data['dest'].branch===dest.branch);
-    if(started&&(started.data['mode']!=='uncommitted'||started.data['source']!==source||started.data['from']!==from))blocked('Unfinished delivery has a different source or legacy format');
+    if(started&&(started.data['source']!==source||started.data['from']!==from))blocked('Unfinished delivery has a different source or caller base');
     const retained=await git(ctx.deps,cwd,['rev-parse','--verify','--quiet',ref],{GIT_OPTIONAL_LOCKS:'0'});
     if(retained.exit===0&&retained.stdout.trim()!==source)blocked('Delivered-source ref points to a different commit');
     const zero='0'.repeat(source.length);
@@ -205,9 +204,8 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
     if(opened && (removed.includes(opened.data['path']) || !registered.includes(path.resolve(ctx.session,opened.data['path'])))) {
       const last=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered');
       const branch=await git(ctx.deps,root,['rev-parse','--verify','--quiet','refs/heads/'+opened.data['branch']]);
-      if(last && !kept.some(k=>owned.includes(k.path)) && (branch.exit===1 || (branch.exit===0 && branch.stdout.trim()===(last.data['source']??last.data['to'])))) {
+      if(last && !kept.some(k=>owned.includes(k.path)) && (branch.exit===1 || (branch.exit===0 && branch.stdout.trim()===last.data['source']))) {
         if(branch.exit===0)await gitOk(ctx.deps,root,['branch','-D',opened.data['branch']]);
-        await gitOk(ctx.deps,root,['update-ref','-d',legacyPreparedRef(ctx.manifest.safeSessionId)]);
       }
     }
     return result({removed,kept});
