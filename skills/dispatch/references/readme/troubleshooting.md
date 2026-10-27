@@ -33,9 +33,7 @@ node scripts/dispatch.ts session reactivate --session-dir <session>
 node scripts/dispatch.ts status show --session <session>
 ```
 
-Read the returned status result, reconcile retained writers and integration state, then resume the next unfinished tool operation. The toolkit has no `rebind` or `send` command. If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
-
-Before upgrading, finish and deliver live old-protocol runs with the version that started them. If that is impossible, preserve their whole folders and ask your host to use the saved work in a new run. The toolkit cannot replay v0.7.x journals or frames; there is no automatic migration.
+Read the returned status result, reconcile retained writers and integration state, then resume the next unfinished tool operation. If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
 
 ## Run a configuration check
 

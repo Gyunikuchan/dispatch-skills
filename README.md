@@ -163,7 +163,7 @@ For work too big for one pass, `design:` creates and reviews an increment graph.
 > [!NOTE]
 > Dispatch creates internal task and integration commits, then delivers unstaged changes to your checkout. It does not commit on your branch, push, or open a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
 
-For help resuming interrupted work or upgrading Dispatch, see [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md).
+For help resuming interrupted work, see [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md).
 
 ## License
 

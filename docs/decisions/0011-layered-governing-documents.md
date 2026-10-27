@@ -21,7 +21,7 @@ Each layer cites upstream IDs instead of copying its content. Every plan criteri
 
 The [design template](../../skills/dispatch/references/templates/design.md) replaces duplicated Context & Intent and Goals & Requirements with strategy and mapping. The [plan template](../../skills/dispatch/references/templates/plan.md) keeps tactical context rather than duplicating intent, non-local exclusions or user questions. The spec owns those questions. Templates and lint own the exact current format; this ADR explains ownership, not an alternate authoring contract.
 
-Task scheduling, file ownership and bounded native writers remain in ADR 0008. Its former plan-format description is superseded here; its isolation and independent-acceptance rationale remains applicable.
+File ownership and bounded native writers retain the isolation rationale in [ADR 0008](0008-task-based-plans-and-bounded-parallel-writers.md). Its plan format is superseded here; execution and acceptance mechanics are superseded by [ADR 0013](0013-toolkit-and-ledger.md).
 
 ## Alternatives and consequences
 

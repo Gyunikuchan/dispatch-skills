@@ -10,7 +10,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 
 | Setting | Needed for | What it controls |
 |---|---|---|
-| `diagnostics` | Optional | Retrospective `diagnostics.md` report for Dispatch maintainers; adds one retro turn per run |
+| `diagnostics` | Optional | Retrospective `diagnostics.md` report for Dispatch maintainers |
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
@@ -91,9 +91,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
-## Older sessions and provider-specific settings
-
-Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. v0.7.x journals and frames are incompatible with the toolkit. Finish old runs before upgrading, or preserve their controller and session files. Automatic migration is not available. For older plans without file ownership, ask your host to rewrite the plan and start a new run. See [Recovery and upgrades](troubleshooting.md#continue-after-a-local-driver-fix).
+## Provider-specific settings
 
 <details>
 <summary>Advanced provider settings</summary>

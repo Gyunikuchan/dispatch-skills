@@ -34,7 +34,7 @@ Read the whole spec at Spec Path before inspection; use Spec Hash as its governi
 For a spec finding, use § Spec: <heading>.
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
-Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or journals
+Use the authoritative plan and the full review history in the review log that its `## Review Findings & Resolutions` links. Consult raw provider output or ledger records
 when missing evidence, an adjudication dispute or recovery requires it; follow
 `references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 
