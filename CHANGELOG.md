@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### v0.8.0 draft
+## [0.8.0] - 2026-10-27
 
-- A deterministic toolkit CLI and append-only ledger replace the workflow driver and event journal.
-- The orchestrator owns sequencing and technical decisions, with fewer non-intent gates. Plans and designs can change during delivery through recorded edits.
-- Approval still protects intent, external dependencies, runtime prerequisites and discarded work; waivers and manual completion require user authority.
-- **Breaking:** v0.7.x sessions are not readable after upgrade. Finish old runs or preserve their controller and session files before upgrading.
+- Dispatch handles routine planning and delivery decisions with fewer approval pauses, while preserving user approval for intent changes, new dependencies, runtime prerequisites, and discarded work.
+- Verified implementation results arrive as unstaged changes in your checkout, ready for you to inspect and commit.
+- Reviews track each code revision, confirm disputed must-fix findings, and allow accepted fixes to complete beyond the normal round limit.
+- Formatting-only Markdown changes preserve approvals and integrity checks. Opt-in diagnostics give clearer failure and usage reports.
+- GitHub Copilot delegates use the current sandbox controls for hands-free execution.
+- **Breaking:** The new toolkit and durable ledger replace the previous workflow engine. v0.7.x sessions cannot resume after upgrade; finish old runs or preserve their controller and session files first.
 
 ## [0.7.3] - 2026-10-21
 
