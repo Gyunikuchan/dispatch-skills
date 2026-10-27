@@ -25,7 +25,7 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
         for (const pattern of WRITE_FLAGS) {
           const hit = argv.some((arg) => pattern.test(arg));
           // codex's only unsandboxed escape: `sandbox: false` explicitly selects danger-full-access.
-          const allowed = id === 'codex' && !sandbox && pattern.source === 'danger-full-access';
+          const allowed = (id === 'codex' && !sandbox && pattern.source === 'danger-full-access') || (id === 'copilot' && sandbox && pattern.source === '^--allow-all-tools$');
           assert.equal(hit && !allowed, false, `${id}/${mode}/${String(sandbox)} has ${pattern.source}`);
         }
         if (spec.sandbox && sandbox && id !== 'opencode') for (const flag of spec.sandbox.flags) assert.ok(argv.includes(flag), `${id} sandbox flag ${flag}`);
@@ -36,6 +36,18 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
   assert.ok(SPECS.codex.argv(request(false), 'cli').argv.includes('sandbox_mode="danger-full-access"'));
   assert.ok(SPECS.codex.argv(request(true), 'cli').argv.includes('--skip-git-repo-check'), 'codex runs outside a trusted git folder');
   assert.deepEqual(SPECS.opencode.argv(request(true), 'cli').argv.slice(0, 7), ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--ro-bind', '/']);
+});
+
+test('copilot sandbox argv uses GA hands-free flags in plan mode', () => {
+  const sandboxed = SPECS.copilot.argv(request(true), 'cli').argv;
+  for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user', '--mode', 'plan', '--reasoning-effort', 'high']) {
+    assert.ok(sandboxed.includes(flag), 'sandboxed copilot argv lacks ' + flag);
+  }
+  for (const flag of ['--experimental', '--yolo', '--allow-all-paths', '--allow-all-urls', '--autopilot']) {
+    assert.ok(!sandboxed.includes(flag), 'sandboxed copilot argv includes ' + flag);
+  }
+  const unsandboxed = SPECS.copilot.argv(request(false), 'cli').argv;
+  for (const flag of ['--sandbox', '--allow-all-tools', '--experimental']) assert.ok(!unsandboxed.includes(flag), 'unsandboxed copilot argv includes ' + flag);
 });
 
 const okResult: ProcessResult = { exit: 0, signal: null, stdout: '{"result":"ok","session_id":"s1"}', stdoutPath: '/r/log', stderrTail: '', durationMs: 1, timedOut: false, truncated: false };

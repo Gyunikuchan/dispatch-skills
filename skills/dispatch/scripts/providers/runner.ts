@@ -181,7 +181,7 @@ export function classifyFailure(text: string): FailureClass | null {
 
 /** A provider diagnostic saying a sandbox flag or setting is unsupported. */
 export function isSandboxUnsupported(text: string, options: { includeSettings?: boolean; strict?: boolean } = {}): boolean {
-  const flag = options.includeSettings ? '--(?:experimental|settings|sandbox)|\\bsandbox(?:ing)?\\b' : '--(?:experimental|sandbox)|\\bsandbox(?:ing)?\\b';
+  const flag = options.includeSettings ? '--(?:settings|sandbox)|\\bsandbox(?:ing)?\\b' : '--sandbox|\\bsandbox(?:ing)?\\b';
   const reason = options.strict
     ? 'unknown|unrecognized|unsupported|invalid'
     : "unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires";
