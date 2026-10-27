@@ -29,6 +29,7 @@ import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { observeTool } from './diagnostics.ts';
+import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
@@ -125,7 +126,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree submit': submit,
   'worktree abandon': abandon,
   'verify run': verifyRun,
-  'ledger append': async ({ session, args, deps }) => {
+  'ledger append': async ({ session, manifest, args, deps }) => {
     let input: unknown;
     try {
       if (args.length !== 1) throw new Error();
@@ -133,7 +134,23 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     } catch {
       throw new ToolError(1, 'invalid-input', 'input requires a readable JSON record file');
     }
-    const value = await appendRecord(session, input, deps);
+    const appended = await appendRecord(session, input, deps);
+    let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
+    let findingsSectionReason: string | undefined;
+    if (input && typeof input === 'object' && !Array.isArray(input)) {
+      const record = input as Record<string, unknown>;
+      const data = record['data'];
+      if (record['kind'] === 'ruling' && data && typeof data === 'object' && !Array.isArray(data)) {
+        const review = typeof (data as Record<string, unknown>)['subject'] === 'string'
+          ? rulingReview((data as Record<string, unknown>)['subject'] as string)
+          : null;
+        if (review) findingsSection = refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; });
+      }
+    }
+    const value = {
+      ...appended,
+      ...(findingsSection ? { findingsSection, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
+    };
     return { ok: true, value, summary: 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended'), exit: 0 };
   },
   'ledger query': async ({ session, values, args }) => {

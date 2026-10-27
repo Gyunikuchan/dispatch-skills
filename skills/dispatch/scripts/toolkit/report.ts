@@ -10,9 +10,10 @@ import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
 import { ToolError } from './output.ts';
-import { diagnosticsEnabled, readReviews, optionalDiagnostics } from './diagnostics.ts';
+import { diagnosticsEnabled, optionalDiagnostics } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
+import { reviewRows } from './review-findings.ts';
 import type { LedgerRecord } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
 
@@ -121,35 +122,6 @@ function userDataSummary(data: Record<string, unknown>): string {
   catch { return '[unavailable]'; }
 }
 
-function reviewRows(fold: Fold, session: string, confirmations:readonly RejectionState[]) {
-  const rows: WalkthroughView['reviewRows'][number][] = [];
-  const findingsPaths = new Map<string, string>();
-  for (const round of readReviews(session)) {
-    const findings = round.findings?.findings;
-    if (!Array.isArray(findings)) continue;
-    const path = `.state/reviews/${round.review}/round-${round.round}/findings.json`;
-    findingsPaths.set(round.review, path);
-    for (const raw of findings) {
-      if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
-      const finding = raw as { id: string; severity?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
-      const ruling = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
-      const rulingValue = ruling?.data['ruling'];
-      const confirmation=confirmations.find(state=>state.request.review===round.review && state.request.finding===finding.id);
-      rows.push({
-        review: round.review,
-        id: finding.id,
-        round: round.round,
-        severity: typeof finding.severity === 'string' ? finding.severity : 'unknown',
-        ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as 'accepted' | 'rejected' | 'duplicate' | 'deferred' : null,
-        rationale: (confirmation && confirmation.state!=='confirmed'?'['+confirmation.state+' reviewer confirmation] ':'')+(typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),
-        ...(typeof finding.recurrence?.of === 'string' ? { recurrence: finding.recurrence.of } : {}),
-        ...(typeof finding.unresolved?.of === 'string' ? { unresolved: finding.unresolved.of } : {}),
-      });
-    }
-  }
-  return { rows, findingsPaths: [...findingsPaths].map(([review, path]) => ({review, path})) };
-}
-
 /** Joins captured facts with changes and review results to form a rendered report. */
 async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<ReportFacts> {
   const changes: WalkthroughView['changes'][number][] = [];
@@ -197,13 +169,15 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     quote: record.quote ?? '',
   }));
   let review:ReturnType<typeof reviewRows>;
-  try {review=reviewRows(snapshot.fold,ctx.session,snapshot.rejectionConfirmations);}
+  try {review=reviewRows(ctx.session,snapshot.fold,snapshot.rejectionConfirmations);}
   catch(error) {
     if(!snapshot.confirmationError || !(error instanceof ToolError && error.reason==='review-corrupt'))throw error;
     snapshot.confirmationError+='; '+error.message;
-    review={rows:[],findingsPaths:[]};
+    review={rows:[],rounds:[]};
   }
   const destBranch = String(snapshot.integration?.data['dest']?.branch ?? '');
+  const glance = snapshot.plan.glance;
+  const tldr = snapshot.plan.box['TL;DR'];
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
     specPath: snapshot.specPath,
@@ -216,6 +190,8 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       branch: destBranch,
       ref: deliveredSourceRef(ctx.manifest.safeSessionId),
     } : null,
+    glance: glance ? { what: glance.what || tldr || '', how: glance.how } : tldr ? { what: tldr, how: '' } : null,
+    tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary, behaviour: task.behaviour })),
     statuses: snapshot.statuses,
     changes,
     edits,
@@ -224,7 +200,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     deferredRulings,
     userRecords,
     reviewRows: review.rows,
-    findingsPaths: review.findingsPaths,
+    reviewRounds: review.rounds,
   };
   return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, userRecords };
 }
@@ -273,7 +249,7 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
   if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'report render takes no positional arguments');
   const writeDiagnosticsEnabled = diagnosticsEnabled(ctx.deps.skillRoot);
   const facts = await reportFacts(ctx);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view));
+  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view, ctx.session));
   const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
@@ -321,7 +297,7 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
   }
   const facts = await materialize(ctx, captured.snapshot);
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view));
+  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view, ctx.session));
   const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');

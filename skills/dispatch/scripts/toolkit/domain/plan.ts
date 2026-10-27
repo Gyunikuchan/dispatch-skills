@@ -67,6 +67,8 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'unknown-requirement':
     case 'plan-id-in-test-name':
     case 'task-summary':
+    case 'task-behaviour':
+    case 'increment-behaviour':
     case 'task-overlap':
     case 'automated-test-duplicates-verify':
     case 'criterion-test-rationale':
@@ -394,6 +396,8 @@ const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;
 const MARKER_HEADING = /^####\s+\[([A-Z][A-Z-]*)\]\s+\S/;
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/i;
+const BEHAVIOUR_PLACEHOLDER = /^(?:TODO|TBD|implement later|fill in|<[^<>]+>)$/i;
+const FILE_COUNT_SUMMARY = /^\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?(?:(?:\s*[,;]\s*|\s+and\s+)\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?)*(?:\s+(?:touched|changed|modified))?$/i;
 const EVIDENCE: readonly EvidenceClass[] = ['red', 'verify', 'review'];
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 // Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
@@ -464,10 +468,11 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const plan: ParsedPlan = {
     title: documentTitle(source),
     box: boxValues(source),
+    glance: parseGlance(lines),
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
     criteria: criteria.map(({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
       ({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
-    tasks: tasks.map(({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
+    tasks: tasks.map(({ id, title, summary, behaviour, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, behaviour, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
     finalCommands,
@@ -504,6 +509,28 @@ function bullets(lines: readonly StructuralLine[], heading: string): string[] {
   });
 }
 
+function parseGlance(lines: readonly StructuralLine[]): { what: string; how: string } | null {
+  const range = sectionRanges(lines, '## At a Glance')[0];
+  if (!range) return null;
+  const values = { what: '', how: '' };
+  let active: keyof typeof values | null = null;
+  for (const entry of lines.slice(range.start + 1, range.end)) {
+    if (entry.fenced) continue;
+    const bullet = /^[-*+]\s+\*\*(What|How it works):\*\*\s*(.*)$/i.exec(entry.text);
+    if (bullet) {
+      active = bullet[1]?.toLowerCase() === 'what' ? 'what' : 'how';
+      values[active] = bullet[2]?.trim() ?? '';
+      continue;
+    }
+    if (active && /^ {2,}\S/.test(entry.text)) {
+      values[active] += `${values[active] ? '\n' : ''}${entry.text.trim()}`;
+      continue;
+    }
+    if (entry.text.trim()) active = null;
+  }
+  return values;
+}
+
 function keyValues(lines: readonly StructuralLine[], heading: string): Record<string, string> | null {
   const range = sectionRanges(lines, heading)[0];
   if (!range) return null;
@@ -515,7 +542,7 @@ function keyValues(lines: readonly StructuralLine[], heading: string): Record<st
   return values;
 }
 
-type DraftTask = PlanTask & { constraints: string[]; prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number; overlapLines: number[] };
+type DraftTask = Omit<PlanTask, 'constraints' | 'behaviour'> & { constraints: string[]; behaviour: string[]; prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number; overlapLines: number[] };
 
 type AuthoredTaskRow = { id: string; title: string; outcome: string; prerequisites: string[]; criteria: string[]; line: number };
 
@@ -550,18 +577,21 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   let task: DraftTask | null = null;
   let malformed = false;
   let inHeader = false;
+  let beforeDetails = true;
   body.forEach((entry, offset) => {
+    if (inHeader && task && entry.text.trim() === '<details>') beforeDetails = false;
     if (isDetailWrapper(entry.text)) return;
     if (/^###\s/.test(entry.text)) {
       const heading = TASK_HEADING.exec(entry.text);
       inHeader = true;
+      beforeDetails = true;
       if (!heading?.[1] || !heading[2]) {
         out.push(lint('task-heading', entry.line, 'Task heading must be "### T<n> — <outcome title>".'));
         task = null; malformed = true;
         return;
       }
       malformed = false;
-      task = { id: heading[1], title: heading[2], summary: '', constraints: [], line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], overlaps: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line, overlapLines: [] };
+      task = { id: heading[1], title: heading[2], summary: '', behaviour: [], constraints: [], line: entry.line, prerequisites: [], criteria: [], paths: [], generated: [], overlaps: [], prerequisitesLine: null, criteriaLine: null, summaryLine: entry.line, overlapLines: [] };
       tasks.push(task);
       return;
     }
@@ -571,7 +601,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
       if (/^\s*[-*+]\s+####\s+\[/.test(entry.text)) out.push(lint('change-heading', entry.line, 'Nested file entries require "- #### [ACTION] path" at task level.'));
       const marker = MARKER_HEADING.exec(entry.text)?.[1];
       if (marker) out.push(lint('unknown-change-marker', entry.line, `Unknown change marker [${marker}]; use [NEW], [MODIFY], [DELETE], or [GENERATED].`));
-      if (inHeader && current) readTaskHeader(current, entry, out);
+      if (inHeader && current) readTaskHeader(current, entry, out, beforeDetails);
       return;
     }
     inHeader = false;
@@ -736,9 +766,9 @@ function joinTaskMap(sections: readonly DraftTask[], rows: readonly AuthoredTask
   return rows.flatMap((row) => joined.has(row.id) ? [joined.get(row.id)!] : []);
 }
 
-/** Task sections keep only task-owned constraints and overlap justifications. */
-function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[]): void {
-  if (isDetailWrapper(entry.text)) return;
+/** Task headers accept visible behaviour and owned constraint/overlap fields; Task Map fields stay outside the header. */
+function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[], beforeDetails: boolean): void {
+  if (!beforeDetails || entry.fenced || isDetailWrapper(entry.text)) return;
   const overlap = OVERLAP_FIELD.exec(entry.text);
   if (overlap) {
     const parts = /^(.+?)\s+[—–-]\s+(\S.*)$/.exec(overlap[1] ?? '');
@@ -760,7 +790,19 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[
     out.push(lint('task-map', entry.line, `Task ${task.id} ${field[1]} belongs in Task Map; remove this task-section field.`));
     return;
   }
+  const behaviour = /^[-*+]\s+(.+?)\s*$/.exec(entry.text);
+  if (behaviour?.[1]) {
+    task.behaviour.push(behaviour[1].trim());
+    return;
+  }
   if (entry.text.trim()) out.push(lint('task-map', entry.line, `Task ${task.id} outcome belongs in Task Map; keep task-specific detail under Constraints or Overlap.`));
+}
+
+export function hasBehaviour(behaviour: readonly string[]): boolean {
+  return behaviour.some((bullet) => {
+    const value = bullet.replace(CODE_SPAN, '').trim().replace(/\.$/, '').trim();
+    return Boolean(value) && !BEHAVIOUR_PLACEHOLDER.test(value) && !FILE_COUNT_SUMMARY.test(value);
+  });
 }
 
 function generatedInputs(raw: string | undefined, line: number, out: LintDefect[]): string[] {
@@ -1112,6 +1154,7 @@ function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], 
     if (!prose.trim() || PROSE_PLACEHOLDER.test(prose) || isFillerNote(task.summary)) {
       out.push(lint('task-summary', task.summaryLine, `Task ${task.id} requires a meaningful plain-language Outcome in its Task Map row.`));
     }
+    if (!hasBehaviour(task.behaviour)) out.push(lint('task-behaviour', task.line, `Task ${task.id} requires a behavioural bullet before its details.`));
     if (task.prerequisitesLine === null) out.push(lint('missing-prerequisite', task.line, `Task ${task.id} requires Prerequisites: none or task IDs in its Task Map row.`));
     for (const id of task.prerequisites) {
       if (id === task.id || !tasks.some((other) => other.id === id)) out.push(lint('missing-prerequisite', task.prerequisitesLine, `Task ${task.id} lists ${id === task.id ? 'itself' : `unknown task ${id}`} in its Task Map Prerequisites cell.`));

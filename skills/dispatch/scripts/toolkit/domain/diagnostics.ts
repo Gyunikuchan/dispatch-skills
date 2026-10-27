@@ -94,7 +94,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
   ...files('scripts/toolkit/domain', 'criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
-  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts prune records red report review status types verify walkthrough writers', '.ts'),
+  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts prune records red report review review-findings status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
 ]);
 

@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
+import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 
 const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
@@ -160,6 +161,33 @@ test('rejected MUST saved confirmation generation survives crashes and supersede
    if(changed){assert.equal(result.output.reason,'target-moved');assert.equal((await f.call()).exit,0);assert.ok(launches>before);assert.equal(f.read(2,'round.json').generation,2);}else assert.equal(f.read(2,'round.json').generation,1);
   }finally{f.cleanup();}
  }
+});
+
+test('plan and design review rounds update the bound findings section', async () => {
+  const f = await fixture();
+  const writeAtomic = nodeLinkFs.writeAtomic;
+  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
+  try {
+    const design = f.artifact('strategy.design.md', '# Strategy\n## Boundaries\nA boundary.\n## Review Findings & Resolutions\nDriver notes.\n');
+    await f.add('bind', { spec: 'mission.spec.md', plan: 'work.plan.md', design: 'strategy.design.md' });
+    for (const [kind, target, review] of [
+      ['plan', f.plan, 'plan-work.plan'],
+      ['design', design, 'design-strategy.design'],
+    ] as const) {
+      const first = await f.call(kind, target);
+      assert.equal(first.exit, 0, JSON.stringify(first));
+      assert.equal(first.value.findingsSection, 'updated', JSON.stringify(first.value));
+      assert.match(fs.readFileSync(target, 'utf8'), new RegExp(`Round 1 \\(${review}\\): 1 findings`));
+
+      fs.appendFileSync(target, '\n## Follow-up\nChanged for round two.\n');
+      const second = await f.call(kind, target);
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      assert.equal(second.value.findingsSection, 'updated');
+      const source = fs.readFileSync(target, 'utf8');
+      assert.match(source, new RegExp(`Round 1 \\(${review}\\): 1 findings`));
+      assert.match(source, new RegExp(`Round 2 \\(${review}\\): 1 findings`));
+    }
+  } finally { nodeLinkFs.writeAtomic = writeAtomic; f.cleanup(); }
 });
 
 test('standalone review targets accept spec overrides and stable Git snapshots',async()=>{

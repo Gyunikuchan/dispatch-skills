@@ -1,5 +1,6 @@
 import { neutralizeComments } from './domain/sanitize.ts';
 import type { CriterionStatus } from './evidence.ts';
+import { renderFindingsSection, type RoundLink } from './review-findings.ts';
 
 type Status = CriterionStatus;
 type Owner = { id: string; title: string };
@@ -10,6 +11,8 @@ export type WalkthroughView = {
   specHash: string;
   planPath: string;
   delivered: { integrated: number; total: number; source: string | null; branch: string; ref: string } | null;
+  glance?: { what: string; how: string } | null;
+  tasks?: readonly { id: string; title: string; outcome: string; behaviour: readonly string[] }[];
   statuses: readonly Status[];
   changes: readonly { action: 'NEW' | 'MODIFY' | 'DELETE'; path: string; owners: readonly Owner[] }[];
   edits: readonly { seq: number; artifact: string; class: string; rationale: string; diffRef: string; affects: readonly string[] }[];
@@ -27,18 +30,13 @@ export type WalkthroughView = {
     recurrence?: string;
     unresolved?: string;
   }[];
-  findingsPaths: readonly { review: string; path: string }[];
+  reviewRounds: readonly RoundLink[];
 };
 
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
 const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
   .replace(/\r\n?/g, '\n').replace(/\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
 const code = (value: string): string => `\`${line(value)}\``;
-const clip = (value: string, limit: number): string => {
-  const chars = Array.from(line(value));
-  return chars.length > limit ? `${chars.slice(0, limit - 1).join('')}…` : chars.join('');
-};
-
 function statusTable(statuses: readonly Status[], state: Status['state']): string[] {
   const rows = statuses.filter((row) => row.state === state);
   if (!rows.length) return ['None.'];
@@ -53,12 +51,7 @@ function statusTable(statuses: readonly Status[], state: Status['state']): strin
   return out;
 }
 
-function reviewStatus(ruling: WalkthroughView['reviewRows'][number]['ruling']): string {
-  if (!ruling) return 'Open';
-  return ruling[0]!.toUpperCase() + ruling.slice(1);
-}
-
-export function renderWalkthrough(view: WalkthroughView): string {
+export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string {
   const statuses = view.statuses;
   const verified = statuses.filter((row) => row.state === 'verified').length;
   const manual = statuses.filter((row) => row.state === 'manual').length;
@@ -70,15 +63,17 @@ export function renderWalkthrough(view: WalkthroughView): string {
   const deleted = view.changes.filter((change) => change.action === 'DELETE').length;
   const changeSummary = `${view.changes.length} files (${added} new · ${modified} modified · ${deleted} deleted)`;
   const openReviews = view.reviewRows.filter((row) => row.ruling === null).length;
-  const delivered = view.delivered === null
+  const integration = view.delivered === null
     ? 'not delivered'
     : view.delivered.source === null
     ? `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; not delivered`
     : `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; uncommitted changes from source ${line(view.delivered.source).slice(0, 12)} in ${line(view.delivered.branch)} working tree; ref ${line(view.delivered.ref)}`;
+  const delivered = line(view.glance?.what) || integration;
   const out = [
     `# ${line(view.title)}`,
     '',
     `> **Delivered:** ${delivered}`,
+    `> **Integration:** ${integration}`,
     `> **Spec:** ${line(view.specPath)} · ${line(view.specHash)}`,
     `> **Plan:** ${line(view.planPath)}`,
     `> **Status:** ${satisfied}/${statuses.length} SC satisfied (verified ${verified} · manual ${manual} · waived ${waived})`,
@@ -87,6 +82,7 @@ export function renderWalkthrough(view: WalkthroughView): string {
     '## At a Glance',
     '',
     `- **Delivered:** ${delivered}`,
+    ...(view.glance?.how ? [`- **How it works:** ${line(view.glance.how)}`] : []),
     `- **Criteria:** ${satisfied}/${statuses.length} satisfied (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing})`,
     `- **Changes:** ${changeSummary}`,
     `- **Deviations:** ${view.edits.length} recorded edits · ${view.unplannedPaths.length} unplanned paths`,
@@ -105,16 +101,28 @@ export function renderWalkthrough(view: WalkthroughView): string {
   ].filter(Boolean);
   if (notes.length) out.push('> [!NOTE]', `> ${notes.join('; ')}. See Verification and Deviations & Follow-ups.`, '');
   out.push('## Changes Made', '');
-  if (view.changes.length) out.push(`Changed ${view.changes.length} files; expand for file paths and task owners.`, '', '<details>', `<summary>${changeSummary}</summary>`, '');
-
   if (!view.changes.length) out.push('None.', '');
-  for (const change of view.changes) {
+  const tasks = view.tasks ?? [];
+  const fileEntry = (change: WalkthroughView['changes'][number]): string[] => {
     const owners = change.owners.map((owner) => `${line(owner.id)} — ${line(owner.title)}`);
-    out.push(`#### [${change.action}] ${code(change.path)}`, '', `- Changes: ${owners.length ? owners.join(', ') : 'unplanned'}`, '');
+    return [`#### [${change.action}] ${code(change.path)}`, '', `- Changes: ${owners.length ? owners.join(', ') : 'unplanned'}`, ''];
+  };
+  for (const task of tasks) {
+    out.push(`### ${line(task.id)} — ${line(task.title)}`, '');
+    const behaviour = task.behaviour.map(line).filter(Boolean);
+    out.push(...(behaviour.length ? behaviour.map((item) => `- ${item}`) : [`- ${line(task.outcome)}`]), '', '<details>', '');
+    const taskChanges = view.changes.filter((change) => change.owners.some((owner) => owner.id === task.id));
+    if (taskChanges.length) for (const change of taskChanges) out.push(...fileEntry(change));
+    else out.push('None.', '');
+    out.push('</details>', '');
   }
-
-  if (view.changes.length) out.push('</details>', '');
-
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const unplannedChanges = view.changes.filter((change) => !change.owners.some((owner) => taskIds.has(owner.id)));
+  if (unplannedChanges.length) {
+    out.push('### Unplanned changes', '', '<details>', '');
+    for (const change of unplannedChanges) out.push(...fileEntry(change));
+    out.push('</details>', '');
+  }
   out.push('## Verification', '', '### Verified', ...statusTable(statuses, 'verified'), '',
     '### Manual', ...statusTable(statuses, 'manual'), '',
     '### Waived', ...statusTable(statuses, 'waived'), '');
@@ -139,18 +147,6 @@ export function renderWalkthrough(view: WalkthroughView): string {
     out.push('');
   } else out.push('None.', '');
 
-  out.push('## Review Findings & Resolutions', '');
-  if (view.reviewRows.length) {
-    out.push('| Review | ID | Round | Severity | Status | Ruling |', '| --- | --- | --- | --- | --- | --- |');
-    for (const row of view.reviewRows) {
-      const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`].filter(Boolean);
-      const status = [reviewStatus(row.ruling), ...markers].join(' ');
-      out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);
-    }
-  } else out.push('*No reviews conducted yet.*');
-  if (view.findingsPaths.length) {
-    out.push('');
-    for (const item of view.findingsPaths) out.push(`Findings: ${line(item.path)}`);
-  }
+  out.push('## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir));
   return `${out.join('\n').replace(/\s+$/, '')}\n`;
 }

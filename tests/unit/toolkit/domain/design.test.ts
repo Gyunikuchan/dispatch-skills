@@ -5,6 +5,9 @@ import { asParsedDesign, designScopeGrew, governedDesignText, parseDesign, valid
 import { validateSpecTraceability, validateDesignTraceability } from '../../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 
 const detail = (id: string) => `### ${id} Step
+- ${id} behaviour is implemented.
+<details>
+
 - Outcome: ${id} outcome delivered
 - Scope: src/${id}.ts
 - Non-scope: other modules
@@ -13,6 +16,7 @@ const detail = (id: string) => `### ${id} Step
 - Validation: node --test ${id}
 - Rollback boundary: revert ${id}
 - Parallel safety: unsafe beside others
+</details>
 `;
 
 const DESIGN = `# Importer design
@@ -71,6 +75,37 @@ const codes = (source: string) => {
 const designResult = parseDesign(DESIGN);
 assert.ok(designResult.ok);
 const design = designResult.design;
+
+test('design increments parse visible behaviour bullets and ignore details summaries', () => {
+  const source = DESIGN.replace('<details>\n\n- Outcome', '<details>\n\n<summary>Hidden increment details</summary>\n\n- Outcome');
+  const result = parseDesign(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.design.increments.map((row) => row.behaviour), [
+    ['I01 behaviour is implemented.'],
+    ['I02 behaviour is implemented.'],
+  ]);
+  assert.ok(!result.warnings.some((item) => item.code === 'increment-behaviour'));
+});
+
+test('design increments warn when behaviour is missing or only a file count', () => {
+  const sources = [
+    DESIGN.replace('- I01 behaviour is implemented.\n', ''),
+    DESIGN.replace('- I01 behaviour is implemented.', '- 2 modified files.'),
+  ];
+  for (const source of sources) {
+    const result = parseDesign(source);
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.ok(result.warnings.some((item) => item.code === 'increment-behaviour'), JSON.stringify(result.warnings));
+  }
+});
+
+test('design increment behaviour accepts prose that starts with a file count', () => {
+  const source = DESIGN.replace('- I01 behaviour is implemented.', '- 2 files are compared by content before delivery.');
+  const result = parseDesign(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.design.increments[0]?.behaviour, ['2 files are compared by content before delivery.']);
+  assert.ok(!result.warnings.some((item) => item.code === 'increment-behaviour'));
+});
 
 test('design presentation findings are warnings', () => {
   const result = parseDesign(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3').replace('REQ-1 strategy', 'Importer strategy'));
@@ -155,6 +190,15 @@ test('journal design admission rejects malformed objectives and dependency graph
     { ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] },
     { ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] },
     { ...design, increments: [rows[1]!] },
+  ];
+  for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
+});
+
+test('journal design admission rejects malformed increment behaviour', () => {
+  const rows = design.increments;
+  const invalid = [
+    { ...design, increments: [{ ...rows[0]!, behaviour: undefined as never }, rows[1]!] },
+    { ...design, increments: [{ ...rows[0]!, behaviour: ['I01 outcome', 4] as never }, rows[1]!] },
   ];
   for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
 });

@@ -20,6 +20,7 @@ import { LEVELS, type Level } from './types.ts';
 import { ToolError } from './output.ts';
 import { redGaps } from './red.ts';
 import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
+import { refreshFindingsSection } from './review-findings.ts';
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget};
@@ -311,6 +312,17 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;
     const file = path.join(dir, 'findings.json');
-    return {ok: true, exit: 0, value: {path: file, review, round: n}, summary: `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`};
+    let findingsSectionReason: string | undefined;
+    const findings = kind === 'plan' || kind === 'design'
+      ? refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; })
+      : null;
+    return {
+      ok: true, exit: 0,
+      value: {
+        path: file, review, round: n,
+        ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
+      },
+      summary: `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`,
+    };
   });
 }

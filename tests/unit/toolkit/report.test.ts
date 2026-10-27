@@ -110,7 +110,7 @@ test('report render writes every missing criterion without Git and rewrites the 
   } finally { f.cleanup(); }
 });
 
-test('report render keeps historical review rows and links only the latest findings file', async () => {
+test('report render shows each completed review round link', async () => {
   const f = await fixture();
   try {
     for (const [round, id] of [[1, 'F001'], [2, 'F002']] as const) {
@@ -124,9 +124,11 @@ test('report render keeps historical review rows and links only the latest findi
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
     assert.match(walkthrough, /\| review-alpha \| F001 \| 1 \| SHOULD \| Open \|/);
     assert.match(walkthrough, /\| review-alpha \| F002 \| 2 \| SHOULD \| Open \|/);
-    assert.deepEqual(walkthrough.match(/^Findings: .*$/gm), [
-      'Findings: .state/reviews/review-alpha/round-2/findings.json',
+    assert.deepEqual(walkthrough.match(/^- Round \d+.*$/gm), [
+      '- Round 1 (review-alpha): 1 findings — [findings](.state/reviews/review-alpha/round-1/findings.json)',
+      '- Round 2 (review-alpha): 1 findings — [findings](.state/reviews/review-alpha/round-2/findings.json)',
     ]);
+    assert.doesNotMatch(walkthrough, /^Findings:/m);
   } finally { f.cleanup(); }
 });
 

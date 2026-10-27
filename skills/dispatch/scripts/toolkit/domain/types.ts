@@ -45,7 +45,7 @@ export type LintDefectCode =
   | 'criterion-review' | 'criterion-critical-review'
   | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
-  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
+  | 'task-heading' | 'task-summary' | 'task-behaviour' | 'increment-behaviour' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap'
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
@@ -91,6 +91,7 @@ export type PlanTask = {
   id: string;
   title: string;
   summary: string;
+  behaviour: readonly string[];
   /** Task-specific instructions for its writer; absent in older serialized plans. */
   constraints?: readonly string[];
   line: number;
@@ -108,6 +109,7 @@ export type PlanWarning = { kind: 'overlap'; tasks: readonly string[]; path: str
 export type ParsedPlan = {
   title: string | null;
   box: Readonly<Record<string, string>>;
+  glance: { what: string; how: string } | null;
   keyDecisions: readonly string[];
   criteria: readonly PlanCriterion[];
   /** Plan-ordered task graph; `changes` is its flattened aggregate. */
@@ -129,7 +131,7 @@ export type ParsedPlan = {
 
 // SECTION: Design
 
-export type DesignIncrement = { id: string; priority: number; summary: string; prerequisites: readonly string[]; paths: readonly string[] };
+export type DesignIncrement = { id: string; priority: number; summary: string; behaviour: readonly string[]; prerequisites: readonly string[]; paths: readonly string[] };
 export type IncrementState = 'complete' | 'active' | 'ready' | 'blocked' | 'invalidated';
 export type ExecutionStatusRow = { id: string; state: IncrementState; summary: string; nextAction: string };
 

@@ -1,6 +1,6 @@
 # Review rules
 
-Preserve complete findings, sources, required changes, duplicate relations, reviewed revision, scope and rulings in linked review artifacts. Owning designs, plans and walkthroughs keep a compact findings summary with a link to full history. Standalone reviews retain a complete report. Consult raw provider output when evidence is disputed; a summary never replaces source inspection.
+Preserve complete findings, sources, required changes, duplicate relations, reviewed revision, scope and rulings in linked review artifacts. The toolkit regenerates each bound plan or design's findings section after every completed review round and ruling, with a link to each round's full findings. Walkthroughs render their findings summary from the ledger. Keep resolution rationale in ruling records; do not edit generated sections. Standalone reviews retain a complete report. Consult raw provider output when evidence is disputed; a summary never replaces source inspection.
 
 Review prompts carry the settled governing spec path and hash. Every reviewer reads the whole spec. Inspect the relevant host standards and [quality bar](templates/quality-bar.md); the [shared review prompt](templates/review-prompt.md) owns adjacent discovery.
 

@@ -332,6 +332,65 @@ test('task-plan: parses tasks with summary, prerequisites, criteria, owned paths
   assert.deepEqual(result.plan.changes.map((change) => change.path), ['src/contract.ts', 'src/reader.ts', 'src/writer.ts', 'docs/contract.md']);
 });
 
+test('task behaviour: records visible bullets and ignores collapsed detail', () => {
+  const source = PLAN.replace('### T1 — Cap fetch retries', [
+    '### T1 — Cap fetch retries',
+    '- The retry loop stops after three attempts.',
+    '* Callers receive the final error.',
+    '```mermaid',
+    'graph LR',
+    '  A --> B',
+    '```',
+    '<details>',
+    '<summary>Old summary ignored</summary>',
+    '',
+    '- Hidden implementation detail.',
+    '</details>',
+    '- This bullet follows details and stays hidden.',
+  ].join('\n'));
+  const result = parsePlan(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.plan.tasks[0]?.behaviour, [
+    'The retry loop stops after three attempts.',
+    'Callers receive the final error.',
+  ]);
+  assert.ok(!result.warnings.some((item) => item.code === 'task-behaviour'));
+});
+
+test('task behaviour: warns on hidden, missing, count-only, and placeholder bullets', () => {
+  const sourceFor = (header: string) => PLAN.replace('### T1 — Cap fetch retries', `### T1 — Cap fetch retries\n${header}`);
+  const taskWarnings = (source: string) => {
+    const result = parsePlan(source);
+    assert.ok(result.ok, JSON.stringify(result));
+    return result.warnings.filter((item) => item.code === 'task-behaviour');
+  };
+
+  const cases: [string, string][] = [
+    ['missing', ''],
+    ['hidden only', '<details>\n<summary>Old summary ignored</summary>\n\n- Hidden implementation detail.\n</details>'],
+    ['file count', '- 3 files changed.'],
+    ['mixed file counts', '- 2 new files, 1 modified file'],
+    ['file count with a code span path', '- 3 files changed `src/fetch.ts`'],
+    ['placeholder', '- TBD'],
+  ];
+  for (const [name, header] of cases) {
+    const warnings = taskWarnings(sourceFor(header));
+    assert.equal(warnings.length, 1, name);
+    assert.equal(warnings[0]?.severity, 'warning', name);
+  }
+
+  assert.deepEqual(taskWarnings(sourceFor('- 2 files are compared by content before delivery')), []);
+  assert.deepEqual(taskWarnings(sourceFor('- 3 files changed before callers receive the terminal error')), []);
+  const rationale = parsePlan(sourceFor('- Rationale: Callers receive the terminal error after retry exhaustion.'));
+  assert.ok(rationale.ok, JSON.stringify(rationale));
+  assert.deepEqual(rationale.plan.tasks[0]?.behaviour, ['Rationale: Callers receive the terminal error after retry exhaustion.']);
+  const taskField = parsePlan(sourceFor('- Outcome: This machine field belongs in the Task Map.'));
+  assert.ok(!taskField.ok && taskField.defects.some((item) => item.code === 'task-map'));
+  assert.ok(taskField.warnings.some((item) => item.code === 'task-behaviour'));
+  const prose = parsePlan(sourceFor('Visible prose remains invalid.'));
+  assert.ok(!prose.ok && prose.defects.some((item) => item.code === 'task-map'));
+});
+
 test('task-plan: rejects graph defects', () => {
   const cases: [string, string, string][] = [
     ['untasked entry', '## Proposed Changes\n\n### T1 — Define the shared contract', 'task-ownership'],
@@ -456,7 +515,7 @@ test('new change heading rejects backticked comma-separated paths', () => {
 test('rejected multi-path change heading registers no path', () => {
   // Real headings for both paths follow; registering either from the rejected heading would add duplicate-change-path.
   const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts');
-  assert.deepEqual(defects(source), ['change-heading', 'missing-section']);
+  assert.deepEqual(defects(source), ['change-heading', 'task-behaviour', 'missing-section']);
 });
 
 test('rejected sole multi-path heading emits only change-heading', () => {
@@ -989,6 +1048,29 @@ test('plan human layout: At a Glance is required and shared sections precede the
   for (const heading of ['At a Glance', 'Key Interfaces & Data', 'Constraints']) assert.ok(result.plan.sharedContext.includes(`## ${heading}`));
   assert.ok(!result.plan.sharedContext.includes('#### [MODIFY]'));
   assert.ok(parsePlan(source.replace('## At a Glance', '## Constraints').replace('## Constraints\n- Keep API.', '## At a Glance\n- Keep API.')).warnings.some(row => row.code === 'section-order'));
+});
+
+test('plan glance: parses What and How it works with indented continuation lines', () => {
+  const source = PLAN.replace('## Key Decisions & Context', [
+    '## At a Glance',
+    '- **What:** Fetch stops after three attempts.',
+    '  Callers receive the final error.',
+    '- **How it works:** Count attempts before sending.',
+    '  Stop after the final retry.',
+    '',
+    '## Key Decisions & Context',
+  ].join('\n'));
+  const result = parsePlan(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.plan.glance, {
+    what: 'Fetch stops after three attempts.\nCallers receive the final error.',
+    how: 'Count attempts before sending.\nStop after the final retry.',
+  });
+
+  const empty = parsePlan(PLAN.replace('## Key Decisions & Context', '## At a Glance\n- **Audience:** maintainers.\n\n## Key Decisions & Context'));
+  assert.ok(empty.ok, JSON.stringify(empty));
+  assert.deepEqual(empty.plan.glance, { what: '', how: '' });
+  assert.equal(parsed(PLAN).glance, null);
 });
 
 const collapsed = (source: string) => source

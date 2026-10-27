@@ -47,7 +47,7 @@ Dispatch organizes work across four canonical document layers:
 - Read **At a Glance** first for the change, its purpose and how it works. Point-form prose keeps the main facts visible.
 - `> [!NOTE]` marks information you need to know; `> [!IMPORTANT]` marks a decision you must make.
 - Diagrams show flow or architecture, with a one-line text summary for an unrendered view. Mermaid in VS Code needs a preview extension.
-- Expand `<details>` to inspect agent detail, file changes and checks.
+- Task and increment behaviour stays visible before `<details>`. Expand the block for file changes, checks and verbose detail.
 
 Authors and reviewers use the [quality bar's authoring rules](references/templates/quality-bar.md#spec).
 
@@ -105,7 +105,7 @@ Plan and deliver one change:
 /dispatch implement: <settled plan path>
 ```
 
-Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans present task summaries before file ownership and prerequisites. Read the settled plan and its verification commands, then run `implement` to begin.
+Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans show task summaries as visible behaviour bullets before file ownership; the Task Map holds outcomes and prerequisites. Read the settled plan and its verification commands, then run `implement` to begin.
 
 Design work that needs multiple increments:
 

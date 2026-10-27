@@ -2,7 +2,7 @@
 // graph priority belongs to the design machine, not here.
 
 import {
-  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, isFillerNote, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
+  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, hasBehaviour, isFillerNote, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
   structuralLines, withoutSections, type PlaceholderVocabulary, type StructuralLine,
 } from './plan.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
@@ -49,7 +49,7 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): { increme
     ids.add(id);
     const prerequisites = (columns[3] ?? '').split(',').map((item) => item.trim()).filter((item) => item && item !== 'none');
     const paths = columns.slice(4).flatMap((column) => column.split(',')).map((item) => item.trim()).filter(Boolean);
-    increments.push({ id, priority, summary: columns[2] ?? '', prerequisites, paths });
+    increments.push({ id, priority, summary: columns[2] ?? '', behaviour: [], prerequisites, paths });
   }
   if (!increments.length) defects.push(lint('missing-increments', null, 'Increment Dependency Graph requires at least one I<nn> row.'));
   const sequence = increments.map((row) => Number(row.id.slice(1))).sort((a, b) => a - b);
@@ -80,13 +80,27 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): { increme
 
 // SECTION: Details and status
 
-function incrementDetails(lines: readonly StructuralLine[]): Map<string, StructuralLine[]> {
-  const blocks = new Map<string, StructuralLine[]>();
-  let current: StructuralLine[] | null = null;
+type IncrementBlock = { line: number; behaviour: string[]; fields: StructuralLine[] };
+
+function incrementDetails(lines: readonly StructuralLine[]): Map<string, IncrementBlock> {
+  const blocks = new Map<string, IncrementBlock>();
+  let current: IncrementBlock | null = null;
+  let afterDetails = false;
   for (const entry of sectionBody(lines, '## Increment Details') ?? []) {
     const heading = /^###\s+(I\d{2})\b/.exec(entry.text)?.[1];
-    if (heading) { current = []; blocks.set(heading, current); continue; }
-    current?.push(entry);
+    if (heading) { current = { line: entry.line, behaviour: [], fields: [] }; blocks.set(heading, current); afterDetails = false; continue; }
+    if (!current) continue;
+    if (entry.fenced) continue;
+    if (entry.text.trim() === '<details>') { afterDetails = true; continue; }
+    const text = entry.text.trim();
+    if (afterDetails) {
+      if (text === '</details>' || text.startsWith('<summary>') || text === '</summary>') continue;
+      current.fields.push(entry);
+      continue;
+    }
+    const bullet = /^ {0,3}[-*+]\s+(.+)$/.exec(entry.text)?.[1]?.trim();
+    if (!bullet || /^(?:Constraints|Overlap|Field):/i.test(bullet)) continue;
+    current.behaviour.push(bullet);
   }
   return blocks;
 }
@@ -124,7 +138,7 @@ export function asParsedDesign(value: unknown): ParsedDesign | null {
   const details = value['details'];
   if (typeof value['box']['TL;DR'] !== 'string' || !value['box']['TL;DR'].trim()) return null;
   if (!Object.values(details).every((row) => record(row) && Object.values(row).every((v) => typeof v === 'string'))) return null;
-  if (!value['increments'].every((row) => record(row) && /^I\d{2}$/.test(String(row['id'])) && Number.isInteger(row['priority']) && typeof row['summary'] === 'string' && record(details[String(row['id'])]) && Array.isArray(row['prerequisites']) && row['prerequisites'].every((v) => typeof v === 'string') && Array.isArray(row['paths']) && row['paths'].length > 0 && row['paths'].every((v) => typeof v === 'string' && v.trim()))) return null;
+  if (!value['increments'].every((row) => record(row) && /^I\d{2}$/.test(String(row['id'])) && Number.isInteger(row['priority']) && typeof row['summary'] === 'string' && Array.isArray(row['behaviour']) && row['behaviour'].every((v) => typeof v === 'string') && record(details[String(row['id'])]) && Array.isArray(row['prerequisites']) && row['prerequisites'].every((v) => typeof v === 'string') && Array.isArray(row['paths']) && row['paths'].length > 0 && row['paths'].every((v) => typeof v === 'string' && v.trim()))) return null;
   const design = value as unknown as ParsedDesign;
   const ids = new Set(design.increments.map((row) => row.id));
   const priorities = design.increments.map((row) => row.priority).sort((a, b) => a - b);
@@ -199,8 +213,10 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   for (const { id } of graph.increments) {
     const block = blocks.get(id);
     if (!block) { defects.push(lint('missing-increment-details', null, `Increment ${id} needs a ### ${id} block under Increment Details.`)); continue; }
+    const behaviour = block.behaviour;
+    if (!hasBehaviour(behaviour)) defects.push(lint('increment-behaviour', block.line, `Increment ${id} needs a behavioural bullet before its details.`));
     const fields: Record<string, string> = {};
-    for (const { text, line } of block) {
+    for (const { text, line } of block.fields) {
       const match = /^\s*[-*]\s+([^:]+):\s*(.*)$/.exec(text);
       if (!match?.[1]) continue;
       const value = (match[2] ?? '').trim();
@@ -224,10 +240,11 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   defects.push(...graph.defects);
   const executionStatus = parseExecutionStatus(lines, new Set(graph.increments.map((row) => row.id)), defects);
   const warnings: LintDefect[] = defects.map(item => ({ ...item, severity: 'warning' }));
+  const designIncrements = graph.increments.map((increment) => ({ ...increment, behaviour: blocks.get(increment.id)?.behaviour ?? [] }));
   return {
     ok: true,
     warnings,
-    design: { approachRequirements, title: documentTitle(source), box: boxValues(source), increments: graph.increments, details, executionStatus, governedText: governedDesignText(source) },
+    design: { approachRequirements, title: documentTitle(source), box: boxValues(source), increments: designIncrements, details, executionStatus, governedText: governedDesignText(source) },
   };
 }
 
