@@ -12,7 +12,7 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  assert.ok(lines <= 10500, `driver TS LOC ${lines} exceeds 10500`);
+  assert.ok(lines <= 10900, `driver TS LOC ${lines} exceeds 10900`);
   assert.ok(KINDS.length <= 13, `ledger kinds ${KINDS.length} exceeds 13`);
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
   assert.ok(bytes <= 4096, `SKILL.md bytes ${bytes} exceeds 4096`);

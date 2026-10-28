@@ -131,6 +131,7 @@ Without a range, code review covers uncommitted changes. Your host agent adjudic
 | `write-concurrency` | Maximum number of implementation task writers running at once |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
+| `explore-subagents` | Optional native explorers for domain grounding before authoring |
 | `phases` | Optional review breadth and round limits |
 
 The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.

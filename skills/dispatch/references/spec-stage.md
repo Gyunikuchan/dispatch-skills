@@ -8,6 +8,8 @@ Follow a supplied plan or design's Parent pins to the governing spec; an increme
 
 When none exists, author `<session>/<slug>.spec.md` from the full chat and inspected artifacts. Preserve constraints, alternatives, rejected options and actual user decisions; label inferred requirements. Lint the spec and resolve parse errors before downstream authoring. Preserve an existing canonical spec's path.
 
+Before authoring a spec, design or plan, ground any domain that needs many files read using [grounding guidance](grounding.md).
+
 Direct other planning skills' output into this canonical owner. Merge stray material before removing it; deleting tracked work follows the user gate.
 
 ## Approval

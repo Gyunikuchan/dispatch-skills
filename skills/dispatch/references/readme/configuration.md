@@ -14,6 +14,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
+| `explore-subagents` | Optional | Native explorer models for grounding the host before planning |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
@@ -87,6 +88,8 @@ Dispatch requests OS sandboxing by default where a provider and execution mode s
 For Node.js requirements and supported provider CLIs, see the [repository README](../../../../README.md).
 
 ## Optional settings
+
+`explore-subagents` configures native, read-only explorers for broad domain reading before the host writes a spec, design, plan, or answer. Set a model and effort for each host platform and level. `deep: true` launches two explorers with different strategies, doubling explorer cost for broader coverage.
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).

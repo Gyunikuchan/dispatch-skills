@@ -19,7 +19,8 @@ import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, type Manifest } from '../lib/session.ts';
-import { lintArtifact } from './lint.ts';
+import { lintArtifact, repositoryReader } from './lint.ts';
+import { lintContextMap, mergeContextMaps, parseContextMap } from './domain/context.ts';
 import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
@@ -168,12 +169,50 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const value = await statusReport(session, manifest.repositoryRoot, deps);
     return { ok: true, value, summary: JSON.stringify(value), exit: 0 };
   },
-  'lint run': async ({ args }) => {
+  'lint run': async ({ args, manifest }) => {
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'artifact requires one path');
-    const value = lintArtifact(path.resolve(args[0]!));
+    const value = lintArtifact(path.resolve(args[0]!), { repositoryRoot: manifest.repositoryRoot });
     const ok = value.errors.length === 0;
     return { ok, value, summary: value.kind + ': ' + value.errors.length + ' errors, ' + value.warnings.length + ' warnings; ' + value.hash,
       exit: ok ? 0 : 4, ...(ok ? {} : { reason: 'lint-errors' }) };
+  },
+  'context merge': async ({ args, values, manifest }) => {
+    if (args.length !== 2) throw new ToolError(1, 'invalid-input', 'context merge requires two input maps');
+    if (typeof values['out'] !== 'string' || !values['out'].trim()) throw new ToolError(1, 'invalid-input', 'context merge requires --out <merged.context.md>');
+    const inputs = args.map(file => path.resolve(file));
+    const out = path.resolve(values['out']);
+    if (![...inputs, out].every(file => file.endsWith('.context.md'))) {
+      throw new ToolError(1, 'invalid-input', 'context merge paths must end in .context.md');
+    }
+    const fileIdentity = (file: string) => {
+      try { return fs.realpathSync(file); }
+      catch {
+        try { return path.join(fs.realpathSync(path.dirname(file)), path.basename(file)); }
+        catch { return file; }
+      }
+    };
+    const normalizedPath = (file: string) => process.platform === 'win32' ? file.toLocaleLowerCase('en-US') : file;
+    if (inputs.some(file => normalizedPath(fileIdentity(file)) === normalizedPath(fileIdentity(out)))) {
+      throw new ToolError(1, 'invalid-input', 'context merge output must differ from both input maps');
+    }
+    const readMap = (file: string) => {
+      const result = lintArtifact(file, { repositoryRoot: manifest.repositoryRoot });
+      if (result.kind !== 'context') throw new ToolError(1, 'invalid-input', 'context merge inputs must be .context.md maps');
+      if (result.errors.length) throw new ToolError(4, 'lint-errors', `Input map has lint errors: ${file}`);
+      let source: string;
+      try { source = fs.readFileSync(file, 'utf8'); }
+      catch { throw new ToolError(1, 'invalid-input', `Input map is missing or unreadable: ${file}`); }
+      return parseContextMap(source);
+    };
+    const left = readMap(inputs[0]!);
+    const right = readMap(inputs[1]!);
+    if (left.commit !== right.commit) throw new ToolError(1, 'invalid-input', 'Context maps have different commits.');
+    const merged = mergeContextMaps(left, right);
+    const checked = lintContextMap(merged.source, { readRepoFile: repositoryReader(manifest.repositoryRoot) });
+    if (checked.defects.length) throw new ToolError(4, 'lint-errors', `Merged context map has lint errors: ${out}`);
+    fs.writeFileSync(out, merged.source, 'utf8');
+    const value = { kind: 'context', out, disputed: merged.disputed, errors: checked.defects, warnings: checked.warnings };
+    return { ok: true, value, summary: `merged context map: ${merged.disputed} disputed entries, ${checked.warnings.length} warnings`, exit: 0 };
   },
 };
 
@@ -195,10 +234,11 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      final: {type:'boolean'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
+      final: {type:'boolean'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'}, out: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
+    if (parsed.values['out'] !== undefined && (tool !== 'context' || action !== 'merge')) throw new Error('--out is only for context merge');
     if(parsed.values['final']!==undefined && (tool!=='verify'||action!=='run'))throw new Error('--final is only for verify run');
     if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
     session = path.resolve(parsed.values['session']);

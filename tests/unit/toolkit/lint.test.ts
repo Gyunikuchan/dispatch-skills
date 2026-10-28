@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { sessionFixture } from './helpers/session.ts';
 import { parsePlan } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
@@ -84,6 +86,95 @@ describe('lint severity', () => {
       assert.equal(r.design.increments.length, count);
       assert.ok(r.warnings.some(x => x.code === code));
     }
+  });
+  test('lint run checks a context map against the repository root', async () => {
+    const f = sessionFixture();
+    try {
+      fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(f.root, 'src', 'entry.ts'), 'export function main() {}\n');
+      const map = [
+        '# Context map: root', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '## Map', '- Entry — `src/entry.ts:1`', '', '## Flows', '- entry: `src/entry.ts:1`', '',
+        '## Invariants', '- Entry exists — `src/entry.ts:1` — "export function main() {}"', '',
+        '## Coverage', '- entry-points: `src/entry.ts:1`', '', '## Precedent', '- Entry: `src/entry.ts`', '',
+        '## Surprises', '- none — `src/entry.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
+      ].join('\n');
+      const file = path.join(f.session, 'maps', 'root.context.md');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, map);
+      const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+      const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
+      const output = f.output();
+      const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+      assert.equal(exit, 0);
+      assert.equal(result.kind, 'context');
+      assert.deepEqual(result.errors, []);
+      assert.deepEqual(result.warnings, []);
+    } finally { f.cleanup(); }
+  });
+
+  test('lint run rejects context references through links outside the repository root', async () => {
+    const f = sessionFixture();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'context-outside-'));
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.ts'), 'export const secret = true;\n');
+      fs.symlinkSync(outside, path.join(f.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+      const map = [
+        '# Context map: linked path', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '## Map', '- Secret — `linked/secret.ts:1`', '', '## Flows', '- secret: `linked/secret.ts:1`', '',
+        '## Invariants', '- Secret exists — `linked/secret.ts:1` — "export const secret = true;"', '',
+        '## Coverage', '- entry-points: `linked/secret.ts:1`', '', '## Precedent', '- Secret: `linked/secret.ts`', '',
+        '## Surprises', '- none — `linked/secret.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
+      ].join('\n');
+      const file = f.artifact('linked.context.md', map);
+      const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+      const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
+      const output = f.output();
+      const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+      assert.equal(exit, 4);
+      assert.ok(result.errors.some((issue: { code: string }) => issue.code === 'context-ref-missing'));
+    } finally {
+      f.cleanup();
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+  test('plan lint warns for context map files the plan omits', async () => {
+    const context = (strategy: string, coverage: string[], precedent: string[], gap: string) => [
+      '# Context map: coverage', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** text', '',
+      '## Map', '- Entry — `src/file.ts:1`', '', '## Flows', '- entry: `src/file.ts:1`', '',
+      '## Invariants', '- Entry is available — `src/file.ts:1` — "Entry"', '',
+      '## Coverage', ...coverage, '', '## Precedent', ...precedent, '',
+      '## Surprises', '- none — `src/file.ts:1`', '', '## Not covered', `- ${gap}`, '',
+    ].join('\n');
+    const plan = PLAN.replace('## Task Map', [
+      '## Out of Scope', '- `docs/exact.md` is handled elsewhere.', '- `docs/target.mdx` is excluded.', '', '## Task Map',
+    ].join('\n'));
+    scoped.artifact('coverage.context.md', context('outside-in', [
+      '- changed: `src/file.ts:1`',
+      '- exact exclusion: `docs/exact.md`',
+      '- longer exclusion: `docs/target.md`',
+      '- unlisted test: `tests/unlisted.test.ts`',
+    ], [
+      '- changed analogue: `src/file.ts`',
+      '- prior docs: `docs/analogue.md`',
+      '- repeated test: `tests/unlisted.test.ts`',
+    ], 'inside-out strategy map was not produced'));
+    scoped.artifact('coverage.outside-in.context.md', context('outside-in', ['- strategy-only: `docs/outside-only.md`'], [], 'none'));
+    scoped.artifact('coverage.inside-out.context.md', context('inside-out', ['- strategy-only: `docs/inside-only.md`'], [], 'none'));
+
+    const checked = await lint('coverage.plan.md', plan);
+    const uncovered = checked.result.warnings.filter((issue: { code: string }) => issue.code === 'context-uncovered');
+    assert.deepEqual(uncovered.map((issue: { message: string }) => issue.message).sort(), [
+      'Context map file docs/analogue.md appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
+      'Context map file docs/target.md appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
+      'Context map file tests/unlisted.test.ts appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
+    ]);
+
+    const before = await lint('plain.plan.md', PLAN);
+    scoped.artifact('plain.outside-in.context.md', context('outside-in', ['- strategy-only: `docs/outside-only.md`'], [], 'none'));
+    scoped.artifact('plain.inside-out.context.md', context('inside-out', ['- strategy-only: `docs/inside-only.md`'], [], 'none'));
+    const after = await lint('plain.plan.md', PLAN);
+    assert.deepEqual(after.result, before.result);
   });
   test('invalid artifact fields persist actionable input failures', async () => {
     const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');

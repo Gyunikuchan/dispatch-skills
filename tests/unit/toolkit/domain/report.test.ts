@@ -231,6 +231,14 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
+test('diagnostics config renders explore-subagents', () => {
+  const config = { 'explore-subagents': { codex: { low: { model: 'gpt-6-luna', effort: 'low', deep: true } } } };
+  const sanitized = sanitizeFacts(facts({ config }));
+  assert.deepEqual(sanitized.config?.['explore-subagents'], config['explore-subagents']);
+  const text = render([facts({ config })]);
+  assert.match(text, /"explore-subagents": \{/);
+  assert.match(text, /"deep": true/);
+});
 test('diagnostics render one subject per phase cell and bound observed collection coverage', () => {
  const subject='1234567890abcdef';
  const generations=['1111222233334444','aaaabbbbccccdddd'];

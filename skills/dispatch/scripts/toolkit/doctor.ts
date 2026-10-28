@@ -9,6 +9,8 @@ import type { Level } from './types.ts';
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 type Writer = { models: string[]; effort: string | null };
+type Explorer = Writer & { deep: boolean };
+type ExplorerConfig = Partial<Record<Level, { model: string | string[]; effort?: string; deep?: boolean }>>;
 
 export function doctorReport(session: string, skillRoot: string, requested?: unknown) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
@@ -19,6 +21,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [];
   const writers: Record<string, Writer> = {};
+  const explorers: Record<string, Explorer> = {};
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
@@ -32,6 +35,15 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
           effort: entry.effort ?? null,
         };
       }
+      const explorerTable = loaded.config['explore-subagents'] as Record<string, ExplorerConfig>;
+      for (const [platform, levels] of Object.entries(explorerTable)) {
+        const entry = resolveLevel(levels, level)!;
+        explorers[platform] = {
+          models: typeof entry.model === 'string' ? [entry.model] : entry.model,
+          effort: entry.effort ?? null,
+          deep: entry.deep ?? false,
+        };
+      }
     }
   } catch (error) {
     problems = [error instanceof Error ? error.message : String(error)];
@@ -39,6 +51,6 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const reason = integrity.status === 'drift' ? 'integrity-drift' : problems.length ? 'config-invalid' : undefined;
   return {
     ok: reason === undefined, ...(reason ? { reason } : {}), integrity,
-    config: { path: configPath, problems }, level, writers,
+    config: { path: configPath, problems }, level, writers, explorers,
   };
 }

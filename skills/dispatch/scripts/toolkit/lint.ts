@@ -1,16 +1,83 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { artifactHash, artifactKind, readArtifact } from './artifacts.ts';
-import { parsePlan } from './domain/plan.ts';
+import { parsePlan, sectionRanges, structuralLines } from './domain/plan.ts';
 import { parseDesign } from './domain/design.ts';
 import { parseSpec } from './domain/spec.ts';
+import { contextCoverageWarnings, lintContextMap, parseContextMap } from './domain/context.ts';
 import { ToolError } from './output.ts';
 
-export function lintArtifact(file: string) {
+export type LintArtifactOptions = { repositoryRoot?: string };
+
+function safeRepoPath(value: string): boolean {
+  if (!value || value.includes('\\') || value.includes('\0') || path.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
+  const normalized = path.posix.normalize(value);
+  return normalized !== '.' && normalized !== '..' && !normalized.startsWith('../') && !path.posix.isAbsolute(normalized);
+}
+
+function within(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+}
+
+/** Reads only repository files whose resolved path remains inside the session's repository root. */
+export function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
+  const root = path.resolve(repositoryRoot);
+  let realRoot: string;
+  try { realRoot = fs.realpathSync(root); } catch { return () => null; }
+  return relativePath => {
+    if (!safeRepoPath(relativePath)) return null;
+    const candidate = path.resolve(root, relativePath);
+    if (!within(root, candidate)) return null;
+    try {
+      const real = fs.realpathSync(candidate);
+      if (!within(realRoot, real) || !fs.statSync(real).isFile()) return null;
+      return fs.readFileSync(real, 'utf8');
+    } catch { return null; }
+  };
+}
+
+function canonicalContextMap(planFile: string): string | null {
+  const name = path.basename(planFile);
+  if (!name.endsWith('.plan.md')) return null;
+  const canonicalName = name.slice(0, -'.plan.md'.length) + '.context.md';
+  try {
+    const matches = fs.readdirSync(path.dirname(planFile)).filter(entry => entry === canonicalName);
+    if (matches.length !== 1) return null;
+    const file = path.join(path.dirname(planFile), matches[0]!);
+    return fs.statSync(file).isFile() ? file : null;
+  } catch { return null; }
+}
+
+function outOfScopeText(source: string): string {
+  const lines = structuralLines(source);
+  const range = sectionRanges(lines, '## Out of Scope')[0];
+  return range ? lines.slice(range.start + 1, range.end).map(line => line.text).join('\n') : '';
+}
+
+export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
+  const isContext = file.endsWith('.context.md');
   const kind = artifactKind(file);
-  if (!kind) throw new ToolError(1, 'invalid-input', 'artifact must end in .spec.md, .plan.md or .design.md');
+  if (!isContext && !kind) throw new ToolError(1, 'invalid-input', 'artifact must end in .spec.md, .plan.md, .design.md or .context.md');
   const source = readArtifact(path.dirname(file), path.basename(file));
   if (source === null) throw new ToolError(1, 'invalid-input', 'artifact is missing or unreadable: ' + file);
+  if (isContext) {
+    if (!options.repositoryRoot) throw new ToolError(1, 'invalid-input', 'context lint requires the session repository root');
+    const result = lintContextMap(source, { readRepoFile: repositoryReader(options.repositoryRoot) });
+    const hash = 'sha256:' + crypto.createHash('sha256').update(source).digest('hex');
+    return { kind: 'context' as const, hash, errors: result.defects, warnings: result.warnings, parsed: result.map };
+  }
   const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source, { level: 'medium' });
+  if (kind === 'plan' && result.ok && 'plan' in result) {
+    const mapFile = canonicalContextMap(file);
+    if (!mapFile) return { kind, hash: artifactHash(kind, source), errors: [], warnings: result.warnings, parsed: result.plan };
+    try {
+      const mapSource = fs.readFileSync(mapFile, 'utf8');
+      const warnings = contextCoverageWarnings(parseContextMap(mapSource), result.plan, outOfScopeText(source));
+      return { kind, hash: artifactHash(kind, source), errors: [], warnings: [...result.warnings, ...warnings], parsed: result.plan };
+    } catch { /* An unreadable optional map leaves plan lint unchanged. */ }
+  }
   const parsed = result.ok ? ('plan' in result ? result.plan : 'design' in result ? result.design : result.spec) : null;
-  return { kind, hash: artifactHash(kind, source), errors: result.ok ? [] : result.defects, warnings: result.warnings, parsed };
+  return { kind, hash: artifactHash(kind!, source), errors: result.ok ? [] : result.defects, warnings: result.warnings, parsed };
 }

@@ -87,13 +87,13 @@ const files = (dir: string, names: string, ext: string) => names.split(' ').map(
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
-  ...files('references/templates', 'design plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan spec walkthrough writer-brief', '.md'),
+  ...files('references/templates', 'context-map design explorer-brief plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan spec walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review', '.md'),
-  ...files('references', 'decision-frame diagnostics glossary providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
+  ...files('references', 'decision-frame diagnostics glossary grounding providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
-  ...files('scripts/toolkit/domain', 'criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
+  ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts prune records red report review review-findings status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
 ]);
@@ -103,7 +103,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
 const DASH = '—';
 const VERBS = ['ask', 'design', 'plan', 'review', 'implement'];
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'phases'];
+const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'explore-subagents', 'phases'];
 const ID = /^[A-Za-z0-9_-]{1,48}$/;
 // Host text may name dispatch files and slash commands, never machine, network, or identity locators.
 const PROHIBITED: readonly RegExp[] = [

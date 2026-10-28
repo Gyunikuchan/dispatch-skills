@@ -15,7 +15,7 @@ test('config resolution is first-existing-wins with no merge', () => {
   };
   const local = loadConfig('/s', (file) => files[file] ?? null);
   assert.equal(local.path, path.join('/s', 'config.local.jsonc'));
-  assert.deepEqual(local.config, { 'read-delegates': { claude: [] }, 'write-subagents': {}, phases: {} });
+  assert.deepEqual(local.config, { 'read-delegates': { claude: [] }, 'write-subagents': {}, 'explore-subagents': {}, phases: {} });
   const only = loadConfig('/s', (file) => (file.endsWith(`${path.sep}config.jsonc`) ? files[file] ?? null : null));
   assert.deepEqual(only.config['phases'], { x: 1 });
   assert.throws(() => loadConfig('/s', () => null), /Config file not found.*config\.sample\.jsonc/);
@@ -33,6 +33,35 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   assert.ok(problems.some((problem) => /Unrecognized top-level key "bogus".*config\.sample\.jsonc/.test(problem)));
   assert.ok(validateConfig({}).some((problem) => /Missing required table "read-delegates"/.test(problem)));
   assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'))), []);
+});
+
+test('explore-subagents validates level entries and a boolean deep', () => {
+  const valid = {
+    ...minimal,
+    'explore-subagents': {
+      codex: {
+        low: { model: 'fast-explorer', effort: 'low', deep: true },
+        high: { model: 'strong-explorer', deep: false },
+      },
+    },
+  };
+  assert.deepEqual(validateConfig(valid), []);
+
+  const invalidCases: Array<[unknown, RegExp]> = [
+    [{ bogus: { low: { model: 'fast-explorer' } } }, /explore-subagents: unknown platform "bogus"/],
+    [{ codex: { bogus: { model: 'fast-explorer' } } }, /explore-subagents\.codex has unrecognized key "bogus"/],
+    [{ codex: { low: { model: 'fast-explorer', unknown: true } } }, /explore-subagents\.codex\.low has unrecognized key "unknown"/],
+    [{ codex: { low: { model: ' ' } } }, /explore-subagents\.codex\.low\.model must be a nonblank string/],
+    [{ codex: { low: { model: 'fast-explorer', deep: 'yes' } } }, /explore-subagents\.codex\.low\.deep must be a boolean/],
+  ];
+  for (const [table, expected] of invalidCases) {
+    assert.match(validateConfig({ ...minimal, 'explore-subagents': table }).join(' '), expected);
+  }
+
+  assert.match(
+    validateConfig({ ...minimal, 'write-subagents': { codex: { low: { model: 'writer', deep: true } } } }).join(' '),
+    /write-subagents\.codex\.low has unrecognized key "deep"\. Valid keys: model, effort/,
+  );
 });
 
 // SECTION: Write concurrency

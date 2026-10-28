@@ -103,6 +103,14 @@
       "low": { "model": "gpt-6-luna", "effort": "max" },
     },
   },
+  // Optional: native read-only explorers can ground the host before planning.
+  // "deep": true launches two explorers with different strategies, doubling explorer cost for broader coverage.
+  // "explore-subagents": {
+  //   "codex": {
+  //     "low": { "model": "gpt-6-luna", "effort": "low" },
+  //     "high": { "model": "gpt-6-luna", "effort": "low", "deep": true },
+  //   },
+  // },
   // Optional: set review size and rounds by level.
   // Without a phase policy, standalone reviews use one target and one round.
   "phases": {

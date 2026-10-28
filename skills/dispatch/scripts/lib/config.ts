@@ -10,7 +10,7 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'phases', 'diagnostics', 'write-concurrency'];
+const TABLES = ['read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'diagnostics', 'write-concurrency'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -86,7 +86,7 @@ export function loadConfig(skillRoot: string, read: ReadFile = readReal): { conf
     const text = read(file);
     if (text === null) continue;
     const parsed = parseJsonc(text);
-    const config = isRecord(parsed) ? { ...parsed, 'write-subagents': parsed['write-subagents'] ?? {}, phases: parsed['phases'] ?? {} } : {};
+    const config = isRecord(parsed) ? { ...parsed, 'write-subagents': parsed['write-subagents'] ?? {}, 'explore-subagents': parsed['explore-subagents'] ?? {}, phases: parsed['phases'] ?? {} } : {};
     if (!isRecord(parsed)) throw new Error(`${file}: config must be a JSON object (${HINT}).`);
     return { config, path: file };
   }
@@ -118,9 +118,14 @@ function sortedJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function checkLevelConfig(where: string, value: unknown, problems: string[]): void {
-  if (!isRecord(value)) { problems.push(`${where} must be an object with model and optional effort (${HINT}).`); return; }
+function checkLevelConfig(where: string, value: unknown, problems: string[], allowDeep = false): void {
+  if (!isRecord(value)) { problems.push(where + ' must be an object with model and optional effort' + (allowDeep ? ' and optional deep' : '') + ' (' + HINT + ').'); return; }
   for (const key of Object.keys(value)) {
+    if (allowDeep && key !== 'model' && key !== 'effort' && key !== 'deep') {
+      problems.push(where + ' has unrecognized key "' + key + '". Valid keys: model, effort, deep (' + HINT + ').');
+      continue;
+    }
+    if (allowDeep && key === 'deep') continue;
     if (key !== 'model' && key !== 'effort') problems.push(`${where} has unrecognized key "${key}". Valid keys: model, effort (${HINT}).`);
   }
   const model = value['model'];
@@ -132,14 +137,15 @@ function checkLevelConfig(where: string, value: unknown, problems: string[]): vo
     if (dup !== undefined) problems.push(`${where}.model has duplicate alias "${String(dup)}" (${HINT}).`);
   }
   if ('effort' in value && !goodName(value['effort'])) problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${HINT}).`);
+  if (allowDeep && 'deep' in value && typeof value['deep'] !== 'boolean') problems.push(where + '.deep must be a boolean (' + HINT + ').');
 }
 
-function checkLevelMap(where: string, value: unknown, problems: string[]): void {
+function checkLevelMap(where: string, value: unknown, problems: string[], allowDeep = false): void {
   if (!isRecord(value)) { problems.push(`${where} must be an object keyed by level (${HINT}).`); return; }
   if (!Object.keys(value).length) problems.push(`${where} must define at least one level (${HINT}).`);
   for (const [key, entry] of Object.entries(value)) {
     if (!LEVELS.includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${LEVELS.join(', ')} (${HINT}).`);
-    else checkLevelConfig(`${where}.${key}`, entry, problems);
+    else checkLevelConfig(`${where}.${key}`, entry, problems, allowDeep);
   }
 }
 
@@ -238,6 +244,8 @@ export function validateConfig(config: unknown): string[] {
   }
   const write = config['write-subagents'];
   if (write !== undefined) checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
+  const explore = config['explore-subagents'];
+  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelMap(where, entry, problems, true));
   if (config['phases'] !== undefined) checkPhases(config['phases'], readKeys, problems);
   return problems;
 }

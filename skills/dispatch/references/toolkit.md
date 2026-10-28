@@ -167,8 +167,14 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 ### lint run
 
 Arguments: `lint run <artifact> --session <session>`.
-Result path: artifact kind/hash, parse errors and warnings. The reported hash is the formatting-tolerant canonical artifact hash that approval, edit and gate records use; formatting-only rewrites keep it.
+Result path: artifact kind/hash, parse errors and warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
 Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
+
+### context merge
+
+Arguments: `context merge <a.context.md> <b.context.md> --out <merged.context.md> --session <session>`.
+Result path: writes the merged map to `--out`; the session result reports its path, disputed entry count, errors and warnings. Entries collapse only when their full lines match after whitespace normalization.
+Refusals: missing `--out`, non-context paths, unreadable or lint-invalid inputs, different commits, output paths that replace an input, or a merged map with lint errors. Entries whose refs appear in only one input and Coverage answers opposed by `not covered` are marked `[disputed]`.
 
 ## Ledger records
 
