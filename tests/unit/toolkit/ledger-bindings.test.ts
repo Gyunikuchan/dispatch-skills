@@ -6,6 +6,63 @@ import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, currentHashes, foldLedger, gate, latest, queryLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 
+test('design-stage bindings retain revisions and block plan-dependent effects until a complete rebind', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({diagnostics: false,
+      'read-delegates': {codex: {targets: [{low: {model: 'fake'}}]}},
+      phases: {'code-review': {targets: {low: 1}, rounds: {low: 1}}}}));
+    f.deps.skillRoot = skill;
+    let key = 0, effects = 0;
+    f.deps.run = async () => {effects++; throw new Error('Design-only work must not run Git');};
+    f.deps.delegate = async () => {effects++; throw new Error('No delegate without a usable review target');};
+    const add = (kind: string, data: object, extra: object = {}) => appendRecord(f.session,
+      {kind, data, by: 'orchestrator', key: 'design-' + key++, ...extra}, f.deps);
+    f.artifact('mission.spec.md', '# Mission\n');
+    const design = f.artifact('strategy.design.md', '# Strategy\n');
+    await add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
+    await add('level', {level: 'low'});
+    const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    const before = hashes().design;
+    fs.appendFileSync(design, '\n## Approach\nPreserve independent increments.\n');
+    const edit = {kind: 'edit', key: 'design-revision', by: 'orchestrator', data: {
+      artifact: 'design', before, after: hashes().design, class: 'non-intent', affects: [], rationale: 'Clarify strategy', diffRef: 'design diff'}};
+    const saved = await appendRecord(f.session, edit, f.deps);
+    assert.deepEqual(await appendRecord(f.session, edit, f.deps), {...saved, deduped: true});
+    assert.equal(hashes().plan, undefined);
+    await assert.rejects(add('bind', {spec: 'mission.spec.md', design: 'missing.design.md'}), {reason: 'invalid-record'});
+    const call = async (args: string[]) => {
+      f.lines.length = 0;
+      const exit = await main([...args, '--session', f.session], f.deps);
+      return {exit, output: f.output()};
+    };
+    for (const args of [['worktree', 'create', 'T1'], ['brief', 'render', 'T1'], ['worktree', 'integrate', 'T1'],
+      ['worktree', 'commit', '--reason', 'repair'], ['verify', 'run'], ['worktree', 'prune'], ['report', 'render'],
+      ['review', 'run', 'integration', '--kind', 'code', '--level', 'low']]) {
+      const result = await call(args);
+      assert.equal(result.exit, 4, args.join(' '));
+      assert.equal(result.output.reason, 'lint-errors', args.join(' '));
+    }
+    assert.equal((await call(['worktree', 'deliver'])).output.reason, 'no-integration');
+    assert.equal((await call(['status', 'show'])).exit, 0);
+    const git = 'a'.repeat(40);
+    await add('integrate', {phase: 'opened', path: '.state/worktrees/integration', branch: 'dispatch/test/integration', base: git, dest: {branch: 'main', path: f.root}});
+    await add('integrate', {phase: 'done', task: 'T1', commit: git});
+    await add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
+    for (const args of [['worktree', 'commit', '--reason', 'repair'], ['review', 'run', 'integration', '--kind', 'code', '--level', 'low']]) {
+      const result = await call(args);
+      assert.equal(result.output.reason, 'lint-errors');
+    }
+    assert.equal(effects, 0);
+    f.artifact('work.plan.md', '# Work\n');
+    await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', design: 'strategy.design.md'});
+    await add('approval', hashes(), {by: 'user', quote: 'Approve the complete tuple'});
+    assert.equal(gate(foldLedger(f.session), hashes(), 'medium').allowed, true);
+    assert.equal(foldLedger(f.session).records.filter(row => row.key === edit.key).length, 1);
+  } finally {f.cleanup();}
+});
+
 test('ledger bindings approvals and input filters preserve validation and retries', async () => {
  const {currentHashes,foldLedger,latest}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
  const f=sessionFixture({ memory: true });try{

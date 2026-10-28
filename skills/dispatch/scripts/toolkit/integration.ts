@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext } from './cli.ts';
-import type { Fold, LedgerTransaction } from './ledger.ts';
+import { latest, type Fold, type LedgerTransaction } from './ledger.ts';
 import { git, gitOk } from './git.ts';
 import { ToolError } from './output.ts';
 export const integrationRecord = (fold: Fold) => fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='opened');
 export async function ensureIntegration(tx: LedgerTransaction, ctx: HandlerContext) {
   const {session,manifest,deps}=ctx;
+  if (!latest(tx.fold, 'bind')?.data['plan']) throw new ToolError(4, 'lint-errors', 'No bound plan');
   const record=integrationRecord(tx.fold);
   const relative=record?.data['path'] ?? '.state/worktrees/integration';
   const cwd=path.resolve(session,relative);

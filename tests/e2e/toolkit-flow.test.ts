@@ -50,6 +50,36 @@ describe('toolkit status sections', () => {
 });
 
 describe('toolkit session flow', () => {
+  test('writer briefs address ignored canonical files outside task worktrees', async () => {
+    const f = await toolkitRepo(); try {
+      const directory = path.join(f.session, 'canonical inputs');
+      fs.mkdirSync(directory, {recursive: true});
+      fs.appendFileSync(path.join(f.root, '.git/info/exclude'), '\n/' + path.basename(f.session) + '/\n');
+      const originals = {spec: fs.readFileSync(path.join(f.root, 'work.spec.md'), 'utf8'), plan: planSource, design: '# Strategy\n'};
+      const bound = Object.fromEntries(Object.entries(originals).map(([kind, source]) => {
+        const file = path.join(directory, 'work.' + kind + '.md');
+        fs.writeFileSync(file, source);
+        return [kind, path.relative(f.root, file).split(path.sep).join('/')];
+      }));
+      assert.equal(f.git(['check-ignore', '--', ...Object.values(bound)]).split(/\r?\n/).length, 3);
+      await appendRecord(f.session, {kind: 'bind', key: 'session-artifacts', by: 'orchestrator', data: bound}, f.deps);
+      await f.level('low');
+      const made = await f.run(['worktree', 'create', 'T1']);
+      assert.equal(made.exit, 0);
+      const worktree = path.resolve(f.session, made.value.path);
+      const rendered = await f.run(['brief', 'render', 'T1']);
+      assert.equal(rendered.exit, 0);
+      const brief = fs.readFileSync(rendered.value.path, 'utf8');
+      const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+      for (const [kind, label] of [['spec', 'Read the governing spec whole'], ['plan', 'Governing plan'], ['design', 'Governing design']] as const) {
+        const address = new RegExp(label + ': `([^`]+)`').exec(brief)?.[1];
+        assert.ok(address, kind + ' read address');
+        assert.equal(fs.existsSync(path.resolve(worktree, bound[kind]!)), false);
+        assert.equal(fs.readFileSync(path.resolve(worktree, address), 'utf8'), originals[kind]);
+        assert.ok(brief.includes(hashes[kind]!));
+      }
+    } finally {f.cleanup();}
+  });
   test('refuses intent changes and orders brief snapshots with concurrent ledger edits',async()=>{
     const f=await toolkitRepo(); try {
       await f.approve(); await f.run(['worktree','create','T1']);

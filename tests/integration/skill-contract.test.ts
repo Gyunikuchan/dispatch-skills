@@ -15,6 +15,14 @@ const section = (text: string, heading: string) => text.split('### ' + heading +
 
 test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
+  assert.match(skill, /For `plan`.*multiple ordered increments.*recommend `design`/);
+  assert.match(skill, /For `design`.*one coherent unit.*recommend `plan`/);
+  assert.match(skill, /wait for the user's choice/);
+  assert.match(skill, /Keep `ask`, `review` and `implement` on their requested verb/);
+  assert.ok(skill.indexOf('Read the selected phase') < skill.indexOf('## Tool loop'));
+  for (const branch of ['`ask`: follow', '`review`: resolve', '`design` or `plan`: resolve', '`implement`: resolve']) assert.ok(skill.includes(branch), branch);
+  assert.match(skill, /Ask needs no spec, plan or approval/);
+  assert.match(skill, /Standalone review adds no approval gate/);
   for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
     const local = target.split('#')[0]!;

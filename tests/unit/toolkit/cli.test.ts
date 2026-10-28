@@ -23,6 +23,9 @@ describe('toolkit CLI contract', () => {
       const head = 'a'.repeat(40), reason = 'repair bounded SHOULD';
       const directory = path.join(f.session, '.state/worktrees/integration');
       fs.mkdirSync(directory, {recursive:true});
+      f.artifact('mission.spec.md', '# Mission\n');
+      f.artifact('work.plan.md', '# Work\n');
+      await appendRecord(f.session, {kind: 'bind', key: 'commit-inputs', by: 'orchestrator', data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
       await appendRecord(f.session, {kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'dispatch/test/integration',base:'b'.repeat(40),dest:{path:f.root,branch:'main'}}}, f.deps);
       const prefix = `dispatch fix: ${reason}\n\nDispatch-Fix: ${readManifest(f.session).safeSessionId}\n`;
       const metadata = reviewFixIdentity({review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:'b'.repeat(40)});

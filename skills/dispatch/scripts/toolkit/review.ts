@@ -98,7 +98,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return result.stdout.trim();
     };
     if (requested === 'integration') {
-      if (!bind) throw new ToolError(4, 'lint-errors', 'Review of integration needs a bound plan');
+      if (!bind?.data['plan']) throw new ToolError(4, 'lint-errors', 'Review of integration needs a bound plan');
       const integration = integrationRecord(current);
       if (!integration || !current.records.some(row=>row.kind==='integrate'&&row.data['phase']==='done')) throw new ToolError(4, 'nothing-to-review', 'No task has been integrated');
       cwd = path.resolve(session, integration.data['path']);
@@ -106,6 +106,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const tasks = [...new Set(current.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task']))];
       summary = 'Integrated tasks: ' + tasks.join(', ');
     } else if (taskTarget) {
+      if (!bind?.data['plan']) throw new ToolError(4, 'lint-errors', 'Review of a task needs a bound plan');
       const launch = launches(current, requested).findLast(launch => launch.finished);
       if (!launch?.finished) throw new ToolError(1, 'invalid-input', 'No finished launch for ' + requested);
       base = launch.record.data['base'].commit; head = launch.finished.data['candidate'];

@@ -41,7 +41,8 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
       },
     }, deps);
     const answers = outcomes.flatMap(outcome => outcome.state === 'done' ? [{slot: outcome.slot,
-      provider: slots.targets.find(slot => slot.slot === outcome.slot)!.provider, text: outcome.text}] : []);
+      provider: outcome.responder?.provider ?? slots.targets.find(slot => slot.slot === outcome.slot)!.provider,
+      ...(outcome.responder ? {responder: outcome.responder} : {}), text: outcome.text}] : []);
     const failed = outcomes.filter(outcome => outcome.state === 'failed');
     const native = outcomes.filter(outcome => outcome.state === 'native');
     const value = {answers, failed, native};

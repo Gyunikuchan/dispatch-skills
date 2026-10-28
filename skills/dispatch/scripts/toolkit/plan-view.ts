@@ -11,7 +11,7 @@ export type Check = { criterion: string; commands: string[]; commandDigest: stri
 export const commandDigest = (check: {criterion: string; commands: readonly string[]}) => 'sha256:' + crypto.createHash('sha256').update(stableValue(check)).digest('hex');
 export function loadPlan(session: string, manifest: Manifest): ParsedPlan {
   const bind = latest(foldLedger(session), 'bind');
-  if (!bind) throw new ToolError(4,'lint-errors','No bound plan');
+  if (!bind?.data['plan']) throw new ToolError(4,'lint-errors','No bound plan');
   const parsed = parsePlan(fs.readFileSync(path.resolve(manifest.repositoryRoot, bind.data['plan']), 'utf8'));
   if (!parsed.ok) throw new ToolError(4,'lint-errors',JSON.stringify(parsed.defects));
   return parsed.plan;

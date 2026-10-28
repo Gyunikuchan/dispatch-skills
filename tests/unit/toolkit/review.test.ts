@@ -364,7 +364,7 @@ test('review rounds reuse slots supersede generations and reject moving targets'
   }
 });
 
-test('review rounds code prompt uses intent and raw task markdown with file clusters and failed slots',async()=>{
+test('review rounds code review prompt uses intent and raw task markdown and refuses a design-stage rebind',async()=>{
   const f=await fixture();
   try {
     fs.writeFileSync(f.plan,`# Work
@@ -396,12 +396,40 @@ test('review rounds code prompt uses intent and raw task markdown with file clus
     const result=await f.call('code','T1');assert.equal(result.exit,0);
     const prompt=fs.readFileSync(f.launches[0]!.request.promptPath,'utf8');
     const summary=prompt.split('- Task: ')[1]!.split('\n- Spec Path:')[0]!;
+    assert.doesNotMatch(prompt,/Walkthrough|absent or unfilled table/);
+    assert.match(prompt,/selected diff and tests/);
+    assert.match(prompt,/does not establish that verification commands ran or final gates passed/);
     assert.equal(summary,'Keep captured work recoverable.\n\n### T1 — First\n#### [NEW] src/first.ts\n- Purpose: Keep captured work recoverable.\n\n- [SC1] Works\n  - Changes: src/first.ts\n  - Verify: `node check`\n  - Evidence: verify');
     assert.doesNotMatch(summary,/sha256:/);
     const findings=JSON.parse(fs.readFileSync(result.value.path,'utf8'));assert.deepEqual(findings.clusters.map((cluster:{file:string})=>cluster.file),['src/first.ts','src/second.ts']);
     f.deps.delegate=async(provider,request,mode)=>{f.launches.push({provider,request,mode});return provider==='agy'?{outcome:{status:'fail',cls:'auth',detail:'No access'},invocations:[]}:{outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]};};
     assert.equal((await f.call()).exit,0);assert.equal(f.read(1,'findings.json').failed.length,1);
+    f.artifact('strategy.design.md', '# Strategy\n');
+    let rebind = true;
+    f.deps.delegate = async () => {
+      if (rebind) {rebind = false; await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});}
+      return {outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []};
+    };
+    const moved = await f.call('code', 'T1');
+    assert.equal(moved.exit, 4);
+    assert.equal(moved.output.reason, 'lint-errors');
   }finally{f.cleanup();}
+});
+
+test('design-stage review binds its spec and preserves an in-place revision without a plan', async () => {
+  const f = await fixture(false);
+  try {
+    const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
+    await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
+    f.deps.delegate = async () => ({outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []});
+    assert.equal((await f.call('design', design)).exit, 0);
+    const before = artifactHash('design', fs.readFileSync(design, 'utf8'));
+    fs.appendFileSync(design, '\n## Risks\nRetain the original boundary.\n');
+    await f.add('edit', {artifact: 'design', before, after: artifactHash('design', fs.readFileSync(design, 'utf8')),
+      class: 'non-intent', affects: [], rationale: 'Clarify risk', diffRef: 'design diff'});
+    assert.equal((await f.call('design', design)).exit, 0);
+    assert.equal(foldLedger(f.session).records.filter(row => row.kind === 'edit').length, 1);
+  } finally {f.cleanup();}
 });
 
 test('review rounds exclusive claim and late native replies stay isolated',async()=>{

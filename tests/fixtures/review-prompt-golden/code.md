@@ -6,20 +6,17 @@ success criteria well, not merely whether it matches the plan.
 - Task: Add a retry budget to the fetch helper
 - Spec Path: .scratch/example/example.spec.md
 - Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-- Walkthrough: .scratch/example/example.walkthrough.md
 - Plan: .scratch/example/example.plan.md
 - Focus: General review
 - Scope: Full review
 - Advisory Tool Turn Target: Unspecified
 
 ### Review against
-- The governing spec's REQs and DECs, the plan's `## Success Criteria`, and the walkthrough's
-  `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
-  missed or met only on paper, such as a test passing without exercising it, is `intent`.
-- With a plan, an absent or unfilled table is a `testing` finding; a plan-less walkthrough carries only its `Final gate:` line.
-- When the walkthrough reads `Final gate: pending`, the final gate runs after this
-  review. Judge criteria from the diff and tests, and raise no finding for pending
-  Verification rows or finding-status sections.
+- The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`:
+  assess each applicable criterion from the selected diff and tests. A goal missed or met only
+  on paper, such as a test passing without exercising it, is `intent`.
+- Code review does not establish that verification commands ran or final gates passed.
+  Execution evidence and final verification remain separate workflow gates.
 - With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not
   propose an alternative to a settled decision as a fix; report a contradiction with one only as
   `intent`, and cite the decision in `defect`.

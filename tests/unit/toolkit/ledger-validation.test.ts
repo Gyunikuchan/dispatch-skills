@@ -6,6 +6,16 @@ import { validateRecord } from '../../../skills/dispatch/scripts/toolkit/records
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 
+test('design-stage bindings require a spec and a plan or design while approval requires a plan', () => {
+  const record = (kind: string, data: object) => ({kind, data, key: 'binding', by: 'user', quote: 'Approved'});
+  const hash = 'sha256:' + 'a'.repeat(64);
+  for (const data of [{spec: 's.spec.md', design: 'd.design.md'}, {spec: 's.spec.md', plan: 'p.plan.md'}])
+    assert.doesNotThrow(() => validateRecord(record('bind', data)));
+  for (const data of [{spec: 's.spec.md'}, {design: 'd.design.md'}])
+    assert.throws(() => validateRecord(record('bind', data)), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord(record('approval', {spec: hash, design: hash})), {reason: 'invalid-record'});
+});
+
 test('ledger records validate closed fields and user-only input', async () => {
  const f=sessionFixture();try{
  const input=f.artifact('record.json','');let n=0;

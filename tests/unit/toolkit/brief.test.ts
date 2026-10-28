@@ -175,11 +175,34 @@ describe('writer brief', () => {
     for (const design of [false, true]) {
       const f = await fixture(design);
       try {
+        const directory = path.join(f.session, 'canonical inputs');
+        fs.mkdirSync(directory, {recursive: true});
+        const bound: Record<string, string> = {};
+        const originals: Record<string, string> = {};
+        for (const [kind, name] of Object.entries({spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})})) {
+          originals[kind] = fs.readFileSync(path.join(f.root, name), 'utf8');
+          fs.writeFileSync(path.join(directory, name), originals[kind]!);
+          bound[kind] = path.relative(f.root, path.join(directory, name));
+        }
+        await f.add('bind', bound);
         await f.add('level', {level: 'low'});
         await f.launch();
+        const worktree = path.join(f.session, '.state/worktrees/T1-1');
+        fs.mkdirSync(worktree, {recursive: true});
         const result = await f.call();
         assert.equal(result.exit, 0);
         const brief = fs.readFileSync(result.value.path, 'utf8');
+        const addresses = {
+          spec: /Read the governing spec whole: `([^`]+)`/.exec(brief)?.[1],
+          plan: /Governing plan: `([^`]+)`/.exec(brief)?.[1],
+          ...(design ? {design: /Governing design: `([^`]+)`/.exec(brief)?.[1]} : {}),
+        };
+        for (const [kind, address] of Object.entries(addresses)) {
+          assert.ok(address, kind + ' read address');
+          assert.equal(fs.readFileSync(path.resolve(worktree, address), 'utf8'), originals[kind]);
+          assert.ok(brief.includes(f.hashes[kind as keyof typeof f.hashes]!));
+          assert.equal(fs.existsSync(path.resolve(worktree, bound[kind]!)), false);
+        }
         if (design) {
           assert.ok(brief.includes('strategy.design.md'));
           assert.ok(brief.includes(f.hashes.design!));

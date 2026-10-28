@@ -7,21 +7,26 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`; default `ask`. Verbs are `ask`, `design`, `plan`, `implement`, `review`. Use design for ordered increments, plan for one unit, implement for delivery. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
+Parse `[level] [(pins)] [verb:] argument`; default `ask`. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
 
-Pick and report the level. Preserve explicit levels; `xhigh` and `max` require user selection. Levels select roster, rounds and approval need. Use configured models and efforts exactly; provider configuration owns roster selection.
+For `plan` with multiple ordered increments, recommend `design`. For `design` with one coherent unit, recommend `plan`. Explain the fit and wait for the user's choice first. Keep `ask`, `review` and `implement` on their requested verb.
+
+Read the selected phase first: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md).
+
+Report the level. Preserve explicit levels; `xhigh` and `max` require user selection. Levels select roster, rounds and approval. Preserve configured models and efforts.
 
 Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path and follow any returned `instructions`. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
 
 ## Tool loop
 
-Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. Stdout contains `ok`, a summary of at most 1024 UTF-8 bytes, and a result `path`. Read that file for details. Exit codes: 0 operation returned (inspect `ok`), 1 usage or invalid input, 2 fault, 3 lock held, 4 gate or pending native work.
+Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. Stdout returns `ok`, a bounded summary and result `path`; read that file. Exit codes: 0 operation returned (inspect `ok`), 1 usage or invalid input, 2 fault, 3 lock held, 4 gate or pending native work.
 
-1. Read host rules and the [quality bar](references/templates/quality-bar.md). Resolve the [governing spec](references/spec-stage.md).
-2. Author and lint the required design or plan; resolve parse errors. Review against the spec, adjudicate findings and apply accepted fixes under [review rules](references/review-rules.md).
-3. Obtain the applicable approval tuple under the [Decision Frame](references/decision-frame.md).
-4. Implement scoped tasks with native writers, then verify the integrated tree. Inspect failed checks and repair within scope. Resolve code findings, commit fixes and verify. Review the exact HEAD under [review rules](references/review-rules.md#review-provenance-and-applicability), which allow only recorded, verified fixes of accepted SHOULD findings from a final completed round at or above the cap to settle without another review. For transient plans, run `worktree prune`, then `verify run` with final selection under the [lifecycle](references/verbs/implement.md). Deliver only after successful final checks.
-5. Run `report complete`; after success run `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifact paths.
+Read host rules and the [quality bar](references/templates/quality-bar.md), then follow the selected branch:
+
+- `ask`: follow the question, answer and synthesis path in its guide. Ask needs no spec, plan or approval.
+- `review`: resolve the [governing spec](references/spec-stage.md) and target; adjudicate under [review rules](references/review-rules.md). Standalone review adds no approval gate. Apply accepted fixes and verify.
+- `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve errors and findings. End with the reviewed artifact and concerns; use the [Decision Frame](references/decision-frame.md) for applicable approval.
+- `implement`: resolve the spec and required design or plan; lint, review and obtain the approval tuple. Implement with native writers; verify the integrated tree and repair within scope. Resolve code findings, commit fixes and verify. Review exact HEAD under [review provenance](references/review-rules.md#review-provenance-and-applicability). For transient plans, run `worktree prune`, then final `verify run` under the [lifecycle](references/verbs/implement.md). Deliver after successful final checks. Run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md) after success. Report behavior, evidence, concerns and artifacts.
 
 For `native-pending`, read each `promptPath`, launch the configured native slot, write its output to `replyPath`, and rerun the same tool call. Preserve running handles; wait on completion or material blockers. [Providers](references/providers.md) owns slot and fallback rules.
 
@@ -33,4 +38,4 @@ Provider delegates stay read-only. Native writers edit only assigned paths and r
 
 After interruption, use `status show`, inspect its result and retained worktrees, then resume the next unfinished operation. Keep uncertain effects and handles until completion is established.
 
-Read the phase you execute: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md). For changes to Dispatch itself, use [self-build](references/self-build.md).
+For Dispatch changes, use [self-build](references/self-build.md).

@@ -8,7 +8,6 @@ export const REVIEW_PROMPT_INPUTS: Readonly<Record<ReviewPromptKind, Readonly<Re
   code: {
     ...shared,
     'Task Summary': 'Add a retry budget to the fetch helper',
-    'Walkthrough Path': '.scratch/example/example.walkthrough.md',
     'Plan Path': '.scratch/example/example.plan.md',
   },
   design: {

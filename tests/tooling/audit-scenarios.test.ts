@@ -31,15 +31,21 @@ const exists = () => true;
 type Selection = { scopes: { scope: string; scenarios: { id: string; class: string; reason: string; kind?: string }[] }[] };
 const scopeOf = (selection: Selection, scope: string) => selection.scopes.find((s) => s.scope === scope);
 
-test('recovery-contract: bundled writer recovery requires admission evidence and the three-failure boundary', async () => {
+test('recovery-contract: bundled scenarios preserve work and enforce current recovery and scope boundaries', async () => {
   const { loadCatalog } = await load();
   const scenario = loadCatalog().scenarios.find((entry) => entry.id === 'implement-recovery-interrupted-writer');
   assert.ok(scenario);
-  assert.match(scenario.expectedOutcome, /three failed attempts/);
-  assert.match(scenario.expectedOutcome, /write-brief.*admissionDefects/);
-  assert.match(scenario.expectedOutcome, /failure limit/);
-  assert.match(scenario.expectedOutcome, /Trace both/);
-  assert.doesNotMatch(scenario.expectedOutcome, /relaunches once/);
+  assert.match(scenario.expectedOutcome, /ledger/);
+  assert.match(scenario.expectedOutcome, /preserve.*work.*evidence/i);
+  assert.match(scenario.expectedOutcome, /reconcile.*handles.*before.*relaunch/i);
+  assert.match(scenario.expectedOutcome, /stopped/);
+  assert.match(scenario.expectedOutcome, /verification.*last.*edit/);
+  assert.doesNotMatch(JSON.stringify(scenario), /admissionDefects|envelope|three failed attempts|failure limit/);
+  const scope = loadCatalog().scenarios.find((entry) => entry.id === 'implement-decision-scope-amendment');
+  assert.ok(scope);
+  assert.match(scope.expectedOutcome, /intent.*dependency.*runtime.*discard/);
+  assert.match(scope.expectedOutcome, /only affected writers/);
+  assert.doesNotMatch(scope.trigger, /pre-write assessment/);
 });
 
 test('audit scenarios default selection covers five verbs with three classes and the four shared boundaries', async () => {

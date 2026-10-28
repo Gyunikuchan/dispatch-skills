@@ -66,7 +66,7 @@ test('summary byte cap preserves large ask answers review findings and native sl
       if (!Object.hasOwn(output, 'reason')) missingReasons.push(scenario);
       assert.ok(output.path);
       const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
-      if (scenario === 'ask') assert.deepEqual(result.answers, [{slot: 'codex[0]', provider: 'codex', text: answer}]);
+      if (scenario === 'ask') assert.deepEqual(result.answers, [{slot: 'codex[0]', provider: 'codex', responder: {slot: 'codex[0]', provider: 'codex', model: 'fixture', native: false}, text: answer}]);
       if (scenario === 'findings') {
         const captured = JSON.parse(fs.readFileSync(result.path, 'utf8'));
         assert.equal(captured.findings.length, 300);

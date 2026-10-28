@@ -76,7 +76,7 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
-Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. If the requested verb does not fit the scope or outcome, Dispatch recommends a better fit before starting and waits for your choice; it does not silently switch verbs. You can skip work you have already completed.
+Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. If a `design` or `plan` request fits the other planning depth, Dispatch recommends that verb before starting and waits for your choice; it does not silently switch verbs. This depth check preserves requested `ask`, `review` and `implement` operations. You can skip work you have already completed.
 
 ## Command pattern
 

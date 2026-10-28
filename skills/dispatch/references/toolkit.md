@@ -176,7 +176,7 @@ Append JSON objects with kind, by, data, optional key and optional quote. Allowe
 
 ### bind
 
-data: `spec`, `plan`, optional `design` are canonical artifact paths. Allowed by: user, orchestrator, tool.
+data: `spec` and at least one of `plan` or `design` are canonical artifact paths. Design-only work binds spec/design before a plan exists; later bind the complete spec/plan/design set. Implementation operations require a bound plan. Allowed by: user, orchestrator, tool.
 
 ### approval
 

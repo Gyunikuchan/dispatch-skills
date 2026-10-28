@@ -29,7 +29,7 @@ test('ask run returns sanitized source answers and launches a new completed atte
     f.script('codex', 'answer', '\u001b[31mUseful `answer`\u001b[0m\n```sh\nsecret\n```\n<!--visible-->');
     const first = await f.call();
     assert.equal(first.exit, 0);
-    assert.deepEqual(first.value.answers, [{slot: 'codex[0]', provider: 'codex', text: 'Useful answer &lt;!--visible--&gt;'}]);
+    assert.deepEqual(first.value.answers, [{slot: 'codex[0]', provider: 'codex', responder: {slot: 'codex[0]', provider: 'codex', model: 'answer', native: false}, text: 'Useful answer &lt;!--visible--&gt;'}]);
     assert.match(first.output.summary, /^ask: 1 answers, 0 failed$/);
     assert.equal((await f.call()).exit, 0);
     assert.equal(f.launches.length, 2);
@@ -93,7 +93,39 @@ test('ask run promotes native replies before publishing answers', async () => {
     fs.writeFileSync(native.replyPath, 'Native `answer`');
     const done = await f.call();
     assert.equal(done.exit, 0); assert.equal(done.value.answers[0].text, 'Native answer');
+    assert.deepEqual(done.value.answers[0].responder, {slot: 'codex[0]', provider: 'codex', model: null, native: true});
+    assert.deepEqual(JSON.parse(fs.readFileSync(answers, 'utf8')).answers, done.value.answers);
     assert.equal(fs.existsSync(answers), true); assert.equal(f.launches.length, 0);
     assert.deepEqual(foldLedger(f.session).records, []);
   } finally {f.cleanup();}
+});
+
+test('ask run attributes reserve and cross-provider native answers to their actual responder', async () => {
+  for (const native of [false, true]) {
+    const f = fixture(); try {
+      fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+        claude: {targets: [{medium: {model: 'target'}}]},
+        ...(native ? {codex: {nativeSubagentsOnly: true, targets: [{medium: {model: 'reserve'}}]}} : {copilot: {targets: [{medium: {model: 'reserve'}}]}}),
+      }, phases: {ask: {targets: {medium: 1}}}}));
+      f.script('claude', 'target', {status: 'fail', cls: 'not-found', detail: 'unavailable'});
+      if (native) f.deps.orchestrator = {platform: 'codex', model: 'host-model'};
+      else f.script('copilot', 'reserve', 'Reserve answer');
+      let result = await f.call();
+      let directory: string;
+      if (native) {
+        assert.equal(result.output.reason, 'native-pending');
+        const pending = result.value.native[0];
+        directory = path.dirname(path.dirname(pending.promptPath));
+        fs.writeFileSync(pending.replyPath, 'Native answer');
+        result = await f.call();
+        assert.equal(f.launches.length, 1);
+      } else directory = path.dirname(path.dirname(f.launches[0]!.request.promptPath));
+      assert.equal(result.exit, 0);
+      const provider = native ? 'codex' : 'copilot';
+      assert.deepEqual(result.value.answers, [{slot: 'claude[0]', provider,
+        responder: {slot: native ? 'claude[0]' : 'copilot[0]', provider, model: native ? 'host-model' : 'reserve', native},
+        text: native ? 'Native answer' : 'Reserve answer'}]);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'answers.json'), 'utf8')).answers, result.value.answers);
+    } finally {f.cleanup();}
+  }
 });

@@ -8,6 +8,7 @@ import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/toolki
 import { parseDesign } from '../../skills/dispatch/scripts/toolkit/domain/design.ts';
 import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthrough.ts';
 import { parseSpec } from '../../skills/dispatch/scripts/toolkit/domain/spec.ts';
+import { reviewPrompt } from '../../skills/dispatch/scripts/toolkit/prompts.ts';
 
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
@@ -15,12 +16,25 @@ const KEPT = [
   'writer-brief.md', 'quality-bar.md',
 ];
 
+test('code review evidence is actionable with and without a bound plan', () => {
+  for (const planPath of [undefined, 'work.plan.md']) {
+    const prompt = reviewPrompt('code', {skillRoot: path.resolve('skills/dispatch'), spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'worktree', scope: 'Full review', ...(planPath ? {planPath} : {})});
+    assert.ok(prompt.includes(`- Plan: ${planPath ?? 'None'}`));
+    assert.doesNotMatch(prompt, /Walkthrough|absent or unfilled table|<Walkthrough Path>/);
+    assert.match(prompt, /selected diff and tests/);
+    assert.match(prompt, /does not establish that verification commands ran or final gates passed/);
+  }
+});
+
 test('plan template shows behaviour before task details', () => {
   const template = readFileSync(new URL('plan.md', root), 'utf8');
   const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
   const task = skeleton.split('### T<n> — <Task title>')[1]!.split('\n## Success Criteria')[0]!;
   assert.match(task, /- <Observable behaviour this task implements and how it works\.>\n\n<details>/);
   assert.doesNotMatch(task, /<summary>/);
+  const criteria = skeleton.split('## Success Criteria\n')[1]!.split('\n## Verification Plan')[0]!;
+  assert.match(criteria, /- \[SC1\] <checkable outcome>\n  <details>\n\n  - Satisfies:/);
+  assert.doesNotMatch(criteria, /<summary>/);
 });
 
 test('design template shows behaviour before increment details', () => {

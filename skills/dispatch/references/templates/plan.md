@@ -89,7 +89,6 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 ## Success Criteria
 - [SC1] <checkable outcome>
   <details>
-  <summary>Checks</summary>
 
   - Satisfies: REQ-<n>[, REQ-<n>...]
   - Changes: <relative-path>[, <relative-path>...]

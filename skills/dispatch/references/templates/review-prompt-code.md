@@ -5,9 +5,8 @@ Kind block for `review-prompt.md`.
 - `<Task Summary>` — intent from the governing spec.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
-- `<Walkthrough Path>` — path to the attached walkthrough.
 - `<Plan Path>` — path to the attached plan, or `None`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed paths: <changed paths>; <range>`, or `Re-review round <n> — walkthrough body changed; review full selected range (<range>)`.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed paths: <changed paths>; <range>`.
 
 ## opener
 
@@ -20,18 +19,15 @@ success criteria well, not merely whether it matches the plan.
 - Task: <Task Summary>
 - Spec Path: <Spec Path>
 - Spec Hash: <Spec Hash>
-- Walkthrough: <Walkthrough Path>
 - Plan: <Plan Path>
 
 ## against
 
-- The governing spec's REQs and DECs, the plan's `## Success Criteria`, and the walkthrough's
-  `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
-  missed or met only on paper, such as a test passing without exercising it, is `intent`.
-- With a plan, an absent or unfilled table is a `testing` finding; a plan-less walkthrough carries only its `Final gate:` line.
-- When the walkthrough reads `Final gate: pending`, the final gate runs after this
-  review. Judge criteria from the diff and tests, and raise no finding for pending
-  Verification rows or finding-status sections.
+- The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`:
+  assess each applicable criterion from the selected diff and tests. A goal missed or met only
+  on paper, such as a test passing without exercising it, is `intent`.
+- Code review does not establish that verification commands ran or final gates passed.
+  Execution evidence and final verification remain separate workflow gates.
 - With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not
   propose an alternative to a settled decision as a fix; report a contradiction with one only as
   `intent`, and cite the decision in `defect`.

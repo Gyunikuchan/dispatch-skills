@@ -40,7 +40,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
     'Spec Path': context.spec.path, 'Spec Hash': context.spec.hash,
     'Review Scope': context.scope, 'User Focus Areas': 'General review', 'Tool Turn Budget': 'Unspecified',
     ...(kind === 'plan' ? {'Plan Path': context.artifact} : kind === 'design' ? {'Design Path': context.artifact} : {
-      'Plan Path': context.planPath ?? 'None', 'Walkthrough Path': 'None', 'Task Summary': context.taskSummary ?? 'Review the selected changes.',
+      'Plan Path': context.planPath ?? 'None', 'Task Summary': context.taskSummary ?? 'Review the selected changes.',
     }),
   };
   const requests=context.requests ?? [];
