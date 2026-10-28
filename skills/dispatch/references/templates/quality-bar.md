@@ -14,7 +14,23 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 - **spec** — Apply IEEE 29148 quality: requirements are unambiguous (one interpretation), consistent, verifiable, complete, feasible, and singular (one requirement per statement; identify non-singular requirements). Check completeness across behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Identify misplaced architecture or execution detail while retaining imposed design constraints. An open question that could change scope, behavior, or risk blocks approval; never invent intent, and route a gap through the user gate.
 
-- **usability** — Open canonical artifacts with At a Glance: short plain-language bullets for what changes, why it matters and how it works. Keep task and increment behaviour visible in bullets before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts. Prefer point form over long prose. Use diagrams only when they explain flow, architecture or data better than text; pair each with a one-line text summary. Retain every required field.
+- **usability** — Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line. Keep task and increment behaviour visible before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field.
+
+### Visual-aid bar
+
+A visual aid is a diagram, table, code, pseudo-code or data block. Include one when it explains content prose explains poorly or gives a skimmable map of three or more related items in long prose. Match the content to its form:
+
+| Content | Form |
+| --- | --- |
+| Components and boundaries | Architecture diagram |
+| Runtime order | Flow or sequence diagram |
+| Lifecycle | State diagram |
+| Items with attributes | Table |
+| Interfaces and data shapes | Code or data block |
+| Algorithm | Pseudo-code |
+| Behaviour change | Before/after table or snippet |
+
+Reject duplicate, decorative or stale visuals. A repeated visual or required table needs to reveal new structure, such as parallel lanes or a critical path. Add no fixed count. Give each diagram a one-line text summary; tables and code/data blocks need none. Put orientation visuals in At a Glance and section visuals beside their prose.
 
 ## code
 

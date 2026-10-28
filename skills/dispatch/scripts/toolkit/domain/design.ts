@@ -9,7 +9,7 @@ import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, P
 
 const lint = (code: LintDefect['code'], line: number | null, message: string): LintDefect => ({ code, severity: 'warning', line, message });
 
-const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments'];
+const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Increments'];
 export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
   'At a Glance', 'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
@@ -114,12 +114,12 @@ function parseExecutionStatus(lines: readonly StructuralLine[], ids: ReadonlySet
     const action = /^Next Action:\s*(.+)$/.exec(text.trim())?.[1];
     if (action) { nextAction = action.trim(); continue; }
     if (!/^\|\s*I\d{2}\s*\|/.test(text)) continue;
-    const [id = '', rawState = '', summary = '', next = ''] = splitColumns(text);
+    const [id = '', rawState = '', next = ''] = splitColumns(text);
     const state = STATES[rawState.toLowerCase()];
     if (!state) { out.push(lint('execution-status', line, `Execution Status ${id} has unknown state "${rawState}"; use complete, active, ready, blocked, or invalidated.`)); continue; }
     if (!ids.has(id)) out.push(lint('execution-status', line, `Execution Status names ${id}, which the graph does not define.`));
     if (rows.some((row) => row.id === id)) out.push(lint('execution-status', line, `Execution Status lists ${id} more than once.`));
-    rows.push({ id, state, summary, nextAction: next });
+    rows.push({ id, state, nextAction: next });
   }
   // NOTE: full graph coverage is not required: the status section lists only active and ready increments.
   if (!nextAction) out.push(lint('execution-status', body[0]?.line ?? null, 'Execution Status requires a non-empty Next Action: line.'));
@@ -136,7 +136,6 @@ export function asParsedDesign(value: unknown): ParsedDesign | null {
   const record = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === 'object' && v !== null && !Array.isArray(v);
   if (!record(value) || !record(value['box']) || !Object.values(value['box']).every((v) => typeof v === 'string') || !record(value['details']) || typeof value['governedText'] !== 'string' || !Array.isArray(value['increments']) || !value['increments'].length) return null;
   const details = value['details'];
-  if (typeof value['box']['TL;DR'] !== 'string' || !value['box']['TL;DR'].trim()) return null;
   if (!Object.values(details).every((row) => record(row) && Object.values(row).every((v) => typeof v === 'string'))) return null;
   if (!value['increments'].every((row) => record(row) && /^I\d{2}$/.test(String(row['id'])) && Number.isInteger(row['priority']) && typeof row['summary'] === 'string' && Array.isArray(row['behaviour']) && row['behaviour'].every((v) => typeof v === 'string') && record(details[String(row['id'])]) && Array.isArray(row['prerequisites']) && row['prerequisites'].every((v) => typeof v === 'string') && Array.isArray(row['paths']) && row['paths'].length > 0 && row['paths'].every((v) => typeof v === 'string' && v.trim()))) return null;
   const design = value as unknown as ParsedDesign;

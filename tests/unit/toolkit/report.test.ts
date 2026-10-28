@@ -98,11 +98,13 @@ test('report render writes every missing criterion without Git and rewrites the 
     assert.equal(first.exit, 0);
     const walkthrough = path.join(f.session, 'report.walkthrough.md');
     const initial = fs.readFileSync(walkthrough, 'utf8');
+    const verification = initial.slice(initial.indexOf('## Verification'), initial.indexOf('## Appendix'));
     for (const id of ['SC1', 'SC2', 'SC3', 'SC4', 'contract']) {
-      assert.match(initial, new RegExp(`\\| ${id} \\| no eligible evidence \\|`));
+      assert.match(verification, new RegExp(`- ${id} · no eligible evidence`));
     }
     assert.match(initial, /### Missing/);
-    assert.match(initial, /## Changes Made\n\nNone\./);
+    assert.match(initial, /## Behaviour Changes\n\n### T1 — Task 1/);
+    assert.match(initial, /<details>\n\nNone\.\n\n<\/details>/);
     assert.equal(f.lines.length, 1);
     fs.writeFileSync(walkthrough, 'stale');
     const second = await invoke(f, 'report', 'render');
@@ -255,8 +257,30 @@ test('cap-ending SHOULD fixes report baseline and correction separately',async()
  }finally{f.cleanup();}
 });
 
-test('nontransient SHOULD correction reports verified without artifact fields on evidence',async()=>{
+test('report render fills review focus and visuals from ledger and design',async()=>{
  const f=await fixture(1);try{
+  const source=planSource(1).replace('# Report fixture',[
+   '# Report fixture','',
+   '> **Parent:** `brief.spec.md` · sha256:'+'a'.repeat(64),
+   '> **Decide:** none','> **Risk:** med — inspect the delivered behavior','> **Scope:** src','',
+   '## At a Glance','- **What:** Plan output is delivered without a legacy summary.','- **How it works:** The renderer joins the bound plan with ledger facts.','',
+  ].join('\n'));
+  fs.writeFileSync(path.join(f.root,'report.plan.md'),source);
+  f.artifact('parent.design.md',[
+   '# Parent design','','## At a Glance',
+   '- **What:** Requests pass through the gateway to storage.',
+   '- **How it works:** The gateway validates requests before storage.',
+   '', '- Text summary: The map shows the request boundary.', '',
+   '| Component | Boundary |','| --- | --- |','| Gateway | Validates requests |','| Store | Persists responses |','',
+   '```mermaid','flowchart LR','  Gateway --> Store','```','',
+  ].join('\n'));
+  await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind:report:design',data:{spec:'brief.spec.md',plan:'report.plan.md',design:'parent.design.md'}},f.deps);
+  await appendRecord(f.session,{kind:'focus',by:'orchestrator',key:'focus:report',data:{bullets:[{text:'Inspect the delivered retry boundary.',evidence:'evidence/retry-boundary.md'}]}},f.deps);
+  const priorReview=path.join(f.session,'.state/reviews/review-alpha/round-1');
+  writeJson(path.join(priorReview,'round.json'),{round:1,generation:1,cap:3,roster:[]});
+  writeJson(path.join(priorReview,'findings.json'),{review:'review-alpha',round:1,findings:[{id:'R1-F001',severity:'SHOULD'},{id:'R1-F002',severity:'SHOULD'}],failed:[]});
+  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-prior-should',data:{subject:'review:review-alpha:R1-F001',ruling:'rejected',rationale:'The change is not needed'}},f.deps);
+  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'defer-prior-should',data:{subject:'review:review-alpha:R1-F002',ruling:'deferred',rationale:'More evidence is needed'}},f.deps);
   const state=await completeFixture(f),baseline=state.head,commit='d'.repeat(40),tree='e'.repeat(40),reason='repair accepted SHOULD';
   state.head=commit;state.tree=tree;state.testedTree=tree;state.changes=[{status:'M',path:'src/task-1.ts'},{status:'A',path:'src/shared.ts'}];
   const fold=foldLedger(f.session),artifacts=currentHashes(f.root,latest(fold,'bind'));
@@ -281,7 +305,18 @@ test('nontransient SHOULD correction reports verified without artifact fields on
   const value=JSON.parse(fs.readFileSync(result.output.path!,'utf8')) as {reviewedCodeBaseline?:string;reviewFixes:{status:string;verification?:{criteria:string[];contract:string[];tree:string}}[]};
   assert.equal(value.reviewedCodeBaseline,baseline);assert.equal(value.reviewFixes[0]!.status,'verified but not re-reviewed');
   assert.deepEqual(value.reviewFixes[0]!.verification?.criteria,['SC1']);assert.deepEqual(value.reviewFixes[0]!.verification?.contract,['contract']);assert.equal(value.reviewFixes[0]!.verification?.tree,tree);
-  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/verified but not re-reviewed/i);assert.match(text,/SC1/);assert.match(text,/contract/);
+  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+  assert.match(text,/- \*\*What:\*\* Plan output is delivered without a legacy summary\./);assert.doesNotMatch(text,/TL;DR/);
+  const focus=text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes'));
+  assert.match(focus,/Risk: med/);assert.match(focus,/Rejected finding review-alpha:R1-F001/);assert.match(focus,/Deferred finding review-alpha:R1-F002/);
+  assert.match(focus,/Inspect the delivered retry boundary\. — Evidence: \[evidence\/retry-boundary\.md\]\(evidence\/retry-boundary\.md\)/);
+  assert.match(focus,/R3-F001.*verified but not re-reviewed/);
+  const visuals=text.slice(text.indexOf('## Visuals'),text.indexOf('## Review Focus'));
+  assert.ok(visuals.includes('| Component | Boundary |'));assert.ok(visuals.includes('```mermaid\nflowchart LR\n  Gateway --> Store\n```'));
+  const bind=latest(foldLedger(f.session),'bind')!;const hashes=currentHashes(f.root,bind),appendix=text.slice(text.indexOf('## Appendix'));
+  assert.ok(appendix.includes(`Spec: brief.spec.md · sha256:${hashes.spec!.slice(7,19)}`));
+  assert.ok(appendix.includes(`Plan: report.plan.md · sha256:${hashes.plan!.slice(7,19)}`));
+  assert.ok(appendix.includes('R3-F001')&&appendix.includes('verified but not re-reviewed')&&appendix.includes('src/task-1.ts'));
   const nextDir=path.join(f.session,'.state/reviews/code-integration/round-4');
   writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
   writeJson(path.join(nextDir,'findings.json'),{review:'code-integration',round:4,findings:[],failed:[]});

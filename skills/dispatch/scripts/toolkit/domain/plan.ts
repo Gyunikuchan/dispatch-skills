@@ -1,7 +1,7 @@
 // Plan parse + lint + governed text (spec §8.1). Shared Markdown helpers are exported for domain/design.ts.
 
 import type {
-  ChangeAction, EvidenceClass, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask, PlanWarning,
+  ChangeAction, EvidenceClass, Glance, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask, PlanWarning,
 } from './types.ts';
 import { criterionHeading, isCriterionId } from './criterion-id.ts';
 
@@ -383,7 +383,7 @@ export function headingPaths(action: ChangeAction, text: string): { paths: Retur
 
 // SECTION: Plan parse
 
-const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
+const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Scope'];
 /** Parent forms: a governing spec pinned by checksum or a design increment. */
 export const SPEC_PIN_VALUE = /^`([^`\s]+\.spec\.md)` · sha256:([0-9a-f]{64})$/;
 export const DESIGN_PIN_VALUE = /^`([^`\s]+\.design\.md)` · (I\d{2})$/;
@@ -509,26 +509,42 @@ function bullets(lines: readonly StructuralLine[], heading: string): string[] {
   });
 }
 
-function parseGlance(lines: readonly StructuralLine[]): { what: string; how: string } | null {
+export function parseGlance(lines: readonly StructuralLine[]): Glance | null {
   const range = sectionRanges(lines, '## At a Glance')[0];
   if (!range) return null;
+  const entries = lines.slice(range.start + 1, range.end);
   const values = { what: '', how: '' };
   let active: keyof typeof values | null = null;
-  for (const entry of lines.slice(range.start + 1, range.end)) {
-    if (entry.fenced) continue;
+  let lastSummaryIndex = -1;
+  let visualStart: number | null = null;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    if (entry.fenced) {
+      if (lastSummaryIndex !== -1 && visualStart === null) visualStart = index;
+      active = null;
+      continue;
+    }
     const bullet = /^[-*+]\s+\*\*(What|How it works):\*\*\s*(.*)$/i.exec(entry.text);
     if (bullet) {
       active = bullet[1]?.toLowerCase() === 'what' ? 'what' : 'how';
       values[active] = bullet[2]?.trim() ?? '';
+      lastSummaryIndex = index;
       continue;
     }
     if (active && /^ {2,}\S/.test(entry.text)) {
       values[active] += `${values[active] ? '\n' : ''}${entry.text.trim()}`;
+      lastSummaryIndex = index;
       continue;
     }
-    if (entry.text.trim()) active = null;
+    if (entry.text.trim()) {
+      active = null;
+      if (lastSummaryIndex !== -1 && visualStart === null) visualStart = index;
+    }
   }
-  return values;
+  const visuals = visualStart === null
+    ? ''
+    : entries.slice(visualStart).map(({ original }) => original).join('\n').replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '');
+  return { ...values, visuals };
 }
 
 function keyValues(lines: readonly StructuralLine[], heading: string): Record<string, string> | null {

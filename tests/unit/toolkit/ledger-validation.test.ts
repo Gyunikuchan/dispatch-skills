@@ -52,6 +52,55 @@ test('ledger records validate closed fields and user-only input', async () => {
  }finally{f.cleanup();}
 });
 
+test('review focus records require link evidence on every bullet', async () => {
+ const f=sessionFixture({memory:true});try{
+  let n=0;
+  const append=async(record:unknown)=>{
+   const file=f.artifact(`focus-${++n}.json`,JSON.stringify(record));
+   f.lines.splice(0);
+   const exit=await main(['ledger','append','--session',f.session,file],f.deps);
+   return {exit,output:f.output()};
+  };
+  const bullets=[
+   {text:'Check report completion behavior',evidence:'skills/dispatch/scripts/toolkit/report.ts'},
+   {text:'Check the acceptance contract',evidence:'https://example.test/review'},
+  ];
+  const accepted=await append({kind:'focus',by:'orchestrator',key:'focus:valid',data:{bullets,visual:'graph TD'}});
+  assert.equal(accepted.exit,0,accepted.output.summary);
+  const stored=JSON.parse(fs.readFileSync(path.join(f.session,'ledger.jsonl'),'utf8').trim().split(/\r?\n/).at(-1)!);
+  assert.equal(stored.kind,'focus');
+  assert.deepEqual(stored.data.bullets,bullets);
+
+  const emptyUser=await append({kind:'focus',by:'user',key:'focus:empty',data:{bullets:[]}});
+  assert.equal(emptyUser.exit,0,emptyUser.output.summary);
+  assert.doesNotThrow(()=>validateRecord({kind:'focus',by:'orchestrator',key:'focus:five',data:{bullets:Array.from({length:5},(_,index)=>({text:`Point ${index}`,evidence:`notes/point-${index}.md`}))}}));
+
+  const invalid=await append({kind:'focus',by:'orchestrator',key:'focus:invalid-evidence',data:{bullets:[bullets[0],{text:'A claim without a link',evidence:'checked'}]}});
+  assert.equal(invalid.exit,1);
+  assert.equal(invalid.output.reason,'invalid-record');
+  assert.match(invalid.output.summary,/data\.bullets\.1\.evidence/);
+  for(const evidence of ['checked','http://example.test/review','/absolute/report.md','C:/repo/report.md','\\\\server\\share\\report.md']) {
+   assert.throws(()=>validateRecord({kind:'focus',by:'orchestrator',key:'focus:bad-link',data:{bullets:[{text:'Review this',evidence}]}}),error=>{
+    assert.equal((error as {reason:string}).reason,'invalid-record');
+    assert.match((error as Error).message,/data\.bullets\.0\.evidence/);
+    return true;
+   },evidence);
+  }
+  for(const [record,field] of [
+   [{kind:'focus',by:'orchestrator',key:'focus:blank-text',data:{bullets:[{text:' ',evidence:'notes/review.md'}]}},'data.bullets.0.text'],
+   [{kind:'focus',by:'orchestrator',key:'focus:unknown-bullet-field',data:{bullets:[{text:'Review this',evidence:'notes/review.md',url:'notes/other.md'}]}},'data.bullets.0.url'],
+   [{kind:'focus',by:'orchestrator',key:'focus:too-many',data:{bullets:Array.from({length:6},(_,index)=>({text:`Point ${index}`,evidence:`notes/point-${index}.md`}))}},'data.bullets'],
+   [{kind:'focus',by:'orchestrator',key:'focus:blank-visual',data:{bullets:[],visual:' '}},'data.visual'],
+   [{kind:'focus',by:'tool',key:'focus:wrong-author',data:{bullets:[]}},'record.by'],
+  ] as const) assert.throws(()=>validateRecord(record),error=>{
+   assert.equal((error as {reason:string}).reason,'invalid-record');
+   assert.match((error as Error).message,new RegExp(field));
+   return true;
+  });
+  assert.throws(()=>validateRecord({kind:'focus',by:'orchestrator',data:{bullets:[]}}),{reason:'missing-key'});
+ }finally{f.cleanup();}
+});
+
 test('uncommitted records accept exact identities and refuse missing or unknown fields',()=>{
  const commit='a'.repeat(40),dest={path:'repo',branch:'main'},record=(data:Record<string,unknown>)=>validateRecord({kind:'integrate',by:'tool',data});
  for(const phase of ['deliver-started','delivered']){

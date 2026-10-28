@@ -9,7 +9,6 @@ const splitMessage = (action: string, text: string) => `List one path per [${act
 
 const PLAN = `# Add retry budget
 
-> **TL;DR:** fetch retries forever; cap them.
 > **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** low — isolated helper
@@ -92,6 +91,13 @@ test('presentation and traceability findings are warnings while structural findi
 const TESTS_LINE = '  - Tests: tests/fetch.test.ts\n';
 const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
 const parsed = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result.plan; };
+
+test('plan: summary box without TL;DR lints clean', () => {
+  const source = readable().replace(/^> \*\*TL;DR:\*\*.*\r?\n/m, '');
+  const result = parsePlan(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.warnings.filter(({ code }) => code === 'summary-label'), []);
+});
 
 test('numeric criterion grammar stays shared across headings task mappings and transient coverage', () => {
   const numeric = PLAN.replaceAll('SC1', 'SC14').replaceAll('SC2', 'SC205');
@@ -1065,11 +1071,34 @@ test('plan glance: parses What and How it works with indented continuation lines
   assert.deepEqual(result.plan.glance, {
     what: 'Fetch stops after three attempts.\nCallers receive the final error.',
     how: 'Count attempts before sending.\nStop after the final retry.',
+    visuals: '',
   });
+
+  const visuals = [
+    '- Text summary: The map shows the request boundary.',
+    '',
+    '| Component | Role |',
+    '| --- | --- |',
+    '| Gateway | Accepts requests |',
+    '',
+    '```mermaid',
+    'flowchart LR',
+    '  Gateway --> Store',
+    '```',
+    '',
+    '<details>',
+    '<summary>Diagram notes</summary>',
+    '',
+    'The note stays with the visual.',
+    '</details>',
+  ].join('\n');
+  const visualResult = parsePlan(source.replace('\n\n## Key Decisions & Context', `\n${visuals}\n\n## Key Decisions & Context`));
+  assert.ok(visualResult.ok, JSON.stringify(visualResult));
+  assert.equal(visualResult.plan.glance?.visuals, visuals);
 
   const empty = parsePlan(PLAN.replace('## Key Decisions & Context', '## At a Glance\n- **Audience:** maintainers.\n\n## Key Decisions & Context'));
   assert.ok(empty.ok, JSON.stringify(empty));
-  assert.deepEqual(empty.plan.glance, { what: '', how: '' });
+  assert.deepEqual(empty.plan.glance, { what: '', how: '', visuals: '' });
   assert.equal(parsed(PLAN).glance, null);
 });
 

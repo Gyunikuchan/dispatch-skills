@@ -6,9 +6,9 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parsePlan, selectTaskBrief } from '../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { parseDesign } from '../../skills/dispatch/scripts/toolkit/domain/design.ts';
-import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthrough.ts';
 import { parseSpec } from '../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 import { reviewPrompt } from '../../skills/dispatch/scripts/toolkit/prompts.ts';
+import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthrough.ts';
 
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
@@ -50,12 +50,13 @@ test('readable artifact templates: human layout sections, callouts, details and 
     const template = readFileSync(new URL(name, root), 'utf8');
     const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
     assert.equal(skeleton.match(/^## .+$/m)?.[0], '## At a Glance', name);
-    for (const type of ['NOTE', 'IMPORTANT']) assert.ok(template.includes(`[!${type}]`), `${name}: ${type}`);
+    if (name !== 'walkthrough.md') for (const type of ['NOTE', 'IMPORTANT']) assert.ok(template.includes(`[!${type}]`), `${name}: ${type}`);
     if (name !== 'spec.md') {
       assert.match(skeleton, /<details>\n/, name);
       assert.match(skeleton, /\n\n<\/details>/, name);
     }
-    if (name === 'design.md' || name === 'walkthrough.md') assert.doesNotMatch(skeleton, /<summary>[^<]*<\/summary>/, name);
+    if (name === 'design.md') assert.doesNotMatch(skeleton, /<summary>[^<]*<\/summary>/, name);
+    if (name === 'walkthrough.md') assert.match(skeleton, /<summary>Audit records<\/summary>/, name);
     if (name === 'plan.md' || name === 'design.md') {
       assert.match(skeleton, /```mermaid\n/, name);
       assert.match(skeleton, /Text summary: .+/, name);
@@ -64,9 +65,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
 
   await t.test('design template parses under layered lint and preserves executable fields and exclusions', () => {
     const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
-    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
-    assert.equal((template.match(/^>$/gm) ?? []).length, 4);
-    const order = ['> **TL;DR:**', '## At a Glance', '## Execution Status', '## Approach', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 3);
+    const order = ['## At a Glance', '## Execution Status', '## Approach', '## Alternatives & Decisions', '## Risks, Security & Operations', '## Architecture & Boundaries', '## Increment Dependency Graph', '## Increment Details', '## Final Integration', '## Review Findings & Resolutions'];
     for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
     let source = template.split('````markdown\n')[1]!.split('````')[0]!;
     source = source.replace('<`<spec path>` · sha256:<hex>>', '`governing.spec.md` · sha256:' + 'a'.repeat(64))
@@ -84,33 +85,51 @@ test('readable artifact templates: human layout sections, callouts, details and 
     assert.ok(!parsed.design.governedText.includes('## Review Findings & Resolutions'));
   });
 
-  await t.test('readable artifact templates: walkthrough hierarchy and ownership match renderer contracts', () => {
+  await t.test('walkthrough template uses the reviewer-first layout', () => {
     const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
-    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 6);
-    assert.equal((template.match(/^>$/gm) ?? []).length, 5);
-    assert.match(template, /#### \[MODIFY\].*\n\n- Changes:/);
-    assert.match(template, /^> \*\*Integration:\*\*/m);
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 0);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 0);
     assert.match(template, /^- \*\*How it works:\*\*/m);
-    assert.match(template, /### T<n> — <task title>\n\n- <plan behaviour bullets, or the Task Map Outcome>\n\n<details>/);
-    assert.match(template, /\| SC \| Evidence \|/);
-    const labels = [...template.matchAll(/^- \*\*(Delivered|Criteria|Changes|Deviations|Follow-ups|Review):\*\*/gm)].map((match) => match[1]);
-    assert.deepEqual(labels, ['Delivered', 'Criteria', 'Changes', 'Deviations', 'Follow-ups', 'Review']);
-    const rendered = renderWalkthrough({ title: 'Example', specPath: 'example.spec.md', specHash: 'a'.repeat(64), planPath: 'example.plan.md', delivered: null, statuses: [], changes: [{ action: 'MODIFY', path: 'src/edit.ts', owners: [] }], edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [], reviewRows: [], reviewRounds: [] });
+    assert.match(template, /^- \*\*Counts:\*\*/m);
+    const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
+    assert.match(skeleton, /### T<n> — <task title>\n\n- <observable behavior from this task>\n\n<details>/);
+    assert.match(skeleton, /- `<relative-path>` · <created \| modified \| deleted>/);
+    assert.doesNotMatch(skeleton, /#### \[|Changes:/);
+    assert.match(skeleton, /<summary>Audit records<\/summary>/);
+    assert.match(skeleton, /\| SC \| Evidence \|/);
+    const labels = [...skeleton.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(labels, ['What', 'How it works', 'Counts']);
     const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
-    assert.deepEqual(headings(template.split('````markdown\n')[1]!.split('````')[0]!), headings(rendered));
+    assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Appendix']);
     const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
-    assert.deepEqual(boxLabels(template), ['Delivered', 'Integration', 'Spec', 'Plan', 'Status', 'Deviations']);
-    assert.deepEqual(boxLabels(template), boxLabels(rendered));
-    assert.deepEqual([...rendered.matchAll(/^- \*\*(Delivered|Criteria|Changes|Deviations|Follow-ups|Review):\*\*/gm)].map((match) => match[1]), labels);
+    assert.deepEqual(boxLabels(template), []);
     assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
+
+    const rendered = renderWalkthrough({
+      title: 'Example', specPath: 'example.spec.md', specHash: `sha256:${'a'.repeat(64)}`,
+      planPath: 'example.plan.md', planHash: `sha256:${'b'.repeat(64)}`, risk: 'med', delivered: null,
+      glance: { what: 'The example shows the result.', how: 'The report reads the bound plan.', visuals: '' },
+      focus: { bullets: [] },
+      tasks: [{ id: 'T1', title: 'Add a file', outcome: 'The new file supports the feature.', behaviour: ['The report describes the feature.'] }],
+      statuses: [{ criterion: 'SC1', state: 'manual', seq: 1, quote: 'approved', evidence: 'manual/proof.md' }],
+      changes: [{ action: 'NEW', path: 'src/new.ts', owners: [{ id: 'T1', title: 'Add a file' }] }],
+      edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [],
+      reviewRows: [], reviewRounds: [], reviewFixes: [],
+    } as Parameters<typeof renderWalkthrough>[0]);
+    assert.deepEqual(headings(skeleton), headings(rendered));
+    const summaryLabels = (text: string) => [...text.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(summaryLabels(skeleton), summaryLabels(rendered));
+    assert.match(rendered, /### T1 — Add a file\n\n- The report describes the feature\.\n\n<details>\n\n- `src\/new\.ts` · created\n\n<\/details>/);
+    assert.match(rendered, /### Manual\n\n- SC1 · User evidence: manual\/proof\.md; quote: approved/);
+    assert.doesNotMatch(rendered, /#### \[|Changes:/);
   });
 
   await t.test('plan template parses under layered lint and preserves executable contracts', () => {
     const template = readFileSync(new URL('plan.md', root), 'utf8');
-    const order = ['> **TL;DR:**', '## At a Glance', '## Background', '## Key Interfaces & Data', '## Key Decisions & Context', '## Constraints', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
+    const order = ['## At a Glance', '## Background', '## Key Interfaces & Data', '## Key Decisions & Context', '## Constraints', '## Open Questions & Assumptions', '## Out of Scope', '## Task Map', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
     for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
-    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
-    assert.equal((template.match(/^>$/gm) ?? []).length, 4);
+    assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
+    assert.equal((template.match(/^>$/gm) ?? []).length, 3);
     assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
     for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
     let source = template.split('````markdown\n')[1]!.split('````')[0]!;

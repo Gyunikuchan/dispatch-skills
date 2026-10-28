@@ -1,100 +1,107 @@
 # Walkthrough template
 
-Toolkit report tools render these walkthrough fields. See [review rules](../review-rules.md) for findings and resolution records.
+Toolkit report tools render this reviewer-first debrief. See [review rules](../review-rules.md) for findings and resolution records.
 
 ````markdown
 # <task title>
 
-> **Delivered:** <plan At a Glance What, plan TL;DR, or integration status, in that order>
->
-> **Integration:** <tasks integrated, source branch and ref>
->
-> **Spec:** <spec path> · <spec hash>
->
-> **Plan:** <plan path>
->
-> **Status:** <satisfied>/<total> SC satisfied (verified <n> · manual <n> · waived <n>)
->
-> **Deviations:** none
-
 ## At a Glance
-- **Delivered:** <same delivered value as the summary box>
+- **What:** <plan At a Glance What, or integration status>
 - **How it works:** <plan How it works text, when present>
-- **Criteria:** <satisfied>/<total> satisfied (verified <n> · manual <n> · waived <n> · missing <n>)
-- **Changes:** <n> files (<n> new · <n> modified · <n> deleted)
-- **Deviations:** <n> recorded edits · <n> unplanned paths
-- **Follow-ups:** <n> open escalations · <n> deferred rulings
-- **Review:** <n> findings (<n> open)
+- **Counts:** <satisfied>/<total> criteria (verified <n> · manual <n> · waived <n> · missing <n>); <n> files (<n> new · <n> modified · <n> deleted); <n> recorded edits; <n> unplanned paths; <n> open escalations; <n> deferred rulings; <n> findings (<n> open)
 
-## Changes Made
+## Visuals
+
+<Plan visuals, or parent design visuals when the plan has none; a recorded replacement takes precedence. `None.` when no visual is available.>
+
+## Review Focus
+
+- <Risk and derived departures; authored focus bullets cite evidence. When Risk is the only derived item, state that delivery matched the plan and all criteria are verified.>
+
+## Behaviour Changes
 
 ### T<n> — <task title>
 
-- <plan behaviour bullets, or the Task Map Outcome>
+- <observable behavior from this task>
 
 <details>
 
-#### [MODIFY] `<relative-path>`
-
-- Changes: <task ID> — <task title>
+- `<relative-path>` · <created | modified | deleted>
+- `<relative-path>` · <created | modified | deleted>
 
 </details>
 
 ### Unplanned changes
 
+- <observable behavior, or None.>
+
 <details>
 
-#### [MODIFY] `<relative-path>`
-
-- Changes: unplanned
+- `<relative-path>` · <created | modified | deleted>
 
 </details>
 
 ## Verification
 
-### Verified
-| SC | Evidence |
-| --- | --- |
-| SC1 | <eligible recorded evidence> |
+- **Status:** <complete | exceptions recorded>
 
 ### Manual
-None.
+
+- <SC> · <reason>
 
 ### Waived
-None.
+
+- <SC> · <reason>
 
 ### Missing
+
+- <SC> · <reason>
+
+## Appendix
+
+<details>
+
+<summary>Audit records</summary>
+
+### Provenance
+
+- Spec: <path> · sha256:<12-character hash>
+- Plan: <path> · sha256:<12-character hash>
+- Integration: <source branch and ref>
+
+### Verified Evidence
+
 | SC | Evidence |
 | --- | --- |
-| SC2 | no eligible evidence |
+| SC<n> | <eligible recorded evidence> |
 
-## Deviations & Follow-ups
-None.
+### User-Attributed Records
 
-## User-Attributed Records
+- <record with verbatim quote, or None.>
 
-None.
+### Deviations & Follow-ups
 
-## Review Findings & Resolutions
+- Deviation: <recorded plan edit and diff reference>
+- Follow-up: <open escalation or follow-up>
+
+### Review Findings & Resolutions
 
 | Review | ID | Round | Severity | Status | Ruling |
 | --- | --- | --- | --- | --- | --- |
 | <review ID> | R1-F001 | 1 | MUST | Accepted | <first ruling line> |
 
-- Round 1 (<review ID>): 1 findings — [findings](<relative path>)
+- Round <n> (<review ID>): <n> findings — [findings](<relative path>)
+
+</details>
 ````
 
 ## Field notes
 
-- Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). At a Glance repeats Delivered, shows How it works when the plan provides it, and reports toolkit counts in the shown order.
-- Delivered: use the plan's At a Glance What, then its TL;DR, then the integration status. Put that value in the summary box and At a Glance; keep integration details on their separate box line.
-- Callouts: the renderer emits at most one `> [!IMPORTANT]` for open escalations needing a user decision, then at most one `> [!NOTE]` listing missing, manual or waived criteria, unplanned paths, recorded deviations and deferred rulings when present. Callouts sit after At a Glance bullets and contain no machine fields.
-- Changes Made: each task keeps behaviour visible and its reported paths, actions and owner inside a label-free `<details>` block. Unplanned paths have their own entry. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag. Empty Changes Made is `None.` without wrappers.
-
-- Verification: separate Verified, Manual and Waived sections; include Missing only when criteria lack evidence. Each nonempty section holds SC and Evidence columns; an empty section is `None.`.
-- Review Findings & Resolutions: toolkit renders the table and round links from findings and rulings. Each completed round, including CLEAN rounds with 0 findings, gets `- Round <n> (<review>): <k> findings — [findings](<relative path>)`. Show `*No reviews conducted yet.*` only before a round completes.
-- Status: verified, manual and waived criteria count as satisfied; missing criteria do not.
-- Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box counts recorded edits. Unplanned paths also appear in this section.
-
-- User-Attributed Records: recorded user decisions, waivers and evidence, or `None.`.
-- Retain the Verification sections and recorded evidence; link evidence only when a recorded artifact exists. Omit optional empty prose within required sections. Use no fixed word limit or second authored summary.
+- Layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Order sections as What/How and one counts line, visuals, Review Focus, per-task Behaviour Changes, Verification, and the collapsed Appendix.
+- What and How: use the plan's At a Glance What and How it works. If the plan has no What, use integration status.
+- Counts: state criterion counts once, include changed-file counts, and list aggregate deviation and review counts on this one line.
+- Visuals: copy all plan At a Glance visuals, or the parent design visuals when the plan has none. A recorded `focus.visual` replaces the copied visuals. Keep one-line text summaries with diagrams.
+- Review Focus: list the plan Risk and any recorded edits, manual/waived/missing criteria, rejected or deferred findings, cap-ending SHOULD fixes verified without re-review, unplanned paths, open escalations or follow-ups, and authored `focus` bullets with evidence links. When Risk is the only derived item, state in one line that delivery matched the plan and all criteria are verified.
+- Behaviour Changes: give each task its `### T<n> — <task title>` heading and visible behaviour bullets, followed by a label-free `<details>` block with compact `path · action` lines. Do not add per-file headings or repeat task titles. Put unplanned paths under Unplanned changes; omit empty entries.
+- Verification: show one status line. Keep Manual, Waived and Missing criteria visible outside `<details>`; omit empty subsections. Keep verified evidence in the Appendix.
+- Appendix: keep verified evidence, user-attributed records and quotes, deviations with diff references, the findings table and round links, and provenance with spec/plan paths, 12-character hashes, and integration source/ref. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.

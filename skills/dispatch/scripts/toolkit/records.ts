@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { stableValue } from './domain/stable-value.ts';
 import { ToolError } from './output.ts';
 
-export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate'] as const;
+export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate', 'focus'] as const;
 export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; data: Record<string, any> };
 export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: string };
 export type ReviewFix = { review: string; round: number; generation: number; findings: string[]; from: string };
@@ -54,6 +54,20 @@ const nested = (fields: Record<string, Rule>, optional: string[] = []): Rule => 
 const dest = nested({ branch: text, path: text });
 const artifacts = nested({ spec: hash, plan: hash, design: hash }, ['design']);
 const reviewFix = nested({ review: text, round: positive, generation: positive, findings: reviewFindings, from: git });
+const focusEvidence = check('an HTTPS URL or relative file path without whitespace or a root prefix', (value) => {
+  if (typeof value !== 'string' || !value || /\s/.test(value)) return false;
+  if (/^https:\/\//i.test(value)) {
+    try { return new URL(value).protocol === 'https:'; }
+    catch { return false; }
+  }
+  if (/^[a-z][a-z\d+.-]*:/i.test(value) || /^[\\/]/.test(value) || value.includes('\\')) return false;
+  return value.includes('/') || /\.[^/.]+$/.test(value);
+});
+const focusBullet = nested({ text, evidence: focusEvidence });
+const focusBullets: Rule = shaped('an array of zero to five review focus bullets', (value, field) => {
+  if (!Array.isArray(value) || value.length > 5) invalid(field, shapeOf(focusBullets));
+  (value as unknown[]).forEach((bullet, index) => focusBullet(bullet, `${field}.${index}`));
+});
 const shapes: Record<string, Record<string, Rule>> = {
   bind: { spec: text, plan: text, design: text },
   approval: { spec: hash, plan: hash, design: hash },
@@ -71,6 +85,7 @@ const shapes: Record<string, Record<string, Rule>> = {
     criterion: text, commandDigest: hash, tree: git, clean: bool,
     before: git, after: git, exit: integer, path: text, artifacts,
   },
+  focus: { bullets: focusBullets, visual: text },
 };
 const writers: Record<string, Record<string, Rule>> = {
   launched: { task: text, path: text, base: nested({ commit: git, taskSection: hash, seq }) },
@@ -114,19 +129,20 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
+  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
     invalid('data', 'a spec and at least one plan or design');
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
   }
+  if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
   const userOnly = ['approval', 'waiver', 'manual-complete'].includes(value.kind) ||
     (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));
   if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {
     throw new ToolError(1, 'user-only', 'record requires by user and non-blank quote');
   }
-  if (!stored && ['approval', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note'].includes(value.kind) && value.key === undefined) {
+  if (!stored && ['approval', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');
   }
   return value;

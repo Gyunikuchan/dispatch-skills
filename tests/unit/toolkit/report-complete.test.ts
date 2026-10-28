@@ -17,10 +17,17 @@ const HEAD_B = 'c'.repeat(40);
 const TREE_B = 'd'.repeat(40);
 const DIRTY_TREE = 'e'.repeat(40);
 
-function planSource(count = 4): string {
+function planSource(count = 4, risk?: string): string {
   const ids = Array.from({ length: count }, (_, index) => `SC${index + 1}`);
   const lines = [
     '# Report fixture', '',
+    ...(risk === undefined ? [] : [
+      '> **Parent:** `brief.spec.md` · sha256:' + 'a'.repeat(64),
+      '> **Decide:** none',
+      `> **Risk:** ${risk} — completion gate fixture`,
+      '> **Scope:** report tests',
+      '',
+    ]),
     '## Task Map',
     '| ID | Title | Outcome | Prerequisites | Criteria |',
     '| --- | --- | --- | --- | --- |',
@@ -47,14 +54,14 @@ function planSource(count = 4): string {
 
 let eventNumber = 0;
 
-async function fixture(count = 4) {
+async function fixture(count = 4, risk?: string) {
   const f = sessionFixture({memory:true});
   const skillRoot = path.join(f.root, 'isolated-skill');
   fs.mkdirSync(skillRoot);
   fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
   f.deps.skillRoot = skillRoot;
   f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', planSource(count));
+  f.artifact('report.plan.md', planSource(count, risk));
   await append(f, {
     kind: 'bind', by: 'tool', key: `bind:${++eventNumber}`,
     data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
@@ -207,11 +214,11 @@ test('report complete statuses enforces user records and counts unique integrate
     assert.equal(foldLedger(f.session).records.length, recordCount);
 
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
-    assert.match(walkthrough, /### Verified[\s\S]*?\| SC1 \| \.state\/evidence\/[a-f0-9]+\.json \|/);
+    assert.match(walkthrough, /### Verified Evidence[\s\S]*?\| SC1 \| \.state\/evidence\/[a-f0-9]+\.json \|/);
     assert.ok(walkthrough.includes(producerPath));
-    assert.match(walkthrough, /### Manual[\s\S]*?\| SC3 \| User evidence: manual\/sc3\.md; quote: SC3 completed by hand \|/);
-    assert.match(walkthrough, /### Waived[\s\S]*?\| SC2 \| Reason: approved exception; quote: SC2 approved \|/);
-    assert.match(walkthrough, new RegExp(`Delivered:\\*\\* 2 of 4 tasks integrated; uncommitted changes from source ${HEAD_A.slice(0, 12)} in main working tree`));
+    assert.match(walkthrough, /### Manual[\s\S]*?- SC3 · User evidence: manual\/sc3\.md; quote: SC3 completed by hand/);
+    assert.match(walkthrough, /### Waived[\s\S]*?- SC2 · Reason: approved exception; quote: SC2 approved/);
+    assert.match(walkthrough, new RegExp(`What:\\*\\* 2 of 4 tasks integrated; uncommitted changes from source ${HEAD_A.slice(0, 12)} in main working tree`));
   } finally { f.cleanup(); }
 });
 
@@ -295,13 +302,59 @@ test('report complete low session accepts bound evidence and a user contract wai
     const result = await invoke(f, 'report', 'complete');
     assert.equal(result.exit, 0, result.output.summary);
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
-    assert.ok(walkthrough.includes(`**Spec:** brief.spec.md · ${hashes.spec}`));
-    assert.ok(walkthrough.includes('**Plan:** report.plan.md'));
+    assert.ok(walkthrough.includes(`- Spec: brief.spec.md · sha256:${hashes.spec!.slice(7, 19)}`));
+    assert.ok(walkthrough.includes(`- Plan: report.plan.md · sha256:${hashes.plan!.slice(7, 19)}`));
     assert.ok(walkthrough.includes(`| SC1 | ${evidencePaths.get('SC1')} |`));
-    assert.match(walkthrough, /\| contract \| Reason: manual contract acceptance; quote: contract waiver quote \|/);
+    assert.match(walkthrough, /- contract · Reason: manual contract acceptance; quote: contract waiver quote/);
     assert.match(walkthrough, /- Deviation: plan edit \(intent\) seq \d+: clarified the acceptance boundary; diff plan-edit\.diff; affects SC1/);
     assert.equal(foldLedger(f.session).records.some((record) => record.kind === 'approval'), false);
   } finally { f.cleanup(); }
+});
+
+test('report complete refuses med-risk delivery without review focus', async () => {
+  for (const risk of ['med', 'high']) {
+    const f = await fixture(1, risk);
+    try {
+      const state = gitState(f.session);
+      await integrate(f, state);
+      let result = await invoke(f, 'report', 'complete');
+      assert.equal(result.output.reason, 'criteria-unmet', `${risk} risk must retain earlier refusal precedence`);
+      await evidenceForPlan(f, TREE_A);
+      result = await invoke(f, 'report', 'complete');
+      assert.equal(result.output.reason, 'undelivered', `${risk} risk must retain delivery refusal precedence`);
+      await deliver(f, HEAD_A);
+      result = await invoke(f, 'report', 'complete');
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'focus-required');
+      assert.equal(fs.existsSync(path.join(f.session, 'report.walkthrough.md')), false);
+
+      const focus = (key: string, count: number) => append(f, {
+        kind: 'focus', by: 'orchestrator', key,
+        data: { bullets: Array.from({ length: count }, (_, index) => ({ text: `Review point ${index + 1}`, evidence: `src/task-${index + 1}.ts` })) },
+      });
+      await focus(`focus:${risk}:sufficient`, 3);
+      assert.equal((await invoke(f, 'report', 'complete')).exit, 0);
+      await focus(`focus:${risk}:superseding-short`, 2);
+      result = await invoke(f, 'report', 'complete');
+      assert.equal(result.output.reason, 'focus-required', 'the latest short record must supersede earlier sufficient focus');
+      await focus(`focus:${risk}:latest-sufficient`, 3);
+      assert.equal((await invoke(f, 'report', 'complete')).exit, 0);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('report complete accepts low-risk delivery without review focus', async () => {
+  for (const risk of ['low', 'unknown', undefined]) {
+    const f = await fixture(1, risk);
+    try {
+      await integrate(f, gitState(f.session));
+      await evidenceForPlan(f, TREE_A);
+      await deliver(f, HEAD_A);
+      const result = await invoke(f, 'report', 'complete');
+      assert.equal(result.exit, 0, result.output.summary);
+      assert.equal(foldLedger(f.session).records.some(record => record.kind === 'focus'), false);
+    } finally { f.cleanup(); }
+  }
 });
 
 test('uncommitted consumers complete by source and ignore later caller history',async()=>{

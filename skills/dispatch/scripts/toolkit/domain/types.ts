@@ -106,10 +106,12 @@ export type PlanTask = {
 /** A write path shared by tasks with no transitive `Requires` path between them and no `Overlap:` justification. */
 export type PlanWarning = { kind: 'overlap'; tasks: readonly string[]; path: string };
 
+export type Glance = { what: string; how: string; visuals: string };
+
 export type ParsedPlan = {
   title: string | null;
   box: Readonly<Record<string, string>>;
-  glance: { what: string; how: string } | null;
+  glance: Glance | null;
   keyDecisions: readonly string[];
   criteria: readonly PlanCriterion[];
   /** Plan-ordered task graph; `changes` is its flattened aggregate. */
@@ -133,7 +135,7 @@ export type ParsedPlan = {
 
 export type DesignIncrement = { id: string; priority: number; summary: string; behaviour: readonly string[]; prerequisites: readonly string[]; paths: readonly string[] };
 export type IncrementState = 'complete' | 'active' | 'ready' | 'blocked' | 'invalidated';
-export type ExecutionStatusRow = { id: string; state: IncrementState; summary: string; nextAction: string };
+export type ExecutionStatusRow = { id: string; state: IncrementState; nextAction: string };
 
 export type ParsedDesign = {
   approachRequirements?: readonly string[];

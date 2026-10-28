@@ -42,7 +42,7 @@ Dispatch organizes work across four canonical document layers:
 - **Spec (Mission brief):** Captures intent, background, decisions, constraints, and desired outcomes. The governing contract read by all participants.
 - **Design (Strategy):** Defines overarching architecture, boundaries, risks, and ordered delivery increments.
 - **Plan (Tactics):** Details tactical execution for one coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria, and verification commands.
-- **Walkthrough (Debrief):** Records the post-execution debrief: delivered behavior, file changes, verification evidence, deviations, and review resolutions.
+- **Walkthrough (Debrief):** Gives reviewers a first-pass view of delivered behavior, where to look, and verification; expanded changes and audit evidence remain available below.
 
 - Read **At a Glance** first for the change, its purpose and how it works. Point-form prose keeps the main facts visible.
 - `> [!NOTE]` marks information you need to know; `> [!IMPORTANT]` marks a decision you must make.

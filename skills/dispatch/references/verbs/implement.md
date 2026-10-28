@@ -17,10 +17,12 @@ For conflicts, inspect both tasks' intent and resolve within their paths in the 
 
 After interruption, use status, inspect recorded launches and integration state, and reconcile live handles before relaunching. A relaunch acknowledges the old writer as stopped; do not run two writers against one worktree. Verification must follow the last relevant edit. Report completion only when criterion evidence is current, required reviews are resolved, and delivery and cleanup are accounted for.
 
+Before report completion, when plan Risk is `med` or `high`, record 3–5 `focus` bullets with evidence; Risk `low` does not require a record.
+
 ## Cap-ending SHOULD corrections
 
 Use the exception only for recorded fixes of accepted SHOULD findings from the final completed review round at or above the cap. Run current criterion and contract checks; report each correction as verified but not re-reviewed against the completed review baseline. Accepted MUST fixes require review, pending MUST rejections require confirmation, and unrelated edits need fresh review.
 
-For plan/design corrections, use the existing edit record with before and after canonical hashes and identify the originating SHOULD finding in its rationale. Explain the reviewed baseline, exact correction and current verification in the walkthrough; report.ts does not parse that rationale for finding attribution.
+For plan/design corrections, use the existing edit record with before and after canonical hashes and identify the originating SHOULD finding in its rationale. Record the reviewed baseline, correction and verification as a `focus` bullet with an evidence link; the walkthrough renderer places it under Review Focus.
 
 For code corrections, pass review-fix metadata with worktree commit as described in the [toolkit contract](../toolkit.md#worktree-commit). A later source edit outside this exception needs checks and fresh review.

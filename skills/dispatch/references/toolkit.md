@@ -25,14 +25,14 @@ Plan/design target paths select artifacts. Code targets resolve in order: integr
 ### report render
 
 Arguments: `report render --session <session>`.
-Result path: walkthrough path, criterion statuses, deviations, user records, findings, rejection confirmation states and evidence references. Renders the current snapshot without claiming completion.
+Result path: walkthrough path, criterion statuses, Review Focus, visuals, deviations, user records, findings, rejection confirmation states and evidence references. Review Focus combines derived departures with authored `focus` bullets. A recorded replacement visual replaces the visuals copied from the plan, or from the parent design when the plan has none. Renders the current snapshot without claiming completion.
 Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 
 ### report complete
 
 Arguments: `report complete --session <session>`.
-Result path: completed walkthrough path, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, the walkthrough reports the reviewed baseline separately from each correction and marks each as verified but not re-reviewed. Plan/design correction attribution stays orchestrator-authored: explain the baseline, correction and verification in the walkthrough; the toolkit does not parse edit rationale for finding attribution.
-Refusals: review-confirmation-required, no-integration, criteria-unmet or undelivered. Inspect reason and statuses; only a successful result is completion.
+Result path: completed walkthrough path with Review Focus and visuals, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, the walkthrough reports the reviewed baseline separately from each correction and marks each as verified but not re-reviewed. For plan/design corrections, record the baseline, correction and verification in a `focus` bullet with evidence; the renderer includes it under Review Focus.
+Refusals: review-confirmation-required, no-integration, criteria-unmet, focus-required or undelivered. `focus-required` (exit 4) means a plan with Risk `med` or `high` lacks a latest `focus` record with at least three bullets. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
 
@@ -206,9 +206,13 @@ data: `subject`, `ruling`, `rationale`. Allowed by: user, orchestrator, tool. A 
 
 data: text. Allowed by: user, orchestrator, tool.
 
+### focus
+
+data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` is an HTTPS URL or a relative path with no whitespace, leading `/` or drive letter. Optional `visual` is Markdown that replaces copied walkthrough visuals. Allowed by: user or orchestrator. Requires a key; the latest record is used.
+
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; the orchestrator explains the reviewed baseline, correction and verification in the walkthrough. The toolkit does not parse edit rationale for finding attribution. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 

@@ -21,7 +21,6 @@ const detail = (id: string) => `### ${id} Step
 
 const DESIGN = `# Importer design
 
-> **TL;DR:** stage the importer.
 > **Parent:** \`governing.spec.md\` · sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 > **Decide:** none
 > **Risk:** med — touches ingestion
@@ -31,10 +30,10 @@ const DESIGN = `# Importer design
 - Stage the importer.
 
 ## Execution Status
-| ID | State | Summary | Next Action |
-| --- | --- | --- | --- |
-| I01 | completed | done | - |
-| I02 | ready | next | implement:I02 |
+| ID | State | Next Action |
+| --- | --- | --- |
+| I01 | completed | - |
+| I02 | ready | implement:I02 |
 
 Next Action: implement:I02
 
@@ -161,7 +160,7 @@ test('design: Execution Status requires a Next Action', () => {
 });
 
 test('design: Execution Status rejects duplicate increment rows', () => {
-  assert.ok(codes(DESIGN.replace('| I02 | ready | next | implement:I02 |', '| I02 | ready | next | implement:I02 |\n| I02 | ready | again | implement:I02 |')).includes('execution-status'));
+  assert.ok(codes(DESIGN.replace('| I02 | ready | implement:I02 |', '| I02 | ready | implement:I02 |\n| I02 | ready | again |')).includes('execution-status'));
 });
 
 test('design-section-order: old order fails and new order passes', () => {
@@ -183,7 +182,7 @@ test('journal design admission rejects malformed objectives and dependency graph
   assert.ok(asParsedDesign(design));
   const rows = design.increments;
   const invalid = [
-    { ...design, box: {} }, { ...design, box: { 'TL;DR': ' ' } },
+    { ...design, box: { Parent: 1 } as never },
     { ...design, increments: [{ ...rows[0]!, paths: [] }, rows[1]!] },
     { ...design, increments: [rows[0]!, { ...rows[1]!, id: 'I01' }] },
     { ...design, increments: [rows[0]!, { ...rows[1]!, priority: 1 }] },
@@ -230,6 +229,21 @@ test('designScopeGrew compares validation case-insensitively', () => {
 });
 
 const layeredDesign = () => DESIGN.replace(/## Approach[\s\S]*?(?=## Alternatives)/, '## Approach\nREQ-1 importer\n\n');
+test('design: summary box without TL;DR lints clean and parses', () => {
+  const result = parseDesign(DESIGN);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(asParsedDesign(result.design), result.design);
+});
+
+test('Execution Status reads ID, State and Next Action', () => {
+  const result = parseDesign(DESIGN);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.design.executionStatus?.rows, [
+    { id: 'I01', state: 'complete', nextAction: '-' },
+    { id: 'I02', state: 'ready', nextAction: 'implement:I02' },
+  ]);
+});
+
 test('design summary: Parent rejects invalid pins', () => {
   for (const parent of [
     'user request',

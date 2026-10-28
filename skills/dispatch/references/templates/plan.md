@@ -4,13 +4,11 @@ External delegates read the plan file with no other context.
 
 Keep deliverables at the root of `.scratch/dispatch-skills/<folder>/`, tool results in `.state/results/`, and records in `ledger.jsonl`, retaining the session in the workspace.
 
-Separate summary fields with blank `>` lines so each field renders as its own paragraph.
+Separate each box field with blank `>` lines so it renders as its own paragraph.
 
 ````markdown
 # <Goal Description>
 
-> **TL;DR:** <problem and outcome>
->
 > **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>
 >
 > **Decide:** <reader decision, or none>
@@ -22,6 +20,8 @@ Separate summary fields with blank `>` lines so each field renders as its own pa
 ## At a Glance
 - **What:** <plain-language change and why it matters>
 - **How it works:** <one-line explanation>
+
+*Optional orientation visual, only when the visual-aid bar admits it:*
 
 ```mermaid
 flowchart LR
@@ -127,12 +127,15 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 
 - Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Place `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections; select their type under those rules.
 
+- At a Glance: **What** is the plan's only outcome summary; **How it works** gives the method in one line without repeating the outcome. Put orientation visuals here when the visual-aid bar admits them.
+
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
 - Keep the template section order: At a Glance first, then shared context and decisions, then task outcomes and execution detail. A present section out of order is a `section-order` warning; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
 - Put task ID, title, outcome, prerequisites, and criteria in the authored Task Map. Join rows to Proposed Changes by ID; titles must match the task headings. Put task-specific Constraints and Overlap under the matching task. Put mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
 - Shared range: At a Glance, Background, optional Key Interfaces & Data, decisions, shared Constraints and Task Map precede task detail. Every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. The authored map is part of the governed plan hash and shared writer context. Put context that all tasks need in the shared range and task-specific detail under the task.
 
-- Task behaviour: put one or more observable bullets after `Constraints:` and `Overlap:` and before `<details>`. The `task-behaviour` warning reports missing bullets and bullets that contain only a file count or placeholder; add a Mermaid diagram or code/data snippet after the bullets when it clarifies the behaviour.
+- Visual placement: put data shapes in Key Interfaces & Data and per-task visuals after behaviour bullets. A plan may include diagrams with or without a parent design; judge each visual with the [visual-aid bar](quality-bar.md#spec).
+- Task behaviour: put one or more observable bullets after `Constraints:` and `Overlap:` and before `<details>`. The `task-behaviour` warning reports missing bullets and bullets that contain only a file count or placeholder; add a section visual after the bullets when it clarifies behaviour, with a text summary for each diagram.
 - Collapsed detail: wrap each task's file entries and each criterion's machine fields in `<details>` without a summary line. Keep wrapper tags on separate lines with a blank line after the opening tag and before the closing tag. Indent criterion wrappers and fields by two spaces; retain field names and file headings.
 - Technical-Design Traceability: increment plans only.
 - Verify: list only this criterion's tests. Select by literal behavior title with the project runner's filter (e.g. `npx jest tests/a.test.ts -t "<title>"`, `pytest tests/test_a.py -k "<name>"`) and fail on zero selected tests; red never runs the aggregate suite. `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad or slow required gate; leave narrow feedback commands unmarked. A Verify command or test file name that contains a criterion or finding ID is a `plan-id-in-test-name` warning.

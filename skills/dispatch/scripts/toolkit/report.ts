@@ -8,7 +8,9 @@ import { criterionStatuses, verifiedStage, type CriterionStatus, type PruneEvide
 import { git, gitOk, headTree, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
+import { readArtifact } from './artifacts.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
+import { parseGlance, structuralLines } from './domain/plan.ts';
 import { ToolError } from './output.ts';
 import { diagnosticsEnabled, optionalDiagnostics } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
@@ -28,10 +30,12 @@ type ReviewFixReport = {
   verification?: { tree: string; criteria: string[]; contract: string[]; finalTree?: string; finalChecks?: string[] };
 };
 type Snapshot = {
+  risk: string;
   fold: Fold;
   bind: LedgerRecord;
   plan: ParsedPlan;
   planPath: string;
+  planHash: string;
   planStem: string;
   specPath: string;
   specHash: string;
@@ -78,7 +82,9 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   if (!bind) throw new ToolError(4, 'lint-errors', 'No bound plan');
   const planPath = String(bind.data['plan']);
   const specPath = String(bind.data['spec']);
-  const specHash = currentHashes(ctx.manifest.repositoryRoot, bind).spec ?? 'unavailable';
+  const hashes = currentHashes(ctx.manifest.repositoryRoot, bind);
+  const specHash = hashes.spec ?? 'unavailable';
+  const planHash = hashes.plan ?? 'unavailable';
   const integration = integrationRecord(fold);
   let integrationPath: string | null = null;
   let head: string | null = null;
@@ -144,32 +150,18 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   const integrated = new Set(fold.records.flatMap((record) =>
     record.kind === 'integrate' && record.data['phase'] === 'done' && typeof record.data['task'] === 'string' &&
       planTaskIds.has(record.data['task']) ? [record.data['task'] as string] : []));
+  const riskToken = plan.box['Risk']?.trim().split(/\s+/, 1)[0];
+  const risk = riskToken === 'med' || riskToken === 'high' ? riskToken : 'low';
   const planStem = path.basename(planPath).replace(/\.plan\.md$/i, '') || plan.title || 'walkthrough';
   let rejectionConfirmations:RejectionState[]=[],confirmationError:string|undefined;
   try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
   return {
-    fold, bind, plan, planPath, planStem, specPath, specHash,
+    fold, bind, plan, planPath, planHash, planStem, specPath, specHash,
+    risk,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
     integrated: integrated.size,rejectionConfirmations,confirmationError,reviewedCodeBaseline,reviewFixes,
   };
-}
-
-function codeSpan(value: unknown): string {
-  const text=JSON.stringify(value)??String(value);
-  const longest=Math.max(0,...(text.match(/`+/g)??[]).map(run=>run.length));
-  const delimiter='`'.repeat(longest+1);
-  return delimiter+text+delimiter;
-}
-function renderReviewFixes(baseline:string|undefined,fixes:readonly ReviewFixReport[]):string {
-  if(!fixes.length)return '';
-  const lines=['## Code Review Corrections',''];
-  if(baseline)lines.push(`Reviewed code baseline: ${codeSpan(baseline)}.`,'');
-  for(const fix of fixes) {
-    lines.push(`- Correction ${codeSpan(fix.commit)} from ${codeSpan(fix.metadata.from)}; findings ${codeSpan(fix.metadata.findings)}; changed paths ${codeSpan(fix.paths)}; status: ${codeSpan(fix.status)}; reason ${codeSpan(fix.reason)}; metadata ${codeSpan(fix.metadata)}.`);
-    if(fix.verification)lines.push(`  - Current evidence: tree ${codeSpan(fix.verification.tree)}; criteria ${codeSpan(fix.verification.criteria)}; contract ${codeSpan(fix.verification.contract)}${fix.verification.finalTree?`; final tree ${codeSpan(fix.verification.finalTree)}; final checks ${codeSpan(fix.verification.finalChecks)}`:''}.`);
-  }
-  return lines.join('\n');
 }
 
 function parseNameStatus(bytes: string): { status: string; path: string }[] {
@@ -244,12 +236,23 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   }
   const destBranch = String(snapshot.integration?.data['dest']?.branch ?? '');
   const glance = snapshot.plan.glance;
-  const tldr = snapshot.plan.box['TL;DR'];
+  const focusRecord = latest(snapshot.fold, 'focus');
+  const focusBullets = (focusRecord?.data['bullets'] as { text: string; evidence: string }[] | undefined) ?? [];
+  const focusVisual = typeof focusRecord?.data['visual'] === 'string' ? focusRecord.data['visual'] : undefined;
+  let visuals = glance?.visuals ?? '';
+  const designPath = snapshot.bind.data['design'];
+  if (!visuals && typeof designPath === 'string') {
+    const source = readArtifact(ctx.manifest.repositoryRoot, designPath);
+    if (source !== null) visuals = parseGlance(structuralLines(source))?.visuals ?? '';
+  }
+
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
     specPath: snapshot.specPath,
     specHash: snapshot.specHash,
     planPath: snapshot.planPath,
+    planHash: snapshot.planHash,
+    risk: snapshot.risk,
     delivered: snapshot.integration ? {
       integrated: snapshot.integrated,
       total: snapshot.plan.tasks.length,
@@ -257,7 +260,9 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       branch: destBranch,
       ref: deliveredSourceRef(ctx.manifest.safeSessionId),
     } : null,
-    glance: glance ? { what: glance.what || tldr || '', how: glance.how } : tldr ? { what: tldr, how: '' } : null,
+    glance,
+    visuals,
+    focus: focusRecord ? { bullets: focusBullets, ...(focusVisual ? { visual: focusVisual } : {}) } : null,
     tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary, behaviour: task.behaviour })),
     statuses: snapshot.statuses,
     changes,
@@ -268,6 +273,8 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     userRecords,
     reviewRows: review.rows,
     reviewRounds: review.rounds,
+    reviewFixes: snapshot.reviewFixes,
+    ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
   };
   return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, userRecords };
 }
@@ -314,8 +321,7 @@ function resultValue(facts: ReportFacts, session: string, walkthroughPath: strin
 }
 
 function walkthroughText(facts:ReportFacts,session:string):string {
-  const walkthrough=renderWalkthrough(facts.view,session),corrections=renderReviewFixes(facts.reviewedCodeBaseline,facts.reviewFixes);
-  return corrections?walkthrough+'\n\n'+corrections+'\n':walkthrough;
+  return renderWalkthrough(facts.view,session);
 }
 
 export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> {
@@ -343,6 +349,12 @@ function refusal(snapshot: Snapshot): ToolError | null {
   const dirty = snapshot.current !== null && snapshot.current.testedTree !== snapshot.current.headTree;
   if (missing.length) return new ToolError(4, 'criteria-unmet', `Missing criteria: ${missing.join(', ')}${dirty ? '; dirty checkout (integration tree differs from HEAD tree)' : ''}`);
   if (!snapshot.deliveredAtHead) return new ToolError(4, 'undelivered', `No delivery record matches integration HEAD ${snapshot.head ?? 'unknown'}`);
+  const risk = snapshot.risk;
+  const focus = latest(snapshot.fold, 'focus');
+  const bullets = focus?.data['bullets'];
+  if ((risk === 'med' || risk === 'high') && (!Array.isArray(bullets) || bullets.length < 3)) {
+    return new ToolError(4, 'focus-required', 'At least three review focus bullets are required for med- or high-risk plans');
+  }
   return null;
 }
 
