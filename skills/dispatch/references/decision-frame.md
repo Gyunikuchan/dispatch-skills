@@ -19,11 +19,11 @@ Use the four-part format above with the following concrete content.
 
 ### Spec approval
 
-Present the canonical path/hash, intent, core REQs, settled DECs and unresolved material questions. Recommend confirmation or specific corrections. Record actual user words; include the settled spec hash in the later implementation tuple.
+Present the canonical path/hash, stated and assumed intent separately, core REQs, settled DECs, unresolved material questions and the `plan` or `design` recommendation from the scope check. Confirm them in one exchange under [spec operation](spec-stage.md#resolve-and-author). Record actual user words; include the settled spec hash in the later implementation tuple.
 
 ### Plan or design approval
 
-Present current artifact paths/hashes, strategy, task or increment sequence, scope and verification. Recommend the bounded unit. Explain delivery risk and alternatives. Record the tuple under [approval](toolkit.md#approval); design-only approval is recorded with the first implemented plan.
+Present current artifact paths/hashes, strategy, task or increment sequence, scope, verification and the proposed level with its reason under [Run level](spec-stage.md#run-level). Recommend the bounded unit and confirm the level. Explain delivery risk and alternatives. Record the tuple under [approval](toolkit.md#approval); design-only approval is recorded with the first implemented plan.
 
 ### Intent finding
 

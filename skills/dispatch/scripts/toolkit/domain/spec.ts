@@ -2,14 +2,10 @@
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';
 import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, sectionRanges, structuralLines, type StructuralLine } from './plan.ts';
-import type { Level } from '../types.ts';
-
 export const SPEC_SECTION_ORDER = [
   '## At a Glance', '## Intent & Problem', '## Background', '## Requirements', '## Non-goals', '## Constraints', '## Decisions',
   '## Discussion Record', '## Open Questions',
 ] as const;
-
-const LOW_SECTIONS: readonly string[] = ['## At a Glance', '## Intent & Problem', '## Requirements', '## Non-goals', '## Constraints'];
 
 export type SpecDefectCode =
   | 'missing-section' | 'section-order' | 'missing-requirement' | 'malformed-id' | 'colliding-id' | 'id-sequence' | 'missing-acceptance' | 'duplicate-section' | 'long-paragraph';
@@ -18,11 +14,6 @@ export type ParsedSpec = { title: string | null; reqIds: readonly string[]; decI
 export type SpecResult = { ok: true; spec: ParsedSpec; warnings: SpecDefect[] } | { ok: false; defects: SpecDefect[]; warnings: SpecDefect[] };
 
 const defect = (code: SpecDefectCode, line: number | null, message: string, blocking = false): SpecDefect => ({ code, severity: blocking ? 'defect' : 'warning', line, message });
-
-/** Required `##` headings for `level`, in template order. */
-export function requiredSpecSections(level: Level): readonly string[] {
-  return level === 'low' ? LOW_SECTIONS : SPEC_SECTION_ORDER;
-}
 
 /** Governed text is the raw source; `artifactHash` canonicalizes it before hashing. */
 export function governedSpecText(source: string): string {
@@ -62,12 +53,12 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
   return blocks;
 }
 
-/** Parses and lints a spec at `level`; any defect fails the parse. Prose is not scanned for IDs. */
-export function parseSpec(source: string, options: { level: Level }): SpecResult {
+/** Parses and lints a spec; any defect fails the parse. Prose is not scanned for IDs. */
+export function parseSpec(source: string): SpecResult {
   const lines = structuralLines(source);
   const defects: SpecDefect[] = [];
-  for (const heading of requiredSpecSections(options.level)) {
-    if (!sectionRanges(lines, heading).length) defects.push(defect('missing-section', null, `Spec at level ${options.level} requires ${heading}.`, heading === '## Requirements'));
+  for (const heading of SPEC_SECTION_ORDER) {
+    if (!sectionRanges(lines, heading).length) defects.push(defect('missing-section', null, `Spec requires ${heading}.`, heading === '## Requirements'));
   }
   for (const item of lintSectionOrder(lines, SPEC_SECTION_ORDER)) defects.push(defect('section-order', item.line, item.message));
   for (const { line, words } of lintLongParagraphs(lines)) defects.push(defect('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));

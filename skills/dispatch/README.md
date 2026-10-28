@@ -19,18 +19,25 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
 
-Every work verb settles a governing spec for the outcome, constraints and user decisions. At `medium` and above, you approve its contents before design or plan authoring; at `low`, Dispatch proceeds and shows it at handoff. For implementation, Dispatch then prepares a plan and applies the review and fix rounds enabled by the selected level's policy before a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
+For a new spec, Dispatch grounds the domain first. When the host provides `grilling`, Dispatch runs it until no user decision remains, then writes the spec and confirms stated and assumed intent. It recommends `plan` or `design` from the scope check in that same exchange. If `grilling` is unavailable, Dispatch confirms intent after grounding. A `review` that must create a spec follows this flow too.
 
-The diagram shows implementation. Questions need no spec; standalone code review settles a spec without adding an authoring approval gate. See [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
+Unless you set a level explicitly, Dispatch proposes and records one after it authors and lints the plan or design, before the first review. That review uses the recorded level. Artifact approval after review confirms any proposed level; at `medium` and above, implementation approval also binds the governing spec, plan and optional design. At `low`, Dispatch shows the artifacts at handoff. Review or implementation may raise the level as complexity appears, but never lower it mid-run. For implementation, Dispatch applies the review and fix rounds enabled by the settled level before a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff. See [levels](references/readme/configuration.md#understand-levels-and-pins).
+
+The diagram shows a path through planning, review and implementation. Questions need no spec; code review of existing work adds no authoring approval gate. See [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
 
 ```mermaid
 flowchart LR
     You([You]) --> Host[Your current host agent]
-    Host --> Spec[Governing spec]
-    Spec --> SpecGate{Approve spec at medium+<br/>before authoring}
-    SpecGate --> Delegates[Read-only delegates]
+    Host --> Ground[Ground the domain]
+    Ground --> Grill[grilling when available]
+    Grill --> Spec[Governing spec]
+    Spec --> Confirm[Confirm stated and assumed intent<br/>and plan or design recommendation]
+    Confirm --> Artifact[Author and lint plan or design]
+    Artifact --> Level[Keep explicit level or propose and record one]
+    Level --> Delegates[Configured reviewers]
     Delegates --> Evidence[Findings with evidence]
-    Evidence --> Writer[Writer for your host platform]
+    Evidence --> Approval[Approve artifact;<br/>confirm proposed level if unset]
+    Approval --> Writer[Writer for your host platform]
     Writer --> Checks[Verification and review]
     Checks --> You
 ```
@@ -76,7 +83,7 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
-Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. If a `design` or `plan` request fits the other planning depth, Dispatch recommends that verb before starting and waits for your choice; it does not silently switch verbs. This depth check preserves requested `ask`, `review` and `implement` operations. You can skip work you have already completed.
+Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. For a new spec, Dispatch recommends `plan` or `design` after grounding and intent refinement, then confirms the recommendation with the spec. It keeps an explicit verb unless the scope check contradicts it; if so, it explains the reason and recommends a change. `ask`, review of an existing artifact, and `implement` keep the requested verb. You can skip work you have already completed.
 
 ## Command pattern
 
@@ -84,7 +91,7 @@ Use `design` when delivery needs multiple ordered increments, `plan` for one coh
 /dispatch [level] [(pins)] [verb:] <question, requirement, artifact, or range>
 ```
 
-- **Level**: `low`, `medium`, or `high` can be selected automatically based on failure impact, reversibility, uncertainty, and the assurance needed. Choose `xhigh` or `max` explicitly. See [levels](references/readme/configuration.md#understand-levels-and-pins) for the criteria.
+- **Level**: `low`, `medium`, or `high` can be supplied explicitly. Otherwise, Dispatch proposes and records a level after it authors and lints the plan or design, before the first review. You confirm a proposed level with artifact approval after review. Choose `xhigh` or `max` explicitly. See [levels](references/readme/configuration.md#understand-levels-and-pins) for the rubric and timing.
 - **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
 - **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, and `implement`.
 - **Argument**: a question, requirement, artifact path, or Git range.

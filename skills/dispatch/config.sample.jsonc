@@ -1,7 +1,8 @@
 /**
  * Copy to config.jsonc or config.local.jsonc beside this skill. No default is shipped;
  * config.local.jsonc takes priority. Check settings with
- * `node scripts/dispatch.ts doctor --level <level>`.
+ * `node scripts/dispatch.ts doctor run --session <session> [--level <level>]`.
+ * `<session>` is the dispatch session folder.
  *
  * Model references:
  * - claude: https://platform.claude.com/docs/en/models/overview
@@ -103,13 +104,9 @@
       "low": { "model": "gpt-6-luna", "effort": "max" },
     },
   },
-  // Optional: native read-only explorers can ground the host before planning.
-  // "deep": true launches two explorers with different strategies, doubling explorer cost for broader coverage.
+  // Optional: define one entry per platform. `deep: true` applies to initial grounding only.
   // "explore-subagents": {
-  //   "codex": {
-  //     "low": { "model": "gpt-6-luna", "effort": "low" },
-  //     "high": { "model": "gpt-6-luna", "effort": "low", "deep": true },
-  //   },
+  //   "codex": { "model": "gpt-6-luna", "effort": "low", "deep": true },
   // },
   // Optional: set review size and rounds by level.
   // Without a phase policy, standalone reviews use one target and one round.

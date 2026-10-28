@@ -9,11 +9,11 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 Parse `[level] [(pins)] [verb:] argument`; default `ask`. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
 
-For `plan` with multiple ordered increments, recommend `design`. For `design` with one coherent unit, recommend `plan`. Explain the fit and wait for the user's choice first. Keep `ask`, `review` and `implement` on their requested verb.
+Recommend `plan` or `design` after intent refinement under [spec stage](references/spec-stage.md). Keep `ask`, `review` and `implement` on their requested verb.
 
 Read the selected phase first: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md).
 
-Report the level. Preserve explicit levels; `xhigh` and `max` require user selection. Levels select roster, rounds and approval. Preserve configured models and efforts.
+Report the level once set under [run level](references/spec-stage.md#run-level). Levels select roster, rounds and approval. Preserve configured models and efforts.
 
 Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path and follow any returned `instructions`. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
 

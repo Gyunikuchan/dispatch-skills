@@ -12,7 +12,7 @@ Intent scattered across chat and repeated design/plan sections lets participants
 
 ### Format and identity
 
-The spec owns intent, requirement acceptance, constraints, user decisions, discussion and open questions. REQ and DEC IDs remain distinct from tasks, plan criteria and design decisions. The [spec template](../../skills/dispatch/references/templates/spec.md) owns exact headings and level-specific fields.
+The spec owns intent, requirement acceptance, constraints, user decisions, discussion and open questions. REQ and DEC IDs remain distinct from tasks, plan criteria and design decisions. The [spec template](../../skills/dispatch/references/templates/spec.md) owns the exact headings.
 
 Artifact identity uses the formatting-tolerant canonical hash reported by toolkit lint. Incidental formatting and report history do not define a new approval identity. The [toolkit contract](../../skills/dispatch/references/toolkit.md#lint-run) owns hashing behavior.
 

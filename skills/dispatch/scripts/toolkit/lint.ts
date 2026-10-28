@@ -68,7 +68,7 @@ export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
     const hash = 'sha256:' + crypto.createHash('sha256').update(source).digest('hex');
     return { kind: 'context' as const, hash, errors: result.defects, warnings: result.warnings, parsed: result.map };
   }
-  const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source, { level: 'medium' });
+  const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source);
   if (kind === 'plan' && result.ok && 'plan' in result) {
     const mapFile = canonicalContextMap(file);
     if (!mapFile) return { kind, hash: artifactHash(kind, source), errors: [], warnings: result.warnings, parsed: result.plan };

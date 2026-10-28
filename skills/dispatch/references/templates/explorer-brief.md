@@ -47,4 +47,4 @@ Use the [context map template](context-map.md), including its source commit, str
 
 Keep this map within 16,384 UTF-8 bytes (16 KB). If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 
-Write only the map to `{{outputPath}}`: use `<session>/<slug>.context.md` for a single explorer, or `<session>/<slug>.outside-in.context.md` / `<session>/<slug>.inside-out.context.md` for a `deep` explorer. Leave repository source files unchanged.
+Use `<session>/<slug>.context.md` for one initial map; for `deep` initial grounding use `<session>/<slug>.outside-in.context.md` or `<session>/<slug>.inside-out.context.md`; for a follow-up use `<session>/<slug>.followup-<n>.context.md` with strategy `single`. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback.

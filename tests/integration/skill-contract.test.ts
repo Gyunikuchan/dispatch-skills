@@ -15,9 +15,7 @@ const section = (text: string, heading: string) => text.split('### ' + heading +
 
 test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
-  assert.match(skill, /For `plan`.*multiple ordered increments.*recommend `design`/);
-  assert.match(skill, /For `design`.*one coherent unit.*recommend `plan`/);
-  assert.match(skill, /wait for the user's choice/);
+  assert.match(skill, /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./);
   assert.match(skill, /Keep `ask`, `review` and `implement` on their requested verb/);
   assert.ok(skill.indexOf('Read the selected phase') < skill.indexOf('## Tool loop'));
   for (const branch of ['`ask`: follow', '`review`: resolve', '`design` or `plan`: resolve', '`implement`: resolve']) assert.ok(skill.includes(branch), branch);
@@ -115,7 +113,7 @@ test('aliases preserve entry mappings', () => {
 
 test('human configuration keeps level and concurrency guidance', () => {
   const config = read(root + 'references/readme/configuration.md');
-  for (const term of ['An explicit level stays in force', '`xhigh` and `max` remain user-selected', '`medium` is the normal level', '`high` requires a credible consequential risk', 'write-concurrency']) assert.ok(config.includes(term), term);
+  for (const term of ['An explicit level stays in force', '`xhigh` and `max` require your explicit choice', '`medium` is the normal level', '`high` requires a credible consequential risk', 'write-concurrency']) assert.ok(config.includes(term), term);
   assert.match(read(root + 'README.md'), /\^22\.18 \|\| >=23\.6/);
   assert.ok(links(read(root + 'references/templates/walkthrough.md')).includes('../review-rules.md'));
 });
@@ -132,12 +130,14 @@ test('human manuals retain portable links and current operational guidance', () 
   }
   const config = read(root + 'references/readme/configuration.md');
   for (const term of [
-    'after its plan and baseline are concrete, immediately before the first production write',
+    'after it authors and lints a plan or design',
+    'records it before the first review',
+    'confirm the proposal with artifact approval after review',
     'failures remain observable and recoverable', 'financial or data-integrity errors',
     'a small rate-precision change can',
     'A large diff, changed external contract, finance repository, or state-machine file alone does not require high',
-    'Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment',
-    'Retries, later phases, accepted scope changes, and later design increments keep the settled level',
+    '`ask` and standalone `review` resolve the level from the invocation, then the session ledger, then `medium`',
+    'the level never decreases mid-run',
     'nativeSubagentsOnly', 'write-subagents', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
     'positive safe integer', 'omission defaults to one',
   ]) assert.ok(config.includes(term), term);

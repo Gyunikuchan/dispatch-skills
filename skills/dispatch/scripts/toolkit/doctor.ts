@@ -10,7 +10,7 @@ import type { Level } from './types.ts';
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 type Writer = { models: string[]; effort: string | null };
 type Explorer = Writer & { deep: boolean };
-type ExplorerConfig = Partial<Record<Level, { model: string | string[]; effort?: string; deep?: boolean }>>;
+type ExplorerConfig = { model: string | string[]; effort?: string; deep?: boolean };
 
 export function doctorReport(session: string, skillRoot: string, requested?: unknown) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
@@ -36,8 +36,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
         };
       }
       const explorerTable = loaded.config['explore-subagents'] as Record<string, ExplorerConfig>;
-      for (const [platform, levels] of Object.entries(explorerTable)) {
-        const entry = resolveLevel(levels, level)!;
+      for (const [platform, entry] of Object.entries(explorerTable)) {
         explorers[platform] = {
           models: typeof entry.model === 'string' ? [entry.model] : entry.model,
           effort: entry.effort ?? null,

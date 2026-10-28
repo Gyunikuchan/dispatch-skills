@@ -232,7 +232,7 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
 test('diagnostics config renders explore-subagents', () => {
-  const config = { 'explore-subagents': { codex: { low: { model: 'gpt-6-luna', effort: 'low', deep: true } } } };
+  const config = { 'explore-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', deep: true } } };
   const sanitized = sanitizeFacts(facts({ config }));
   assert.deepEqual(sanitized.config?.['explore-subagents'], config['explore-subagents']);
   const text = render([facts({ config })]);

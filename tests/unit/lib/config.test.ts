@@ -35,24 +35,23 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'))), []);
 });
 
-test('explore-subagents validates level entries and a boolean deep', () => {
+test('explore-subagents validates a flat entry and a boolean deep', () => {
   const valid = {
     ...minimal,
     'explore-subagents': {
       codex: {
-        low: { model: 'fast-explorer', effort: 'low', deep: true },
-        high: { model: 'strong-explorer', deep: false },
+        model: 'fast-explorer', effort: 'low', deep: true,
       },
     },
   };
   assert.deepEqual(validateConfig(valid), []);
 
   const invalidCases: Array<[unknown, RegExp]> = [
-    [{ bogus: { low: { model: 'fast-explorer' } } }, /explore-subagents: unknown platform "bogus"/],
+    [{ bogus: { model: 'fast-explorer' } }, /explore-subagents: unknown platform "bogus"/],
     [{ codex: { bogus: { model: 'fast-explorer' } } }, /explore-subagents\.codex has unrecognized key "bogus"/],
-    [{ codex: { low: { model: 'fast-explorer', unknown: true } } }, /explore-subagents\.codex\.low has unrecognized key "unknown"/],
-    [{ codex: { low: { model: ' ' } } }, /explore-subagents\.codex\.low\.model must be a nonblank string/],
-    [{ codex: { low: { model: 'fast-explorer', deep: 'yes' } } }, /explore-subagents\.codex\.low\.deep must be a boolean/],
+    [{ codex: { low: { model: 'fast-explorer' } } }, /explore-subagents\.codex has unrecognized key "low"/],
+    [{ codex: { model: ' ' } }, /explore-subagents\.codex\.model must be a nonblank string/],
+    [{ codex: { model: 'fast-explorer', deep: 'yes' } }, /explore-subagents\.codex\.deep must be a boolean/],
   ];
   for (const [table, expected] of invalidCases) {
     assert.match(validateConfig({ ...minimal, 'explore-subagents': table }).join(' '), expected);

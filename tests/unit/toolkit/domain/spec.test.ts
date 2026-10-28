@@ -16,19 +16,18 @@ function spec(parts: Partial<Record<string, string | null>> = {}, order?: readon
   return `# Spec\n\n> **Status:** draft\n\n${headings.filter((h) => bodies[h] !== null).map((h) => section(h, bodies[h]!)).join('\n')}`;
 }
 
-const codes = (source: string, level: 'low' | 'medium' = 'medium') => {
-  const result = parseSpec(source, { level });
+const codes = (source: string) => {
+  const result = parseSpec(source);
   return [...(result.ok ? [] : result.defects), ...result.warnings].map((d) => d.code);
 };
 
-test('spec lint reports missing sections by level', () => {
-  assert.ok(parseSpec(spec(), { level: 'medium' }).ok);
+test('spec lint requires every template section', () => {
+  assert.ok(parseSpec(spec()).ok);
 
-  const lowSource = spec({ Background: null, Decisions: null, 'Discussion Record': null, 'Open Questions': null });
-  assert.ok(parseSpec(lowSource, { level: 'low' }).ok);
-  assert.deepEqual(codes(lowSource, 'medium'), ['missing-section', 'missing-section', 'missing-section', 'missing-section']);
+  const incomplete = spec({ Background: null, Decisions: null, 'Discussion Record': null, 'Open Questions': null });
+  assert.deepEqual(codes(incomplete), ['missing-section', 'missing-section', 'missing-section', 'missing-section']);
 
-  assert.deepEqual(codes(spec({ Constraints: null }), 'low'), ['missing-section']);
+  assert.deepEqual(codes(spec({ Constraints: null })), ['missing-section']);
 });
 
 test('spec lint: section order reports an out-of-order section', () => {
@@ -37,7 +36,7 @@ test('spec lint: section order reports an out-of-order section', () => {
 });
 
 test('spec lint: ids are returned in order', () => {
-  const result = parseSpec(spec(), { level: 'medium' });
+  const result = parseSpec(spec());
   assert.ok(result.ok);
   assert.deepEqual(result.spec.reqIds, ['REQ-1', 'REQ-2']);
   assert.deepEqual(result.spec.decIds, ['DEC-1']);
@@ -65,7 +64,7 @@ test('spec lint: a decision heading that uses a plan ID form is colliding-id', (
 });
 
 test('spec lint: ids in prose are not defects', () => {
-  assert.ok(parseSpec(spec({ 'Intent & Problem': 'Cites SC1, T2, I01, and R1-F1.' }), { level: 'medium' }).ok);
+  assert.ok(parseSpec(spec({ 'Intent & Problem': 'Cites SC1, T2, I01, and R1-F1.' })).ok);
 });
 
 test('spec lint: ids absent from requirements are missing-requirement', () => {
@@ -78,7 +77,7 @@ test('spec lint: acceptance bullet is required per requirement', () => {
 
 test('spec lint reports invalid IDs and missing acceptance in duplicated Requirements sections', () => {
   const source = `${spec()}\n## Requirements\n### T9 — Shadow\n- Acceptance: hidden.\n\n### REQ-3 — Unchecked\nNo check.\n`;
-  const result = parseSpec(source, { level: 'medium' });
+  const result = parseSpec(source);
   assert.ok(!result.ok);
   const found: string[] = [...result.defects, ...result.warnings].map((d) => d.code);
   for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance']) assert.ok(found.includes(code), `${code} in ${found.join(',')}`);
@@ -94,18 +93,16 @@ test('spec lint reports duplicated Decisions sections and malformed decision IDs
 
 
 test('spec human layout: At a Glance is required first and long paragraphs warn', () => {
-  for (const level of ['low', 'medium', 'high'] as const) {
-    const missing = parseSpec(spec({ 'At a Glance': null }), { level });
-    assert.ok(missing.ok);
-    assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
-    const moved = spec().replace('## At a Glance\n- Specs explain the work.\n', '').replace('## Background', '## At a Glance\n- Specs explain the work.\n\n## Background');
-    const reordered = parseSpec(moved, { level });
-    assert.ok(reordered.ok);
-    assert.ok(reordered.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
-    const source = spec({ Background: Array(61).fill('word').join(' ') });
-    const long = parseSpec(source, { level });
-    assert.ok(long.ok);
-    assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
-    assert.deepEqual(long.spec.reqIds, ['REQ-1', 'REQ-2']);
-  }
+  const missing = parseSpec(spec({ 'At a Glance': null }));
+  assert.ok(missing.ok);
+  assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
+  const moved = spec().replace('## At a Glance\n- Specs explain the work.\n', '').replace('## Background', '## At a Glance\n- Specs explain the work.\n\n## Background');
+  const reordered = parseSpec(moved);
+  assert.ok(reordered.ok);
+  assert.ok(reordered.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
+  const source = spec({ Background: Array(61).fill('word').join(' ') });
+  const long = parseSpec(source);
+  assert.ok(long.ok);
+  assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
+  assert.deepEqual(long.spec.reqIds, ['REQ-1', 'REQ-2']);
 });

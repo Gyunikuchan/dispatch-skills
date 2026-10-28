@@ -6,15 +6,24 @@ Use for design, plan, implement and every review kind. Ask needs no spec. The [s
 
 Follow a supplied plan or design's Parent pins to the governing spec; an increment plan follows its design. An explicit review spec must agree with settled governing intent. Otherwise reuse the single session spec. Investigate ambiguity before selecting a file.
 
-When none exists, author `<session>/<slug>.spec.md` from the full chat and inspected artifacts. Preserve constraints, alternatives, rejected options and actual user decisions; label inferred requirements. Lint the spec and resolve parse errors before downstream authoring. Preserve an existing canonical spec's path.
+When a verb needs a new spec, including `review` when no spec exists, use this sequence:
 
-Before authoring a spec, design or plan, ground any domain that needs many files read using [grounding guidance](grounding.md).
+1. **Ground.** Ground the domain under [grounding guidance](grounding.md) before intent refinement. Derive explorer questions from the request.
+2. **Refine.** When the host provides `grilling`, invoke it by name after grounding at every level. Its first decision-tree node checks scope and splits independent subsystems before detailed questions. Use context maps or follow-up explorers for facts, not grilling subagents. Continue until no user decision is open; map its output into the canonical spec as best effort. If `grilling` is unavailable, skip it without adding a replacement clarification round.
+3. **Author.** Write `<session>/<slug>.spec.md` from the full chat, grounding and grilling output. Preserve constraints, alternatives, rejected options and actual user decisions; label inferences as `(assumption)` constraints or put them in Open Questions. Lint the spec and resolve parse errors before downstream authoring. Preserve an existing canonical spec's path.
+4. **Confirm.** In one exchange, present stated and assumed intent separately and recommend `plan` or `design` from the scope check; when `grilling` was unavailable, use grounded scope. Keep an explicit user verb unless that scope contradicts it; if so, explain and recommend the other verb.
 
 Direct other planning skills' output into this canonical owner. Merge stray material before removing it; deleting tracked work follows the user gate.
 
 ## Approval
 
-Confirm new-spec intent with the user before planning. At medium and above, implementation uses one approval tuple for the current spec, plan and optional design hashes, with actual user words. Design approval precedes increment planning and is recorded with the first plan's tuple. At low, show governing artifacts in the report. Standalone review settlement does not add an approval gate. See [approval records](toolkit.md#approval).
+Confirm new-spec intent at the end of [Resolve and author](#resolve-and-author), before planning. At medium and above, implementation uses one approval tuple for the current spec, plan and optional design hashes, with actual user words. Design approval precedes increment planning and is recorded with the first plan's tuple. At low, show governing artifacts in the report. Standalone review settlement does not add an approval gate. See [approval records](toolkit.md#approval).
+
+## Run level
+
+Preserve an explicit level. Otherwise, after the plan or design is authored and linted, propose a level with a reason and present it for user confirmation in the Plan or design approval Decision Frame. Record the selected level as an orchestrator `level` ledger entry before the first review so `review run` uses it. For design, set the level before design review and carry it to increment plans.
+
+When review or implementation finds more complexity, raise the level up to `high` and record it in the ledger. Never lower it mid-run; `xhigh` and `max` require user selection. `ask` and standalone review resolve the level from explicit input, then the ledger, then `medium`. See the [level rubric](readme/configuration.md#understand-levels-and-pins).
 
 ## Readers and document layers
 

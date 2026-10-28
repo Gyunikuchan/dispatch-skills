@@ -64,7 +64,7 @@ describe('lint severity', () => {
   });
   test('requirements block while decision heading defects warn', async () => {
     assert.equal((await lint('a.spec.md', SPEC.replace('REQ-1', 'REQ-x'))).exit, 4);
-    const missing = parseSpec(SPEC.replace('## Requirements', '## Other'), {level: 'medium'});
+    const missing = parseSpec(SPEC.replace('## Requirements', '## Other'));
     assert.equal(missing.ok, false);
     const r = await lint('a.spec.md', SPEC.replace('DEC-1', 'DEC-x'));
     assert.equal(r.exit, 0);

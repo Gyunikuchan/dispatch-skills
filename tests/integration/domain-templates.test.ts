@@ -151,15 +151,13 @@ test('readable artifact templates: human layout sections, callouts, details and 
     assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
   });
 
-  await t.test('templates: spec template skeleton lints at low and medium', () => {
+  await t.test('templates: spec template skeleton lints cleanly', () => {
     const template = readFileSync(new URL('spec.md', root), 'utf8').replace(/\r\n/g, '\n');
     const source = template.split('````markdown\n')[1]!.split('````')[0]!
       .replace('### REQ-<n> — <title>', '### REQ-1 — Concrete title').replace('### DEC-<n> — <title>', '### DEC-1 — Concrete title');
-    for (const level of ['low', 'medium'] as const) {
-      const result = parseSpec(source, { level });
-      assert.ok(result.ok, `${level}: ${JSON.stringify(result)}`);
-      assert.deepEqual(result.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), [], level);
-    }
+    const result = parseSpec(source);
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.deepEqual(result.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), []);
   });
 
 });

@@ -155,7 +155,7 @@ Refusals: positional arguments or invalid filters.
 ### doctor run
 
 Arguments: `doctor run --session <session> [--level <level>]`.
-Result path: integrity, configuration path/problems, selected level and configured writer models/efforts. Doctor does not probe provider/mode availability, authentication or sandbox support.
+Result path: integrity, configuration path/problems, explorer models/efforts per platform independent of level, selected level and configured writer models/efforts. `--level` selects writer models. Doctor does not probe provider/mode availability, authentication or sandbox support.
 Refusals: positional arguments or invalid configuration. Inspect ok and reason for failed integrity or unavailable capabilities.
 
 ### status show

@@ -140,12 +140,12 @@ function checkLevelConfig(where: string, value: unknown, problems: string[], all
   if (allowDeep && 'deep' in value && typeof value['deep'] !== 'boolean') problems.push(where + '.deep must be a boolean (' + HINT + ').');
 }
 
-function checkLevelMap(where: string, value: unknown, problems: string[], allowDeep = false): void {
+function checkLevelMap(where: string, value: unknown, problems: string[]): void {
   if (!isRecord(value)) { problems.push(`${where} must be an object keyed by level (${HINT}).`); return; }
   if (!Object.keys(value).length) problems.push(`${where} must define at least one level (${HINT}).`);
   for (const [key, entry] of Object.entries(value)) {
     if (!LEVELS.includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${LEVELS.join(', ')} (${HINT}).`);
-    else checkLevelConfig(`${where}.${key}`, entry, problems, allowDeep);
+    else checkLevelConfig(`${where}.${key}`, entry, problems);
   }
 }
 
@@ -245,7 +245,7 @@ export function validateConfig(config: unknown): string[] {
   const write = config['write-subagents'];
   if (write !== undefined) checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
   const explore = config['explore-subagents'];
-  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelMap(where, entry, problems, true));
+  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelConfig(where, entry, problems, true));
   if (config['phases'] !== undefined) checkPhases(config['phases'], readKeys, problems);
   return problems;
 }

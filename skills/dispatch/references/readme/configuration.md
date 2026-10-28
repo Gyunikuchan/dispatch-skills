@@ -14,7 +14,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
-| `explore-subagents` | Optional | Native explorer models for grounding the host before planning |
+| `explore-subagents` | Optional | One native explorer entry per platform; `deep` applies only to initial grounding |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
@@ -44,13 +44,11 @@ Replace the provider and model names with choices available in your environment.
 
 Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The level determines which configured model choices and review policy apply. If a target has no exact match, Dispatch uses its nearest configured lower level; when none exists, it uses the lowest configured higher level. Missing fields are not copied between level entries.
 
-When no level is supplied, the host agent chooses `low`, `medium`, or `high` from the likely impact and recovery cost:
-
 - `low` fits localized, routine, reversible work such as copy, documentation, isolated presentation changes, or pure tests when no runtime or domain invariant changes.
 - `medium` is the normal level for bounded behavior in one feature or subsystem, such as validation, forms, flags, contained refactors, or backward-compatible integration. Use it when uncertainty is meaningful but failures remain observable and recoverable.
 - `high` requires a credible consequential risk: financial or data-integrity errors, persisted-format or journal-replay invariants, security or write authority, an incompatible external contract that could materially harm callers, or cross-boundary failures that are difficult to recover. A large diff, changed external contract, finance repository, or state-machine file alone does not require high; a small rate-precision change can, while a broad reversible accessibility change may not.
 
-Every implementation run receives one more assessment after its plan and baseline are concrete, immediately before the first production write. This also covers inline baseline hotfixes and the first implementation child of a design. A classified run adopts that assessment. An explicit level stays in force; Dispatch reports a higher assessment. Retries, later phases, accepted scope changes, and later design increments keep the settled level. `xhigh` and `max` remain user-selected. Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
+An explicit level stays in force. Otherwise, Dispatch proposes a level with a reason after it authors and lints a plan or design, then records it before the first review. That review uses the recorded level; you confirm the proposal with artifact approval after review. For a design, record the level before design review and carry it to its increment plans. Review or implementation may raise the level up to `high` and record the change when they find more complexity; the level never decreases mid-run. `xhigh` and `max` require your explicit choice. `ask` and standalone `review` resolve the level from the invocation, then the session ledger, then `medium`. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
 
 Pins affect one invocation:
 
@@ -77,7 +75,7 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup"
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity, configuration validity and configured writer models at the selected level. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
+Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
 
 If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
 
@@ -89,7 +87,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
-`explore-subagents` configures native, read-only explorers for broad domain reading before the host writes a spec, design, plan, or answer. Set a model and effort for each host platform and level. `deep: true` launches two explorers with different strategies, doubling explorer cost for broader coverage.
+`explore-subagents` configures native, read-only explorers for domain grounding. Define one `{ model, effort?, deep? }` entry per platform; explorer choices do not depend on run level. `deep: true` launches two strategies for initial grounding. Dispatch can also launch one explorer for an unanswered question at any stage; `deep` does not affect these follow-ups.
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).

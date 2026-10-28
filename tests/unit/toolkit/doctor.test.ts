@@ -54,7 +54,7 @@ test('doctor report resolves writers and level and reports integrity and config 
   } finally { f.cleanup(); }
 });
 
-test('doctor reports explorers with deep for the selected level', async () => {
+test('doctor reports explorers independent of level', async () => {
   const f = sessionFixture();
   try {
     const skill = path.join(f.root, 'skill');
@@ -65,10 +65,7 @@ test('doctor reports explorers with deep for the selected level', async () => {
     fs.writeFileSync(config, JSON.stringify({
       'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
       'explore-subagents': {
-        codex: {
-          low: { model: 'fast-explorer', effort: 'low' },
-          high: { model: 'strong-explorer', effort: 'medium', deep: true },
-        },
+        codex: { model: 'fast-explorer', effort: 'low', deep: true },
       },
     }));
     const run = async (args: string[] = []) => {
@@ -78,9 +75,9 @@ test('doctor reports explorers with deep for the selected level', async () => {
     };
 
     const high = await run(['--level', 'high']);
-    assert.deepEqual(high.explorers, { codex: { models: ['strong-explorer'], effort: 'medium', deep: true } });
-    const medium = await run(['--level', 'medium']);
-    assert.deepEqual(medium.explorers, { codex: { models: ['fast-explorer'], effort: 'low', deep: false } });
+    assert.deepEqual(high.explorers, { codex: { models: ['fast-explorer'], effort: 'low', deep: true } });
+    const low = await run(['--level', 'low']);
+    assert.deepEqual(low.explorers, high.explorers);
 
     fs.writeFileSync(config, JSON.stringify({ 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } } }));
     const absent = await run();
