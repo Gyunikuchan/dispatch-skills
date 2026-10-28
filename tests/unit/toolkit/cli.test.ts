@@ -2,13 +2,59 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test } from 'node:test';
+import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+
+function useMemoryAtomicWrite(): () => void {
+  const writeAtomic = nodeLinkFs.writeAtomic;
+  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
+  return () => { nodeLinkFs.writeAtomic = writeAtomic; };
+}
 
 describe('toolkit CLI contract', () => {
+  test('commit retries distinguish corrupt correction metadata from completed retries', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const head = 'a'.repeat(40), reason = 'repair bounded SHOULD';
+      const directory = path.join(f.session, '.state/worktrees/integration');
+      fs.mkdirSync(directory, {recursive:true});
+      await appendRecord(f.session, {kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'dispatch/test/integration',base:'b'.repeat(40),dest:{path:f.root,branch:'main'}}}, f.deps);
+      const prefix = `dispatch fix: ${reason}\n\nDispatch-Fix: ${readManifest(f.session).safeSessionId}\n`;
+      const metadata = reviewFixIdentity({review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:'b'.repeat(40)});
+      let message = '';
+      f.deps.run = async (argv) => {
+        const args = argv.slice(1);
+        if (args.join(' ') === 'rev-parse HEAD') return {exit:0,stdout:head,stderr:''};
+        if (args[0] === 'diff' || args[0] === 'ls-files') return {exit:0,stdout:'',stderr:''};
+        if (args[0] === 'log') return {exit:0,stdout:message,stderr:''};
+        throw Error('Unexpected Git call: ' + JSON.stringify(argv));
+      };
+      for (const trailers of [
+        `Dispatch-Review-Fix: ${metadata.digest}\nDispatch-Review-Fix-Data: broken`,
+        `Dispatch-Review-Fix: sha256:${'0'.repeat(64)}\nDispatch-Review-Fix-Data: ${metadata.data}`,
+        `Dispatch-Review-Fix: ${metadata.digest}\nDispatch-Review-Fix: ${metadata.digest}\nDispatch-Review-Fix-Data: ${metadata.data}`,
+      ]) {
+        message = prefix + trailers;
+        f.lines.length = 0;
+        assert.equal(await main(['worktree','commit','--reason',reason,'--session',f.session],f.deps),1);
+        assert.equal(f.output().reason,'invalid-review-fix');
+        assert.equal(foldLedger(f.session).records.filter(row=>row.data['phase']==='fix').length,0);
+      }
+      message = prefix + `Dispatch-Review-Fix: ${metadata.digest}\nDispatch-Review-Fix-Data: ${metadata.data}`;
+      f.lines.length = 0;
+      assert.equal(await main(['worktree','commit','--reason',reason,'--session',f.session],f.deps),0);
+      f.lines.length = 0;
+      assert.equal(await main(['worktree','commit','--reason',reason,'--session',f.session],f.deps),4);
+      assert.equal(f.output().reason,'no-changes');
+    } finally { f.cleanup(); }
+  });
   test('usage errors print one line without a result path', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({memory:true});
     try {
       for (const args of [['unknown', 'run'], ['lint', 'unknown'], ['lint', 'run'], ['lint', 'run', '--session', f.root]]) {
         f.lines.length = 0;
@@ -23,7 +69,7 @@ describe('toolkit CLI contract', () => {
     } finally { f.cleanup(); }
   });
   test('handlers persist success refusals and unexpected faults', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({memory:true});
     try {
       for (const [reason, exit] of [['invalid-input', 1], ['invalid-record', 1], ['user-only', 1], ['missing-key', 1], ['approval-stale', 1], ['key-conflict', 2], ['ledger-corrupt', 2], ['fault', 2], ['lock-held', 3], ['lint-errors', 4]] as const) {
         f.lines.length = 0;
@@ -45,7 +91,7 @@ describe('toolkit CLI contract', () => {
     } finally { f.cleanup(); }
   });
   test('output write failure reports fault without a path', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({memory:true});
     try {
       assert.equal(await main(['lint', 'run', '--session', f.session], { ...f.deps,
         handler: async () => ({ ok: true, summary: 'done', value: {}, exit: 0 }),
@@ -57,7 +103,8 @@ describe('toolkit CLI contract', () => {
   });
 
   test('plan and design ruling appends update only the matching findings section', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({memory:true});
+    const restoreAtomicWrite = useMemoryAtomicWrite();
     try {
       const spec = f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nKeep work recoverable.\n');
       const plan = f.artifact('work.plan.md', '# Work\n\n## Review Findings & Resolutions\nPlan driver note.\n\n## Next\nPlan stays intact.\n');
@@ -84,7 +131,7 @@ describe('toolkit CLI contract', () => {
       const designBefore = fs.readFileSync(design, 'utf8');
       const planResult = await append('plan-ruling', { kind: 'ruling', by: 'orchestrator', key: 'plan-ruling', data: { subject: `review:${planReview}:R1-F001`, ruling: 'accepted', rationale: 'Plan fix applied' } });
       assert.equal(planResult.exit, 0);
-      assert.equal(planResult.value['findingsSection'], 'updated');
+      assert.equal(planResult.value['findingsSection'], 'updated', JSON.stringify(planResult.value));
       assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
       assert.equal(fs.readFileSync(design, 'utf8'), designBefore);
 
@@ -96,11 +143,12 @@ describe('toolkit CLI contract', () => {
       assert.equal(designResult.value['findingsSection'], 'updated');
       assert.match(fs.readFileSync(design, 'utf8'), /Round 1 \(design-strategy\.design\): 1 findings/);
       assert.equal(fs.readFileSync(plan, 'utf8'), planAfter);
-    } finally { f.cleanup(); }
+    } finally { restoreAtomicWrite(); f.cleanup(); }
   });
 
   test('deduped ruling retry refreshes a skipped findings section', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({memory:true});
+    const restoreAtomicWrite = useMemoryAtomicWrite();
     try {
       const spec = f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nKeep work recoverable.\n');
       const plan = f.artifact('work.plan.md', '# Work\n\n## Review Findings & Resolutions\nDriver note.\n');
@@ -132,6 +180,6 @@ describe('toolkit CLI contract', () => {
       assert.equal(retried.value['deduped'], true);
       assert.equal(retried.value['findingsSection'], 'updated');
       assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
-    } finally { f.cleanup(); }
+    } finally { restoreAtomicWrite(); f.cleanup(); }
   });
 });

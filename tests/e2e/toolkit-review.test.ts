@@ -217,3 +217,49 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
     }finally{f.cleanup();}
   }
 });
+
+test('rejected missing-red ruling settles later rounds after the target moves',async()=>{
+  const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
+    const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
+    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
+    f.deps.skillRoot=skill;f.deps.liveness={claude:true};f.deps.orchestrator=null;
+    f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
+    await f.level('high');await f.approve();
+    const launch=async(text:string)=>{
+      const made=await f.run(['worktree','create','T1']);assert.equal(made.exit,0,JSON.stringify(made.output));
+      fs.writeFileSync(path.resolve(f.session,made.value.path,'src/file.ts'),text);
+      assert.equal((await f.run(['worktree','submit','T1'])).exit,0);assert.equal((await f.run(['worktree','integrate','T1'])).exit,0);
+    };
+    const review=async()=>{const result=await f.run(['review','run','T1','--kind','code']);assert.equal(result.exit,0,JSON.stringify(result.output));return JSON.parse(fs.readFileSync(result.value.path,'utf8'));};
+    await launch('first\n');const first=await review();assert.ok(first?.findings,JSON.stringify(first));
+    const gap=first.findings.find((finding:any)=>finding.defect.startsWith('missing-red: T1 SC1;'));
+    assert.ok(gap,JSON.stringify(first));
+    await appendRecord(f.session,{kind:'ruling',key:'reject-missing-red',by:'orchestrator',data:{subject:'review:'+first.review+':'+gap.id,ruling:'rejected',rationale:'The wrapper exit proves the test failed before the fix'}},f.deps);
+    await launch('second\n');const second=await review();
+    assert.equal(second.findings.some((finding:any)=>finding.defect.startsWith('missing-red: T1 SC1;')),false);
+    assert.equal(second.escalations.some((row:any)=>row.key.startsWith('missing-red:')),false);
+    await launch('third\n');const third=await review();
+    assert.equal(third.findings.some((finding:any)=>finding.defect.startsWith('missing-red: T1 SC1;')),false);
+    assert.equal(third.escalations.some((row:any)=>row.key.startsWith('missing-red:')),false);
+  }finally{f.cleanup();}
+});
+
+test('wrapper RED exit suppresses missing-red without a report section',async()=>{
+  const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
+    const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
+    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
+    f.deps.skillRoot=skill;f.deps.liveness={claude:true};f.deps.orchestrator=null;
+    f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
+    await f.level('high');await f.approve();
+    const made=await f.run(['worktree','create','T1']);assert.equal(made.exit,0,JSON.stringify(made.output));
+    fs.writeFileSync(path.resolve(f.session,made.value.path,'src/file.ts'),'changed\n');
+    assert.equal((await f.run(['worktree','submit','T1'])).exit,0);
+    const launch=foldLedger(f.session).records.findLast(row=>row.kind==='writer'&&row.data['phase']==='finished')!.data['launch'];
+    const redDir=path.join(f.session,'.state','briefs','T1-'+launch+'.red');fs.mkdirSync(redDir,{recursive:true});
+    fs.writeFileSync(path.join(redDir,'SC1.exit'),JSON.stringify({status:1,signal:null,error:null})+'\n');
+    const result=await f.run(['review','run','T1','--kind','code']);assert.equal(result.exit,0,JSON.stringify(result.output));
+    const findings=JSON.parse(fs.readFileSync(result.value.path,'utf8'));
+    assert.equal(findings.findings.some((finding:any)=>finding.defect.startsWith('missing-red: T1 SC1;')),false);
+    assert.equal(findings.escalations.some((row:any)=>row.key.startsWith('missing-red:')),false);
+  }finally{f.cleanup();}
+});

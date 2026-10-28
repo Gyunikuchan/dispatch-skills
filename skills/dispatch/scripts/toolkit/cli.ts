@@ -195,7 +195,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      final: {type:'boolean'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
+      final: {type:'boolean'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');

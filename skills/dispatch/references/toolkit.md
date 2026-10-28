@@ -31,7 +31,7 @@ Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 ### report complete
 
 Arguments: `report complete --session <session>`.
-Result path: completed walkthrough path, criterion statuses, deviations and optional diagnostics path.
+Result path: completed walkthrough path, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, the walkthrough reports the reviewed baseline separately from each correction and marks each as verified but not re-reviewed. Plan/design correction attribution stays orchestrator-authored: explain the baseline, correction and verification in the walkthrough; the toolkit does not parse edit rationale for finding attribution.
 Refusals: review-confirmation-required, no-integration, criteria-unmet or undelivered. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
@@ -54,9 +54,9 @@ Refusals: approval-chain gate, wrong-task, no-pending-integration or unresolved-
 
 ### worktree commit
 
-Arguments: `worktree commit --session <session> --reason <reason>`.
-Result path: integration fix commit and reason; use after direct accepted fixes.
-Refusals: blank reason, integration-pending or no-changes.
+Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file>]`.
+Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes.
+Refusals: blank reason, integration-pending, no-changes or invalid review-fix metadata.
 
 ### worktree abort
 
@@ -70,9 +70,15 @@ Arguments: `worktree prune --session <session>`.
 Result path: declared targets and source/result commits, or an idempotent completed result.
 Refusals: unsafe-transient-target, unsafe-integration, missing-final-command, transient-command-dependency, integration-pending, prune-unintegrated-tasks, prune-open-writers, integration-dirty, prune-prechecks-required, prune-review-required or prune-transition-stale. No-transient plans keep existing verification and delivery behavior.
 
-Run after all tasks integrate, checks pass and code review of the exact committed integration HEAD is complete. Review must inspect retained durable or FINAL coverage; explicit command-path checks cannot prove opaque runner or glob semantics. Settle command corrections, rerun checks and re-review before pruning. At least one nonempty FINAL command is required even with a durable Covered by criterion. A projected command that explicitly names a deletion target blocks pruning.
+Run after all tasks integrate and checks pass. A completed full review normally covers the exact committed integration HEAD. The narrow cap-ending SHOULD exception below is the only alternate review baseline. Review must inspect retained durable or FINAL coverage; explicit command-path checks cannot prove opaque runner or glob semantics. Settle command corrections, rerun checks and re-review before pruning. At least one nonempty FINAL command is required even with a durable Covered by criterion. A projected command that explicitly names a deletion target blocks pruning.
 
 The tool preflights the whole declared set before recording: only tracked NEW transient Tests may be deleted. It refuses support files, durable sharing, baseline files, path escapes, case collisions, links and directories. It rechecks containment before each unlink. Preflight refusal deletes nothing. A later failure retains already completed declared deletions for recovery; this is not an atomic filesystem transaction.
+
+#### Cap-ending SHOULD corrections
+
+For a final completed review round at or above the configured cap, a contiguous chain of recorded SHOULD correction commits may settle without another review solely for those fixes. This includes a final round reached after a MUST-driven continuation. Each integration fix record may include reviewFix metadata with review (the review ID), round (the round number), generation (the generation number), findings (a nonempty list of finding IDs) and from (the full reviewed code commit). worktree commit validates the metadata structure; prune checks the accepted SHOULD findings and correction scope against the saved final full review, requires no later review and current verification, and refuses unrelated or unverified changes. Unrelated changes and unverified corrections do not qualify.
+
+Keep the reviewed commit as the baseline and report each correction as verified but not re-reviewed. Accepted MUST fixes still require review, pending MUST rejections still require confirmation, and CONSIDER handling is unchanged.
 
 The integrate prune-started record binds artifact hashes, exact reviewed commit/tree, target list and command projections. pruned adds the pure-deletion commit/tree. Retry the same call after interruption: only the recorded deletions may be missing or dirty; unrelated edits or stale identities block recovery. Keep the old pruning records and evidence.
 
@@ -174,7 +180,7 @@ data: `spec`, `plan`, optional `design` are canonical artifact paths. Allowed by
 
 ### approval
 
-data: `spec`, `plan`, optional `design` are artifact hashes, forming one approval tuple. Allowed by: user only with a nonblank quote. At medium and above, writer briefs and integration require this tuple or its non-intent edit chain.
+data: `spec`, `plan`, optional `design` are artifact hashes, forming one approval tuple. Allowed by: user only with a nonblank quote. At medium and above, writer briefs and integration require this tuple; recorded non-intent edits may carry it forward to the current hashes.
 
 ### level
 
@@ -202,7 +208,7 @@ data: text. Allowed by: user, orchestrator, tool.
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; the orchestrator explains the reviewed baseline, correction and verification in the walkthrough. The toolkit does not parse edit rationale for finding attribution. Include every edit as a walkthrough deviation.
 
 ### evidence
 
@@ -214,7 +220,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

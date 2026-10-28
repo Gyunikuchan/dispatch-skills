@@ -2,9 +2,9 @@
 
 Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`. Follow applicable host rules. Run no Git write commands.
 
-Read the governing spec whole: `{{specPath}}` ({{specHash}}).
+Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). Compare governed hashes with the values from `lint run`; raw file SHA-256 values differ.
 {{design}}
-Governing plan: `{{planPath}}` ({{planHash}}).
+Governing plan: `{{planPath}}` (governed hash {{planHash}}).
 
 1. For each criterion with `RED:`, write failing tests first and run its RED command to observe the failures. Use its generated command under RED capture commands when present.
 2. Classify intermediate step, helper and branch-permutation checks as transient in isolated declared host-runner paths. Justify durable tests under the canonical quality bar below; local coverage is optional implementation feedback. Run full modified logical test files and known impacted consumers before aggregate checks. Implement the task until each Verify command and each contract command passes. If a needed path is outside scope, or a plan detail is wrong or infeasible, report the evidence to the orchestrator. Keep plan edits with the orchestrator.

@@ -70,3 +70,21 @@ test('invalid-record rejections name the field and its expected shape', () => {
   ];
   for(const [record,message] of cases)assert.throws(()=>validateRecord(record),(error: Error)=>message.test(error.message),String(message));
 });
+
+test('cap-ending SHOULD fixes validate integration metadata',()=>{
+ const commit='a'.repeat(40),reviewFix={review:'code-integration',round:3,generation:2,findings:['R3-F001'],from:commit};
+ const record=(metadata:unknown)=>validateRecord({kind:'integrate',by:'tool',data:{phase:'fix',commit,reason:'repair accepted SHOULD',...(metadata===undefined?{}:{reviewFix:metadata})}});
+ assert.doesNotThrow(()=>record(reviewFix));
+ assert.doesNotThrow(()=>record(undefined));
+ for(const invalid of [
+  {...reviewFix,round:0},
+  {...reviewFix,generation:-1},
+  {...reviewFix,findings:[]},
+  {...reviewFix,findings:['R3-F001',' ']},
+  {...reviewFix,findings:['R3-F001','R3-F001']},
+  {...reviewFix,from:'bad'},
+  {...reviewFix,extra:true},
+ ])assert.throws(()=>record(invalid),{reason:'invalid-record'});
+ assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{phase:'done',task:'T1',commit,reviewFix}}),{reason:'invalid-record'});
+ assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{phase:'opened',path:'p',branch:'b',base:commit,dest:{path:'repo',branch:'main'},reviewFix}}),{reason:'invalid-record'});
+});

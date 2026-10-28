@@ -81,6 +81,46 @@ function content(record: RecordInput | LedgerRecord): string {
   });
 }
 
+type ApprovalChainResult = { allowed: true } | { allowed: false; reason: 'unrecorded-change' | 'intent-change' };
+function approvalChain(fold: Fold, artifact: string, approved: string, current: string | null | undefined, approvalSeq?: number): ApprovalChainResult {
+  const edits = fold.records.filter(row => row.kind === 'edit' && row.data['artifact'] === artifact);
+  const walk = (start: string, rows: readonly LedgerRecord[]) => {
+    let hash = start;
+    for (const edit of rows) {
+      if (edit.data['before'] !== hash) return { allowed: false as const, reason: 'unrecorded-change' as const };
+      if (edit.data['class'] !== 'non-intent') return { allowed: false as const, reason: 'intent-change' as const };
+      hash = edit.data['after'] as string;
+    }
+    return { allowed: true as const, hash };
+  };
+  const before = approvalSeq === undefined ? edits : edits.filter(row => row.seq < approvalSeq);
+  const baselines = [approved];
+  // Earlier edit history is unrelated when a later recorded edit starts from the approved hash.
+  const chainStart = before.findLastIndex(edit => edit.data['before'] === approved);
+  if (chainStart >= 0) {
+    const chain = walk(approved, before.slice(chainStart));
+    if (chain.allowed && chain.hash !== approved) baselines.push(chain.hash);
+  }
+  if (approvalSeq === undefined) {
+    return current !== null && current !== undefined && baselines.includes(current)
+      ? { allowed: true }
+      : { allowed: false, reason: 'unrecorded-change' };
+  }
+
+  const after = edits.filter(row => row.seq > approvalSeq);
+  let baselineOneFailure: ApprovalChainResult | undefined;
+  for (const baseline of baselines) {
+    const chain = walk(baseline, after);
+    if (!chain.allowed) {
+      baselineOneFailure ??= chain;
+      continue;
+    }
+    if (chain.hash === current) return { allowed: true };
+    baselineOneFailure ??= { allowed: false, reason: 'unrecorded-change' };
+  }
+  return baselineOneFailure ?? { allowed: false, reason: 'unrecorded-change' };
+}
+
 export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
 export async function appendRecord(session: string, input: unknown, deps: LockDeps): Promise<{ seq: number; deduped: boolean }> {
   return withLedger(session, 'ledger append', deps, tx => tx.append(input));
@@ -119,8 +159,12 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
     }
     if (record.kind === 'approval') {
       const hashes = currentHashes(root, bind);
-      if (!bind || stableValue(hashes) !== stableValue(record.data)) {
-        throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts');
+      const artifacts = Object.keys(bind?.data ?? {}).sort();
+      const approvedArtifacts = Object.keys(record.data).sort();
+      if (!bind || stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
+        !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed)) {
+        const current = Object.entries(hashes).map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`).join('; ');
+        throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''));
       }
     }
     if (record.kind === 'edit' && !Object.hasOwn(bind?.data ?? {}, record.data['artifact'])) {
@@ -196,13 +240,8 @@ export function gate(fold: Fold, current: Hashes, level?: string): { allowed: bo
     return { allowed: false, reason: 'missing-approval' };
   }
   for (const artifact of artifacts) {
-    let hash = approval.data[artifact];
-    for (const edit of fold.records.filter(row => row.seq > approval.seq && row.kind === 'edit' && row.data['artifact'] === artifact)) {
-      if (edit.data['before'] !== hash) return { allowed: false, reason: 'unrecorded-change', artifact };
-      if (edit.data['class'] !== 'non-intent') return { allowed: false, reason: 'intent-change', artifact };
-      hash = edit.data['after'];
-    }
-    if (hash !== current[artifact as ArtifactKind]) return { allowed: false, reason: 'unrecorded-change', artifact };
+    const chain = approvalChain(fold, artifact, approval.data[artifact], current[artifact as ArtifactKind], approval.seq);
+    if (!chain.allowed) return { ...chain, artifact };
   }
   return { allowed: true };
 }

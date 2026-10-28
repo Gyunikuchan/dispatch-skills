@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { fakeGit } from './helpers/fake-git.ts';
@@ -238,5 +239,56 @@ test('uncommitted consumers render the working-tree delivery from source with it
  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'delivered',mode:'uncommitted',dest:{path:f.root,branch:'main'},from:'c'.repeat(40),source:HEAD}},f.deps);
  const result=await invoke(f,'report','render');assert.equal(result.exit,0);const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
  assert.match(text,/uncommitted changes from source aaaaaaaaaaaa in main working tree; ref refs\/dispatch\/[^\s/]+\/delivered-source/);assert.doesNotMatch(text,/delivered [0-9a-f]{12} to main/);
+ }finally{f.cleanup();}
+});
+
+test('cap-ending SHOULD fixes report baseline and correction separately',async()=>{
+ const f=await fixture(1);try{
+  await completeFixture(f);
+  const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:'c'.repeat(40)};
+  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit:'d'.repeat(40),reason:'repair accepted SHOULD',reviewFix}},f.deps);
+  const result=await invoke(f,'report','render');assert.equal(result.exit,0);
+  const value=JSON.parse(fs.readFileSync(result.output.path!,'utf8')) as {reviewFixes:{commit:string;metadata:typeof reviewFix;status:string}[];reviewedCodeBaseline?:string};
+  assert.equal(value.reviewFixes.length,1);assert.equal(value.reviewFixes[0]!.commit,'d'.repeat(40));assert.deepEqual(value.reviewFixes[0]!.metadata,reviewFix);assert.equal(value.reviewFixes[0]!.status,'not verified');
+  assert.equal(value.reviewedCodeBaseline,undefined);
+  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/R3-F001/);assert.match(text,/not verified/i);assert.doesNotMatch(text,/verified but not re-reviewed/i);
+ }finally{f.cleanup();}
+});
+
+test('nontransient SHOULD correction reports verified without artifact fields on evidence',async()=>{
+ const f=await fixture(1);try{
+  const state=await completeFixture(f),baseline=state.head,commit='d'.repeat(40),tree='e'.repeat(40),reason='repair accepted SHOULD';
+  state.head=commit;state.tree=tree;state.testedTree=tree;state.changes=[{status:'M',path:'src/task-1.ts'},{status:'A',path:'src/shared.ts'}];
+  const fold=foldLedger(f.session),artifacts=currentHashes(f.root,latest(fold,'bind'));
+  const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline};
+  const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');
+  const finding={id:'R3-F001',severity:'SHOULD',category:'correctness',locus:'src/task-1.ts:L1',defect:'The assertion is wrong',requiredChange:'Correct the assertion',sources:['reviewer'],scope:'in',fix:{paths:['src/task-1.ts','src/shared.ts'],dependencies:[],verification:[]}};
+  writeJson(path.join(reviewDir,'round.json'),{round:3,generation:1,cap:3,startSeq:fold.lastSeq,target:{base:'c'.repeat(40),head:baseline},scope:'Full review',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
+  writeJson(path.join(reviewDir,'findings.json'),{review:'code-integration',round:3,findings:[finding],failed:[]});
+  writeJson(path.join(reviewDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'FINDINGS',findings:[{severity:'SHOULD',locus:'src/task-1.ts:L1',tag:'correctness',defect:finding.defect,requiredChange:finding.requiredChange}]})});
+  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-nontransient-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed'}},f.deps);
+  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit,reason,reviewFix}},f.deps);
+  for(const check of checks(loadPlan(f.session,readManifest(f.session))))await appendRecord(f.session,{kind:'evidence',by:'tool',data:{criterion:check.criterion,commandDigest:check.commandDigest,tree,clean:true,before:tree,after:tree,exit:0,path:'.state/evidence/'+check.criterion+'.json'}},f.deps);
+  const metadata=reviewFixIdentity(reviewFix),message=[`dispatch fix: ${reason}`,'',`Dispatch-Fix: ${readManifest(f.session).safeSessionId}`,`Dispatch-Review-Fix: ${metadata.digest}`,`Dispatch-Review-Fix-Data: ${metadata.data}`,''].join('\n');
+  const git=fakeGit(state);f.deps.run=async(argv)=>{
+   const args=argv.slice(1),output=(stdout='')=>({exit:0,stdout,stderr:''});
+   if(args[0]==='rev-list'&&args[1]==='--reverse'&&args[2]==='--parents')return output(`${commit} ${baseline}\n`);
+   if(args[0]==='diff-tree'&&args.includes(commit))return output('src/task-1.ts\0src/shared.ts\0');
+   if(args[0]==='log'&&args[1]==='-1'&&args[2]==='--format=%B'&&args[3]===commit)return output(message);
+   return git(argv);
+  };
+  const result=await invoke(f,'report','render');assert.equal(result.exit,0);
+  const value=JSON.parse(fs.readFileSync(result.output.path!,'utf8')) as {reviewedCodeBaseline?:string;reviewFixes:{status:string;verification?:{criteria:string[];contract:string[];tree:string}}[]};
+  assert.equal(value.reviewedCodeBaseline,baseline);assert.equal(value.reviewFixes[0]!.status,'verified but not re-reviewed');
+  assert.deepEqual(value.reviewFixes[0]!.verification?.criteria,['SC1']);assert.deepEqual(value.reviewFixes[0]!.verification?.contract,['contract']);assert.equal(value.reviewFixes[0]!.verification?.tree,tree);
+  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');assert.match(text,/verified but not re-reviewed/i);assert.match(text,/SC1/);assert.match(text,/contract/);
+  const nextDir=path.join(f.session,'.state/reviews/code-integration/round-4');
+  writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
+  writeJson(path.join(nextDir,'findings.json'),{review:'code-integration',round:4,findings:[],failed:[]});
+  writeJson(path.join(nextDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'CLEAN',findings:[]})});
+  const reviewed=await invoke(f,'report','render');assert.equal(reviewed.exit,0);
+  const reviewedValue=JSON.parse(fs.readFileSync(reviewed.output.path!,'utf8'));
+  assert.deepEqual(reviewedValue.reviewFixes,[]);
+  assert.doesNotMatch(fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8'),/Code Review Corrections/);
  }finally{f.cleanup();}
 });

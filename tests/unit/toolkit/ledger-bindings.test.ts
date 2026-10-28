@@ -93,3 +93,113 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
     f.cleanup();
   }
 });
+
+test('approval accepts a recorded non-intent chain and stale approvals list current hashes', async () => {
+  const boundPlan = async () => {
+    const f = sessionFixture({ memory: true });
+    let n = 0;
+    const add = (kind: string, data: object, extra: object = {}) => appendRecord(
+      f.session, { kind, data, by: 'orchestrator', key: 'approval-chain-' + n++, ...extra }, f.deps,
+    );
+    const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    const edit = (before: string, after: string, editClass = 'non-intent') => add('edit', {
+      artifact: 'plan', before, after, class: editClass, affects: [], rationale: 'Record the plan edit', diffRef: 'test diff',
+    });
+    const approve = (data: object) => add('approval', data, { by: 'user', quote: 'I approve the plan I reviewed' });
+    f.artifact('s.spec.md', 'Spec');
+    f.artifact('p.plan.md', 'A');
+    await add('bind', { spec: 's.spec.md', plan: 'p.plan.md' });
+    return { f, hashes, edit, approve };
+  };
+  const scenario = async (exercise: (context: Awaited<ReturnType<typeof boundPlan>>) => Promise<void>) => {
+    const context = await boundPlan();
+    try { await exercise(context); } finally { context.f.cleanup(); }
+  };
+  const assertStale = async (append: () => Promise<unknown>, current: ReturnType<typeof currentHashes>) => {
+    await assert.rejects(append(), (error: unknown) => {
+      const failure = error as { reason?: string; message?: string };
+      assert.equal(failure.reason, 'approval-stale');
+      for (const [artifact, hash] of Object.entries(current)) {
+        assert.ok(failure.message?.includes(`current: ${artifact} ${hash}`), failure.message);
+      }
+      return true;
+    });
+  };
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const approved = hashes();
+    f.artifact('p.plan.md', 'B');
+    const afterEdit = hashes();
+    await edit(approved.plan!, afterEdit.plan!);
+    await approve(approved);
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: true });
+
+    f.artifact('p.plan.md', 'D');
+    const afterPostApprovalEdit = hashes();
+    await edit(afterEdit.plan!, afterPostApprovalEdit.plan!);
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: true });
+    f.artifact('p.plan.md', 'unrecorded');
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: false, reason: 'unrecorded-change', artifact: 'plan' });
+  });
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const approved = hashes();
+    f.artifact('p.plan.md', 'B');
+    const changed = hashes();
+    await edit(approved.plan!, changed.plan!, 'intent');
+    f.artifact('p.plan.md', 'A');
+    const reverted = hashes();
+    await edit(changed.plan!, reverted.plan!);
+    await approve(approved);
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: true });
+  });
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const originallySeen = hashes();
+    f.artifact('p.plan.md', 'B');
+    const recorded = hashes();
+    await edit(originallySeen.plan!, recorded.plan!);
+    f.artifact('p.plan.md', 'C');
+    const current = hashes();
+    await approve(current);
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: true });
+  });
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const approvedA = hashes();
+    f.artifact('p.plan.md', 'C');
+    const hashC = hashes().plan!;
+    f.artifact('p.plan.md', 'A');
+    const hashA = hashes().plan!;
+    await edit(hashC, hashA);
+    f.artifact('p.plan.md', 'B');
+    const hashB = hashes().plan!;
+    await edit(hashA, hashB);
+    f.artifact('p.plan.md', 'C');
+    const current = hashes();
+    await edit(hashB, current.plan!);
+    await approve(approvedA);
+    assert.deepEqual(gate(foldLedger(f.session), hashes()), { allowed: true });
+  });
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const approved = hashes();
+    f.artifact('p.plan.md', 'B');
+    const current = hashes();
+    await edit(approved.plan!, current.plan!, 'intent');
+    await assertStale(() => approve(approved), hashes());
+  });
+
+  await scenario(async ({ f, hashes, edit, approve }) => {
+    const approved = hashes();
+    f.artifact('p.plan.md', 'B');
+    const hashB = hashes().plan!;
+    await edit(approved.plan!, hashB);
+    f.artifact('p.plan.md', 'unrelated');
+    const unrelated = hashes().plan!;
+    f.artifact('p.plan.md', 'C');
+    const current = hashes();
+    await edit(unrelated, current.plan!);
+    await assertStale(() => approve(approved), current);
+  });
+});

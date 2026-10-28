@@ -14,7 +14,9 @@ A settled DEC may resolve an intent claim autonomously: cite it in the rationale
 
 Keep the actual reviewed revision and scope. After edits, choose continued review coverage from changed paths, accepted fixes and disputed claims; do not imply that a previous review covered newer bytes. Preserve earlier findings and rulings. A failed provider or missing coverage remains visible.
 
-Level policy selects roster and round caps. The cap bounds quality rounds. An accepted MUST fix or a pending MUST rejection earns continuation past the cap. Recurrence and rejection escalations stop non-converging loops. A cap-ending SHOULD or CONSIDER fix remains unreviewed until another actual review covers it; do not switch targets or invent coverage to close a finding.
+Level policy selects roster and round caps. The cap bounds quality rounds. An accepted MUST fix or a pending MUST rejection earns continuation past the cap. Recurrence and rejection escalations stop non-converging loops.
+
+For the final completed review round at or above the configured cap, apply accepted SHOULD findings from that round and record each correction with its current verification. This also covers the final round after a MUST-driven continuation. These fixes need no review solely for themselves; keep the completed review as the reviewed baseline and report corrections as verified but not re-reviewed. Use this exception only for recorded fixes of accepted SHOULD findings from that round; unrelated edits and unverified fixes require review. Accepted MUST fixes still require review, and pending MUST rejections still require confirmation. CONSIDER handling is unchanged.
 
 ## Rulings and fix scope
 

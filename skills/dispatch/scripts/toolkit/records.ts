@@ -5,6 +5,7 @@ import { ToolError } from './output.ts';
 export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate'] as const;
 export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; data: Record<string, any> };
 export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: string };
+export type ReviewFix = { review: string; round: number; generation: number; findings: string[]; from: string };
 type Rule = (value: unknown, field: string) => void;
 
 // Naming the expected shape lets the caller correct the record in one turn.
@@ -24,10 +25,16 @@ const bool = check('a boolean', (value) => typeof value === 'boolean');
 const string = check('a string', (value) => typeof value === 'string');
 const seq = check('a non-negative integer', (value) => Number.isSafeInteger(value) && (value as number) >= 0);
 const launch = check('a positive ledger seq', (value) => Number.isSafeInteger(value) && (value as number) > 0);
+const positive = check('a positive integer', (value) => Number.isSafeInteger(value) && (value as number) > 0);
 const choice = (...values: string[]): Rule => check('one of ' + values.join(', '), (value) => values.includes(value as string));
 const array: Rule = shaped('an array of non-blank strings', (value, field) => {
   if (!Array.isArray(value)) invalid(field, shapeOf(array));
   (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
+});
+const reviewFindings: Rule = shaped('a non-empty array of unique finding IDs', (value, field) => {
+  if (!Array.isArray(value) || value.length === 0) invalid(field, shapeOf(reviewFindings));
+  (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
+  if (new Set(value as string[]).size !== (value as unknown[]).length) invalid(field, shapeOf(reviewFindings));
 });
 
 const describe = (fields: Record<string, Rule>, optional: string[] = []) => 'an object with ' + Object.keys(fields).map((key) => optional.includes(key) ? key + '?' : key).join(', ');
@@ -46,6 +53,7 @@ const nested = (fields: Record<string, Rule>, optional: string[] = []): Rule => 
 
 const dest = nested({ branch: text, path: text });
 const artifacts = nested({ spec: hash, plan: hash, design: hash }, ['design']);
+const reviewFix = nested({ review: text, round: positive, generation: positive, findings: reviewFindings, from: git });
 const shapes: Record<string, Record<string, Rule>> = {
   bind: { spec: text, plan: text, design: text },
   approval: { spec: hash, plan: hash, design: hash },
@@ -83,7 +91,7 @@ const integrations: Record<string, Record<string, Rule>> = {
   conflict: { task: text, paths: array },
   done: { task: text, commit: git },
   abandoned: { task: text, candidate: git, reason: text },
-  fix: { commit: git, reason: text },
+  fix: { commit: git, reason: text, reviewFix },
   'deliver-started': { mode: choice('uncommitted'), dest, from: git, source: git },
   delivered: { mode: choice('uncommitted'), dest, from: git, source: git, noop: bool },
   closed: { reason: text },
@@ -106,7 +114,7 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : [];
+  const optional = ['bind', 'approval'].includes(value.kind) ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
@@ -120,6 +128,11 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     throw new ToolError(1, 'missing-key', 'record.key is required');
   }
   return value;
+}
+
+export function validateReviewFix(input: unknown): ReviewFix {
+  reviewFix(input, 'reviewFix');
+  return input as ReviewFix;
 }
 
 export function defaultKey(record: RecordInput): string {

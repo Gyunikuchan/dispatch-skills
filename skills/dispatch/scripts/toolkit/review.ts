@@ -274,15 +274,27 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           const launch = launches(currentFold, task).findLast(launch => launch.finished && (requested !== 'integration' || launch.finished.seq < (integrated?.seq ?? 0)));
           const reportFile = path.join(session, '.state/briefs', task + '-' + launch?.launch + '.report.md');
           const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : undefined;
-          for (const gap of redGaps({plan, task, changed: captured.changed, report})) {
+          const taskCriteria = plan.tasks.find(candidate => candidate.id === task)?.criteria;
+          const redCriteria = plan.criteria.filter(criterion => taskCriteria?.includes(criterion.id) && criterion.evidence === 'red' && criterion.red && !criterion.redException);
+          const redExits = new Map<string, number | null>();
+          for (const criterion of redCriteria) {
+            let wrapper: {status?: unknown} | null;
+            try { wrapper = read(path.join(session, '.state/briefs', task + '-' + launch?.launch + '.red', criterion.id + '.exit')); }
+            catch (error) { if (error instanceof SyntaxError) continue; throw error; }
+            if (wrapper && (typeof wrapper.status === 'number' || wrapper.status === null)) redExits.set(criterion.id, wrapper.status);
+          }
+          for (const gap of redGaps({plan, task, changed: captured.changed, report, redExits})) {
             const defect = 'missing-red: ' + task + ' ' + gap.criterion;
+            const priorGaps = [...prior].reverse().flatMap(value => value.findings.map(finding => ({round: value.round, finding})))
+              .filter(value => value.finding.defect.startsWith(defect + ';'));
+            if (priorGaps.some(({finding}) => settledRulings.some(row => row.data['subject'] === 'review:' + review + ':' + finding.id && row.data['ruling'] === 'rejected'))) continue;
             const file = path.resolve(manifest.repositoryRoot, bind.data['plan']);
             const finding: Finding & {unresolved?: {of: string}} = {
               id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'), severity: 'SHOULD', category: 'testing',
               locus: file + ':L' + gap.line, defect: defect + '; Tests touched: ' + (gap.testsTouched ? 'yes' : 'no'),
               requiredChange: "Show the criterion's test failing before the fix in the writer report", sources: ['tool'], scope: 'in',
             };
-            const previous = [...prior].reverse().flatMap(value => value.findings.map(finding => ({round: value.round, finding}))).find(value => value.finding.defect.startsWith(defect + ';'));
+            const previous = priorGaps[0];
             if (previous) {
               const previousTarget = priorTargets[previous.round];
               const changed = requested === 'integration'

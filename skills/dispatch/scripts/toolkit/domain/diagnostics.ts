@@ -306,7 +306,7 @@ const PREFLIGHT = ['scripts/toolkit/doctor.ts', 'Detect this condition in the pr
 const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
-  quota: ['references/providers.md', "Check model quota or plan before the next run, or add another model alias to the voice's model array; quota limits may be shared."],
+  quota: ['references/providers.md', 'Reorder or remove the exhausted model alias, or check its quota; quota limits may be shared.'],
   timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
   'context-overflow': ['scripts/toolkit/prompts.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
@@ -332,7 +332,28 @@ export function heuristics(run: RunFacts): Finding[] {
   for (const [cls, items] of groups(wasted, failureClass)) {
     const [component, fix] = FAILURE_FIXES[cls] ?? DEFAULT_FIX;
     const spent = sum(items.map((i) => i.durationMs));
-    add('H1', 'correctness', component, `\`${cls}\`: ${items.length} of ${plural(cli.length, 'CLI attempt')} failed (${tally(items.map((i) => i.provider))})${spent === undefined ? '' : `, ${formatDuration(spent)} of driver time`}.`, 'Failed attempts delay the wave and trigger retries or cascade launches.', fix);
+    const quota = cls === 'quota';
+    const attempts = tally(items.map((i) => quota ? `${i.provider}/${i.model}` : i.provider));
+    let recovery = '';
+    if (quota) {
+      const indexOf = new Map(run.invocations.map((item, index) => [item, index]));
+      const routed = new Set(['next-model', 'next-mode', 'reserve']);
+      const recovered = items.filter((failedItem) => {
+        if (!failedItem.subject || !failedItem.slot || !routed.has(failedItem.routingOutcome ?? '')) return false;
+        const failedIndex = indexOf.get(failedItem);
+        if (failedIndex === undefined) return false;
+        return run.invocations.slice(failedIndex + 1).some((later) => {
+          if (later.surface !== 'cli' || !later.launched || later.subject !== failedItem.subject || later.outcome !== 'ok'
+            || (later.validationOutcome !== undefined && later.validationOutcome !== 'ok')) return false;
+          const retried = later.slot === failedItem.slot && failedItem.attempt !== undefined
+            && later.attempt !== undefined && later.attempt > failedItem.attempt;
+          const reserved = later.slot !== undefined && later.slot !== failedItem.slot && later.targetSlot === failedItem.slot;
+          return retried || reserved;
+        });
+      }).length;
+      recovery = `, ${recovered} recovered by fallback`;
+    }
+    add('H1', 'correctness', component, `\`${cls}\`: ${items.length} of ${plural(cli.length, 'CLI attempt')} failed (${attempts})${recovery}${spent === undefined ? '' : `, ${formatDuration(spent)} of driver time`}.`, 'Failed attempts delay the wave and trigger retries or cascade launches.', fix);
   }
   for (const [key, rows] of groups(run.reviews, (r) => r.phase ?? '')) {
     const rounds = Math.max(...rows.map((r) => r.round));
@@ -373,7 +394,9 @@ export function heuristics(run: RunFacts): Finding[] {
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
     if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured uncached tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
-  if (run.rejectedTools?.length) add('H8','correctness','scripts/toolkit/records.ts',`${plural(run.rejectedTools.length,'toolkit operation')} rejected (${tally(run.rejectedTools.map(e=>e.tool+' '+e.action+': '+e.cls))}).`,'Rejected operations can require another host turn.','Return the allowed input shape and current preconditions with the rejection.');
+  for (const [component, items] of groups(run.rejectedTools ?? [], (item) => item.cls === 'approval-stale' || item.cls === 'key-conflict' ? 'scripts/toolkit/ledger.ts' : 'scripts/toolkit/records.ts')) {
+    add('H8', 'correctness', component, `${plural(items.length, 'toolkit operation')} rejected (${tally(items.map((item) => item.tool + ' ' + item.action + ': ' + item.cls))}).`, 'Rejected operations can require another host turn.', 'Return the allowed input shape and current preconditions with the rejection.');
+  }
   // One relaunch without a recorded cause is not a pattern.
   if ((run.relaunches ?? 0) >= 2) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches!,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');
   return bySeverity(out);

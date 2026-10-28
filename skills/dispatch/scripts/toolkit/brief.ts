@@ -121,7 +121,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     task, worktree,
     specPath: bind.data['spec'], specHash: snapshot.hashes.spec!,
     planPath: bind.data['plan'], planHash: snapshot.hashes.plan!,
-    design: bind.data['design'] ? 'Governing design: `' + bind.data['design'] + '` (' + snapshot.hashes.design + ').' : '',
+    design: bind.data['design'] ? 'Governing design: `' + bind.data['design'] + '` (governed hash ' + snapshot.hashes.design + ').' : '',
     shared: parsed.plan.sharedContext, section, criteria, quality,
     reportPath, redLogDir, redCapture: renderRedCapture(selected, task, worktree, redLogDir),
     contracts: checks(parsed.plan).find(check => check.criterion === 'contract')!.commands.map(command => '- `' + command + '`').join('\n'),

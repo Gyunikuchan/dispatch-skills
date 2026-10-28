@@ -1,10 +1,10 @@
-import { pruneTransition } from './prune.ts';
+import { pruneTransition, reviewIdentity, type ReviewIdentity } from './prune.ts';
 import { hasTransient } from './plan-view.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { criterionStatuses, type CriterionStatus } from './evidence.ts';
+import { criterionStatuses, verifiedStage, type CriterionStatus, type PruneEvidence } from './evidence.ts';
 import { git, gitOk, headTree, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
@@ -14,11 +14,19 @@ import { diagnosticsEnabled, optionalDiagnostics } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import { reviewRows } from './review-findings.ts';
-import type { LedgerRecord } from './records.ts';
+import type { LedgerRecord, ReviewFix } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
 
 import { loadRejections, applicableReviewIds, type RejectionState } from './confirmations.ts';
 type Current = { headTree: string; testedTree: string };
+type ReviewFixReport = {
+  commit: string;
+  reason: string;
+  metadata: ReviewFix;
+  status: 'verified but not re-reviewed' | 'not verified';
+  paths: string[];
+  verification?: { tree: string; criteria: string[]; contract: string[]; finalTree?: string; finalChecks?: string[] };
+};
 type Snapshot = {
   fold: Fold;
   bind: LedgerRecord;
@@ -37,6 +45,8 @@ type Snapshot = {
   integrated: number;
   rejectionConfirmations: RejectionState[];
   confirmationError: string | undefined;
+  reviewedCodeBaseline: string | undefined;
+  reviewFixes: ReviewFixReport[];
 };
 type ReportFacts = Snapshot & {
   view: WalkthroughView;
@@ -84,9 +94,49 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     }
   }
   const checkRows = checks(plan);
-  let transition;
+  let transition:PruneEvidence|null|undefined;
   let invalidPruning=false;
   if(hasTransient(plan)) {try{transition=await pruneTransition(ctx,fold,plan,true);}catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;invalidPruning=true;}}
+  let fixRecords=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['reviewFix']);
+  let reviewedCodeBaseline:string|undefined;
+  let corrections:ReviewIdentity|undefined;
+  const completedPrune=fold.records.findLast(record=>record.kind==='integrate'&&record.data['phase']==='pruned');
+  const reviewHead=typeof completedPrune?.data['from']==='string'?completedPrune.data['from']:head;
+  if(fixRecords.length&&integrationPath&&integration&&reviewHead&&typeof integration.data['base']==='string') {
+    try {
+      corrections=await reviewIdentity(ctx,fold,integrationPath,reviewHead,integration.data['base']);
+      reviewedCodeBaseline=corrections.baseline;
+    } catch(error) {
+      if(!(error instanceof ToolError&&error.reason==='prune-review-required'))throw error;
+    }
+  }
+  if(corrections)fixRecords=fixRecords.filter(record=>record.seq>corrections!.startSeq);
+  const correctionVerified=():boolean=>{
+    if(!fixRecords.length||!corrections||!checkRows.length)return false;
+    if(hasTransient(plan)) {
+      if(!transition||!current||current.headTree!==current.testedTree)return false;
+      const history={...fold,records:fold.records.filter(record=>record.seq<transition!.sourceSeq)};
+      const source={headTree:transition.sourceTree,testedTree:transition.sourceTree};
+      return verifiedStage(history,checkRows,source,transition.artifacts)&&verifiedStage(fold,transition.final,current,transition.artifacts);
+    }
+    return !!current&&verifiedStage(fold,checkRows,current,undefined);
+  };
+  const hasCurrentVerification=correctionVerified();
+  const reviewFixes:ReviewFixReport[]=fixRecords.map(record=>{
+    const metadata=record.data['reviewFix'] as ReviewFix;
+    const accepted=corrections?.corrections.find(correction=>correction.commit===record.data['commit']&&correction.seq===record.seq);
+    const verification=accepted&&hasCurrentVerification?{
+      tree:transition?.sourceTree??current!.headTree,
+      criteria:checkRows.filter(check=>check.criterion!=='contract').map(check=>check.criterion),
+      contract:checkRows.filter(check=>check.criterion==='contract').map(check=>check.criterion),
+      ...(transition?{finalTree:current!.headTree,finalChecks:transition.final.map(check=>check.criterion)}:{}),
+    }:undefined;
+    return {
+      commit:String(record.data['commit']),reason:String(record.data['reason']),metadata,
+      status:verification?'verified but not re-reviewed':'not verified',paths:accepted?.paths??[],
+      ...(verification?{verification}:{}),
+    };
+  });
   const statusRows = invalidPruning?checkRows.map(c=>({criterion:c.criterion,state:'missing' as const,reason:'pruning or final verification required'})):criterionStatuses(fold, checkRows, current,transition);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
   const deliveredAtHead = Boolean(delivered && head && delivered.data['source'] === head);
@@ -101,8 +151,25 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   return {
     fold, bind, plan, planPath, planStem, specPath, specHash,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
-    integrated: integrated.size,rejectionConfirmations,confirmationError,
+    integrated: integrated.size,rejectionConfirmations,confirmationError,reviewedCodeBaseline,reviewFixes,
   };
+}
+
+function codeSpan(value: unknown): string {
+  const text=JSON.stringify(value)??String(value);
+  const longest=Math.max(0,...(text.match(/`+/g)??[]).map(run=>run.length));
+  const delimiter='`'.repeat(longest+1);
+  return delimiter+text+delimiter;
+}
+function renderReviewFixes(baseline:string|undefined,fixes:readonly ReviewFixReport[]):string {
+  if(!fixes.length)return '';
+  const lines=['## Code Review Corrections',''];
+  if(baseline)lines.push(`Reviewed code baseline: ${codeSpan(baseline)}.`,'');
+  for(const fix of fixes) {
+    lines.push(`- Correction ${codeSpan(fix.commit)} from ${codeSpan(fix.metadata.from)}; findings ${codeSpan(fix.metadata.findings)}; changed paths ${codeSpan(fix.paths)}; status: ${codeSpan(fix.status)}; reason ${codeSpan(fix.reason)}; metadata ${codeSpan(fix.metadata)}.`);
+    if(fix.verification)lines.push(`  - Current evidence: tree ${codeSpan(fix.verification.tree)}; criteria ${codeSpan(fix.verification.criteria)}; contract ${codeSpan(fix.verification.contract)}${fix.verification.finalTree?`; final tree ${codeSpan(fix.verification.finalTree)}; final checks ${codeSpan(fix.verification.finalChecks)}`:''}.`);
+  }
+  return lines.join('\n');
 }
 
 function parseNameStatus(bytes: string): { status: string; path: string }[] {
@@ -242,14 +309,20 @@ function resultValue(facts: ReportFacts, session: string, walkthroughPath: strin
     userRecords: facts.userRecords,
     delivered: facts.view.delivered,
     rejectionConfirmations:facts.rejectionConfirmations,confirmationError:facts.confirmationError,
+    reviewedCodeBaseline:facts.reviewedCodeBaseline,reviewFixes:facts.reviewFixes,
   };
+}
+
+function walkthroughText(facts:ReportFacts,session:string):string {
+  const walkthrough=renderWalkthrough(facts.view,session),corrections=renderReviewFixes(facts.reviewedCodeBaseline,facts.reviewFixes);
+  return corrections?walkthrough+'\n\n'+corrections+'\n':walkthrough;
 }
 
 export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'report render takes no positional arguments');
   const writeDiagnosticsEnabled = diagnosticsEnabled(ctx.deps.skillRoot);
   const facts = await reportFacts(ctx);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view, ctx.session));
+  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
   const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
@@ -290,6 +363,7 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
       value: {
         path: path.relative(ctx.session, walkthroughPath).split(path.sep).join('/'),
         statuses: snapshot.statuses,
+        reviewedCodeBaseline:snapshot.reviewedCodeBaseline,reviewFixes:snapshot.reviewFixes,
         reason: captured.refusal.reason,
         message: captured.refusal.message,
       },
@@ -297,7 +371,7 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
   }
   const facts = await materialize(ctx, captured.snapshot);
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, renderWalkthrough(facts.view, ctx.session));
+  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
   const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete') : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');

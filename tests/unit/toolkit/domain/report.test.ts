@@ -358,8 +358,67 @@ test('elapsed waits and partial usage remain explicit', () => {
 
   assert.ok(text.includes('| — | native completed |'), 'unattested native usage stays unavailable');
   const quota = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' })] })), 'H1')[0]!;
-  assert.match(quota.proposedFix, /another model alias/);
+  assert.match(quota.proposedFix, /Reorder or remove the exhausted model alias, or check its quota/);
+  assert.doesNotMatch(quota.proposedFix, /add another model alias/);
   assert.doesNotMatch(quota.proposedFix, /each model has its own quota/);
+});
+
+test('H1 quota names model and fallback recoveries and H8 cites the rejecting module', () => {
+  const quotaFailure = (subject: string, slot: string, overrides: Partial<InvocationFacts> = {}) => invocation({
+    provider: 'agy', model: 'gemini-4-argon', outcome: 'quota', subject, slot, attempt: 1, ...overrides,
+  });
+  const quotaFinding = (invocations: InvocationFacts[]) => assertShape(
+    only(heuristics(facts({ invocations })), 'H1').find(item => item.evidence.startsWith('`quota`')),
+    'correctness',
+  );
+  const repeatedAttempts = quotaFinding([
+    quotaFailure('aaaaaaaaaaaaaaaa', 'agy[0]', { routingOutcome: 'next-model' }),
+    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'aaaaaaaaaaaaaaaa', slot: 'agy[0]', attempt: 2 }),
+    quotaFailure('bbbbbbbbbbbbbbbb', 'agy[1]', { routingOutcome: 'next-model' }),
+    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'bbbbbbbbbbbbbbbb', slot: 'agy[1]', attempt: 2 }),
+  ]);
+  assert.match(repeatedAttempts.evidence, /agy\/gemini-4-argon ×2/);
+  assert.match(repeatedAttempts.evidence, /2 recovered by fallback/);
+  assert.match(repeatedAttempts.proposedFix, /Reorder or remove the exhausted model alias, or check its quota/);
+
+  const reserveFallback = quotaFinding([
+    quotaFailure('cccccccccccccccc', 'agy[2]', { routingOutcome: 'next-model' }),
+    quotaFailure('cccccccccccccccc', 'agy[2]', { attempt: 2, routingOutcome: 'reserve' }),
+    invocation({ provider: 'claude', model: 'sonnet', subject: 'cccccccccccccccc', slot: 'claude[0]', targetSlot: 'agy[2]' }),
+  ]);
+  assert.match(reserveFallback.evidence, /agy\/gemini-4-argon ×2/);
+  assert.match(reserveFallback.evidence, /2 recovered by fallback/);
+
+  const unrecovered = quotaFinding([
+    quotaFailure('dddddddddddddddd', 'agy[3]'),
+    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'dddddddddddddddd', slot: 'agy[3]', attempt: 2 }),
+    quotaFailure('eeeeeeeeeeeeeeee', 'agy[4]', { routingOutcome: 'stop' }),
+    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'eeeeeeeeeeeeeeee', slot: 'agy[4]', attempt: 2 }),
+    quotaFailure('ffffffffffffffff', 'agy[5]', { routingOutcome: 'native-fallback' }),
+    quotaFailure('gggggggggggggggg', 'agy[6]', { routingOutcome: 'next-model' }),
+    invocation({ provider: 'claude', model: 'sonnet', outcome: 'timeout', subject: 'gggggggggggggggg', slot: 'agy[6]', attempt: 2 }),
+    quotaFailure('hhhhhhhhhhhhhhhh', 'agy[7]', { routingOutcome: 'next-model' }),
+    invocation({ provider: 'claude', model: 'sonnet', surface: 'native', mode: 'native', outcome: 'native-pending', nativeState: 'pending', subject: 'hhhhhhhhhhhhhhhh', slot: 'claude[1]', targetSlot: 'agy[7]' }),
+    quotaFailure('iiiiiiiiiiiiiiii', 'agy[8]', { routingOutcome: 'next-mode' }),
+    invocation({ provider: 'claude', model: 'sonnet', outcome: 'ok', validationOutcome: 'invalid', subject: 'iiiiiiiiiiiiiiii', slot: 'agy[8]', attempt: 2 }),
+    quotaFailure('jjjjjjjjjjjjjjjj', 'agy[9]', { routingOutcome: 'next-model' }),
+    invocation({ provider: 'claude', model: 'sonnet', surface: 'native', launched: false, outcome: 'ok', nativeState: 'completed', subject: 'jjjjjjjjjjjjjjjj', slot: 'claude[2]', targetSlot: 'agy[9]' }),
+  ]);
+  assert.match(unrecovered.evidence, /agy\/gemini-4-argon ×7/);
+  assert.match(unrecovered.evidence, /0 recovered by fallback/);
+
+  const rejectedTools = [
+    { tool: 'ledger', action: 'append', cls: 'approval-stale' },
+    { tool: 'ledger', action: 'append', cls: 'key-conflict' },
+    { tool: 'ledger', action: 'append', cls: 'invalid-record' },
+  ];
+  const h8 = only(heuristics(facts({ rejectedTools })), 'H8');
+  const ledger = h8.find(item => item.component === 'scripts/toolkit/ledger.ts');
+  const records = h8.find(item => item.component === 'scripts/toolkit/records.ts');
+  assert.ok(ledger);
+  assert.match(ledger.evidence, /approval-stale ×1, ledger append: key-conflict ×1/);
+  assert.ok(records);
+  assert.match(records.evidence, /invalid-record ×1/);
 });
 
 test('diagnostics report: heuristic H1 fires for CLI failures', () => {
@@ -499,7 +558,7 @@ test('heuristic precision H1 ignores quota-store skips that never launched', () 
   const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
   assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
   const [finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
-  assert.match(finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex ×2\), 2m 0s of driver time\./);
+  assert.match(finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./);
 });
 
 test('heuristic precision H9 needs two relaunches', () => {

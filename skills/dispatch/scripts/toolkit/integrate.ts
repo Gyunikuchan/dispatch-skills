@@ -1,11 +1,15 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger, gate, currentHashes, latest, type Fold, type LedgerTransaction } from './ledger.ts';
-import type { LedgerRecord } from './records.ts';
+import { validateReviewFix, type LedgerRecord, type ReviewFix } from './records.ts';
 import { git, gitOk, changedPaths } from './git.ts';
 import { ensureIntegration } from './integration.ts';
 import { launches, isStale, abandonedRef } from './writers.ts';
 import { loadPlan, taskSection } from './plan-view.ts';
 import { ToolError } from './output.ts';
+import { stableValue } from './domain/stable-value.ts';
 
 export const result=(value: unknown): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value)});
 export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
@@ -13,6 +17,38 @@ export function reason(ctx: HandlerContext): string {
   const value=ctx.values['reason'];
   if(typeof value!=='string'||!value.trim())throw new ToolError(1,'invalid-input','A non-blank --reason is required');
   return value;
+}
+export function reviewFixIdentity(value: ReviewFix): { digest: string; data: string } {
+  const canonical = stableValue(value);
+  return {
+    digest: 'sha256:' + crypto.createHash('sha256').update(canonical).digest('hex'),
+    data: Buffer.from(canonical).toString('base64url'),
+  };
+}
+export function reviewFixFromCommit(message: string): ReviewFix | undefined {
+  const digests = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix: '));
+  const values = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix-Data: '));
+  if (!digests.length && !values.length) return undefined;
+  if (digests.length !== 1 || values.length !== 1) throw new ToolError(1, 'invalid-review-fix', 'Expected one correction digest and metadata trailer');
+  const digest = digests[0]!.slice('Dispatch-Review-Fix: '.length);
+  const encoded = values[0]!.slice('Dispatch-Review-Fix-Data: '.length);
+  try {
+    const parsed = validateReviewFix(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')));
+    if (digest !== reviewFixIdentity(parsed).digest) throw new Error('Correction digest mismatch');
+    return parsed;
+  } catch {
+    throw new ToolError(1, 'invalid-review-fix', 'Correction metadata is malformed or differs from its digest');
+  }
+}
+function readReviewFix(ctx: HandlerContext): ReviewFix | undefined {
+  const file = ctx.values['review-fix'];
+  if (file === undefined) return undefined;
+  if (typeof file !== 'string' || !file.trim()) throw new ToolError(1, 'invalid-input', 'A JSON file is required for --review-fix');
+  try { return validateReviewFix(JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'))); }
+  catch (error) {
+    if (error instanceof ToolError) throw error;
+    throw new ToolError(1, 'invalid-input', 'input requires a readable review-fix JSON object');
+  }
 }
 function task(ctx: HandlerContext): string {
   if(ctx.args.length!==1)throw new ToolError(1,'invalid-input','One task ID is required');
@@ -110,19 +146,25 @@ export async function continueIntegration(ctx: HandlerContext): Promise<HandlerR
   });
 }
 export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
-  const why=reason(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
+  const why=reason(ctx); let reviewFix=readReviewFix(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
   return withLedger(ctx.session,'worktree commit',ctx.deps,async tx=>{
     const active=pending(tx.fold); if(active)refuse('integration-pending',active.data['task']);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     let hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     if((await changedPaths(ctx.deps,cwd,'HEAD')).length) {
-      await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','dispatch fix: '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId]);
+      const metadata=reviewFix?reviewFixIdentity(reviewFix):undefined;
+      const identity=metadata?['-m','Dispatch-Review-Fix: '+metadata.digest,'-m','Dispatch-Review-Fix-Data: '+metadata.data]:[];
+      await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','dispatch fix: '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
       await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     } else {
       const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
       if(message.split('\n')[0]!=='dispatch fix: '+why || !message.split('\n').includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
+      const recorded=reviewFixFromCommit(message);
+      if(recorded && reviewFix && stableValue(recorded)!==stableValue(reviewFix))refuse('no-changes');
+      if(recorded)reviewFix=recorded;
+      else if(reviewFix)refuse('no-changes');
     }
-    await tx.append({kind:'integrate',by:'tool',data:{phase:'fix',commit:hash,reason:why}}); return result({commit:hash,reason:why});
+    await tx.append({kind:'integrate',by:'tool',data:{phase:'fix',commit:hash,reason:why,...(reviewFix?{reviewFix}:{})}}); return result({commit:hash,reason:why});
   });
 }
 export async function abort(ctx: HandlerContext): Promise<HandlerResult> {

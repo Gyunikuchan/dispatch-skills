@@ -73,6 +73,24 @@ test('accepted fixes require a fresh review of the exact integration HEAD',async
  fs.writeFileSync(path.join(r.integration,target),'fixed assertion\n');assert.equal((await r.run(['worktree','commit','--reason','fix accepted assertion'])).output.ok,true);assert.equal((await r.run(['verify','run'])).output.ok,true);assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-review-required');review(r,2);assert.equal((await r.run(['worktree','prune'])).output.ok,true);
 }finally{r.cleanup();}});
 
+test('cap-ending SHOULD fixes settle without another review',async()=>{const r=await prepared();try{
+ const baseline=r.git(['rev-parse','HEAD'],r.integration),reason='repair accepted cap-ending SHOULD';
+ const finding={id:'R3-F001',severity:'SHOULD',locus:target+':L1',defect:'The transient assertion is incomplete',requiredChange:'Correct the transient assertion',sources:['reviewer'],scope:'in'};
+ review(r,3,[finding]);await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'accept-cap-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed'}},r.deps);
+ const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline},metadataFile=path.join(r.session,'review-fix.json');fs.writeFileSync(metadataFile,JSON.stringify(reviewFix));
+ fs.writeFileSync(path.join(r.integration,target),'corrected transient test\n');
+ const crash=await r.run(['worktree','commit','--reason',reason,'--review-fix',metadataFile],point=>{if(point==='commit:after-commit')throw Error('crash after commit');});assert.equal(crash.exit,2);assert.equal(foldLedger(r.session).records.some(row=>row.data['phase']==='fix'),false);
+ fs.writeFileSync(metadataFile,JSON.stringify({...reviewFix,findings:['R3-F099']}));assert.equal((await r.run(['worktree','commit','--reason',reason,'--review-fix',metadataFile])).output.reason,'no-changes');assert.equal(foldLedger(r.session).records.some(row=>row.data['phase']==='fix'),false);
+ const recovered=await r.run(['worktree','commit','--reason',reason]);assert.equal(recovered.output.ok,true,JSON.stringify(recovered));
+ const fixRecord=foldLedger(r.session).records.findLast(row=>row.kind==='integrate'&&row.data['phase']==='fix');assert.deepEqual(fixRecord?.data['reviewFix'],reviewFix);
+ assert.equal((await r.run(['worktree','prune'])).output.reason,'prune-prechecks-required');
+ assert.equal((await r.run(['verify','run'])).output.ok,true);const pruned=await r.run(['worktree','prune']);assert.equal(pruned.output.ok,true,JSON.stringify(pruned));assert.equal(pruned.value.from,fixRecord?.data['commit']);
+ assert.equal((await r.run(['verify','run','--final'])).output.ok,true);assert.equal((await r.run(['worktree','deliver'])).output.ok,true);
+ const complete=await r.run(['report','complete']);assert.equal(complete.output.ok,true,JSON.stringify(complete));
+ assert.equal(complete.value.reviewedCodeBaseline,baseline);assert.equal(complete.value.reviewFixes[0].status,'verified but not re-reviewed');
+ const walkthrough=fs.readFileSync(path.join(r.session,String(complete.value.path)),'utf8');assert.match(walkthrough,/reviewed code baseline/i);assert.match(walkthrough,/verified but not re-reviewed/i);assert.match(walkthrough,/R3-F001/);
+}finally{r.cleanup();}});
+
 test('uncommitted delivery requires verified pruned delivery',async()=>{
  const support='tests/helpers/shared.ts';
  const source=transientPlanSource.replace('| none | SC1 |','| none | SC1, SC2 |').replace('## Success Criteria','#### [NEW] '+support+'\n- Purpose: retained shared helper.\n\n## Success Criteria').replace('  - Changes: '+target,'  - Changes: '+target+', '+support).replace('  - Tests: '+target,'  - Tests: '+target+', '+support).replace('## Verification Plan','- [SC2] Coverage review\n  - Changes: '+support+'\n  - Evidence: review\n  - Review: inspect retained coverage\n\n## Verification Plan');

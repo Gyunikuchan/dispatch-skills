@@ -11,7 +11,8 @@ import type { ParsedPlan } from './domain/types.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { parseReport } from './domain/report.ts';
 import { integrationRecord } from './integration.ts';
-import { pending } from './integrate.ts';
+import { pending, reviewFixFromCommit } from './integrate.ts';
+import type { ReviewFix } from './records.ts';
 import { launches } from './writers.ts';
 import { git, gitOk, headTree, testedTree } from './git.ts';
 import { verifiedStage, type PruneEvidence } from './evidence.ts';
@@ -21,6 +22,13 @@ function rejections(ctx:HandlerContext,fold:Fold) {
   try {return loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {
     if(error instanceof ToolError && error.reason==='review-confirmation-required')return refuse('prune-review-required');
+    throw error;
+  }
+}
+function reviewRead<T>(read:()=>T):T {
+  try{return read();}
+  catch(error) {
+    if(error instanceof SyntaxError || (typeof error==='object' && error!==null && (error as NodeJS.ErrnoException).code==='ENOENT'))refuse('prune-review-required');
     throw error;
   }
 }
@@ -113,24 +121,51 @@ async function owned(ctx:HandlerContext,fold:Fold) {
       await gitOk(ctx.deps,cwd,['symbolic-ref','--short','HEAD'])!==opened.data['branch'])refuse('unsafe-integration');
   return {cwd,opened};
 }
-function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):string {
+export type ReviewCorrection = { commit:string; seq:number; reason:string; reviewFix:ReviewFix; paths:string[] };
+export type ReviewIdentity = { identity:string; baseline:string; round:number; generation:number; startSeq:number; corrections:ReviewCorrection[] };
+function safeCorrectionPath(value:unknown):string|null {
+  if(typeof value!=='string'||!value.trim())return null;
+  const normalized=value.replaceAll('\\','/');
+  if(normalized.startsWith('/')||/^[a-z]:/i.test(normalized)||normalized.split('/').some(part=>!part||part==='.'||part==='..')||path.posix.normalize(normalized)!==normalized)return null;
+  return normalized;
+}
+function correctionScope(finding:any):string[]|null {
+  if(Object.hasOwn(finding,'fix')) {
+    const fix=finding.fix;
+    if(!fix||typeof fix!=='object'||Array.isArray(fix)||!Array.isArray(fix.paths)||!fix.paths.length)return null;
+    const paths:string[]=[];
+    for(const value of fix.paths) {
+      const normalized=safeCorrectionPath(value);
+      if(!normalized)return null;
+      paths.push(normalized);
+    }
+    return [...new Set(paths)];
+  }
+  const match=typeof finding.locus==='string'?/^(.+):L[1-9]\d*$/.exec(finding.locus):null;
+  const file=match?safeCorrectionPath(match[1]):null;
+  return file?[file]:null;
+}
+export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,head:string,base:string):Promise<ReviewIdentity> {
   const states=rejections(ctx,fold);
   if(states.some(state=>state.state!=='confirmed'))refuse('prune-review-required');
   const directory=path.join(ctx.session,'.state/reviews/code-integration');
-  let names:string[];try{names=fs.readdirSync(directory).filter(n=>/^round-\d+$/.test(n)).sort((a,b)=>Number(a.slice(6))-Number(b.slice(6)));}catch{refuse('prune-review-required');}
+  const names=reviewRead(()=>fs.readdirSync(directory).filter(n=>/^round-\d+$/.test(n)).sort((a,b)=>Number(a.slice(6))-Number(b.slice(6))));
   const rounds=names.map(n=>{
     const dir=path.join(directory,n);
-    try{return {dir,round:JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8')),findings:JSON.parse(fs.readFileSync(path.join(dir,'findings.json'),'utf8'))};}catch{return null;}
+    return {dir,round:reviewRead(()=>JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8'))),findings:reviewRead(()=>JSON.parse(fs.readFileSync(path.join(dir,'findings.json'),'utf8')))};
   });
-  if(rounds.some(r=>!r))refuse('prune-review-required');
   const last=rounds.at(-1);
     if(!last)refuse('prune-review-required');
   const {round,findings}=last;
-  if(round.target?.head!==head ||
+  const baseline=round.target?.head;
+  if(typeof baseline!=='string'||!/^([a-f0-9]{40}|[a-f0-9]{64})$/.test(baseline)||
       round.target?.base!==base ||
       (!equal(round.artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind'))) ||
       round.spec?.hash!==round.artifacts?.spec) ||
       ! /^(?:Full review|Re-review round \d+ \(full\))/i.test(round.scope??'') ||
+      !Number.isSafeInteger(round.round) || round.round!==Number(last.dir.slice(last.dir.lastIndexOf('round-')+6)) ||
+      !Number.isSafeInteger(round.generation) || round.generation<1 ||
+      !Number.isSafeInteger(round.startSeq) || round.startSeq<0 ||
       !Array.isArray(round.roster) ||
       !round.roster.length ||
       !Array.isArray(findings.findings) ||
@@ -140,7 +175,7 @@ function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):st
   const targets=round.roster.filter((slot:any)=>!slot.reserve);
   if(!targets.length)refuse('prune-review-required');
   for(const slot of targets) {
-    let saved;try{saved=JSON.parse(fs.readFileSync(path.join(last.dir,'gen-'+round.generation,'slots',slot.slot+'.json'),'utf8'));}catch{refuse('prune-review-required');}
+    const saved=reviewRead(()=>JSON.parse(fs.readFileSync(path.join(last.dir,'gen-'+round.generation,'slots',slot.slot+'.json'),'utf8')));
     if(saved.slot!==slot.slot ||
       saved.state!=='done' ||
       !parseReport({kind:'code',source:slot.slot,text:saved.text}).ok)refuse('prune-review-required');files.push(saved);
@@ -148,6 +183,8 @@ function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):st
   const escalations=new Map<string,string>();for(const r of fold.records)if(r.kind==='escalation')escalations.set(r.data['id'],r.data['state']);
   if([...escalations.values()].includes('open'))refuse('prune-review-required');
   const all=rounds.flatMap(r=>r?.findings.findings??[]);
+  if(findings.findings.some((finding:any)=>!finding||typeof finding.id!=='string'||!finding.id.trim()) ||
+      new Set(findings.findings.map((finding:any)=>finding.id)).size!==findings.findings.length)refuse('prune-review-required');
   const settled=(finding:any,seen=new Set<string>()):boolean=>{
     if(seen.has(finding.id))return false;seen.add(finding.id);
     const ruling=fold.records.findLast(r=>r.kind==='ruling' &&
@@ -161,7 +198,7 @@ function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):st
     if(ruling.data['ruling']==='accepted')return ruling.seq<=round.startSeq  &&
        rounds.some(r=>r &&
       r.round.round<round.round &&
-      r.round.target?.head!==head &&
+      r.round.target?.head!==baseline &&
       r.findings.findings.some((f:any)=>f.id===finding.id))  &&
        !findings.findings.some((f:any)=>f.id===finding.id ||
       f.unresolved?.of===finding.id ||
@@ -170,8 +207,47 @@ function reviewIdentity(ctx:HandlerContext,fold:Fold,head:string,base:string):st
   };
   if(all.some((f:any)=>f.severity==='MUST' &&
       !settled(f)))refuse('prune-review-required');
-  return digest({rounds:rounds.map(r=>r &&
-      {round:r.round,findings:r.findings}),files,rulings:fold.records.filter(r=>r.kind==='ruling'&&r.data['subject'].startsWith('review:code-integration:'))});
+  const corrections:ReviewCorrection[]=[];
+  if(head!==baseline) {
+    if(!Number.isSafeInteger(round.cap)||round.cap<1||round.round<round.cap)refuse('prune-review-required');
+    const lines=await gitOk(ctx.deps,cwd,['rev-list','--reverse','--parents',baseline+'..'+head]);
+    const commits=lines.split(/\r?\n/).filter(Boolean).map(line=>line.split(' '));
+    if(!commits.length)refuse('prune-review-required');
+    let parent=baseline,lastSeq=round.startSeq;
+    const finalFindings=new Map<string,any>(findings.findings.map((finding:any)=>[finding.id,finding]));
+    for(const row of commits) {
+      const [commit,...parents]=row;
+      if(!commit||parents.length!==1||parents[0]!==parent)refuse('prune-review-required');
+      const matches=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['commit']===commit);
+      if(matches.length!==1)refuse('prune-review-required');
+      const record=matches[0]!;
+      const metadata=record.data['reviewFix'] as ReviewFix|undefined;
+      if(record.by!=='tool'||!metadata||metadata.review!=='code-integration'||metadata.round!==round.round||metadata.generation!==round.generation||metadata.from!==baseline||record.seq<=lastSeq)refuse('prune-review-required');
+      for(const id of metadata.findings) {
+        const finding=finalFindings.get(id);
+        const ruling=fold.records.findLast(candidate=>candidate.kind==='ruling'&&candidate.data['subject']==='review:code-integration:'+id);
+        if(!finding||finding.severity!=='SHOULD'||!ruling||ruling.data['ruling']!=='accepted'||!String(ruling.data['rationale']??'').trim()||ruling.seq<=round.startSeq||ruling.seq>=record.seq)refuse('prune-review-required');
+      }
+      const allowed=new Set<string>();
+      for(const id of metadata.findings) {
+        const paths=correctionScope(finalFindings.get(id));
+        if(!paths?.length)refuse('prune-review-required');
+        for(const file of paths)allowed.add(file);
+      }
+      const changes=split(await gitOk(ctx.deps,cwd,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]));
+      if(!changes.length||changes.some(file=>!allowed.has(file.replaceAll('\\','/'))))refuse('prune-review-required');
+      const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B',commit]);
+      if(message.split(/\r?\n/)[0]!=='dispatch fix: '+record.data['reason']||!message.split(/\r?\n/).includes('Dispatch-Fix: '+ctx.manifest.safeSessionId))refuse('prune-review-required');
+      let committed:ReviewFix|undefined;
+      try {committed=reviewFixFromCommit(message);}catch{refuse('prune-review-required');}
+      if(!committed||!equal(committed,metadata))refuse('prune-review-required');
+      corrections.push({commit,seq:record.seq,reason:String(record.data['reason']),reviewFix:metadata,paths:changes});
+      parent=commit;lastSeq=record.seq;
+    }
+    if(parent!==head)refuse('prune-review-required');
+  }
+  const identity=digest({rounds:rounds.map(r=>r && {round:r.round,findings:r.findings}),files,rulings:fold.records.filter(r=>r.kind==='ruling'&&r.data['subject'].startsWith('review:code-integration:')),baseline,corrections});
+  return {identity,baseline,round:round.round,generation:round.generation,startSeq:round.startSeq,corrections};
 }
 async function deletionTree(ctx:HandlerContext,cwd:string,from:string,targets:string[]) {
   const directory=path.join(ctx.session,'.state/tmp');fs.mkdirSync(directory,{recursive:true});
@@ -207,7 +283,7 @@ export async function pruneTransition(ctx:HandlerContext,fold:Fold,plan:ParsedPl
       await gitOk(ctx.deps,cwd,['rev-parse',to+'^'])!==d['from'] ||
       await gitOk(ctx.deps,cwd,['rev-parse',d['from']+'^{tree}'])!==d['sourceTree'] ||
       await deletionTree(ctx,cwd,d['from'],targets)!==d['tree'] ||
-      reviewIdentity(ctx,fold,d['from'],opened.data['base'])!==d['review'])refuse('prune-transition-stale');
+      (await reviewIdentity(ctx,fold,cwd,d['from'],opened.data['base'])).identity!==d['review'])refuse('prune-transition-stale');
   for(const target of targets)if(physical(cwd,target,true))refuse('prune-transition-stale');
   const historical={...fold,records:fold.records.filter(r=>r.seq<started.seq)};
   if(!verifiedStage(historical,d['pre'],{headTree:d['sourceTree'],testedTree:d['sourceTree']},d['artifacts']))refuse('prune-transition-stale');
@@ -244,7 +320,7 @@ export async function prune(ctx:HandlerContext):Promise<HandlerResult> {
     const sourceFold={...tx.fold,records:started?tx.fold.records.filter(r=>r.seq<started!.seq):tx.fold.records};
     const green=verifiedStage(sourceFold,pre,{headTree:sourceTree,testedTree:sourceTree},artifacts);
     prunePreconditions(tx.fold,plan,started?true:observed===tree,green);
-    const review=reviewIdentity(ctx,tx.fold,from,opened.data['base']);
+    const review=(await reviewIdentity(ctx,tx.fold,cwd,from,opened.data['base'])).identity;
     const snapshot={artifacts,from,sourceTree,targets,pre,final,review};
     const operation=digest(snapshot);
     if(started &&
@@ -273,7 +349,7 @@ export async function prune(ctx:HandlerContext):Promise<HandlerResult> {
     for(const target of targets) {await ctx.deps.hook?.('prune:before-unlink');
     if(await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])!==head ||
       !equal(artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(tx.fold,'bind'))) ||
-      reviewIdentity(ctx,tx.fold,from,opened.data['base'])!==review)refuse('prune-transition-stale');
+      (await reviewIdentity(ctx,tx.fold,cwd,from,opened.data['base'])).identity!==review)refuse('prune-transition-stale');
     if(await validateFile(target,true))fs.unlinkSync(path.join(cwd,target));
     await ctx.deps.hook?.('prune:after-delete');}
     if(await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])!==head  ||

@@ -348,3 +348,17 @@ test('writer brief keeps task behaviour and criterion fields from collapsed plan
     assert.equal(markdown.split(behaviour).length - 1, 1);
   } finally { f.cleanup(); }
 });
+
+test('brief labels governed hashes and names lint for comparison', async () => {
+  const f = await fixture(true);
+  try {
+    await f.approve(); await f.launch();
+    const rendered = await f.call();
+    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
+    const markdown = fs.readFileSync(rendered.value.path, 'utf8');
+    assert.ok(markdown.includes(`mission.spec.md\` (governed hash ${f.hashes.spec})`));
+    assert.ok(markdown.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
+    assert.ok(markdown.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
+    assert.match(markdown, /Compare governed hashes with the values from `lint run`; raw file SHA-256 values differ/i);
+  } finally { f.cleanup(); }
+});
