@@ -19,27 +19,26 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
 
-For a new spec, Dispatch grounds the domain first. When the host provides `grilling`, Dispatch runs it until no user decision remains, then writes the spec and confirms stated and assumed intent. It recommends `plan` or `design` from the scope check in that same exchange. If `grilling` is unavailable, Dispatch confirms intent after grounding. A `review` that must create a spec follows this flow too.
+A typical run:
 
-Unless you set a level explicitly, Dispatch proposes and records one after it authors and lints the plan or design, before the first review. That review uses the recorded level. Artifact approval after review confirms any proposed level; at `medium` and above, implementation approval also binds the governing spec, plan and optional design. At `low`, Dispatch shows the artifacts at handoff. Review or implementation may raise the level as complexity appears, but never lower it mid-run. For implementation, Dispatch applies the review and fix rounds enabled by the settled level before a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff. See [levels](references/readme/configuration.md#understand-levels-and-pins).
+1. **Understand the request.** Dispatch explores the relevant code first, using native explorer agents when `explore-subagents` is configured. If the [`grilling`](https://github.com/mattpocock/skills) skill is installed, it then asks you questions until no open decision remains. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
+2. **Write and review.** Dispatch writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
+3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
+4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
 
-The diagram shows a path through planning, review and implementation. Questions need no spec; code review of existing work adds no authoring approval gate. See [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
+The level can go up during a run if the work proves harder, but never down. Questions (`ask`) need no spec, and code review of existing work needs no approval. See [levels](references/readme/configuration.md#understand-levels-and-pins) and [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
 
 ```mermaid
-flowchart LR
-    You([You]) --> Host[Your current host agent]
-    Host --> Ground[Ground the domain]
-    Ground --> Grill[grilling when available]
-    Grill --> Spec[Governing spec]
-    Spec --> Confirm[Confirm stated and assumed intent<br/>and plan or design recommendation]
-    Confirm --> Artifact[Author and lint plan or design]
-    Artifact --> Level[Keep explicit level or propose and record one]
-    Level --> Delegates[Configured reviewers]
-    Delegates --> Evidence[Findings with evidence]
-    Evidence --> Approval[Approve artifact;<br/>confirm proposed level if unset]
-    Approval --> Writer[Writer for your host platform]
-    Writer --> Checks[Verification and review]
-    Checks --> You
+flowchart TD
+    User(["👤 Your request"]) --> Ground["🔍 Explore the codebase<br/>(explorer agents if configured)"]
+    Ground --> Spec["📄 Clarify and write the spec"]
+    Spec --> Artifact["📝 Write plan or design"]
+    Artifact --> Review["🎲 Independent reviewers<br/>cite evidence"]
+    Review --> Adjudicate["⚖️ Host agent checks findings<br/>and applies fixes"]
+    Adjudicate --> Approve{"You approve"}
+    Approve --> Writer["💻 Host-platform writer<br/>makes the changes"]
+    Writer --> Checks["✅ Verification + code review"]
+    Checks --> Handoff(["📦 Changes + evidence<br/>handed to you"])
 ```
 
 ### Canonical documents
@@ -49,14 +48,14 @@ Dispatch organizes work across four canonical document layers:
 - **Spec (Mission brief):** Captures intent, background, decisions, constraints, and desired outcomes. The governing contract read by all participants.
 - **Design (Strategy):** Defines overarching architecture, boundaries, risks, and ordered delivery increments.
 - **Plan (Tactics):** Details tactical execution for one coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria, and verification commands.
-- **Walkthrough (Debrief):** Gives reviewers a first-pass view of delivered behavior, where to look, and verification; expanded changes and audit evidence remain available below.
+- **Walkthrough (Debrief):** Records what was delivered, where to look, and how it was verified.
 
-- Read **At a Glance** first for the change, its purpose and how it works. Point-form prose keeps the main facts visible.
-- `> [!NOTE]` marks information you need to know; `> [!IMPORTANT]` marks a decision you must make.
-- Diagrams show flow or architecture, with a one-line text summary for an unrendered view. Mermaid in VS Code needs a preview extension.
-- Task and increment behaviour stays visible before `<details>`. Expand the block for file changes, checks and verbose detail.
+Reading tips for these documents:
 
-Authors and reviewers use the [quality bar's authoring rules](references/templates/quality-bar.md#spec).
+- Start with **At a Glance**: the change, its purpose, and how it works.
+- `> [!NOTE]` marks something you need to know; `> [!IMPORTANT]` marks a decision you must make.
+- Expand `<details>` blocks for file changes, checks, and full evidence.
+- Mermaid diagrams in VS Code need a preview extension.
 
 ## Before you start
 
@@ -83,7 +82,7 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
-Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. For a new spec, Dispatch recommends `plan` or `design` after grounding and intent refinement, then confirms the recommendation with the spec. It keeps an explicit verb unless the scope check contradicts it; if so, it explains the reason and recommends a change. `ask`, review of an existing artifact, and `implement` keep the requested verb. You can skip work you have already completed.
+Not sure between `plan` and `design`? Dispatch checks the scope and recommends one; if your choice looks wrong for the scope, it says why and suggests a switch. You can start at any step — for example, `implement` an existing plan.
 
 ## Command pattern
 
@@ -91,7 +90,7 @@ Use `design` when delivery needs multiple ordered increments, `plan` for one coh
 /dispatch [level] [(pins)] [verb:] <question, requirement, artifact, or range>
 ```
 
-- **Level**: `low`, `medium`, or `high` can be supplied explicitly. Otherwise, Dispatch proposes and records a level after it authors and lints the plan or design, before the first review. You confirm a proposed level with artifact approval after review. Choose `xhigh` or `max` explicitly. See [levels](references/readme/configuration.md#understand-levels-and-pins) for the rubric and timing.
+- **Level**: `low`, `medium`, `high`, `xhigh`, or `max` — which configured models and how much review. If omitted, Dispatch proposes `low`–`high` for you to confirm; `xhigh` and `max` are only used when you ask. See [levels](references/readme/configuration.md#understand-levels-and-pins).
 - **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
 - **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, and `implement`.
 - **Argument**: a question, requirement, artifact path, or Git range.
@@ -112,7 +111,7 @@ Plan and deliver one change:
 /dispatch implement: <settled plan path>
 ```
 
-Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans show task summaries as visible behaviour bullets before file ownership; the Task Map holds outcomes and prerequisites. Read the settled plan and its verification commands, then run `implement` to begin.
+`plan:` already reviews and fixes the plan as its level allows; the `review:` line is an optional extra pass. Read the plan's task summaries and verification commands, then run `implement`.
 
 Design work that needs multiple increments:
 
@@ -128,7 +127,7 @@ Review current or committed work:
 /dispatch review code: main..HEAD
 ```
 
-Without a range, code review covers uncommitted changes. Your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again under the [review rounds policy](references/review-rules.md#review-provenance-and-applicability).
+Without a range, code review covers only uncommitted changes. Your host agent checks each finding, applies accepted safe fixes, then verifies and reviews again.
 
 ## Configure routing
 
@@ -145,7 +144,7 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 
 ## Safety and session files
 
-- Read delegates use provider-specific read-only controls and credential stripping. Dispatch requests an OS sandbox where the provider and execution mode support it; provider launches report unsupported sandboxing. Setting `sandbox: false` opts out of OS isolation, which provider read-only controls do not replace.
+- Read delegates run read-only, without your credential environment variables, and in an OS sandbox where the provider supports it. `sandbox: false` turns the sandbox off for that provider.
 - Production changes use a writer configured for the host platform after the plan settles.
 - Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
@@ -153,7 +152,7 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 
 See [Workspaces and results](references/readme/concepts.md) for session files and verification.
 
-Changes to your repository or plan preserve completed work. Your host agent decides what needs another check; approve code removal separately. See [Changing requirements](references/readme/implement.md#when-requirements-change).
+If requirements change mid-run, completed work is kept and your host agent decides what to recheck; removing code needs your approval. See [Changing requirements](references/readme/implement.md#when-requirements-change).
 
 ## Troubleshooting
 

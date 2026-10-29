@@ -23,11 +23,12 @@ For a large change, dispatch breaks the design into smaller increments. Each inc
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Spec["📄 Governing spec"]
-    Spec --> SpecGate{"Approve spec at medium+<br/>before authoring"}
-    SpecGate --> Design["🗺️ Tech design + review"]
-    Design --> DesignGate{"Approve design"}
-    DesignGate --> Plan["📝 Increment plan + plan review"]
+    User(["👤 Requirement"]) --> Ground["🔍 Explore the codebase<br/>(explorer agents if configured)"]
+    Ground --> Spec["📄 Spec: goals, constraints, decisions"]
+    Spec --> SpecGate{"You approve the spec"}
+    SpecGate --> Design["🗺️ Design + review"]
+    Design --> DesignGate{"You approve the design"}
+    DesignGate --> Plan["📝 Plan for next increment + review"]
     Plan --> Tasks["🧩 Tasks in isolated worktrees"]
     Tasks --> Red["🔴 Failing tests first"]
     Red --> Green["💻 Writer makes them pass"]
@@ -37,7 +38,7 @@ flowchart TD
     Final -->|Last increment| Handoff(["📦 Changes + evidence<br/>handed to you"])
 ```
 
-All work verbs first settle one governing spec for the outcome, constraints and decisions. At `medium` and above, you approve its contents before design or plan authoring; `low` proceeds and shows the spec at handoff. Smaller tasks can use `/dispatch implement:` to author a plan from that spec. Standalone review reuses or authors a spec before reviewing the target; standalone code review adds no authoring approval gate. See [document layers and approvals](skills/dispatch/references/readme/concepts.md#spec-design-and-plan).
+Every workflow except a quick question starts by agreeing on one **spec**: the outcome, constraints, and decisions that everything else is checked against. At level `medium` and above you approve the spec before any design or plan is written; at `low` Dispatch proceeds and shows you the spec at the end. Smaller changes skip the design and go straight to a single plan. See [document layers and approvals](skills/dispatch/references/readme/concepts.md#spec-design-and-plan).
 
 ## Key differentiators
 
@@ -93,10 +94,10 @@ node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
-> Exclude installed skill directories from host formatters and linters (for example, with ignore files). Integrity tolerates common Markdown formatting (whitespace, table layout, emphasis markers, heading spacing, fence style) and all JSON formatting. List marker, numbering and indentation changes, and any `.ts` rewrite, fail the integrity check. Artifact hashes tolerate the same Markdown formatting.
+> Exclude installed skill directories from your formatters and linters. Dispatch checks its own files for integrity; whitespace-level Markdown and JSON reformatting is tolerated, but rewritten lists or `.ts` files fail the check.
 
 > [!NOTE]
-> Dispatch requests OS sandboxing by default where a provider and execution mode support it. Provider launches report unsupported sandboxing; Doctor checks integrity and configuration. Setting `sandbox: false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they are not the same boundary. Antigravity uses plan mode as its write boundary.
+> Where a provider supports it, read delegates run in an OS sandbox by default. Setting `sandbox: false` on a provider turns that off; the provider's own read-only mode still applies but is a weaker boundary. Antigravity uses plan mode as its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch user guide, workflow choices, configuration, and troubleshooting.
 
@@ -117,7 +118,10 @@ The three aliases exist for familiar slash commands only; `dispatch` alone does 
 /dispatch [level] [(pins)] [ask|design|plan|review|implement]: <argument>
 ```
 
-Levels `low` … `max` select configured model and review-policy presets; the sample configuration increases review breadth at higher levels. Pins such as `(claude,agy)` or `(all)` choose which configured providers answer.
+All parts except the argument are optional; the default verb is `ask`.
+
+- **Level** (`low`, `medium`, `high`, `xhigh`, `max`) picks which configured models and how much review to use. Leave it out and Dispatch proposes one for you to confirm.
+- **Pins** such as `(claude,agy)`, `(3)`, or `(all)` choose which configured providers answer.
 
 Ask another model a bounded question:
 
@@ -133,7 +137,7 @@ Write a plan, then optionally run an additional review pass:
 /dispatch review: .scratch/dispatch-skills/<folder>/webhooks.plan.md
 ```
 
-The plan runs the review and fix rounds enabled by its level's `plan-review` policy. The second command is another pass; Dispatch infers that a `.plan.md` file is a plan.
+`plan:` already reviews and fixes the plan as its level allows. The second command is an optional extra review pass.
 
 Review your working tree or a branch range:
 
@@ -143,11 +147,11 @@ Review your working tree or a branch range:
 ```
 
 > [!NOTE]
-> With no range, a dirty tree is reviewed as its uncommitted changes alone — staged, unstaged, and untracked — and your committed branch work is left out. A clean tree has no reviewable changes. Name a range explicitly to review committed changes.
+> With no range, only uncommitted changes (staged, unstaged, and untracked) are reviewed. Name a range to review commits.
 
-In each review, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again under the [review rounds policy](skills/dispatch/references/review-rules.md#review-provenance-and-applicability). Disputed or intent-dependent findings can still be escalated to you.
+In each review, your host agent checks every finding, applies the accepted safe fixes, then verifies and reviews again. Findings that depend on your intent are brought to you.
 
-Run the whole loop — spec settlement, plan and review, applicable approvals, implementation and code review:
+Run the whole loop — spec, plan and review, your approval, implementation, and code review:
 
 ```text
 /dispatch implement: Add CSV export
@@ -161,7 +165,7 @@ For work too big for one pass, `design:` creates and reviews an increment graph.
 ```
 
 > [!NOTE]
-> Dispatch creates internal task and integration commits, then delivers unstaged changes to your checkout. It does not commit on your branch, push, or open a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
+> Dispatch works in its own internal worktrees and commits, then delivers the result as unstaged changes in your checkout. It never commits on your branch, pushes, or opens a PR. Session files live under `.scratch/dispatch-skills/`, so interrupted runs can resume; the handoff gives the folder path.
 
 For help resuming interrupted work, see [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md).
 
