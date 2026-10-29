@@ -39,6 +39,8 @@ export type WalkthroughView = {
     id: string;
     round: number;
     severity: string;
+    /** `model/effort` of each source slot, or the slot id when the roster lacks it. */
+    sources?: readonly string[];
     ruling: 'accepted' | 'rejected' | 'duplicate' | 'deferred' | null;
     rationale: string;
     recurrence?: string;

@@ -21,10 +21,10 @@ function fixture() {
   };
 }
 
-function addRound(session: string, review: string, round: number, findings: readonly object[]): void {
+function addRound(session: string, review: string, round: number, findings: readonly object[], roster: readonly object[] = []): void {
   const directory = path.join(session, '.state', 'reviews', review, `round-${round}`);
   fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ round, generation: 1, cap: 2, roster: [] }));
+  fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ round, generation: 1, cap: 2, roster }));
   fs.writeFileSync(path.join(directory, 'findings.json'), JSON.stringify({ review, round, findings }));
 }
 
@@ -47,10 +47,25 @@ test('completed CLEAN rounds render with per-round relative links', () => {
     const rendered = renderFindingsSection(result.rows, result.rounds.map(round => ({ ...round, path: path.resolve(f.session, round.path) })), path.join(f.session, 'docs'));
 
     assert.equal(result.rounds.length, 2);
-    assert.match(rendered, /\| plan-work\.plan \| R1-F001 \| 1 \| SHOULD \| Open \|/);
+    assert.match(rendered, /\| plan-work\.plan \| R1-F001 \| 1 \| SHOULD \| — \| Open \|/);
     assert.match(rendered, /Round 1 \(plan-work\.plan\): 1 findings — \[findings\]\(\.\.\/\.state\/reviews\/plan-work\.plan\/round-1\/findings\.json\)/);
     assert.match(rendered, /Round 2 \(plan-work\.plan\): 0 findings — \[findings\]\(\.\.\/\.state\/reviews\/plan-work\.plan\/round-2\/findings\.json\)/);
     assert.doesNotMatch(rendered, /No reviews conducted yet/);
+  } finally { f.cleanup(); }
+});
+
+test('rows name each source slot as model/effort from the round roster', () => {
+  const f = fixture();
+  try {
+    const review = 'plan-work.plan';
+    addRound(f.session, review, 1, [{ id: 'R1-F001', severity: 'MUST', sources: ['claude[0]', 'codex[0]', 'gone[0]'] }], [
+      { slot: 'claude[0]', model: 'claude-opus-5-5', effort: 'low' },
+      { slot: 'codex[0]', model: ['gpt-6.1-sol', 'gpt-6'] },
+    ]);
+    const result = reviewRows(f.session, foldLedger(f.session), [], [review]);
+
+    assert.deepEqual(result.rows[0]!.sources, ['claude-opus-5-5/low', 'gpt-6.1-sol', 'gone[0]']);
+    assert.match(renderFindingsSection(result.rows, [], f.docs), /\| MUST \| claude-opus-5-5\/low, gpt-6\.1-sol, gone\[0\] \| Open \|/);
   } finally { f.cleanup(); }
 });
 

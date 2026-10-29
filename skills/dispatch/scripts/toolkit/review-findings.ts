@@ -17,6 +17,13 @@ export type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
 const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
   .replace(/\r\n?/g, '\n').replace(/\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
+// A slot's model may be a fallback list; the first entry is the configured one.
+const slotLabel = (slot: Record<string, unknown> | undefined, id: string): string => {
+  const model = Array.isArray(slot?.['model']) ? slot['model'][0] : slot?.['model'];
+  if (typeof model !== 'string') return id;
+  return typeof slot?.['effort'] === 'string' ? `${model}/${slot['effort']}` : model;
+};
+
 const clip = (value: string, limit: number): string => {
   const chars = Array.from(line(value));
   return chars.length > limit ? `${chars.slice(0, limit - 1).join('')}…` : chars.join('');
@@ -43,7 +50,7 @@ export function reviewRows(
     });
     for (const raw of findings) {
       if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
-      const finding = raw as { id: string; severity?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
+      const finding = raw as { id: string; severity?: unknown; sources?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
       const ruling = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
       const rulingValue = ruling?.data['ruling'];
       const confirmation = confirmations.find(state => state.request.review === round.review && state.request.finding === finding.id);
@@ -52,6 +59,8 @@ export function reviewRows(
         id: finding.id,
         round: round.round,
         severity: typeof finding.severity === 'string' ? finding.severity : 'unknown',
+        sources: (Array.isArray(finding.sources) ? finding.sources : []).filter((id): id is string => typeof id === 'string')
+          .map((id) => slotLabel(round.roster.find((slot) => slot.slot === id), id)),
         ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as ReviewRow['ruling'] : null,
         rationale: (confirmation && confirmation.state !== 'confirmed' ? `[${confirmation.state} reviewer confirmation] ` : '') +
           (typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),
@@ -66,12 +75,12 @@ export function reviewRows(
 export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readonly RoundLink[], fromDir: string): string {
   const out: string[] = [];
   if (rows.length) {
-    out.push('| Review | ID | Round | Severity | Status | Ruling |', '| --- | --- | --- | --- | --- | --- |');
+    out.push('| Review | ID | Round | Severity | Source | Status | Ruling |', '| --- | --- | --- | --- | --- | --- | --- |');
     for (const row of rows) {
       const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`].filter(Boolean);
       const rulingStatus = row.ruling ? row.ruling[0]!.toUpperCase() + row.ruling.slice(1) : 'Open';
       const status = [rulingStatus, ...markers].join(' ');
-      out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);
+      out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.sources?.length ? row.sources.join(', ') : '—')} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);
     }
   } else if (!rounds.length) out.push('*No reviews conducted yet.*');
 

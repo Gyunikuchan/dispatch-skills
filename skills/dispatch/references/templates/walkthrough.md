@@ -86,9 +86,9 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 
 ### Review Findings & Resolutions
 
-| Review | ID | Round | Severity | Status | Ruling |
-| --- | --- | --- | --- | --- | --- |
-| <review ID> | R1-F001 | 1 | MUST | Accepted | <first ruling line> |
+| Review | ID | Round | Severity | Source | Status | Ruling |
+| --- | --- | --- | --- | --- | --- | --- |
+| <review ID> | R1-F001 | 1 | MUST | <model/effort> | Accepted | <first ruling line> |
 
 - Round <n> (<review ID>): <n> findings — [findings](<relative path>)
 

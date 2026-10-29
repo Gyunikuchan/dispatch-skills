@@ -125,8 +125,8 @@ test('report render shows each completed review round link', async () => {
     const result = await invoke(f, 'report', 'render');
     assert.equal(result.exit, 0, result.output.summary);
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
-    assert.match(walkthrough, /\| review-alpha \| F001 \| 1 \| SHOULD \| Open \|/);
-    assert.match(walkthrough, /\| review-alpha \| F002 \| 2 \| SHOULD \| Open \|/);
+    assert.match(walkthrough, /\| review-alpha \| F001 \| 1 \| SHOULD \| — \| Open \|/);
+    assert.match(walkthrough, /\| review-alpha \| F002 \| 2 \| SHOULD \| — \| Open \|/);
     assert.deepEqual(walkthrough.match(/^- Round \d+.*$/gm), [
       '- Round 1 (review-alpha): 1 findings — [findings](.state/reviews/review-alpha/round-1/findings.json)',
       '- Round 2 (review-alpha): 1 findings — [findings](.state/reviews/review-alpha/round-2/findings.json)',

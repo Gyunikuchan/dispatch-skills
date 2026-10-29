@@ -169,7 +169,7 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     '### Verified Evidence', '[source evidence](evidence/first.json)', 'historical pre-prune evidence via validated pruning',
     '### User-Attributed Records', 'the user approved this row \\| &lt;!-- literal --&gt;',
     '### Deviations & Follow-ups', 'diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010',
-    '### Review Findings & Resolutions', '| review-alpha | R1-F001 | 1 | SHOULD | Accepted (recurs R1-F001) |',
+    '### Review Findings & Resolutions', '| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |',
     '[findings](.state/reviews/review-alpha/round-1/findings.json)',
     '### Review Fixes', 'Reviewed code baseline:', 'verified but not re-reviewed', 'src/report.ts', 'e'.repeat(40),
     '</details>',

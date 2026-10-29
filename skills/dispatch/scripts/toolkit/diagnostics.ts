@@ -10,13 +10,14 @@ import { generateSkillHashes, readVersion } from '../lib/integrity.ts';
 import { loadConfig } from '../lib/config.ts';
 import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
-type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; native?: boolean; reserve?: boolean};
+type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
 type SlotOutcome =
   | {slot: string; state: 'done'}
   | {slot: string; state: 'native'}
   | {slot: string; state: 'failed'; cls: string};
 type ReviewedFinding = {
   id: string;
+  sources?: string[];
   recurrence?: {of: string};
   unresolved?: {of: string};
 };
