@@ -30,7 +30,7 @@ Anchor a code `spec` finding on the changed code line and cite `§ Spec: <headin
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to this project's conventions: read `AGENTS.md`, including nested ones on reviewed paths.
+Adhere to the host rule files that the quality section's discovery rule finds.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
@@ -52,6 +52,7 @@ On re-review, verify prior resolutions in the review log that `## Review Finding
 earlier settled findings as closed. The governing spec's Decisions and Non-goals, and decisions recorded in the governing design or plan, are settled:
 contest one only by naming it and citing evidence it did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+- Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Examples: agent rule files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`), contributor guides (`CONTRIBUTING.md`, `CODING_STANDARDS.md`, and style guides they link), and nested copies on in-scope paths; the nearest copy wins over its parent. Read only those that apply; skip rules that configured linters, formatters or type checkers enforce.
 - Precedence: Applicable host rule files govern first. For nested `AGENTS.md` files, the nearest file wins over its parent. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
 - Host rules override only this bar. Plan scope, write boundaries, verification requirements, and safety rules stay fixed. Writers report a conflict between host rules and the brief under concerns; reviewers do not report such a conflict as a finding.
 - **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, or XY problem; add nothing beyond the ask. Route a design or plan that changes intent through the user gate.

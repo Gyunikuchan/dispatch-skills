@@ -5,7 +5,6 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { canonicalContextMap } from './lint.ts';
 import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { parseReport } from './domain/report.ts';
@@ -60,7 +59,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const gate = levelGate(fold, level);
   if (!gate.allowed) throw new ToolError(4, gate.reason!, gate.reason!);
   const confirmInput = ctx.values['spec'] ?? latest(fold, 'bind')?.data['spec'];
-  if (kind !== 'code' && !canonicalContextMap(path.resolve(manifest.repositoryRoot, requested))) throw new ToolError(4, 'missing-context-map', 'missing-context-map');
   if (kind !== 'code') {
     // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
     if (typeof confirmInput !== 'string') throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');

@@ -707,15 +707,17 @@ test('review with zero resolved targets reports underfill in the failure message
   } finally {f.cleanup();}
 });
 
-test('plan and design review refuse without the sibling context map', async () => {
+test('plan and design review launch without a sibling context map', async () => {
   const f=await fixture();try {
     const orphan=f.artifact('orphan.plan.md','# Orphan\n## Work\nNo grounding.\n');
-    const refusedPlan=await f.call('plan',orphan);
-    assert.equal(refusedPlan.exit,4);assert.equal(refusedPlan.output.reason,'missing-context-map');
+    const plan=await f.call('plan',orphan);
+    assert.equal(plan.exit,0,JSON.stringify(plan));
+    assert.equal(f.launches.length,2);
+
     const design=f.artifact('orphan.design.md','# Design\n## Boundaries\nSingle writer.\n');
-    const refusedDesign=await f.call('design',design);
-    assert.equal(refusedDesign.exit,4);assert.equal(refusedDesign.output.reason,'missing-context-map');
-    assert.equal(f.launches.length,0);
+    const designReview=await f.call('design',design);
+    assert.equal(designReview.exit,0,JSON.stringify(designReview));
+    assert.equal(f.launches.length,4);
   }finally{f.cleanup();}
 });
 

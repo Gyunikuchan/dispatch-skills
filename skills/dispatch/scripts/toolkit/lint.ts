@@ -5,7 +5,7 @@ import { artifactHash, artifactKind, readArtifact } from './artifacts.ts';
 import { parsePlan, sectionRanges, structuralLines } from './domain/plan.ts';
 import { parseDesign } from './domain/design.ts';
 import { parseSpec } from './domain/spec.ts';
-import { contextCoverageWarnings, lintContextMap, parseContextMap, type ContextLintIssue } from './domain/context.ts';
+import { contextCoverageWarnings, lintContextMap, parseContextMap } from './domain/context.ts';
 import { ToolError } from './output.ts';
 
 export type LintArtifactOptions = { repositoryRoot?: string };
@@ -52,11 +52,6 @@ export function canonicalContextMap(artifactFile: string): string | null {
   } catch { return null; }
 }
 
-const missingContextMap = (file: string): ContextLintIssue => ({
-  code: 'missing-context-map', severity: 'defect', line: null,
-  message: 'Plan and design need a sibling context map named ' + path.basename(file).replace(/\.(plan|design)\.md$/, '.context.md') + '.',
-});
-
 function outOfScopeText(source: string): string {
   const lines = structuralLines(source);
   const range = sectionRanges(lines, '## Out of Scope')[0];
@@ -80,9 +75,9 @@ export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
   const parsed = result.ok ? ('plan' in result ? result.plan : 'design' in result ? result.design : result.spec) : null;
   const errors = result.ok ? [] : result.defects;
   if (kind === 'spec') return { kind, hash, errors, warnings: result.warnings, parsed };
-  // SECTION: Grounding — plan and design require their sibling context map.
+  // SECTION: Grounding — plan coverage warns when a sibling map exists.
   const mapFile = canonicalContextMap(file);
-  if (!mapFile) return { kind, hash, errors: [...errors, missingContextMap(file)], warnings: result.warnings, parsed };
+  if (!mapFile) return { kind, hash, errors, warnings: result.warnings, parsed };
   if (kind === 'plan' && result.ok && 'plan' in result) {
     try {
       const mapSource = fs.readFileSync(mapFile, 'utf8');

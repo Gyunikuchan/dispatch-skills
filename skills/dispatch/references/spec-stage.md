@@ -8,7 +8,7 @@ Follow a supplied plan or design's Parent pins to the governing spec; an increme
 
 When a verb needs a new spec, including `review` when no spec exists, use this sequence:
 
-1. **Ground.** Ground the domain under [grounding guidance](grounding.md) before intent refinement. Derive explorer questions from the request.
+1. **Ground.** Ground the domain under [grounding guidance](grounding.md) before intent refinement. Derive explorer questions from the request. Propose no solution, scope or option before grounding completes.
 2. **Refine.** When the host provides `grilling`, invoke it by name after grounding at every level. Its first decision-tree node checks scope and splits independent subsystems before detailed questions. Use context maps or follow-up explorers for facts, not grilling subagents. Continue until no user decision is open; map its output into the canonical spec as best effort. If `grilling` is unavailable, skip it without adding a replacement clarification round.
 3. **Author.** Write `<session>/<slug>.spec.md` from the full chat, grounding and grilling output. Preserve constraints, alternatives, rejected options and actual user decisions; label inferences as `(assumption)` constraints or put them in Open Questions. Lint the spec and resolve parse errors before downstream authoring. Preserve an existing canonical spec's path.
 4. **Confirm.** In one exchange, present stated and assumed intent separately and recommend `plan` or `design` from the scope check; when `grilling` was unavailable, use grounded scope. Keep an explicit user verb unless that scope contradicts it; if so, explain and recommend the other verb. Record the user's reply as a `confirm` ledger record with the spec hash ([toolkit](toolkit.md#confirm)).

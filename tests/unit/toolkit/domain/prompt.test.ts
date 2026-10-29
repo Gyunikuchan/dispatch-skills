@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
@@ -257,11 +257,17 @@ test('quality selection rejects missing, empty, duplicate sections and invalid c
 });
 
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
+  const bar = read(templates, 'quality-bar.md');
+  const discoveryRule = 'before judging or editing, find every file that sets conventions for in-scope paths';
   for (const kind of ['code', 'design', 'plan'] as const) {
     const text = flat(kind);
     assert.equal(text.split('Applicable host rule files govern first.').length, 2, kind);
     assert.equal(text.split('This bar supplements host rules where they are silent and yields where they conflict.').length, 2, kind);
+    assert.equal(text.split(discoveryRule).length - 1, 1, `${kind}: host-rule discovery`);
   }
+  assert.equal(qualityCriteria(bar, 'writer').split(discoveryRule).length - 1, 1, 'writer: host-rule discovery');
+  const inspection = read(templates, 'review-prompt.md').split(/^### Inspection\s*$/m)[1]!.split(/^### /m)[0]!;
+  assert.doesNotMatch(inspection, /AGENTS\.md/);
 });
 
 // SECTION: Durable test bar and plan-free naming

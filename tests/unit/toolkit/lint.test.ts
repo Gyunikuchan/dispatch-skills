@@ -97,19 +97,19 @@ describe('lint severity', () => {
       assert.ok(r.warnings.some(x => x.code === code));
     }
   });
-  test('plan and design lint report a missing sibling context map until it exists', async () => {
+  test('plan and design lint accept a missing sibling context map', async () => {
     const design = '# Design\n## Increment Dependency Graph\n';
     const absentPlan = await lint('solo.plan.md', PLAN);
-    assert.equal(absentPlan.exit, 4);
-    assert.ok(absentPlan.result.errors.some((x: { code: string }) => x.code === 'missing-context-map'));
+    assert.equal(absentPlan.exit, 0);
+    assert.deepEqual(absentPlan.result.errors, []);
     const absentDesign = await lint('solo.design.md', design);
-    assert.equal(absentDesign.exit, 4);
-    assert.ok(absentDesign.result.errors.some((x: { code: string }) => x.code === 'missing-context-map'));
-    scoped.artifact('solo.context.md', CONTEXT_MAP);
+    assert.equal(absentDesign.exit, 0);
+    assert.deepEqual(absentDesign.result.errors, []);
+
+    scoped.artifact('solo.context.md', CONTEXT_MAP.replaceAll('src/file.ts', 'docs/uncovered.md'));
     const presentPlan = await lint('solo.plan.md', PLAN);
-    const presentDesign = await lint('solo.design.md', design);
     assert.deepEqual(presentPlan.result.errors, []);
-    assert.deepEqual(presentDesign.result.errors, []);
+    assert.ok(presentPlan.result.warnings.some((x: { code: string }) => x.code === 'context-uncovered'));
   });
   test('lint run checks a context map against the repository root', async () => {
     const f = sessionFixture();

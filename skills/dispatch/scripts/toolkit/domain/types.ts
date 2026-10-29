@@ -33,7 +33,7 @@ export type DraftFinding = Omit<Finding, 'id' | 'dupOf'>;
 
 export type LintDefectCode =
   // Summary box and placeholders
-  | 'missing-context-map' | 'missing-summary-box' | 'summary-label' | 'leftover-placeholder' | 'placeholder' | 'filler-note'
+  | 'missing-summary-box' | 'summary-label' | 'leftover-placeholder' | 'placeholder' | 'filler-note'
   // Plan structure
   | 'proposed-changes' | 'change-heading' | 'unknown-change-marker' | 'invalid-change-path' | 'duplicate-change-path'
   | 'change-path-excluded' | 'generated-command' | 'verification-plan' | 'automated-tests' | 'automated-tests-owner'

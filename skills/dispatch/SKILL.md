@@ -13,13 +13,13 @@ Recommend `plan` or `design` after intent refinement under [spec stage](referenc
 
 Read the selected phase first: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md).
 
-Report the level once set under [run level](references/spec-stage.md#run-level). Levels select roster, rounds and approval. Preserve configured models and efforts.
+Report the level once set under [run level](references/spec-stage.md#run-level). Preserve configured models and efforts.
 
-Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Retain the returned session path and follow any returned `instructions`. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
+Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Keep its session path and follow returned `instructions`. Reuse with `session reactivate --session-dir <session>`; `session quota-reprobe` refreshes one quota key. See [CLI contract](references/toolkit.md) for session options and outputs.
 
 ## Tool loop
 
-Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. Stdout returns `ok`, a bounded summary and result `path`; read that file. Exit codes: 0 operation returned (inspect `ok`), 1 usage or invalid input, 2 fault, 3 lock held, 4 gate or pending native work.
+Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. Read the result `path`; stdout gives `ok` and a bounded summary. Exits: 0 returned (check `ok`), 1 invalid input, 2 fault, 3 lock held, 4 gate or native work pending.
 
 Read host rules and the [quality bar](references/templates/quality-bar.md), then follow the selected branch:
 
@@ -32,10 +32,10 @@ For `native-pending`, read each `promptPath`, launch the configured native slot,
 
 ## Invariants and recovery
 
-User-only records (approval, waiver, manual completion and selection of xhigh/max) require actual user quotes. Never invent decisions. At medium and above, writer briefs and integration require the approved current artifact tuple or its recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
+Quote actual user words for approval, waiver, manual completion and xhigh/max selection. Never invent decisions. At medium and above, briefs and integration require the current approval tuple or recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
 
-Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
+Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
-After interruption, use `status show`, inspect its result and retained worktrees, then resume the next unfinished operation. Keep uncertain effects and handles until completion is established.
+After interruption, use `status show`, inspect its result and retained worktrees, then resume unfinished work. Retain uncertain effects and handles until completion.
 
 For Dispatch changes, use [self-build](references/self-build.md).

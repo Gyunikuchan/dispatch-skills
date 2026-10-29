@@ -25,7 +25,7 @@ Populate the template variables (kind blocks declare the rest):
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to this project's conventions: read `AGENTS.md`, including nested ones on reviewed paths.
+Adhere to the host rule files that the quality section's discovery rule finds.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
