@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { currentSnapshot, gate, latest, withLedger } from './ledger.ts';
 import { parsePlan, selectTaskBrief } from './domain/plan.ts';
+import { qualityCriteria } from './domain/prompt.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
@@ -112,11 +113,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   const redLogDir = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.red');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const quality = ['shared', 'code'].map(name => {
-    const body = new RegExp('^## ' + name + '\\r?\\n([\\s\\S]*?)(?=^## |$(?![\\s\\S]))', 'm').exec(bar)?.[1]?.trim();
-    if (!body) throw new Error('Missing quality section ' + name);
-    return body;
-  }).join('\n\n');
+  const quality = qualityCriteria(bar, 'writer');
   const slots: Record<string, string> = {
     task, worktree,
     specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']), specHash: snapshot.hashes.spec!,

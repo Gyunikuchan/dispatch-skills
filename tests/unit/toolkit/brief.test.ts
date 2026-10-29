@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { qualityCriteria } from '../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 const PLAN = `# Scoped work
@@ -255,6 +256,7 @@ describe('writer brief', () => {
       assert.match(payload.data.command, /node first-red/);
       assert.doesNotMatch(payload.data.command, /node poison-red/);
       const quality = getQuality(f.deps.skillRoot);
+      assert.equal(brief.split('## Quality\n\n' + qualityCriteria(quality, 'writer')).length - 1, 1);
       for (const name of ['shared', 'code']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
         assert.ok(brief.includes(body));

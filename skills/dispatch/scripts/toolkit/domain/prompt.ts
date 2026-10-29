@@ -118,17 +118,21 @@ export function rotateTags(kindBlockTags: string, by: number): string {
   return rotateLines(kindBlockTags, by, (line) => line.startsWith('- '));
 }
 
-/** Selects the consumer's criteria as the frame's single quality block. */
-export function qualityBar(markdown: string, consumer: QualityConsumer, rotation = 0): string {
+/** Joined bodies of the consumer's selected quality sections. */
+export function qualityCriteria(markdown: string, consumer: QualityConsumer, rotation = 0): string {
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
-  const bodies = qualitySections[consumer].map((section) => {
+  return qualitySections[consumer].map((section) => {
     const body = sections.get(section);
     if (body === undefined) throw new Error(`Missing quality section: ${section}`);
     if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
     return rotateLines(body.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
-  });
-  return `## quality\n\n${bodies.join('\n\n')}`;
+  }).join('\n\n');
+}
+
+/** Selects the consumer's criteria as the frame's single `quality` slot section. */
+export function qualityBar(markdown: string, consumer: QualityConsumer, rotation = 0): string {
+  return `## quality\n\n${qualityCriteria(markdown, consumer, rotation)}`;
 }
 
 /**
