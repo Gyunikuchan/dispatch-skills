@@ -129,13 +129,14 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree abandon': abandon,
   'verify run': verifyRun,
   'ledger append': async ({ session, manifest, args, deps }) => {
+    if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file: ledger append <record.json> --session <session>');
+    const file = path.resolve(args[0]!);
+    let text: string;
+    try {text = fs.readFileSync(file, 'utf8');}
+    catch {throw new ToolError(1, 'invalid-input', 'Cannot read record file ' + file);}
     let input: unknown;
-    try {
-      if (args.length !== 1) throw new Error();
-      input = JSON.parse(fs.readFileSync(args[0]!, 'utf8'));
-    } catch {
-      throw new ToolError(1, 'invalid-input', 'input requires a readable JSON record file');
-    }
+    try {input = JSON.parse(text);}
+    catch (error) {throw new ToolError(1, 'invalid-input', 'Record file ' + file + ' is not valid JSON: ' + (error as SyntaxError).message);}
     const appended = await appendRecord(session, input, deps);
     let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
     let findingsSectionReason: string | undefined;

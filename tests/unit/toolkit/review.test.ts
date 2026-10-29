@@ -196,6 +196,7 @@ test('plan and design review rounds update the bound findings section', async ()
 });
 
 test('standalone review targets accept spec overrides and stable Git snapshots',async()=>{
+  const ACCEPTED='code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
   const f=await fixture(false);
   try {
     f.config(true);f.deps.liveness={};
@@ -255,9 +256,10 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     assert.equal(dirs.length,2);assert.notEqual(dirs[0],dirs[1]);
     assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','rev-parse','--verify','--end-of-options','feature^{commit}'])));
     assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','merge-base','main-id','head-id'])));
-    assert.equal((await call('code','T1')).output.reason,'invalid-input');
+    const unresolved=await call('code','T1');assert.equal(unresolved.output.reason,'invalid-input');assert.equal(unresolved.output.summary,'Cannot resolve revision T1; '+ACCEPTED);
+    f.lines.length=0;assert.equal(await main(['review','run','--session',f.session],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'One review target is required: '+ACCEPTED+'; plan and design targets are artifact paths');
     unrelated=true;const orphan=await call('code','orphan');assert.equal(orphan.output.reason,'invalid-input');assert.match(orphan.output.summary,/common ancestor/);unrelated=false;
-    missing=true;assert.equal((await call('code','worktree')).output.reason,'invalid-input');missing=false;
+    missing=true;const headUnresolved=await call('code','worktree');assert.equal(headUnresolved.output.reason,'invalid-input');assert.equal(headUnresolved.output.summary,'Cannot resolve revision HEAD; '+ACCEPTED);missing=false;
     assert.equal((await call('plan',f.plan,'absent.spec.md')).output.reason,'invalid-input');
     const noSpec=await call('plan',f.plan,null);assert.equal(noSpec.exit,4);assert.equal(noSpec.output.reason,'lint-errors');
     await f.add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});

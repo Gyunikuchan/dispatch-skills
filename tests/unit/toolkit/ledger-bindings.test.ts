@@ -94,8 +94,9 @@ test('ledger bindings approvals and input filters preserve validation and retrie
  f.lines.length=0;assert.equal(await main(['ledger','query','--session',f.session,'--kind','integrate'],f.deps),0);assert.equal(JSON.parse(fs.readFileSync(f.output().path!,'utf8')).length,2);
  for(const filter of [{kind:'bad'},{since:'-1'},{since:'wat'}])assert.throws(()=>queryLedger(foldLedger(f.session),filter),{reason:'invalid-input'});
  f.lines.length=0;assert.equal(await main(['ledger','query','--session',f.session,'--kind','bad'],f.deps),1);assert.equal(f.output().reason,'invalid-input');
- for(const file of ['missing',f.root]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,file],f.deps),1);assert.equal(f.output().reason,'invalid-input');}
- fs.writeFileSync(input,'bad');f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),1);
+ for(const file of ['missing',f.root]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,file],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'Cannot read record file '+path.resolve(file));}
+ for(const extra of [[],[input,input]]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,...extra],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.match(f.output().summary,/ledger append <record\.json>/);}
+ fs.writeFileSync(input,'bad');f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.ok(f.output().summary.startsWith('Record file '+path.resolve(input)+' is not valid JSON: '));
  const ledger=path.join(f.session,'ledger.jsonl');const bytes=fs.readFileSync(ledger,'utf8');const first=JSON.parse(bytes.split('\n')[0]!);fs.appendFileSync(ledger,JSON.stringify(first)+'\n');const corrupt=fs.readFileSync(ledger,'utf8');await assert.rejects(add('note',{text:'n'}),{reason:'ledger-corrupt'});assert.equal(fs.readFileSync(ledger,'utf8'),corrupt);
  }finally{f.cleanup();}
 });

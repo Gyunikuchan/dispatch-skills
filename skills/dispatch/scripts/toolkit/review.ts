@@ -23,6 +23,9 @@ import { redGaps } from './red.ts';
 import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection } from './review-findings.ts';
 
+// NOTE: shared by every target rejection so the host can correct its target in one turn.
+const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
+
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill};
 function read<T>(file: string): T | null {
@@ -48,7 +51,7 @@ function specHashFor(root: string, input: string): string {
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const {session, manifest, deps} = ctx;
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One review target is required');
+  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One review target is required: ' + CODE_TARGETS + '; plan and design targets are artifact paths');
   const requested = ctx.args[0]!;
   const inferred = artifactKind(requested);
   const kind = (ctx.values['kind'] ?? (inferred === 'plan' || inferred === 'design' ? inferred : 'code')) as ReviewKind;
@@ -82,7 +85,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   let series = '';
   if (requested === 'worktree') {
     const head = await git(deps, manifest.repositoryRoot, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
-    if (head.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD');
+    if (head.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD; ' + CODE_TARGETS);
     series = '@' + head.stdout.trim();
   }
   const review = reviewId(kind,artifact,gitTarget?series:undefined);
@@ -110,7 +113,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
     const revision = async (ref: string) => {
       const result = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
-      if (result.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref);
+      if (result.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref + '; ' + CODE_TARGETS);
       return result.stdout.trim();
     };
     if (requested === 'integration') {
