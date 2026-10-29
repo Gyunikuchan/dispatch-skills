@@ -24,6 +24,7 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
     await add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
     await add('level', {level: 'low'});
     const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    await add('confirm', {spec: hashes().spec}, {by: 'user', quote: 'Approved the mission'});
     const before = hashes().design;
     fs.appendFileSync(design, '\n## Approach\nPreserve independent increments.\n');
     const edit = {kind: 'edit', key: 'design-revision', by: 'orchestrator', data: {
@@ -134,6 +135,7 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
     for (const kind of kinds) f.artifact(names[kind], plain[kind]);
     assert.equal((await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'orchestrator', data: names }, f.deps)).seq > 0, true);
     const approved = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    await appendRecord(f.session, { kind: 'confirm', key: 'confirm', by: 'user', quote: 'yes', data: { spec: approved.spec } }, f.deps);
     await appendRecord(f.session, { kind: 'approval', key: 'approval', by: 'user', quote: 'yes', data: approved }, f.deps);
     assert.deepEqual(verdict(), { allowed: true });
     for (const kind of kinds) f.artifact(names[kind], formatted[kind]);
@@ -142,7 +144,8 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
     for (const kind of kinds) {
       const [from, to] = wordChanges[kind];
       f.artifact(names[kind], formatted[kind].replace(from, to));
-      assert.deepEqual(verdict(), { allowed: false, reason: 'unrecorded-change', artifact: kind });
+      // A spec change fails the confirm check before approval, which reports no artifact.
+      assert.deepEqual(verdict(), kind === 'spec' ? { allowed: false, reason: 'missing-confirmation' } : { allowed: false, reason: 'unrecorded-change', artifact: kind });
       f.artifact(names[kind], formatted[kind]);
       assert.deepEqual(verdict(), { allowed: true });
     }
@@ -166,6 +169,7 @@ test('approval accepts a recorded non-intent chain and stale approvals list curr
     f.artifact('s.spec.md', 'Spec');
     f.artifact('p.plan.md', 'A');
     await add('bind', { spec: 's.spec.md', plan: 'p.plan.md' });
+    await add('confirm', { spec: hashes().spec }, { by: 'user', quote: 'I confirm the spec' });
     return { f, hashes, edit, approve };
   };
   const scenario = async (exercise: (context: Awaited<ReturnType<typeof boundPlan>>) => Promise<void>) => {

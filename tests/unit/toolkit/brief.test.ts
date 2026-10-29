@@ -76,7 +76,7 @@ async function fixture(design = false, source = PLAN) {
   f.lines.length = 0;
   const planPath = f.artifact('work.plan.md', source);
   const binding = bindings.get(design);
-  let key = binding ? 1 : 0;
+  let key = binding ? 2 : 0;
   let lastSeq = key;
   const add = async (kind: string, data: object, extra: object = {}) => {
     lastSeq++;
@@ -94,10 +94,11 @@ async function fixture(design = false, source = PLAN) {
   };
   if (binding) {
     fs.writeFileSync(ledgerPath, binding);
-    key = 1;
+    key = 2;
   } else {
     if (fs.existsSync(ledgerPath)) fs.unlinkSync(ledgerPath);
     await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
+    await add('confirm', {spec: currentHashes(f.root, {spec: 'mission.spec.md'}).spec}, {by: 'user', quote: 'Approved'});
     bindings.set(design, fs.readFileSync(ledgerPath, 'utf8'));
   }
   let hashes = source === PLAN ? cachedHashes.get(design) : undefined;

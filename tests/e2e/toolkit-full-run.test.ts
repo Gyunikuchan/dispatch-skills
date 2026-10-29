@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture, CLEAN } from '../helpers/e2e.ts';
-import { planSource } from './helpers/toolkit-repo.ts';
+import { contextMapSource, planSource } from './helpers/toolkit-repo.ts';
+import { artifactHash } from '../../skills/dispatch/scripts/toolkit/artifacts.ts';
 
 test('uncommitted delivery through public entry preserves standalone review', async () => {
   const f = fixture({ responses: [CLEAN, CLEAN, CLEAN] });
@@ -11,7 +12,8 @@ test('uncommitted delivery through public entry preserves standalone review', as
     for (const key of ['cli', 'begin', 'reply', 'rebind', 'initialize']) assert.equal(Object.keys(f).includes(key), false, key);
     const plan = planSource.replaceAll('src/file.ts', 'src/a.ts').replace('node -e "process.exit(0)"', `node -e "require('assert').match(require('fs').readFileSync('src/a.ts','utf8'),/value = 2/)"`);
     fs.writeFileSync(path.join(f.repo, 'work.plan.md'), plan);
-    f.git('add', 'work.plan.md'); f.git('commit', '-qm', 'plan');
+    fs.writeFileSync(path.join(f.repo, 'work.context.md'), contextMapSource);
+    f.git('add', 'work.plan.md', 'work.context.md'); f.git('commit', '-qm', 'plan');
     const run = async (args: string[], expected = 0) => {
       const result = await f.launch(args).done;
       assert.equal(result.exit, expected, result.stderr + result.stdout);
@@ -34,6 +36,9 @@ test('uncommitted delivery through public entry preserves standalone review', as
       fs.writeFileSync(file, JSON.stringify({ kind, key: kind, by: 'orchestrator', data }));
       await tool(['ledger', 'append', file]);
     }
+    const confirmFile = path.join(f.dir, 'confirm.json');
+    fs.writeFileSync(confirmFile, JSON.stringify({ kind: 'confirm', key: 'confirm', by: 'user', quote: 'confirmed', data: { spec: artifactHash('spec', fs.readFileSync(path.join(f.repo, 'governing.spec.md'), 'utf8')) } }));
+    await tool(['ledger', 'append', confirmFile]);
     await tool(['lint', 'run', 'work.plan.md']);
     const review = async (args: string[]) => {
       const result = await tool(['review', 'run', ...args]);

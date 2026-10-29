@@ -124,21 +124,26 @@ export type InitOptions = { repositoryRoot: string; sessionId: string; sessionTi
  * collision with another identity takes a numeric title suffix.
  */
 export function initializeSession(options: InitOptions): string {
+  return initSession(options).path;
+}
+
+/** As `initializeSession`, and reports whether an existing folder was returned rather than created. */
+export function initSession(options: InitOptions): { path: string; reused: boolean } {
   const repo = canonicalRepositoryRoot(options.repositoryRoot);
   const root = workspaceSessionRoot(options.repositoryRoot);
   const found = matching(root, options.sessionId, repo);
   if (found.length > 1) throw new Error(`Ambiguous session identity ${options.sessionId}: ${found.join(', ')}`);
-  if (found[0] !== undefined) return fs.realpathSync(found[0]);
+  if (found[0] !== undefined) return { path: fs.realpathSync(found[0]), reused: true };
   const claim = path.join(root, `.claim-${safePathId(options.sessionId)}`);
   try { fs.mkdirSync(claim, { mode: 0o700 }); } catch (error) {
     if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
     // Another creator holds the claim: reuse its folder once published, or retry after it releases.
     const appeared = waitForClaim(root, options.sessionId, repo, claim, options.waitMs ?? CLAIM_WAIT_MS);
-    return appeared ?? initializeSession(options);
+    return appeared !== null ? { path: appeared, reused: true } : initSession(options);
   }
   try {
     const raced = matching(root, options.sessionId, repo);
-    if (raced[0] !== undefined) return fs.realpathSync(raced[0]);
+    if (raced[0] !== undefined) return { path: fs.realpathSync(raced[0]), reused: true };
     const baseTitle = safeTitle(options.sessionTitle);
     const baseName = folderName(options.now, baseTitle);
     for (let n = 0; ; n++) {
@@ -159,7 +164,7 @@ export function initializeSession(options: InitOptions): string {
         fs.rmSync(dir, { recursive: true, force: true });
         throw error;
       }
-      return fs.realpathSync(dir);
+      return { path: fs.realpathSync(dir), reused: false };
     }
   } finally {
     fs.rmSync(claim, { recursive: true, force: true });

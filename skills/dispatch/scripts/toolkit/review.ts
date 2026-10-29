@@ -3,8 +3,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
-import { foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
+import { canonicalContextMap } from './lint.ts';
 import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { parseReport } from './domain/report.ts';
@@ -37,6 +38,14 @@ function atomic(file: string, value: unknown) {
 const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const splitPaths = (text: string) => text.split('\0').filter(Boolean);
+// NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
+function specHashFor(root: string, input: string): string {
+  const specPath = path.resolve(root, input);
+  let text: string;
+  try {text = fs.readFileSync(fs.realpathSync.native(specPath), 'utf8');}
+  catch {throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);}
+  return artifactHash('spec', text);
+}
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const {session, manifest, deps} = ctx;
@@ -50,6 +59,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   if (!LEVELS.includes(level)) throw new ToolError(1, 'invalid-input', 'Unknown level');
   const gate = levelGate(fold, level);
   if (!gate.allowed) throw new ToolError(4, gate.reason!, gate.reason!);
+  const confirmInput = ctx.values['spec'] ?? latest(fold, 'bind')?.data['spec'];
+  if (kind !== 'code' && !canonicalContextMap(path.resolve(manifest.repositoryRoot, requested))) throw new ToolError(4, 'missing-context-map', 'missing-context-map');
+  if (kind !== 'code') {
+    // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
+    if (typeof confirmInput !== 'string') throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
+    const confirmation = confirmGate(fold, specHashFor(manifest.repositoryRoot, confirmInput));
+    if (!confirmation.allowed) throw new ToolError(4, confirmation.reason!, confirmation.reason!);
+  }
   const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
   const bound = latest(fold, 'bind');

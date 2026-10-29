@@ -27,6 +27,7 @@ test('prune review identity keeps unexpected read errors',async()=>{
   await appendRecord(f.session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},f.deps);
   const hashes=currentHashes(f.root,latest(foldLedger(f.session),'bind'));
   const head='a'.repeat(40),base='b'.repeat(40),tree='c'.repeat(40),deletedTree='d'.repeat(40),branch='dispatch/test/integration';
+  await appendRecord(f.session,{kind:'confirm',by:'user',quote:'Approved',key:'confirm',data:{spec:hashes.spec}},f.deps);
   await appendRecord(f.session,{kind:'approval',by:'user',quote:'Approved',key:'approval',data:hashes},f.deps);
   const parsedTransient=parsePlan(transient);if(!parsedTransient.ok)throw new Error(JSON.stringify(parsedTransient.defects));
   for(const check of checks(parsedTransient.plan))await appendRecord(f.session,{kind:'evidence',by:'tool',key:'evidence:'+check.criterion,data:{criterion:check.criterion,commandDigest:check.commandDigest,tree,clean:true,before:tree,after:tree,exit:0,path:'verify.txt',artifacts:hashes}},f.deps);

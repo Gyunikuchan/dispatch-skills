@@ -58,6 +58,9 @@ test('summary byte cap preserves large ask answers review findings and native sl
       f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nPreserve results.\n');
       await appendRecord(f.session, {kind: 'bind', by: 'orchestrator', key: 'bind',
         data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
+      f.artifact('work.context.md', '# Context map: work\n');
+      await appendRecord(f.session, {kind: 'confirm', by: 'user', quote: 'Approved', key: 'confirm',
+        data: {spec: currentHashes(f.root, latest(foldLedger(f.session), 'bind')).spec}}, f.deps);
       const args = scenario === 'ask' ? ['ask', 'run', target] : ['review', 'run', target, '--kind', 'plan'];
       assert.equal(await main([...args, '--session', f.session], f.deps), native ? 4 : 0, f.lines.join('\n'));
       const output = f.output();
@@ -102,6 +105,7 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
     for(const file of ['writer-brief.md','quality-bar.md']) fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(templates,file));
     const add=(kind:string,data:object,extra:object={})=>appendRecord(f.session,{kind,by:'orchestrator',key:kind,data,...extra},f.deps);
     await add('bind',{spec:'mission.spec.md',plan:'large-multibyte.plan.md'});
+    await add('confirm',{spec:currentHashes(f.root,latest(foldLedger(f.session),'bind')).spec},{by:'user',quote:'Approved'});
     await add('approval',currentHashes(f.root,latest(foldLedger(f.session),'bind')),{by:'user',quote:'Approved'});
     await add('writer',{phase:'launched',task:'T1',path:'.state/worktrees/T1-1',base:{commit:'a'.repeat(40),taskSection:'sha256:'+'b'.repeat(64),seq:1}});
     assert.equal(await main(['brief','render','T1','--session',f.session],{...f.deps,skillRoot:skill,hook:point=>{if(point==='brief:after-gate') fs.writeFileSync(plan,'UNGATED');}}),0);

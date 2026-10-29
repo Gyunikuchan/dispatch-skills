@@ -12,8 +12,8 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  assert.ok(lines <= 11000, `driver TS LOC ${lines} exceeds 11000`);
-  assert.ok(KINDS.length <= 13, `ledger kinds ${KINDS.length} exceeds 13`);
+  assert.ok(lines <= 11100, `driver TS LOC ${lines} exceeds 11100`);
+  assert.ok(KINDS.length <= 14, `ledger kinds ${KINDS.length} exceeds 14`);
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
   assert.ok(bytes <= 4096, `SKILL.md bytes ${bytes} exceeds 4096`);
 });
@@ -24,6 +24,7 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
   const data: Record<string, Record<string, unknown>[]> = {
     bind: [{ spec: 'spec.md', plan: 'plan.md', design: 'design.md' }],
     approval: [{ spec: hash, plan: hash, design: hash }],
+    confirm: [{ spec: hash }],
     level: ['low', 'medium', 'high', 'xhigh', 'max'].map(level => ({ level })),
     waiver: [{ criterion: 'SC1', reason: 'User accepted the limit' }],
     'manual-complete': [{ criterion: 'SC1', evidence: 'User observed the result' }],
@@ -54,7 +55,7 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
   assert.deepEqual(Object.keys(data).sort(), [...KINDS].sort());
   for (const kind of KINDS) for (const value of data[kind]!) {
     const record = { kind, key: `${kind}:${value['phase'] ?? value['level'] ?? 'record'}`, data: value };
-    const userOnly = ['approval', 'waiver', 'manual-complete'].includes(kind) ||
+    const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(kind) ||
       (kind === 'level' && ['xhigh', 'max'].includes(String(value['level'])));
     const label = record.key;
     assert.doesNotThrow(() => validateRecord({ ...record, by: 'user', quote: 'I approve this action.' }), label);

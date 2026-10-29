@@ -5,7 +5,7 @@ import { artifactHash, artifactKind, readArtifact } from './artifacts.ts';
 import { parsePlan, sectionRanges, structuralLines } from './domain/plan.ts';
 import { parseDesign } from './domain/design.ts';
 import { parseSpec } from './domain/spec.ts';
-import { contextCoverageWarnings, lintContextMap, parseContextMap } from './domain/context.ts';
+import { contextCoverageWarnings, lintContextMap, parseContextMap, type ContextLintIssue } from './domain/context.ts';
 import { ToolError } from './output.ts';
 
 export type LintArtifactOptions = { repositoryRoot?: string };
@@ -38,17 +38,24 @@ export function repositoryReader(repositoryRoot: string): (relativePath: string)
   };
 }
 
-function canonicalContextMap(planFile: string): string | null {
-  const name = path.basename(planFile);
-  if (!name.endsWith('.plan.md')) return null;
-  const canonicalName = name.slice(0, -'.plan.md'.length) + '.context.md';
+/** Returns the sibling `<slug>.context.md` of a plan or design, or null when it is absent. */
+export function canonicalContextMap(artifactFile: string): string | null {
+  const name = path.basename(artifactFile);
+  const suffix = ['.plan.md', '.design.md'].find(item => name.endsWith(item));
+  if (!suffix) return null;
+  const canonicalName = name.slice(0, -suffix.length) + '.context.md';
   try {
-    const matches = fs.readdirSync(path.dirname(planFile)).filter(entry => entry === canonicalName);
+    const matches = fs.readdirSync(path.dirname(artifactFile)).filter(entry => entry === canonicalName);
     if (matches.length !== 1) return null;
-    const file = path.join(path.dirname(planFile), matches[0]!);
+    const file = path.join(path.dirname(artifactFile), matches[0]!);
     return fs.statSync(file).isFile() ? file : null;
   } catch { return null; }
 }
+
+const missingContextMap = (file: string): ContextLintIssue => ({
+  code: 'missing-context-map', severity: 'defect', line: null,
+  message: 'Plan and design need a sibling context map named ' + path.basename(file).replace(/\.(plan|design)\.md$/, '.context.md') + '.',
+});
 
 function outOfScopeText(source: string): string {
   const lines = structuralLines(source);
@@ -69,15 +76,19 @@ export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
     return { kind: 'context' as const, hash, errors: result.defects, warnings: result.warnings, parsed: result.map };
   }
   const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source);
+  const hash = artifactHash(kind!, source);
+  const parsed = result.ok ? ('plan' in result ? result.plan : 'design' in result ? result.design : result.spec) : null;
+  const errors = result.ok ? [] : result.defects;
+  if (kind === 'spec') return { kind, hash, errors, warnings: result.warnings, parsed };
+  // SECTION: Grounding — plan and design require their sibling context map.
+  const mapFile = canonicalContextMap(file);
+  if (!mapFile) return { kind, hash, errors: [...errors, missingContextMap(file)], warnings: result.warnings, parsed };
   if (kind === 'plan' && result.ok && 'plan' in result) {
-    const mapFile = canonicalContextMap(file);
-    if (!mapFile) return { kind, hash: artifactHash(kind, source), errors: [], warnings: result.warnings, parsed: result.plan };
     try {
       const mapSource = fs.readFileSync(mapFile, 'utf8');
       const warnings = contextCoverageWarnings(parseContextMap(mapSource), result.plan, outOfScopeText(source));
-      return { kind, hash: artifactHash(kind, source), errors: [], warnings: [...result.warnings, ...warnings], parsed: result.plan };
+      return { kind, hash, errors, warnings: [...result.warnings, ...warnings], parsed };
     } catch { /* An unreadable optional map leaves plan lint unchanged. */ }
   }
-  const parsed = result.ok ? ('plan' in result ? result.plan : 'design' in result ? result.design : result.spec) : null;
-  return { kind, hash: artifactHash(kind!, source), errors: result.ok ? [] : result.defects, warnings: result.warnings, parsed };
+  return { kind, hash, errors, warnings: result.warnings, parsed };
 }

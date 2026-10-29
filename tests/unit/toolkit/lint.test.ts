@@ -21,6 +21,13 @@ const PLAN = [
   '## Verification Plan', '### Automated Tests', '- `npm run lint`', '',
 ].join('\n');
 const SPEC = '# Spec\n## Requirements\n### REQ-1 — Works\n- Acceptance: works\n## Decisions\n### DEC-1 — Use it\n';
+const CONTEXT_MAP = [
+  '# Context map: file', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+  '## Map', '- File — `src/file.ts:1`', '', '## Flows', '- file: `src/file.ts:1`', '',
+  '## Invariants', '- File exists — `src/file.ts:1` — "File"', '',
+  '## Coverage', '- entry-points: `src/file.ts:1`', '', '## Precedent', '- File: `src/file.ts`', '',
+  '## Surprises', '- none — `src/file.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
+].join('\n');
 async function lint(name: string, source: string) {
   const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
   const f = {...scoped, cleanup: () => {}};
@@ -34,6 +41,8 @@ async function lint(name: string, source: string) {
 }
 describe('lint severity', () => {
   test('presentation warnings retain parsed plans and governed hashes', async () => {
+    scoped.artifact('a.context.md', CONTEXT_MAP);
+    scoped.artifact('b.context.md', CONTEXT_MAP);
     const a = await lint('a.plan.md', PLAN + '\n## Review Findings & Resolutions\nold\n');
     const b = await lint('b.plan.md', PLAN + '\n## Review Findings & Resolutions\nnew\n');
     assert.equal(a.exit, 0);
@@ -72,6 +81,7 @@ describe('lint severity', () => {
   });
   test('design graph defects preserve partial structure as warnings', async () => {
     const graph = '# Design\n## Increment Dependency Graph\n';
+    scoped.artifact('a.context.md', CONTEXT_MAP);
     const envelope = await lint('a.design.md', graph);
     assert.equal(envelope.exit, 0);
     assert.equal(envelope.result.parsed.increments.length, 0);
@@ -86,6 +96,20 @@ describe('lint severity', () => {
       assert.equal(r.design.increments.length, count);
       assert.ok(r.warnings.some(x => x.code === code));
     }
+  });
+  test('plan and design lint report a missing sibling context map until it exists', async () => {
+    const design = '# Design\n## Increment Dependency Graph\n';
+    const absentPlan = await lint('solo.plan.md', PLAN);
+    assert.equal(absentPlan.exit, 4);
+    assert.ok(absentPlan.result.errors.some((x: { code: string }) => x.code === 'missing-context-map'));
+    const absentDesign = await lint('solo.design.md', design);
+    assert.equal(absentDesign.exit, 4);
+    assert.ok(absentDesign.result.errors.some((x: { code: string }) => x.code === 'missing-context-map'));
+    scoped.artifact('solo.context.md', CONTEXT_MAP);
+    const presentPlan = await lint('solo.plan.md', PLAN);
+    const presentDesign = await lint('solo.design.md', design);
+    assert.deepEqual(presentPlan.result.errors, []);
+    assert.deepEqual(presentDesign.result.errors, []);
   });
   test('lint run checks a context map against the repository root', async () => {
     const f = sessionFixture();
@@ -170,6 +194,7 @@ describe('lint severity', () => {
       'Context map file tests/unlisted.test.ts appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
     ]);
 
+    scoped.artifact('plain.context.md', context('single', [], [], 'none'));
     const before = await lint('plain.plan.md', PLAN);
     scoped.artifact('plain.outside-in.context.md', context('outside-in', ['- strategy-only: `docs/outside-only.md`'], [], 'none'));
     scoped.artifact('plain.inside-out.context.md', context('inside-out', ['- strategy-only: `docs/inside-only.md`'], [], 'none'));

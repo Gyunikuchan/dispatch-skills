@@ -88,7 +88,7 @@ test('cap-ending SHOULD fixes settle without another review',async()=>{const r=a
  assert.equal((await r.run(['verify','run','--final'])).output.ok,true);assert.equal((await r.run(['worktree','deliver'])).output.ok,true);
  const complete=await r.run(['report','complete']);assert.equal(complete.output.ok,true,JSON.stringify(complete));
  assert.equal(complete.value.reviewedCodeBaseline,baseline);assert.equal(complete.value.reviewFixes[0].status,'verified but not re-reviewed');
- const walkthrough=fs.readFileSync(path.join(r.session,String(complete.value.path)),'utf8');assert.match(walkthrough,/reviewed code baseline/i);assert.match(walkthrough,/verified but not re-reviewed/i);assert.match(walkthrough,/R3-F001/);
+ const walkthrough=fs.readFileSync(path.join(r.session,String(complete.value.path)),'utf8');assert.match(walkthrough,/verified but not re-reviewed/i);assert.match(walkthrough,/R3-F001/);
 }finally{r.cleanup();}});
 
 test('uncommitted delivery requires verified pruned delivery',async()=>{

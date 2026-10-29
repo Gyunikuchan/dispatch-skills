@@ -228,9 +228,21 @@ export function levelGate(fold: Fold, level?: string): { allowed: boolean; reaso
   return { allowed: true };
 }
 
+// SECTION: intent confirmation
+// Fail closed: a missing spec hash or confirm record cannot match, so the spec is never implicitly confirmed.
+export function confirmGate(fold: Fold, specHash: string | null | undefined): { allowed: boolean; reason?: string } {
+  const confirmed = latest(fold, 'confirm')?.data['spec'];
+  if (typeof specHash !== 'string' || typeof confirmed !== 'string' || !approvalChain(fold, 'spec', confirmed, specHash).allowed) {
+    return { allowed: false, reason: 'missing-confirmation' };
+  }
+  return { allowed: true };
+}
+
 export function gate(fold: Fold, current: Hashes, level?: string): { allowed: boolean; reason?: string; artifact?: string } {
   const decision = levelGate(fold, level);
   if (!decision.allowed) return decision;
+  const confirmation = confirmGate(fold, current.spec);
+  if (!confirmation.allowed) return confirmation;
   level ??= latest(fold, 'level')?.data['level'] ?? 'medium';
   if (level === 'low') return { allowed: true };
   const approval = latest(fold, 'approval');

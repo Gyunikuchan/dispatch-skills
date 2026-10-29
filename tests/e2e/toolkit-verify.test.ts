@@ -14,9 +14,9 @@ describe('toolkit verify', () => {
       assert.equal(f.git(['branch','--show-current'],f.integration),'dispatch/test/integration');
       const first=rows().find(r=>r.kind==='evidence')!.data;
       assert.equal(first['tree'],f.git(['rev-parse','HEAD^{tree}'],f.integration)); assert.equal(first['clean'],true); assert.equal(first['exit'],0); assert.match(first['commandDigest'],/^sha256:/);
-      await f.run(['verify','run']); assert.equal(rows().length,4);
+      await f.run(['verify','run']); assert.equal(rows().length,5);
       fs.writeFileSync(path.join(f.integration,'ignored'),'ignored');
-      await f.run(['verify','run','--criteria','SC1']); assert.equal(rows().length,4);
+      await f.run(['verify','run','--criteria','SC1']); assert.equal(rows().length,5);
       fs.writeFileSync(path.join(f.integration,'new.txt'),'new');
       r=await f.run(['verify','run','--criteria','SC1']); assert.equal(r.output.reason,'dirty');
       assert.equal(rows().at(-1)!.data['clean'],false); assert.notEqual(rows().at(-1)!.data['tree'],first['tree']);

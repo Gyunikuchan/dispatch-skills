@@ -16,7 +16,7 @@ Refusals: unreadable question, invalid level, level-unapproved, no read delegate
 
 Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`. Pass `--spec` until a spec is bound.
 Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. When the roster has fewer targets than configured or drops a native-only provider, the value adds `underfill` (`host`: detected orchestrator or null; `configured`; `resolved`; `excluded` providers), the summary header names it before any item list, and zero targets carry the same note in the refusal. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
-Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
+Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, missing-context-map, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
 
@@ -31,26 +31,26 @@ Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 ### report complete
 
 Arguments: `report complete --session <session>`.
-Result path: completed walkthrough path with Review Focus and visuals, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, the walkthrough reports the reviewed baseline separately from each correction and marks each as verified but not re-reviewed. For plan/design corrections, record the baseline, correction and verification in a `focus` bullet with evidence; the renderer includes it under Review Focus.
+Result path: completed walkthrough path with Review Focus and visuals, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, Review Focus lists each correction with its status; the result value carries `reviewedCodeBaseline`. For plan/design corrections, record the baseline, correction and verification in a `focus` bullet with evidence; the renderer includes it under Review Focus.
 Refusals: review-confirmation-required, no-integration, criteria-unmet, focus-required or undelivered. `focus-required` (exit 4) means a plan with Risk `med` or `high` lacks a latest `focus` record with at least three bullets. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
 
 Arguments: `brief render <task> --session <session>`.
 Result path: writer brief filename, task, launch and UTF-8 bytes.
-Refusals: approval-chain or level gate, lint-errors, unknown task or no-open-launch. Create the task worktree before rendering.
+Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unknown task or no-open-launch. Create the task worktree before rendering.
 
 ### worktree integrate
 
 Arguments: `worktree integrate <task> --session <session> [--ack-stale <rationale>]`.
 Result path: integration commit and task, or retained conflict paths.
-Refusals: approval-chain gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
+Refusals: approval-chain or missing-confirmation gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
 
 ### worktree continue
 
 Arguments: `worktree continue <task> --session <session>`.
 Result path: completed integration commit after a retained conflict.
-Refusals: approval-chain gate, wrong-task, no-pending-integration or unresolved-conflict.
+Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-integration or unresolved-conflict.
 
 ### worktree commit
 
@@ -168,7 +168,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 Arguments: `lint run <artifact> --session <session>`. Pass the artifact as the positional argument, for example `node <skills-dir>/dispatch/scripts/dispatch.ts lint run .scratch/dispatch-skills/<folder>/<name>.plan.md --session <session>`.
 Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
-Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
+Refusals: unreadable/unknown artifact or lint-errors. A plan or design without a sibling `<slug>.context.md` reports defect `missing-context-map`. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
 
 ### context merge
 
@@ -184,7 +184,7 @@ Refusals: positional arguments. `diagnostics-failed` (exit 4) leaves an existing
 
 ## Ledger records
 
-Append JSON objects with kind, by, data, optional key and optional quote. Allowed by values are user, orchestrator and tool, except the user-only rules below. Tools supply seq and at on storage. Use stable explicit keys for bind, approval, level, escalation, edit, ruling and note; remaining kinds can derive idempotency keys. Reusing a key with different content refuses. Preserve quotes verbatim; never invent user evidence.
+Append JSON objects with kind, by, data, optional key and optional quote. Allowed by values are user, orchestrator and tool, except the user-only rules below. Tools supply seq and at on storage. Use stable explicit keys for bind, approval, confirm, level, escalation, edit, ruling and note; remaining kinds can derive idempotency keys. Reusing a key with different content refuses. Preserve quotes verbatim; never invent user evidence.
 
 ### bind
 
@@ -193,6 +193,10 @@ data: `spec` and at least one of `plan` or `design` are canonical artifact paths
 ### approval
 
 data: `spec`, `plan`, optional `design` are artifact hashes, forming one approval tuple. Allowed by: user only with a nonblank quote. At medium and above, writer briefs and integration require this tuple; recorded non-intent edits may carry it forward to the current hashes.
+
+### confirm
+
+data: `spec` is the canonical spec hash of the user's intent confirmation. Requires a key. Allowed by: user only with a nonblank quote. `review run` for plan or design and `gate` at every level refuse `missing-confirmation` unless the latest `confirm` hash matches the current spec hash, directly or through recorded non-intent spec edits.
 
 ### level
 
@@ -248,11 +252,11 @@ These commands use --session-dir rather than --session and run before tool calls
 
 ### session init
 
-`session init --objective "<objective>" [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>}; summary is at most 1024 UTF-8 bytes. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
+`session init --objective "<objective>" [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>, reused:<boolean>}; `reused` is true when an existing folder is returned and false when init creates one. Summary is at most 1024 UTF-8 bytes. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
 
 ### session reactivate
 
-`session reactivate --session-dir <session>` reactivates the same session idempotently. Stdout: {ok:true, summary, path:<sessionDir>} with the same byte cap.
+`session reactivate --session-dir <session>` reactivates the same session idempotently. Stdout: {ok:true, summary, path:<sessionDir>, reused:true} with the same byte cap.
 
 ### session quota-reprobe
 

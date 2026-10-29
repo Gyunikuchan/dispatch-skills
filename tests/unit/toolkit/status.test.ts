@@ -40,6 +40,7 @@ test('status report exposes bindings approval gate open escalations and torn tai
     const append = (kind: string, key: string, data: unknown, by = 'orchestrator') => appendRecord(f.session, { kind, key, data, by, ...(by === 'user' ? { quote: 'approved' } : {}) }, f.deps);
     await append('bind', 'bind', { spec: 'mission.spec.md', plan: 'work.plan.md' });
     const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    await append('confirm', 'confirm', { spec: hashes.spec }, 'user');
     await append('approval', 'approval', hashes, 'user');
     await append('level', 'level', { level: 'high' });
     await append('escalation', 'open-a', { id: 'a', state: 'open', summary: 'first' });
@@ -57,14 +58,14 @@ test('status report exposes bindings approval gate open escalations and torn tai
     assert.deepEqual(report.approved, hashes);
     assert.deepEqual(report.gate, { allowed: true });
     assert.deepEqual(report.escalations, [{ id: 'b', state: 'open', summary: 'pending' }]);
-    assert.equal(report.recordCount, 6);
+    assert.equal(report.recordCount, 7);
     assert.equal(report.tornTail, false);
     fs.writeFileSync(plan, 'changed');
     fs.appendFileSync(path.join(f.session, 'ledger.jsonl'), '{torn');
     const changed = await run();
     assert.deepEqual(changed.gate, { allowed: false, reason: 'unrecorded-change', artifact: 'plan' });
     assert.equal(changed.tornTail, true);
-    assert.equal(changed.recordCount, 6);
+    assert.equal(changed.recordCount, 7);
     assert.equal(fs.existsSync(path.join(f.session, '.state', 'lock')), false);
     assert.ok(fs.readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8').endsWith('{torn'));
   } finally { f.cleanup(); }

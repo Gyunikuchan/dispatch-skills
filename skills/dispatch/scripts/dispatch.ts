@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseCommand, UsageError } from './lib/cli.ts';
 import { reprobeQuota } from './lib/quota-store.ts';
-import { findRepoRoot, initializeSession, platformSessionId, reactivateSession } from './lib/session.ts';
+import { findRepoRoot, initSession, platformSessionId, reactivateSession } from './lib/session.ts';
 import { H } from './policy/quota.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
 import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
@@ -41,11 +41,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
       print({ v: 1, action: 'quota-reprobe', key: result.key, appliesTo: 'future-waves' });
       return 0;
     }
-    const dir = command.action === 'init'
-      ? initializeSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
-      : reactivateSession(path.resolve(flag('session-dir')!), repo);
+    const session = command.action === 'init'
+      ? initSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
+      : { path: reactivateSession(path.resolve(flag('session-dir')!), repo), reused: true };
     const diagnostics = diagnosticInstructions(deps.skillRoot).instructions;
-    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: dir, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
+    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: session.path, reused: session.reused, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
     return 0;
   } catch (error) {
     const usage = error instanceof UsageError;

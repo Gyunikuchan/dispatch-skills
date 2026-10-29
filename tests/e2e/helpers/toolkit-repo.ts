@@ -7,6 +7,9 @@ import { main, nodeDeps, type CliDeps } from '../../../skills/dispatch/scripts/t
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 export const planSource = ['# Work', '', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '', '## Proposed Changes', '### T1 — File', '#### [MODIFY] src/file.ts', '- Purpose: implements behavior.', '', '## Success Criteria', '- [SC1] File works', '  - Changes: src/file.ts', '  - Verify: `node -e "process.exit(0)"`', '  - Evidence: verify', '', '## Verification Plan', '### Automated Tests', '- `node -e "process.stdout.write(\'contract\')"`', ''].join('\n');
 
+// Plan and design lint require a sibling context map; Coverage stays empty so plan lint adds no coverage warnings.
+export const contextMapSource = ['# Context map: work', '', '> **Commit:** 0000000', '>', '> **Strategy:** single', '>', '> **Tool:** text', '', '## Map', '', '## Coverage', ''].join('\n');
+
 let baseTemplate: string | null = null;
 function getBaseTemplate(): string {
   if (!baseTemplate) {
@@ -19,6 +22,7 @@ function getBaseTemplate(): string {
     fs.writeFileSync(path.join(baseTemplate, 'src/file.ts'), 'initial\n');
     fs.writeFileSync(path.join(baseTemplate, '.gitignore'), '20261023T0000Z-test/\nignored\n');
     fs.writeFileSync(path.join(baseTemplate, 'work.plan.md'), planSource);
+    fs.writeFileSync(path.join(baseTemplate, 'work.context.md'), contextMapSource);
     fs.writeFileSync(path.join(baseTemplate, 'work.spec.md'), '# Spec\n## Requirements\n### REQ-1 — Work\n- Acceptance: works\n');
     git(['add', '.']);
     git(['commit', '-m', 'base']);
@@ -65,7 +69,13 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   fs.writeFileSync(path.join(session,'manifest.json'),JSON.stringify({schemaVersion:1,folderName:path.basename(session),sessionId:'test',safeSessionId:'test',repositoryRoot:root}));
   const deps = nodeDeps();
   await appendRecord(session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},deps);
-  const approve = async () => appendRecord(session,{kind:'approval',by:'user',quote:'approved',key:'approval:' + foldLedger(session).lastSeq,data:currentHashes(root,latest(foldLedger(session),'bind'))},deps);
+  const bound=currentHashes(root,latest(foldLedger(session),'bind'));
+  await appendRecord(session,{kind:'confirm',by:'user',quote:'confirmed',key:'confirm',data:{spec:bound.spec}},deps);
+  const approve = async () => {
+    const hashes=currentHashes(root,latest(foldLedger(session),'bind'));
+    await appendRecord(session,{kind:'confirm',by:'user',quote:'confirmed',key:'confirm:' + foldLedger(session).lastSeq,data:{spec:hashes.spec}},deps);
+    return appendRecord(session,{kind:'approval',by:'user',quote:'approved',key:'approval:' + foldLedger(session).lastSeq,data:hashes},deps);
+  };
   const level = async (value='low') => appendRecord(session,{kind:'level',by:'orchestrator',key:'level:' + foldLedger(session).lastSeq,data:{level:value}},deps);
   const edit = async (data: object) => appendRecord(session,{kind:'edit',by:'orchestrator',key:'edit:' + foldLedger(session).lastSeq,data},deps);
   const run = async (args: string[], hook?: CliDeps['hook']) => { const lines: string[]=[]; const exit=await main([...args,'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { stableValue } from './domain/stable-value.ts';
 import { ToolError } from './output.ts';
 
-export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate', 'focus'] as const;
+export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate', 'focus', 'confirm'] as const;
 export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; data: Record<string, any> };
 export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: string };
 export type ReviewFix = { review: string; round: number; generation: number; findings: string[]; from: string };
@@ -71,6 +71,7 @@ const focusBullets: Rule = shaped('an array of zero to five review focus bullets
 const shapes: Record<string, Record<string, Rule>> = {
   bind: { spec: text, plan: text, design: text },
   approval: { spec: hash, plan: hash, design: hash },
+  confirm: { spec: hash },
   level: { level: choice('low', 'medium', 'high', 'xhigh', 'max') },
   waiver: { criterion: text, reason: text },
   'manual-complete': { criterion: text, evidence: text },
@@ -137,12 +138,12 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
   }
   if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
-  const userOnly = ['approval', 'waiver', 'manual-complete'].includes(value.kind) ||
+  const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(value.kind) ||
     (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));
   if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {
     throw new ToolError(1, 'user-only', 'record requires by user and non-blank quote');
   }
-  if (!stored && ['approval', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
+  if (!stored && ['approval', 'confirm', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');
   }
   return value;

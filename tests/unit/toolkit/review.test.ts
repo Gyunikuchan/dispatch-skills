@@ -12,8 +12,9 @@ import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 
 const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
 const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results', severity = 'SHOULD') => JSON.stringify({status:'FINDINGS',findings:[{severity,tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
+const CONTEXT_MAP='# Context map: work\n\n> **Commit:** abc123\n>\n> **Strategy:** single\n>\n> **Tool:** text\n\n## Map\n- Work — `work.plan.md:1`\n';
 const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
-async function fixture(bound=true) {
+async function fixture(bound=true, confirmed=true) {
   // A shallow virtual root avoids physical ancestor probes in quota-path validation.
   const root=path.join(path.parse(os.tmpdir()).root,'review-'+crypto.randomUUID());
   const cleanup=memoryNodeFs(root);
@@ -41,9 +42,12 @@ async function fixture(bound=true) {
   }));config();
   const spec=f.artifact('mission.spec.md','# Mission\n## Intent & Problem\nKeep captured work recoverable.\n## Requirements\n### REQ-1 — Works\n');
   const plan=f.artifact('work.plan.md','# Work\n## Work\nOriginal body.\n## Review Findings & Resolutions\nDriver log.\n');
+  f.artifact('work.context.md',CONTEXT_MAP);
   let key=0;
   const add=(kind:string,data:object)=>appendRecord(f.session,{kind,by:'orchestrator',key:'input-'+key++,data},f.deps);
   if(bound) await add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});
+  const confirm=(specPath=spec)=>appendRecord(f.session,{kind:'confirm',by:'user',quote:'Approved',key:'confirm:'+key++,data:{spec:artifactHash('spec',fs.readFileSync(specPath,'utf8'))}},f.deps);
+  if(confirmed) await confirm();
   f.deps.delegate=async(provider,request,mode)=>{
     f.launches.push({provider,request,mode});
     return {outcome:{status:'ok',text:report(),resume:null,sessionId:null},invocations:[]};
@@ -56,7 +60,7 @@ async function fixture(bound=true) {
   };
   const directory=path.join(f.session,'.state/reviews/plan-work.plan');
   const read=(round:number,file:string)=>JSON.parse(fs.readFileSync(path.join(directory,'round-'+round,file),'utf8'));
-  return {...f,spec,plan,add,call,directory,read,config};
+  return {...f,spec,plan,add,call,confirm,directory,read,config};
 }
 
 test('rejected MUST remains pending beyond cap and requires source-specific explicit agreement',async()=>{
@@ -169,6 +173,7 @@ test('plan and design review rounds update the bound findings section', async ()
   nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
   try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Boundaries\nA boundary.\n## Review Findings & Resolutions\nDriver notes.\n');
+    f.artifact('strategy.context.md', CONTEXT_MAP);
     await f.add('bind', { spec: 'mission.spec.md', plan: 'work.plan.md', design: 'strategy.design.md' });
     for (const [kind, target, review] of [
       ['plan', f.plan, 'plan-work.plan'],
@@ -217,6 +222,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
       return done;
     };
     const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
+    f.artifact('strategy.context.md',CONTEXT_MAP);
     const pending=await call('design',design);
     await finish(pending,'design',design,f.spec);
     const designRound=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-1/round.json'),'utf8'));
@@ -256,6 +262,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     const noSpec=await call('plan',f.plan,null);assert.equal(noSpec.exit,4);assert.equal(noSpec.output.reason,'lint-errors');
     await f.add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});
     const override=f.artifact('override.spec.md','# Override\n## Requirements\n### REQ-1 — Override\n');
+    await f.confirm(override);
     assert.equal((await call('design',design,override)).output.reason,'native-pending');
     const overridden=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-2/round.json'),'utf8'));
     assert.equal(overridden.spec.path,fs.realpathSync.native(override));
@@ -308,6 +315,7 @@ test('review rounds capture dedupe clusters scope caps and design prompts',async
     assert.doesNotMatch(prompt.split('- Scope: ')[1]!.split('\n')[0]!,/Review Findings & Resolutions/);
     assert.equal((await f.call()).output.reason,'round-cap');
     const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
+    f.artifact('strategy.context.md',CONTEXT_MAP);
     assert.equal((await f.call('design',design)).exit,0);
     assert.match(fs.readFileSync(f.launches.at(-1)!.request.promptPath,'utf8'),/Design Path:|Design:/);
   } finally {f.cleanup();}
@@ -350,11 +358,13 @@ test('review rounds reuse slots supersede generations and reject moving targets'
     const f=await fixture();
     try {
       let edit=true;
+      const specBefore=artifactHash('spec',fs.readFileSync(f.spec,'utf8'));
       const delegate=f.deps.delegate;
       f.deps.delegate=async(...args)=>{const value=await delegate(...args);if(edit){edit=false;fs.appendFileSync(moved==='plan'?f.plan:f.spec,'\n## Added\nMoved.\n');}return value;};
       const result=await f.call(); assert.equal(result.output.reason,'target-moved');
       assert.equal(fs.existsSync(path.join(f.directory,'round-1/findings.json')),false);
       const gen1=fs.readdirSync(path.join(f.directory,'round-1/gen-1/slots'));
+      if(moved==='spec')await f.add('edit',{artifact:'spec',before:specBefore,after:artifactHash('spec',fs.readFileSync(f.spec,'utf8')),class:'non-intent',affects:[],rationale:'Record the spec revision',diffRef:'test diff'});
       assert.equal((await f.call()).exit,0); assert.equal(f.read(1,'round.json').generation,2);
       if(moved==='spec')assert.equal(f.read(1,'round.json').spec.hash,artifactHash('spec',fs.readFileSync(f.spec,'utf8')));
       assert.deepEqual(fs.readdirSync(path.join(f.directory,'round-1/gen-1/slots')),gen1);
@@ -465,6 +475,7 @@ test('design-stage review binds its spec and preserves an in-place revision with
   const f = await fixture(false);
   try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
+    f.artifact('strategy.context.md', CONTEXT_MAP);
     await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
     f.deps.delegate = async () => ({outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []});
     assert.equal((await f.call('design', design)).exit, 0);
@@ -574,6 +585,7 @@ test('review recurrence refuses changed bound spec before recovering pending fin
     f.deps.hook=point=>{if(point==='review:after-pending')throw new Error('Interrupted');};
     assert.equal((await f.call()).exit,2);delete f.deps.hook;
     fs.appendFileSync(f.spec,'\n## New constraint\nChanged.\n');
+    await f.add('edit',{artifact:'spec',before:f.read(1,'round.json').spec.hash,after:artifactHash('spec',fs.readFileSync(f.spec,'utf8')),class:'non-intent',affects:[],rationale:'Record the spec revision',diffRef:'test diff'});
     const count=f.launches.length;assert.equal((await f.call()).output.reason,'target-moved');assert.equal(f.launches.length,count);
     assert.equal(fs.existsSync(path.join(f.directory,'round-2/findings.json')),false);
     assert.equal(foldLedger(f.session).records.filter(row=>row.kind==='escalation').length,0);
@@ -693,4 +705,42 @@ test('review with zero resolved targets reports underfill in the failure message
     assert.equal(zero.exit, 2); assert.equal(zero.output.reason, 'review-failed');
     assert.match(JSON.stringify(zero.output), /Every review slot failed; underfill \d\/2 targets, host undetected, excluded native-only: codex, copilot/);
   } finally {f.cleanup();}
+});
+
+test('plan and design review refuse without the sibling context map', async () => {
+  const f=await fixture();try {
+    const orphan=f.artifact('orphan.plan.md','# Orphan\n## Work\nNo grounding.\n');
+    const refusedPlan=await f.call('plan',orphan);
+    assert.equal(refusedPlan.exit,4);assert.equal(refusedPlan.output.reason,'missing-context-map');
+    const design=f.artifact('orphan.design.md','# Design\n## Boundaries\nSingle writer.\n');
+    const refusedDesign=await f.call('design',design);
+    assert.equal(refusedDesign.exit,4);assert.equal(refusedDesign.output.reason,'missing-context-map');
+    assert.equal(f.launches.length,0);
+  }finally{f.cleanup();}
+});
+
+test('plan and design review refuse without a user confirm of the current spec at every level', async () => {
+  const f=await fixture(true,false);try {
+    for(const level of ['low','medium']) {
+      const refused=await f.call('plan',f.plan,level);
+      assert.equal(refused.exit,4,level);assert.equal(refused.output.reason,'missing-confirmation',level);
+    }
+    const design=f.artifact('work.design.md','# Design\n## Boundaries\nSingle writer.\n');
+    const refusedDesign=await f.call('design',design,'medium');
+    assert.equal(refusedDesign.exit,4);assert.equal(refusedDesign.output.reason,'missing-confirmation');
+    assert.equal(f.launches.length,0);
+    await f.confirm();
+    assert.equal((await f.call()).exit,0);
+    fs.appendFileSync(f.spec,'\n## Scope\nChanged intent without a recorded edit.\n');
+    const stale=await f.call();
+    assert.equal(stale.exit,4);assert.equal(stale.output.reason,'missing-confirmation');
+  }finally{f.cleanup();}
+});
+
+test('unbound plan review without a spec refuses before the zero-round skip', async () => {
+  const f=await fixture(false,false);try {
+    const refused=await f.call('plan',f.plan,'low');
+    assert.equal(refused.exit,4);assert.equal(refused.output.reason,'lint-errors');
+    assert.equal(f.launches.length,0);
+  }finally{f.cleanup();}
 });

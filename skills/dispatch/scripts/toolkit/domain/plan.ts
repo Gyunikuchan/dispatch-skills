@@ -52,6 +52,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'automated-tests-unavailable':
     case 'unsatisfied-requirement':
     case 'criterion-red-test-path':
+    case 'missing-context-map':
     case 'overlap':
     case 'missing-seams':
     case 'red-downgraded':

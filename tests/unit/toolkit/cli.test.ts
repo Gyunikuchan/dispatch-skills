@@ -102,6 +102,7 @@ describe('toolkit CLI contract', () => {
 test('lint run summary lists first defects with remaining count', async () => {
   const f = sessionFixture({memory:true});
   try {
+    f.artifact('work.context.md', '# Context map: work\n');
     const file = f.artifact('work.plan.md', '# Work\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n## Success Criteria\n');
     assert.equal(await main(['lint', 'run', file, '--session', f.session], f.deps), 4);
     assert.equal(f.output().reason, 'lint-errors');

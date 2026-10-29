@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  findRepoRoot, folderName, FOLDER_NAME, initializeSession, readManifest, reactivateSession,
+  findRepoRoot, folderName, FOLDER_NAME, initializeSession, initSession, readManifest, reactivateSession,
 } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 const now = new Date('2026-09-29T17:54:00.000Z');
@@ -99,4 +99,11 @@ test('session reactivate validates repository and rejects external locations', (
   fs.mkdirSync(external, { recursive: true });
   fs.writeFileSync(path.join(external, 'manifest.json'), fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   assert.throws(() => reactivateSession(external, root), /outside the workspace session root/);
+});
+
+test('init reports reused false when it creates the folder and true when it returns it', () => {
+  const { root, temp } = repo();
+  const created = initSession({ repositoryRoot: root, sessionId: 'u1', sessionTitle: 'demo', now, tempRoot: temp });
+  assert.equal(created.reused, false);
+  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 'u1', sessionTitle: 'demo', now, tempRoot: temp }), { path: created.path, reused: true });
 });

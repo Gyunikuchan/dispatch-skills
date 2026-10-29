@@ -11,7 +11,7 @@ When a verb needs a new spec, including `review` when no spec exists, use this s
 1. **Ground.** Ground the domain under [grounding guidance](grounding.md) before intent refinement. Derive explorer questions from the request.
 2. **Refine.** When the host provides `grilling`, invoke it by name after grounding at every level. Its first decision-tree node checks scope and splits independent subsystems before detailed questions. Use context maps or follow-up explorers for facts, not grilling subagents. Continue until no user decision is open; map its output into the canonical spec as best effort. If `grilling` is unavailable, skip it without adding a replacement clarification round.
 3. **Author.** Write `<session>/<slug>.spec.md` from the full chat, grounding and grilling output. Preserve constraints, alternatives, rejected options and actual user decisions; label inferences as `(assumption)` constraints or put them in Open Questions. Lint the spec and resolve parse errors before downstream authoring. Preserve an existing canonical spec's path.
-4. **Confirm.** In one exchange, present stated and assumed intent separately and recommend `plan` or `design` from the scope check; when `grilling` was unavailable, use grounded scope. Keep an explicit user verb unless that scope contradicts it; if so, explain and recommend the other verb.
+4. **Confirm.** In one exchange, present stated and assumed intent separately and recommend `plan` or `design` from the scope check; when `grilling` was unavailable, use grounded scope. Keep an explicit user verb unless that scope contradicts it; if so, explain and recommend the other verb. Record the user's reply as a `confirm` ledger record with the spec hash ([toolkit](toolkit.md#confirm)).
 
 Direct other planning skills' output into this canonical owner. Merge stray material before removing it; deleting tracked work follows the user gate.
 
@@ -33,6 +33,6 @@ Authors, reviewers and writers read the whole governing spec. Writers also read 
 
 ## Revision protocol
 
-An intent edit requires a recorded user quote; record the decision in the spec and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Record the before/after hashes, classification, diff reference and rationale in a ledger edit record.
+An intent edit requires a recorded user quote; record the decision in the spec, record a new `confirm` for the revised spec hash, and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Record the before/after hashes, classification, diff reference and rationale in a ledger edit record.
 
 Edit canonical artifacts in place; continue with unaffected writers. Notify only affected writers through the implementation rules. Preserve candidates, live handles, evidence and review history. Update dependent intent references and verification obligations before their next use; report changes in walkthrough deviations.

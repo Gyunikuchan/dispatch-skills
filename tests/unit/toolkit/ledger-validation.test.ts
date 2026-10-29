@@ -147,3 +147,15 @@ test('cap-ending SHOULD fixes validate integration metadata',()=>{
  assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{phase:'done',task:'T1',commit,reviewFix}}),{reason:'invalid-record'});
  assert.throws(()=>validateRecord({kind:'integrate',by:'tool',data:{phase:'opened',path:'p',branch:'b',base:commit,dest:{path:'repo',branch:'main'},reviewFix}}),{reason:'invalid-record'});
 });
+
+test('confirm records are user-only with a quote, a key and a spec hash', () => {
+  const hash = 'sha256:' + 'a'.repeat(64);
+  const confirm = (overrides: object) => ({kind: 'confirm', by: 'user', quote: 'Approved', key: 'confirm', data: {spec: hash}, ...overrides});
+  assert.doesNotThrow(() => validateRecord(confirm({})));
+  assert.throws(() => validateRecord(confirm({by: 'orchestrator'})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(confirm({quote: ' '})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(confirm({quote: undefined})), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord({kind: 'confirm', by: 'user', quote: 'Approved', data: {spec: hash}}), {reason: 'missing-key'});
+  assert.throws(() => validateRecord(confirm({data: {spec: 'sha256:' + 'A'.repeat(64)}})), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord(confirm({data: {}})), {reason: 'invalid-record'});
+});
