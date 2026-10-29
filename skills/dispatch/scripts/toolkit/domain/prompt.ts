@@ -100,15 +100,33 @@ export const qualitySections = {
   design: ['shared', 'spec', 'design'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
 
+export function rotate<T>(items: readonly T[], by: number): T[] {
+  if (!items.length) return [];
+  const shift = ((by % items.length) + items.length) % items.length;
+  return [...items.slice(shift), ...items.slice(0, shift)];
+}
+
+function rotateLines(markdown: string, by: number, isRotated: (line: string) => boolean): string {
+  const lines = markdown.split('\n');
+  const positions = lines.flatMap((line, index) => isRotated(line) ? [index] : []);
+  const rotated = rotate(positions.map((index) => lines[index]!), by);
+  for (const [index, position] of positions.entries()) lines[position] = rotated[index]!;
+  return lines.join('\n');
+}
+
+export function rotateTags(kindBlockTags: string, by: number): string {
+  return rotateLines(kindBlockTags, by, (line) => line.startsWith('- '));
+}
+
 /** Selects the consumer's criteria as the frame's single quality block. */
-export function qualityBar(markdown: string, consumer: QualityConsumer): string {
+export function qualityBar(markdown: string, consumer: QualityConsumer, rotation = 0): string {
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
   const bodies = qualitySections[consumer].map((section) => {
     const body = sections.get(section);
     if (body === undefined) throw new Error(`Missing quality section: ${section}`);
     if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
-    return body.trim();
+    return rotateLines(body.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
   });
   return `## quality\n\n${bodies.join('\n\n')}`;
 }

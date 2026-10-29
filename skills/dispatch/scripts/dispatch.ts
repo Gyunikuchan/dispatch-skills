@@ -11,6 +11,8 @@ import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
+const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run` and ground under references/grounding.md: launch explorers only when doctor reports one for this platform; otherwise self-ground.';
+
 export type EntryDeps = CliDeps & { cwd?: () => string };
 
 export async function main(argv: readonly string[] = process.argv.slice(2), deps: EntryDeps = nodeDeps()): Promise<number> {
@@ -42,7 +44,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
     const dir = command.action === 'init'
       ? initializeSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
       : reactivateSession(path.resolve(flag('session-dir')!), repo);
-    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: dir, ...diagnosticInstructions(deps.skillRoot) });
+    const diagnostics = diagnosticInstructions(deps.skillRoot).instructions;
+    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: dir, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
     return 0;
   } catch (error) {
     const usage = error instanceof UsageError;

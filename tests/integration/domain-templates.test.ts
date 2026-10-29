@@ -237,6 +237,27 @@ test('quality selection: plans name searched equivalents and plan review checks 
   assert.ok(maintainability.includes('search the repository by name and behaviour for an existing equivalent'));
 });
 
+test('quality bar names standard code smells as judgement calls', () => {
+  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const maintainability = qualityBar(bar, 'code').split('\n').find((line) => line.startsWith('- **maintainability** —'));
+  assert.ok(maintainability);
+  for (const smell of [
+    'Duplicated Code', 'Feature Envy', 'Data Clumps', 'Primitive Obsession', 'Shotgun Surgery', 'Divergent Change',
+    'Repeated Switches', 'Message Chains', 'Middle Man', 'Speculative Generality', 'Refused Bequest', 'Mysterious Name',
+  ]) assert.ok(maintainability.includes(smell), `missing ${smell}`);
+  assert.ok(maintainability.includes('Smells (judgement calls, never `MUST` alone)'));
+});
+
+test('code review flags unrequested consumer-boundary behaviour as intent', () => {
+  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
+  const against = codePrompt.split(/^## against$/m)[1]?.split(/^## /m)[0]?.replace(/\s+/g, ' ');
+  assert.ok(against);
+  assert.ok(against.includes('Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an `intent` finding; internal helpers and refactors are not.'));
+
+  const rules = readFileSync(new URL('../review-rules.md', root), 'utf8');
+  assert.ok(rules.includes('For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).'));
+});
+
 test('templates: plan template defines the durable bar and isolates transient test files', () => {
   const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
   assert.ok(plan.includes('- Retain: <transient|durable>'));

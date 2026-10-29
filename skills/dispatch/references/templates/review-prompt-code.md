@@ -26,6 +26,7 @@ success criteria well, not merely whether it matches the plan.
 - The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`:
   assess each applicable criterion from the selected diff and tests. A goal missed or met only
   on paper, such as a test passing without exercising it, is `intent`.
+- Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an `intent` finding; internal helpers and refactors are not.
 - Code review does not establish that verification commands ran or final gates passed.
   Execution evidence and final verification remain separate workflow gates.
 - With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not

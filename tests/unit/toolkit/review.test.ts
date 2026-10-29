@@ -416,6 +416,51 @@ test('review rounds code review prompt uses intent and raw task markdown and ref
   }finally{f.cleanup();}
 });
 
+test('review voices receive prompts rotated by roster position',async()=>{
+  const f=await fixture();
+  try {
+    fs.writeFileSync(f.plan,`# Work
+## Task Map
+| ID | Title | Outcome | Prerequisites | Criteria |
+| --- | --- | --- | --- | --- |
+| T1 | First | Works | none | SC1 |
+## Proposed Changes
+### T1 — First
+#### [NEW] src/first.ts
+- Purpose: Keep captured work recoverable.
+## Success Criteria
+- [SC1] Works
+  - Changes: src/first.ts
+  - Verify: \`node check\`
+  - Evidence: verify
+## Verification Plan
+### Automated Tests
+- \`node check\`
+`);
+    await f.add('writer',{phase:'launched',task:'T1',path:'.state/worktrees/T1-1',base:{commit:'a'.repeat(40),taskSection:'sha256:'+'b'.repeat(64),seq:1}});
+    await f.add('writer',{phase:'finished',task:'T1',launch:1,candidate:'c'.repeat(40)});
+    f.deps.run=async()=>({exit:0,stdout:'src/first.ts\0src/second.ts\0',stderr:''});
+    f.deps.delegate=async(provider,request,mode)=>{
+      f.launches.push({provider,request,mode});
+      return {outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]};
+    };
+    assert.equal((await f.call('code','T1')).exit,0);
+    assert.equal(f.launches.length,2);
+    const roundFile=path.resolve(path.dirname(f.launches[0]!.request.promptPath),'..','..','round.json');
+    const round=JSON.parse(fs.readFileSync(roundFile,'utf8')) as {roster:{slot:string;provider:string;index:number;reserve:boolean}[]};
+    const targets=round.roster.filter(slot=>!slot.reserve);
+    assert.equal(targets.length,2);
+    assert.deepEqual(targets.map(slot=>slot.index),[0,0]);
+    for(const [position,slot] of targets.entries()) {
+      const launch=f.launches.find(item=>item.provider===slot.provider);
+      assert.ok(launch,`missing launch for ${slot.provider}`);
+      const prompt=fs.readFileSync(launch.request.promptPath,'utf8');
+      const firstTag=prompt.slice(prompt.indexOf('### Tags')).match(/^- `([^`]+)`/m)?.[1];
+      assert.equal(firstTag,['intent','spec'][position],`roster position ${position} (${slot.slot})`);
+    }
+  }finally{f.cleanup();}
+});
+
 test('design-stage review binds its spec and preserves an in-place revision without a plan', async () => {
   const f = await fixture(false);
   try {

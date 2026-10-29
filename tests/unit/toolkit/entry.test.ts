@@ -84,7 +84,7 @@ test('dispatch entry distinguishes quota preconditions from filesystem faults', 
 });
 
 
-test('session instructions disclose diagnostics only when enabled', async () => {
+test('session instructions always point at grounding and add diagnostics only when enabled', async () => {
   for (const enabled of [false,true]) {
     const f = sessionFixture();
     try {
@@ -92,17 +92,21 @@ test('session instructions disclose diagnostics only when enabled', async () => 
       const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
       fs.writeFileSync(path.join(skill,'config.jsonc'), JSON.stringify({diagnostics:enabled}));
       const deps = {...f.deps,skillRoot:skill,cwd:()=>f.root};
+      const assertInstructions = (value: { instructions?: unknown }) => {
+        const instructions = value.instructions;
+        if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
+        assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md: launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
+        if (enabled) assert.match(instructions,/references\/diagnostics\.md/);
+        else assert.doesNotMatch(instructions,/references\/diagnostics\.md/);
+        assert.ok(!instructions.includes(f.root));
+        assert.ok(Buffer.byteLength(instructions) <= 2048);
+      };
       assert.equal(await entry.main(['session','init','--objective','test'],deps),0);
       const value = JSON.parse(f.lines[0]!);
-      if (enabled) {
-        assert.match(value.instructions,/references\/diagnostics\.md/);
-        assert.ok(!value.instructions.includes(f.root));
-        assert.ok(Buffer.byteLength(value.instructions) <= 2048);
-      }
-      else assert.equal('instructions' in value,false);
+      assertInstructions(value);
       f.lines.length=0;
       assert.equal(await entry.main(['session','reactivate','--session-dir',value.path],deps),0);
-      assert.equal('instructions' in JSON.parse(f.lines[0]!),enabled);
+      assertInstructions(JSON.parse(f.lines[0]!));
     } finally {f.cleanup();}
   }
 });

@@ -263,3 +263,43 @@ test('wrapper RED exit suppresses missing-red without a report section',async()=
     assert.equal(findings.escalations.some((row:any)=>row.key.startsWith('missing-red:')),false);
   }finally{f.cleanup();}
 });
+
+test('toolkit code review refuses an empty worktree diff before launching voices', async () => {
+  const f = await toolkitRepo();
+  try {
+    const skill = path.join(f.session, 'empty-review-skill');
+    fs.mkdirSync(skill);
+    fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+      'read-delegates': { claude: { targets: [{ low: { model: 'fake' } }] } },
+      phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 1 } } },
+    }));
+    f.deps.skillRoot = skill;
+    f.deps.liveness = { claude: true };
+    f.deps.orchestrator = null;
+    let launches = 0;
+    f.deps.delegate = async () => {
+      launches++;
+      return { outcome: { status: 'ok', text: JSON.stringify({ status: 'CLEAN', findings: [] }), resume: null, sessionId: null }, invocations: [] };
+    };
+    await f.level('low');
+    await f.approve();
+
+    const recordsBefore = foldLedger(f.session).records.length;
+    const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+
+    assert.equal(result.exit, 4, JSON.stringify(result.output));
+    assert.equal(result.output.reason, 'nothing-to-review');
+    assert.equal(launches, 0);
+    assert.equal(foldLedger(f.session).records.length, recordsBefore);
+    const reviewsRoot = path.join(f.session, '.state/reviews');
+    const rounds = fs.existsSync(reviewsRoot)
+      ? fs.readdirSync(reviewsRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .flatMap(entry => fs.readdirSync(path.join(reviewsRoot, entry.name)).filter(name => /^round-\d+$/.test(name)))
+      : [];
+    assert.deepEqual(rounds, []);
+  } finally {
+    f.cleanup();
+  }
+});

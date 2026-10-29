@@ -151,6 +151,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
     }
     const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]));
+    if (!changed.length) throw new ToolError(4, 'nothing-to-review', `No changes between ${base.slice(0, 12)}..${head.slice(0, 12)}`);
     return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
 
@@ -170,10 +171,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (!fixed && !rejectionStates().some(state=>state.state==='pending')) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
     }
     const dir = path.join(directory, 'round-' + n);
+    const current = await capture();
     fs.mkdirSync(dir, {recursive: true});
     const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
     let round = read<Round>(roundFile);
-    const current = await capture();
     if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
     const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {}, confirmationRounds:ConfirmationRound[]=[];
     for (let i = 1; i < n; i++) {
@@ -243,8 +244,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const bind = latest(foldLedger(session), 'bind');
       const requestsBySlot=new Map<string,RejectionRequest[]>();
       for(const request of round.requests ?? [])for(const slot of request.sourceSlots)requestsBySlot.set(slot,[...(requestsBySlot.get(slot) ?? []),request]);
-      const prompt = (slot:RosterSlot)=>reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary,
-        ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? []});
+      const targets = round!.roster.filter(entry => !entry.reserve);
+      const prompt = (slot:RosterSlot)=>{
+        const position=targets.findIndex(entry=>entry.slot===slot.slot);
+        return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary,
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position});
+      };
       const validate = (text: string,logicalSlot:string): Validation => {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
         if (parsed.ok) return {ok: true};

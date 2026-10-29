@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, fillTemplate, qualityBar, settledSection, type Settled } from './domain/prompt.ts';
+import { assembleTemplate, fillTemplate, qualityBar, rotateTags, settledSection, type Settled } from './domain/prompt.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import { structuralLines } from './domain/plan.ts';
@@ -31,11 +31,14 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[];
+  taskSummary?: string; scope: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number;
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
-  const template = assembleTemplate(read('review-prompt.md'), read('review-prompt-' + kind + '.md'), undefined, [qualityBar(read('quality-bar.md'), kind)]);
+  const kindBlock = read('review-prompt-' + kind + '.md');
+  const tags = sections(kindBlock, false).get('tags');
+  const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
+  const template = assembleTemplate(read('review-prompt.md'), rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0)]);
   const values: Record<string, string> = {
     'Spec Path': context.spec.path, 'Spec Hash': context.spec.hash,
     'Review Scope': context.scope, 'User Focus Areas': 'General review', 'Tool Turn Budget': 'Unspecified',

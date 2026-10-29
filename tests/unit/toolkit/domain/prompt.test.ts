@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
 
 import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 
@@ -59,6 +61,91 @@ test('prompt assembly equals the golden per review kind', () => {
     }
   }
 });
+
+const reviewKinds = ['code', 'plan', 'design'] as const;
+const familyOrder = {
+  shared: ['intent', 'maintainability'],
+  spec: ['spec', 'usability'],
+  code: ['spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'testing', 'usability'],
+  plan: ['intent', 'architecture', 'decomposition', 'testing'],
+  design: ['intent', 'architecture', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'testing', 'usability', 'decomposition'],
+} as const;
+const tagOrder = {
+  code: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
+  plan: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
+  design: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
+} as const;
+const rotateExpected = <T,>(items: readonly T[], by: number): T[] => {
+  const shift = items.length ? ((by % items.length) + items.length) % items.length : 0;
+  return [...items.slice(shift), ...items.slice(0, shift)];
+};
+const reviewContext = (kind: typeof reviewKinds[number], rotation = 0) => ({
+  skillRoot: path.resolve('skills/dispatch'),
+  spec: {path: REVIEW_PROMPT_INPUTS[kind]['Spec Path']!, hash: REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!},
+  artifact: REVIEW_PROMPT_INPUTS[kind][kind === 'design' ? 'Design Path' : 'Plan Path']!,
+  ...(kind === 'code' ? {planPath: REVIEW_PROMPT_INPUTS.code['Plan Path']!, taskSummary: REVIEW_PROMPT_INPUTS.code['Task Summary']!} : {}),
+  scope: REVIEW_PROMPT_INPUTS[kind]['Review Scope']!,
+  rotation,
+});
+const sectionBullets = (prompt: string, heading: string): string[] => {
+  const lines = prompt.split('\n');
+  const start = lines.indexOf(heading);
+  assert.notEqual(start, -1, `missing ${heading} section`);
+  const body: string[] = [];
+  for (let index = start + 1; index < lines.length && !/^#{1,6}\s/.test(lines[index]!); index++) {
+    if (/^- `[^`]+`$/.test(lines[index]!)) body.push(lines[index]!.match(/`([^`]+)`/)![1]!);
+  }
+  return body;
+};
+const familyBullets = (prompt: string): string[] => [...prompt.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map((match) => match[1]!);
+const linePositions = (prompt: string, marker: string): number[] => prompt.split('\n').flatMap((line, index) => line.includes(marker) ? [index] : []);
+
+test('review voices receive identical guidance in rotated axis order', () => {
+  const sharedFixedLines = [
+    'Precedence: Applicable host rule files govern first.',
+    'Host rules override only this bar.',
+  ];
+  for (const kind of reviewKinds) {
+    const base = reviewPrompt(kind, reviewContext(kind));
+    const fixedLines = [
+      ...sharedFixedLines,
+      ...(kind === 'code' || kind === 'plan' ? ['- Tooling: skip issues that configured linters, formatters, or type checkers enforce.'] : []),
+      ...(kind === 'plan' ? ['- Code criteria: apply the code section to proposed changes and touched interfaces at planning altitude; do not require written implementation.'] : []),
+      ...(kind === 'plan' || kind === 'design' ? ['### Visual-aid bar', '| Components and boundaries | Architecture diagram |'] : []),
+    ];
+    const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
+    const familyCounts = familySections.map((section) => familyOrder[section].length);
+    const cycle = [tagOrder[kind].length, ...familyCounts].reduce((left, right) => left / gcd(left, right) * right, 1);
+    for (const rotation of [0, 1, 2, cycle]) {
+      const prompt = reviewPrompt(kind, reviewContext(kind, rotation));
+      assert.deepEqual(sectionBullets(prompt, '### Tags'), rotateExpected(tagOrder[kind], rotation), `${kind}: tags at rotation ${rotation}`);
+      const actualFamilies = familyBullets(prompt);
+      let offset = 0;
+      for (let index = 0; index < familySections.length; index++) {
+        const section = familySections[index]!;
+        const count = familyCounts[index]!;
+        assert.deepEqual(actualFamilies.slice(offset, offset + count), rotateExpected(familyOrder[section], rotation), `${kind}: ${section} at rotation ${rotation}`);
+        offset += count;
+      }
+      assert.deepEqual([...prompt.split('\n')].sort(), [...base.split('\n')].sort(), `${kind}: line multiset at rotation ${rotation}`);
+      for (const marker of fixedLines) {
+        const positions = linePositions(base, marker);
+        assert.ok(positions.length, `${kind}: missing fixed line ${marker}`);
+        assert.deepEqual(linePositions(prompt, marker), positions, `${kind}: fixed line ${marker}`);
+      }
+      if (rotation === cycle) assert.equal(prompt, base, `${kind}: wraparound`);
+    }
+  }
+});
+
+test('rotation zero matches the golden prompt', () => {
+  for (const kind of reviewKinds) assert.equal(`${reviewPrompt(kind, reviewContext(kind))}\n`, read(golden, `${kind}.md`), kind);
+});
+
+function gcd(left: number, right: number): number {
+  while (right) [left, right] = [right, left % right];
+  return left;
+}
 
 test('prompt: a slot without a kind section, or a section without a slot, throws', () => {
   const frame = '## Prompt template\n````markdown\n<<slot:a>>\n````\n';

@@ -9,6 +9,7 @@ Review prompts carry the settled governing spec path and hash. Every reviewer re
 Read the full result file before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for defects in governing text and testing for missing verification coverage. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts.
 
 A settled DEC may resolve an intent claim autonomously: cite it in the rationale. For changed intent, a new external dependency/runtime prerequisite or discarded work, use the [user gate](decision-frame.md#user-gate-boundaries). Record changed intent through [spec operation](spec-stage.md#revision-protocol).
+For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).
 
 ## Review provenance and applicability
 

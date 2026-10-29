@@ -1,16 +1,16 @@
 # Grounding
 
-For new specs, use this grounding procedure under the [spec-stage sequence](spec-stage.md#resolve-and-author). Also ground before design, plan or `ask` when understanding needs many files read.
+Initial grounding is required for every new spec, regardless of question size. Run `doctor run` and use its configured explorer for this platform; if none is configured, self-ground under [Publish](#publish). Also ground before design, plan or `ask` when understanding needs many files read.
 
 ## Launch
 
-Run `doctor run` without `--level` and use the resolved explorer model and effort exactly. Send each explorer the question-driven [explorer brief](templates/explorer-brief.md), which sets a 16 KB (16,384 UTF-8 byte) budget per map. Launch one native explorer for initial grounding unless `deep: true`; deep applies only to initial grounding, where outside-in and inside-out explorers run in parallel with the same resolved model, effort, objective, questions and full Coverage checklist. Follow [native slot rules](providers.md#native-slots); a host that cannot launch the configured slot is a blocker, not permission to substitute.
+Run `doctor run` without `--level`. When it reports a configured explorer for this platform, use its resolved model and effort exactly. Send each explorer the question-driven [explorer brief](templates/explorer-brief.md), which sets a 16 KB (16,384 UTF-8 byte) budget per map. Launch one native explorer for initial grounding unless `deep: true`; deep applies only to initial grounding, where outside-in and inside-out explorers run in parallel with the same resolved model, effort, objective, questions and full Coverage checklist. Follow [native slot rules](providers.md#native-slots); a host that cannot launch the configured slot is a blocker, not permission to substitute.
 
 Outside-in starts at entry points, docs, config, samples, tests and precedent, then traces into internals. Inside-out starts at the symbols and files planned to change, then traces callers, importers, re-exports and tests. These strategies set the starting direction; both explorers follow the brief's tool order.
 
 ## Follow-up explorers
 
-At any stage, including grilling, authoring or review adjudication, launch one follow-up explorer when an unanswered question needs many files read and no existing map answers it. Put only that question and its limited Coverage checklist in a single-strategy brief. Handle small lookups directly. Use the follow-up output form in the [explorer brief](templates/explorer-brief.md#map-budget-and-output); keep `<slug>.context.md` for the initial map. Lint each map and verify load-bearing claims at source before relying on it.
+For follow-ups only, launch one explorer when an unanswered question needs many files read and no existing map answers it; handle small lookups directly. This applies at any stage, including grilling, authoring or review adjudication. Put only that question and its limited Coverage checklist in a single-strategy brief. Use the follow-up output form in the [explorer brief](templates/explorer-brief.md#map-budget-and-output); keep `<slug>.context.md` for the initial map. Lint each map and verify load-bearing claims at source before relying on it.
 
 ## Check and recover
 
