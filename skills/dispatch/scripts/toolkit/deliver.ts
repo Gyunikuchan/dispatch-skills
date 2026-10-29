@@ -170,21 +170,35 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
     const tasks=[...new Set(tx.fold.records.filter(r=>r.kind==='writer').map(r=>r.data['task'] as string))];
     const writers=tasks.flatMap(t=>launches(tx.fold,t));
     const owned=[...new Set([...writers.map(w=>w.record.data['path'] as string),...(opened?[opened.data['path'] as string]:[])])];
-    const observed: Record<string,{head:string}>={};
+    const observed: Record<string,{head:string}>={},deregistered: string[]=[];
     for(const relative of owned) {
       const cwd=path.resolve(ctx.session,relative),local=path.relative(boundary,cwd);
-      if(!local || local.startsWith('..') || path.isAbsolute(local) || !registered.includes(cwd) || !fs.existsSync(cwd))continue;
+      if(!local || local.startsWith('..') || path.isAbsolute(local) || !fs.existsSync(cwd))continue;
       const physical=path.relative(physicalBoundary,fs.realpathSync(cwd));
-      if(physical && !physical.startsWith('..') && !path.isAbsolute(physical))observed[relative]={head:await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])};
+      if(!physical || physical.startsWith('..') || path.isAbsolute(physical))continue;
+      if(registered.includes(cwd))observed[relative]={head:await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])};
+      else if(!fs.existsSync(path.join(cwd,'.git')))deregistered.push(relative);
     }
     const terminal=new Set(terminalWorktrees(tx.fold,observed));
+    const integrated=(w: typeof writers[number])=>!!w.finished && tx.fold.records.some(r=>r.kind==='integrate' && r.seq>w.finished!.seq && r.data['phase']==='done' && r.data['task']===w.record.data['task']);
+    const delivered=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered');
     const removed: string[]=[],kept: {path:string;reason:string;paths?:string[]}[]=[],ready: string[]=[];
+    // Git cannot report a deregistered directory's state (e.g. after an interrupted removal), so only ledger-merged remnants are removed.
+    const remnants=deregistered.filter(relative=>{
+      const writer=writers.findLast(w=>w.record.data['path']===relative);
+      const merged=writer ? integrated(writer) : !!delivered && !tx.fold.records.some(r=>r.kind==='integrate' && r.seq>delivered.seq && r.data['phase']!=='closed') &&
+        terminalWorktrees(tx.fold,{[relative]:{head:delivered.data['source']}}).includes(relative);
+      if(!merged)kept.push({path:relative,reason:'unpreserved'});
+      return merged;
+    });
     for(const cwd of registered) {
       const relative=owned.find(p=>path.resolve(ctx.session,p)===cwd);
       if(!relative || !observed[relative]) {kept.push({path:cwd,reason:'unowned'}); continue;}
       if(!terminal.has(relative)){kept.push({path:relative,reason:'non-terminal'}); continue;}
-      const ignored=(await gitOk(ctx.deps,cwd,['ls-files','--others','--ignored','--exclude-standard','-z'])).split('\0').filter(Boolean);
       const writer=writers.findLast(w=>w.record.data['path']===relative);
+      // Merged work already lives in the integration branch or the caller, so its worktree needs no restoration.
+      if(writer ? integrated(writer) : !!delivered && observed[relative]!.head===delivered.data['source']) {ready.push(relative); continue;}
+      const ignored=(await gitOk(ctx.deps,cwd,['ls-files','--others','--ignored','--exclude-standard','-z'])).split('\0').filter(Boolean);
       let snapshot=observed[relative]!.head;
       if(writer) {
         const preserved=await git(ctx.deps,root,['rev-parse','--verify',abandonedRef(ctx.manifest.safeSessionId,writer.record.data['task'],writer.launch)]);
@@ -197,14 +211,20 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       } else ready.push(relative);
     }
     // Preserve all snapshots until every worktree has passed its preservation check.
-    for(const relative of ready){await gitOk(ctx.deps,root,['worktree','remove','--force',path.resolve(ctx.session,relative)]);removed.push(relative);}
+    for(const relative of remnants){fs.rmSync(path.resolve(ctx.session,relative),{recursive:true,force:true});removed.push(relative);}
+    for(const relative of ready){
+      const cwd=path.resolve(ctx.session,relative);
+      await gitOk(ctx.deps,root,['worktree','remove','--force',cwd]);
+      // NOTE: Git for Windows leaves a directory holding a junction (e.g. a linked node_modules); rmSync unlinks junctions without following them.
+      fs.rmSync(cwd,{recursive:true,force:true});
+      removed.push(relative);
+    }
     for(const writer of writers) {
-      if(writer.finished && tx.fold.records.some(r=>r.kind==='integrate' && r.seq>writer.finished!.seq && r.data['phase']==='done' && r.data['task']===writer.record.data['task']))await gitOk(ctx.deps,root,['update-ref','-d',candidateRef(ctx.manifest.safeSessionId,writer.record.data['task'],writer.launch)]);
+      if(integrated(writer))await gitOk(ctx.deps,root,['update-ref','-d',candidateRef(ctx.manifest.safeSessionId,writer.record.data['task'],writer.launch)]);
     }
     if(opened && (removed.includes(opened.data['path']) || !registered.includes(path.resolve(ctx.session,opened.data['path'])))) {
-      const last=tx.fold.records.findLast(r=>r.kind==='integrate' && r.data['phase']==='delivered');
       const branch=await git(ctx.deps,root,['rev-parse','--verify','--quiet','refs/heads/'+opened.data['branch']]);
-      if(last && !kept.some(k=>owned.includes(k.path)) && (branch.exit===1 || (branch.exit===0 && branch.stdout.trim()===last.data['source']))) {
+      if(delivered && !kept.some(k=>owned.includes(k.path)) && (branch.exit===1 || (branch.exit===0 && branch.stdout.trim()===delivered.data['source']))) {
         if(branch.exit===0)await gitOk(ctx.deps,root,['branch','-D',opened.data['branch']]);
       }
     }

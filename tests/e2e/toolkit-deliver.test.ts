@@ -142,14 +142,48 @@ describe('toolkit delivery and cleanup',()=>{
       await r.run(['worktree','close','--reason','stop']); await r.run(['worktree','cleanup']); assert.ok(!fs.existsSync(r.integration)); assert.ok(r.git(['branch','--list','dispatch/test/integration']));
     }finally{r.cleanup();}
   });
-  it('keeps unpreserved submitted-edit bytes', async () => {
-    await each(['submitted-edit', 'ignored-closed', 'dirty-delivered'], async mode => {
+  it('removes merged worktrees without preservation checks', async () => {
+    await each(['submitted-edit', 'linked', 'ignored-delivered', 'dirty-delivered'], async mode => {
       const { r, writer } = await prepared(); try {
-        let file: string;
-        if (mode === 'submitted-edit') { file = path.join(writer, 'src/file.ts'); fs.writeFileSync(file, 'kept\n'); }
-        else { await r.run(['worktree', 'deliver']); if (mode === 'ignored-closed') await r.run(['worktree', 'close', '--reason', 'stop']); file = path.join(r.integration, mode === 'dirty-delivered' ? 'src/file.ts' : 'ignored'); fs.writeFileSync(file, 'kept\n'); }
+        let dir = writer; const target = path.join(r.session, 'link-target');
+        if (mode === 'submitted-edit') fs.writeFileSync(path.join(writer, 'src/file.ts'), 'later\n');
+        else if (mode === 'linked') { fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'keep'), 'keep'); fs.symlinkSync(target, path.join(writer, 'ignored'), 'junction'); }
+        else { await r.run(['worktree', 'deliver']); dir = r.integration; fs.writeFileSync(path.join(dir, mode === 'dirty-delivered' ? 'src/file.ts' : 'ignored'), 'later\n'); }
+        const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.ok(!fs.existsSync(dir)); assert.ok(!JSON.stringify(cleaned.value).includes('unpreserved'));
+        if (mode === 'linked') assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
+        if (mode.endsWith('-delivered')) assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
+      } finally { r.cleanup(); }
+    });
+  });
+  it('retries removal of a deregistered worktree remnant without following links', async () => {
+    const { r, writer } = await prepared(); try {
+      const target = path.join(r.session, 'link-target'); fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'keep'), 'keep');
+      // Simulate a cleanup interrupted after Git deregistered the worktree but before the directory was removed.
+      r.git(['worktree', 'remove', '--force', writer]); fs.mkdirSync(writer); fs.symlinkSync(target, path.join(writer, 'ignored'), 'junction');
+      const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0);
+      assert.ok(!fs.existsSync(writer)); assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep'); assert.ok(JSON.stringify(cleaned.value.removed).includes(path.basename(writer)));
+    } finally { r.cleanup(); }
+  });
+  it('keeps deregistered remnants of unmerged work', async () => {
+    await each(['active-writer', 'moved-integration', 'interrupted-integration', 'writer-after-delivery'], async mode => {
+      const r = await toolkitRepo(planSource, base); try {
+        await r.level(); let dir: string;
+        if (mode === 'active-writer') dir = path.join(r.session, (await r.run(['worktree', 'create', 'T1'])).value.path);
+        else if (mode === 'writer-after-delivery') { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); assert.equal((await r.run(['worktree', 'deliver'])).exit, 0); await r.run(['worktree', 'create', 'T1']); dir = r.integration; }
+        else if (mode === 'interrupted-integration') { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); assert.equal((await r.run(['worktree', 'deliver'])).exit, 0); await appendRecord(r.session, { kind: 'integrate', by: 'tool', data: { phase: 'started', task: 'T1', candidate: r.git(['rev-parse', 'HEAD'], r.integration) } }, r.deps); dir = r.integration; }
+        else { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); await r.run(['worktree', 'deliver']); fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'after\n'); assert.equal((await r.run(['worktree', 'commit', '--reason', 'after'])).exit, 0); dir = r.integration; }
+        r.git(['worktree', 'remove', '--force', dir]); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'work'), 'kept');
+        const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(path.join(dir, 'work'), 'utf8'), 'kept'); assert.ok(JSON.stringify(cleaned.value.kept).includes('unpreserved'));
+      } finally { r.cleanup(); }
+    });
+  });
+  it('keeps unpreserved bytes in undelivered integration work', async () => {
+    await each(['ignored', 'src/file.ts', 'moved-past-delivery'], async name => {
+      const { r } = await prepared(); try {
+        if (name === 'moved-past-delivery') { await r.run(['worktree', 'deliver']); fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'after delivery\n'); assert.equal((await r.run(['worktree', 'commit', '--reason', 'after delivery'])).exit, 0); name = 'ignored'; }
+        await r.run(['worktree', 'close', '--reason', 'stop']); const file = path.join(r.integration, name); fs.writeFileSync(file, 'kept\n');
         const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(file, 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
-        if (mode === 'dirty-delivered') assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
+        assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
       } finally { r.cleanup(); }
     });
   });

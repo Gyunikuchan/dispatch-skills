@@ -112,7 +112,7 @@ Refusals: blank reason or unexpected task argument. Closing records state; it do
 
 Arguments: `worktree cleanup --session <session>`.
 Result path: removed paths and kept paths with reasons, including unowned, non-terminal and unpreserved.
-Refusals: unexpected arguments, lock or filesystem/Git fault. Kept paths require inspection; cleanup preserves snapshots and ignored files. See [cleanup](worktree-cleanup.md).
+Refusals: unexpected arguments, lock or filesystem/Git fault. Kept paths require inspection; cleanup removes merged worktrees and preserves snapshots and ignored files elsewhere. See [cleanup](worktree-cleanup.md).
 
 ### worktree create
 
