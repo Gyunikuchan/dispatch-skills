@@ -154,11 +154,11 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
     if((await changedPaths(ctx.deps,cwd,'HEAD')).length) {
       const metadata=reviewFix?reviewFixIdentity(reviewFix):undefined;
       const identity=metadata?['-m','Dispatch-Review-Fix: '+metadata.digest,'-m','Dispatch-Review-Fix-Data: '+metadata.data]:[];
-      await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','dispatch fix: '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
+      await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
       await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     } else {
       const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
-      if(message.split('\n')[0]!=='dispatch fix: '+why || !message.split('\n').includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
+      if(message.split('\n')[0]!=='fix(dispatch): '+why || !message.split('\n').includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
       const recorded=reviewFixFromCommit(message);
       if(recorded && reviewFix && stableValue(recorded)!==stableValue(reviewFix))refuse('no-changes');
       if(recorded)reviewFix=recorded;

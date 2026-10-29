@@ -101,4 +101,15 @@ describe('toolkit writer worktrees', () => {
     assert.equal(r.git(['rev-parse','HEAD'],cwd),base); assert.equal(fs.readFileSync(path.join(cwd,'outside'),'utf8'),'outside');
     assert.equal(records(r).filter(x=>x.data['phase']==='finished').length,0);
   });
+  it('commits writer submissions with a conventional message and without host hooks', async t => {
+    const r=await toolkitRepo(); t.after(r.cleanup);
+    assert.equal((await r.run(['worktree','create','T1'])).exit,0); const cwd=launchPath(r);
+    const hooks=path.join(r.root,'.test-hooks'); fs.mkdirSync(hooks);
+    fs.writeFileSync(path.join(hooks,'pre-commit'),'#!/bin/sh\necho generated > unowned.txt\ngit add unowned.txt\n',{mode:0o755});
+    r.git(['config','core.hooksPath',hooks]);
+    fs.writeFileSync(path.join(cwd,'src/file.ts'),'changed\n');
+    const submitted=await r.run(['worktree','submit','T1']); assert.equal(submitted.exit,0,JSON.stringify(submitted));
+    assert.equal(r.git(['log','-1','--format=%s'],cwd),'chore(dispatch): T1 launch 1');
+    assert.equal(r.git(['diff','--name-only','HEAD^','HEAD'],cwd),'src/file.ts');
+  });
 });

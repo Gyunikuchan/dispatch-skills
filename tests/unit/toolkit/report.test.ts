@@ -293,7 +293,7 @@ test('report render fills review focus and visuals from ledger and design',async
   await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-nontransient-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed'}},f.deps);
   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit,reason,reviewFix}},f.deps);
   for(const check of checks(loadPlan(f.session,readManifest(f.session))))await appendRecord(f.session,{kind:'evidence',by:'tool',data:{criterion:check.criterion,commandDigest:check.commandDigest,tree,clean:true,before:tree,after:tree,exit:0,path:'.state/evidence/'+check.criterion+'.json'}},f.deps);
-  const metadata=reviewFixIdentity(reviewFix),message=[`dispatch fix: ${reason}`,'',`Dispatch-Fix: ${readManifest(f.session).safeSessionId}`,`Dispatch-Review-Fix: ${metadata.digest}`,`Dispatch-Review-Fix-Data: ${metadata.data}`,''].join('\n');
+  const metadata=reviewFixIdentity(reviewFix),message=[`fix(dispatch): ${reason}`,'',`Dispatch-Fix: ${readManifest(f.session).safeSessionId}`,`Dispatch-Review-Fix: ${metadata.digest}`,`Dispatch-Review-Fix-Data: ${metadata.data}`,''].join('\n');
   const git=fakeGit(state);f.deps.run=async(argv)=>{
    const args=argv.slice(1),output=(stdout='')=>({exit:0,stdout,stderr:''});
    if(args[0]==='rev-list'&&args[1]==='--reverse'&&args[2]==='--parents')return output(`${commit} ${baseline}\n`);

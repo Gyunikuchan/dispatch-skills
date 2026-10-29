@@ -237,7 +237,7 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       const changes=split(await gitOk(ctx.deps,cwd,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]));
       if(!changes.length||changes.some(file=>!allowed.has(file.replaceAll('\\','/'))))refuse('prune-review-required');
       const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B',commit]);
-      if(message.split(/\r?\n/)[0]!=='dispatch fix: '+record.data['reason']||!message.split(/\r?\n/).includes('Dispatch-Fix: '+ctx.manifest.safeSessionId))refuse('prune-review-required');
+      if(message.split(/\r?\n/)[0]!=='fix(dispatch): '+record.data['reason']||!message.split(/\r?\n/).includes('Dispatch-Fix: '+ctx.manifest.safeSessionId))refuse('prune-review-required');
       let committed:ReviewFix|undefined;
       try {committed=reviewFixFromCommit(message);}catch{refuse('prune-review-required');}
       if(!committed||!equal(committed,metadata))refuse('prune-review-required');
@@ -356,7 +356,7 @@ export async function prune(ctx:HandlerContext):Promise<HandlerResult> {
        !equal(artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(tx.fold,'bind')))  ||
        await testedTree(ctx.deps,ctx.session,cwd)!==expected)refuse('prune-transition-stale');
     if(head===from) {await gitOk(ctx.deps,cwd,['--literal-pathspecs','add','-u','--',...targets]);
-    await gitOk(ctx.deps,cwd,['--literal-pathspecs','commit','--only','-m','dispatch: prune declared transient tests','--',...targets]);
+    await gitOk(ctx.deps,cwd,['--literal-pathspecs','commit','--only','-m','chore(dispatch): prune declared transient tests','--',...targets]);
     await ctx.deps.hook?.('prune:after-commit');}
     const to=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     if(await gitOk(ctx.deps,cwd,['rev-parse','HEAD^'])!==from  ||

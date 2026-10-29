@@ -131,8 +131,9 @@ export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
       if(outside.length) refuse('out-of-scope',JSON.stringify({paths:outside}));
       if(!changed.length) refuse('no-changes');
       await gitOk(ctx.deps,cwd,['add','-A']);
-      await gitOk(ctx.deps,cwd,['commit','-m','dispatch: '+id+' launch '+launch.launch]);
-      candidate=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
+      // NOTE: plumbing skips host hooks, which may stage unowned generated files; integration commits still run them.
+      candidate=await gitOk(ctx.deps,cwd,['commit-tree',await gitOk(ctx.deps,cwd,['write-tree']),'-p',base,'-m','chore(dispatch): '+id+' launch '+launch.launch]);
+      await gitOk(ctx.deps,cwd,['reset','--soft',candidate]);
       await ctx.deps.hook?.('submit:after-commit');
     }
     await gitOk(ctx.deps,cwd,['update-ref',candidateRef(ctx.manifest.safeSessionId,id,launch.launch),candidate]);

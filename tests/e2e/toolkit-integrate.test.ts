@@ -89,7 +89,7 @@ describe('toolkit integration',()=>{
       await r.run(['worktree','create','T1']); assert.equal((await r.run(['worktree','commit','--reason','fix'])).output.reason,'no-changes');
       fs.writeFileSync(path.join(r.integration,'src/file.ts'),'fixed\n'); assert.equal((await r.run(['worktree','commit','--reason','fix'],crash('commit:after-commit'))).exit,2);
       const head=r.git(['rev-parse','HEAD'],r.integration); assert.equal((await r.run(['worktree','commit','--reason','fix'])).exit,0); assert.equal(rows(r,'fix').length,1); assert.equal(r.git(['rev-parse','HEAD'],r.integration),head);
-      r.git(['commit','--allow-empty','-m','dispatch fix: other'],r.integration); assert.equal((await r.run(['worktree','commit','--reason','other'])).output.reason,'no-changes'); assert.equal(rows(r,'fix').length,1);
+      r.git(['commit','--allow-empty','-m','fix(dispatch): other'],r.integration); assert.equal((await r.run(['worktree','commit','--reason','other'])).output.reason,'no-changes'); assert.equal(rows(r,'fix').length,1);
       for(const action of ['commit','abort']) assert.equal((await r.run(['worktree',action,...(action==='abort'?['T1']:[])])).output.reason,'invalid-input');
     }finally{r.cleanup();}
   });

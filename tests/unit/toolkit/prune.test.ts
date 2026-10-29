@@ -162,7 +162,7 @@ test('cap-ending SHOULD fixes require a verified bounded commit chain',async()=>
   fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[finding],failed:[]}));
   fs.writeFileSync(path.join(reviewDir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
   const canonical=stableValue(reviewFix),fixDigest='sha256:'+crypto.createHash('sha256').update(canonical).digest('hex'),fixData=Buffer.from(canonical).toString('base64url');
-  const manifest=readManifest(f.session),message=[`dispatch fix: ${commitReason}`,'',`Dispatch-Fix: ${manifest.safeSessionId}`,`Dispatch-Review-Fix: ${fixDigest}`,`Dispatch-Review-Fix-Data: ${fixData}`,''].join('\n');
+  const manifest=readManifest(f.session),message=[`fix(dispatch): ${commitReason}`,'',`Dispatch-Fix: ${manifest.safeSessionId}`,`Dispatch-Review-Fix: ${fixDigest}`,`Dispatch-Review-Fix-Data: ${fixData}`,''].join('\n');
   let commits=[[head,baseline]],changed=['src/file.ts','src/helper.ts'];
   f.deps.run=async(argv)=>{
    const args=argv.slice(1),output=(stdout='')=>({exit:0,stdout,stderr:''});

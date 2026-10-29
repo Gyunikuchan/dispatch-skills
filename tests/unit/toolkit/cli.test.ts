@@ -20,7 +20,7 @@ describe('toolkit CLI contract', () => {
       f.artifact('work.plan.md', '# Work\n');
       await appendRecord(f.session, {kind: 'bind', key: 'commit-inputs', by: 'orchestrator', data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
       await appendRecord(f.session, {kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'dispatch/test/integration',base:'b'.repeat(40),dest:{path:f.root,branch:'main'}}}, f.deps);
-      const prefix = `dispatch fix: ${reason}\n\nDispatch-Fix: ${readManifest(f.session).safeSessionId}\n`;
+      const prefix = `fix(dispatch): ${reason}\n\nDispatch-Fix: ${readManifest(f.session).safeSessionId}\n`;
       const metadata = reviewFixIdentity({review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:'b'.repeat(40)});
       let message = '';
       f.deps.run = async (argv) => {

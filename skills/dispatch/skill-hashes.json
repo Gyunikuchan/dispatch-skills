@@ -84,7 +84,7 @@
   "scripts/toolkit/fanout.ts": "700ca203351687f3f81b4a21fc53d52748f9280cacbc15c46ae783b1c8a96eff",
   "scripts/toolkit/findings.ts": "cff1ad2409c5dd93db2e1aedca096201b3b1460574bc2095d8a84506bf4216e9",
   "scripts/toolkit/git.ts": "df5d414ab2cf589eb6365147736e0910808607d308a9a59a93292bc96ad76286",
-  "scripts/toolkit/integrate.ts": "0442e4e7990fa6f6d4e01cb88be3fa5f528d9705ca80bf796e322f1462703c28",
+  "scripts/toolkit/integrate.ts": "4320b4516caf88866a6aa47984e9445d77c33a8b609c8ce4225aaec04254d7f4",
   "scripts/toolkit/integration.ts": "c5ee232c9a28251f80ba65d8d2fb595665f7d4563b4dbdddee04bbdd1c4635b9",
   "scripts/toolkit/ledger.ts": "ab5247199a27dc735bf268d2b86c36e58741feb2acf8285c99ea271c5b97347c",
   "scripts/toolkit/lint.ts": "867f6de5dfa6a308691b8d2a785e201e85e52a0d47cbf8e18f4c491f4e7c10c1",
@@ -92,7 +92,7 @@
   "scripts/toolkit/output.ts": "3546a8f6cbd0114fb1db96366c63b55987fca4ce6c9e983987c1bbb61d2b640a",
   "scripts/toolkit/plan-view.ts": "ac67cb143c3b7216017cae782cb67ab1c05e870871af8f87ad78754e7508fa68",
   "scripts/toolkit/prompts.ts": "7af9571f5824a46c4e6486fbfee0c008be2806070a1947b6b7305968d4731243",
-  "scripts/toolkit/prune.ts": "e1c03b23175d1f68feb979ade427425cc1fedfdcba4ff1f741bb984f248cb4d2",
+  "scripts/toolkit/prune.ts": "2af9deb3bc996d3f3d27bbf969ca27500462a57433ff4db0d774581fe1dd8548",
   "scripts/toolkit/records.ts": "8809337d68abf4071e43974ad7d6fed6f0faf73b9d92c2640781f11e1167b911",
   "scripts/toolkit/red.ts": "9ccbf62b8615f173704def0f3cdb5246734c542b0615815a0d9850f3c4155ac6",
   "scripts/toolkit/report.ts": "ff868ed74c9346d3129dcad078c4243691a556572f9d00e415bc9038342189cd",
@@ -102,5 +102,5 @@
   "scripts/toolkit/types.ts": "c9cc70331d59513aaa982060548eb4032f1462c883e9acf1cfebe9e06a607802",
   "scripts/toolkit/verify.ts": "24b4809bb1ec72a260697f349032146a9a714980d4eb3f1952a0fd738af68a78",
   "scripts/toolkit/walkthrough.ts": "f90b61368dc62e4428751b3c646e0e65b3d80e3ecd1c851da0c551c3bc119ed7",
-  "scripts/toolkit/writers.ts": "90172491479f245a3dbba6e6460baa30420295f25f4eb70148db5e89af211ab3"
+  "scripts/toolkit/writers.ts": "6bf8859359c987ae24b51186995e851265a85da492a2486a96e11bff5b9d3b6c"
 }
