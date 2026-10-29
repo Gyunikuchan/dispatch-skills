@@ -44,7 +44,7 @@ test('walkthrough follows reviewer order and states counts once', () => {
   }));
 
   assert.deepEqual([...rendered.matchAll(/^## .+$/gm)].map((match) => match[0]), [
-    '## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Appendix',
+    '## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix',
   ]);
   const glance = section(rendered, '## At a Glance', '## Visuals');
   assert.match(glance, /- \*\*What:\*\* The plan behaviour is visible to readers\./);
@@ -53,11 +53,11 @@ test('walkthrough follows reviewer order and states counts once', () => {
   for (const count of ['1/1 criteria', '1 files', '0 recorded edits', '0 unplanned paths', '0 findings']) {
     assert.equal((rendered.match(new RegExp(count, 'g')) ?? []).length, 1, count);
   }
-  const verification = section(rendered, '## Verification', '## Appendix');
+  const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
   assert.match(verification, /- \*\*Status:\*\* complete/);
   assert.doesNotMatch(verification, /\d+\/\d+|\d+ files|\d+ findings/);
   assert.doesNotMatch(rendered, /^> \*\*(Delivered|Integration|Spec|Plan|Status|Deviations):/m);
-  assert.doesNotMatch(rendered, /^## (Changes Made|Deviations & Follow-ups|User-Attributed Records|Review Findings & Resolutions)$/m);
+  assert.doesNotMatch(rendered, /^## (Changes Made|User-Attributed Records)$/m);
 });
 
 test('walkthrough review focus lists departures and authored evidence', () => {
@@ -168,10 +168,13 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     'Integration: source 123456abcdef7890 · branch main · ref refs/dispatch/x/delivered-source',
     '### Verified Evidence', '[source evidence](evidence/first.json)', 'historical pre-prune evidence via validated pruning',
     '### User-Attributed Records', 'the user approved this row \\| &lt;!-- literal --&gt;',
-    '### Deviations & Follow-ups', 'diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010',
-    '### Review Findings & Resolutions', '| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |',
-    '[findings](.state/reviews/review-alpha/round-1/findings.json)',
-    '### Review Fixes', 'Reviewed code baseline:', 'verified but not re-reviewed', 'src/report.ts', 'e'.repeat(40),
     '</details>',
   ]) assert.ok(appendix.includes(detail), detail);
+
+  const deviations = section(rendered, '## Deviations & Follow-ups');
+  for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010']) assert.ok(deviations.includes(detail), detail);
+  const findings = section(rendered, '## Review Findings & Resolutions');
+  for (const detail of ['| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |', '[findings](.state/reviews/review-alpha/round-1/findings.json)']) assert.ok(findings.includes(detail), detail);
+  assert.ok(!appendix.includes('Review Findings & Resolutions') && !appendix.includes('Deviations & Follow-ups'));
+  assert.ok(rendered.indexOf('## Verification') < rendered.indexOf('## Deviations & Follow-ups') && rendered.indexOf('## Review Findings & Resolutions') < rendered.indexOf('## Appendix'));
 });

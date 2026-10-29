@@ -57,6 +57,19 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 
 - <SC> · <reason>
 
+## Deviations & Follow-ups
+
+- Deviation: <recorded plan edit and diff reference>
+- Follow-up: <open escalation or follow-up>
+
+## Review Findings & Resolutions
+
+| Review | ID | Round | Severity | Source | Status | Ruling |
+| --- | --- | --- | --- | --- | --- | --- |
+| <review ID> | R1-F001 | 1 | MUST | <model/effort> | Accepted | <first ruling line> |
+
+- Round <n> (<review ID>): <n> findings — [findings](<relative path>)
+
 ## Appendix
 
 <details>
@@ -79,29 +92,18 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 
 - <record with verbatim quote, or None.>
 
-### Deviations & Follow-ups
-
-- Deviation: <recorded plan edit and diff reference>
-- Follow-up: <open escalation or follow-up>
-
-### Review Findings & Resolutions
-
-| Review | ID | Round | Severity | Source | Status | Ruling |
-| --- | --- | --- | --- | --- | --- | --- |
-| <review ID> | R1-F001 | 1 | MUST | <model/effort> | Accepted | <first ruling line> |
-
-- Round <n> (<review ID>): <n> findings — [findings](<relative path>)
-
 </details>
 ````
 
 ## Field notes
 
-- Layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Order sections as What/How and one counts line, visuals, Review Focus, per-task Behaviour Changes, Verification, and the collapsed Appendix.
+- Layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Order sections as What/How and one counts line, visuals, Review Focus, per-task Behaviour Changes, Verification, Deviations & Follow-ups, Review Findings & Resolutions, and the collapsed Appendix.
 - What and How: use the plan's At a Glance What and How it works. If the plan has no What, use integration status.
 - Counts: state criterion counts once, include changed-file counts, and list aggregate deviation and review counts on this one line.
 - Visuals: copy all plan At a Glance visuals, or the parent design visuals when the plan has none. A recorded `focus.visual` replaces the copied visuals. Keep one-line text summaries with diagrams.
 - Review Focus: list the plan Risk and any recorded edits, manual/waived/missing criteria, rejected or deferred findings, cap-ending SHOULD fixes verified without re-review, unplanned paths, open escalations or follow-ups, and authored `focus` bullets with evidence links. When Risk is the only derived item, state in one line that delivery matched the plan and all criteria are verified.
 - Behaviour Changes: give each task its `### T<n> — <task title>` heading and visible behaviour bullets, followed by a label-free `<details>` block with compact `path · action` lines. Do not add per-file headings or repeat task titles. Put unplanned paths under Unplanned changes; omit empty entries.
 - Verification: show one status line. Keep Manual, Waived and Missing criteria visible outside `<details>`; omit empty subsections. Keep verified evidence in the Appendix.
-- Appendix: keep verified evidence, user-attributed records and quotes, deviations with diff references, the findings table and round links, and provenance with spec/plan paths, 12-character hashes, and integration source/ref. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.
+- Deviations & Follow-ups: list recorded edits with diff references, unplanned paths, open escalations and deferred rulings, or `None.`.
+- Review Findings & Resolutions: show the findings table and round links visibly, outside `<details>`.
+- Appendix: keep verified evidence, user-attributed records and quotes, and provenance with spec/plan paths, 12-character hashes, and integration source/ref. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.

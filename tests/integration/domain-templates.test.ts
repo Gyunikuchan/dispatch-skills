@@ -100,7 +100,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
     const labels = [...skeleton.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(labels, ['What', 'How it works', 'Counts']);
     const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
-    assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Appendix']);
+    assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix']);
     const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(boxLabels(template), []);
     assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);

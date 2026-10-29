@@ -27,7 +27,7 @@
   "references/templates/review-prompt-plan.md": "cedfb435ae7a25337fcddf4627a76774752b862909282d9b383442219394920d",
   "references/templates/review-prompt.md": "96f8df0a1045269542b3481926017b70f427a4f5929d17331be32907d8b60bcf",
   "references/templates/spec.md": "1814d1942e2b754688059eb0b67bf3adf1a3239273d7051b7169cda9f3f5b1da",
-  "references/templates/walkthrough.md": "eae45a3e6cfec8419608d0fc795694ebbd3637e5966dcf1f3da67ce2fd07968f",
+  "references/templates/walkthrough.md": "76390af4947fb7c13608832e23e93dc3464ca3f0632f10f150c98d208c451ae6",
   "references/templates/writer-brief.md": "e36ee6396a14c4b8cac99ad1c71429c49881fd8ff656a2712d5dac0c42a338cc",
   "references/toolkit.md": "daf3abb83c51c24b3d794411b264a8e7051a3eef3a74ec235dc404fa8ac6cb9f",
   "references/verbs/ask.md": "3e8ea5fc9067bfe47046475010933fbc85dcbd400c158f1f04bbd2e8c9f4482b",
@@ -101,6 +101,6 @@
   "scripts/toolkit/status.ts": "066e9b9edb49240544d702c1bdf65efe940878f147ead4e751cbcc94cb014580",
   "scripts/toolkit/types.ts": "c9cc70331d59513aaa982060548eb4032f1462c883e9acf1cfebe9e06a607802",
   "scripts/toolkit/verify.ts": "24b4809bb1ec72a260697f349032146a9a714980d4eb3f1952a0fd738af68a78",
-  "scripts/toolkit/walkthrough.ts": "8c1eb41f9e2581c6a5f8fcb1a3f8ebbb88ac51051763fd05ac954b201654876f",
+  "scripts/toolkit/walkthrough.ts": "9bac23e552ca520cdd14ae2d8d4431349a58ab22ced3364ba3a76b1ad02c8a2c",
   "scripts/toolkit/writers.ts": "6bf8859359c987ae24b51186995e851265a85da492a2486a96e11bff5b9d3b6c"
 }

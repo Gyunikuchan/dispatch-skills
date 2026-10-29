@@ -98,7 +98,7 @@ test('report render writes every missing criterion without Git and rewrites the 
     assert.equal(first.exit, 0);
     const walkthrough = path.join(f.session, 'report.walkthrough.md');
     const initial = fs.readFileSync(walkthrough, 'utf8');
-    const verification = initial.slice(initial.indexOf('## Verification'), initial.indexOf('## Appendix'));
+    const verification = initial.slice(initial.indexOf('## Verification'), initial.indexOf('## Deviations & Follow-ups'));
     for (const id of ['SC1', 'SC2', 'SC3', 'SC4', 'contract']) {
       assert.match(verification, new RegExp(`- ${id} · no eligible evidence`));
     }
@@ -316,7 +316,7 @@ test('report render fills review focus and visuals from ledger and design',async
   const bind=latest(foldLedger(f.session),'bind')!;const hashes=currentHashes(f.root,bind),appendix=text.slice(text.indexOf('## Appendix'));
   assert.ok(appendix.includes(`Spec: brief.spec.md · sha256:${hashes.spec!.slice(7,19)}`));
   assert.ok(appendix.includes(`Plan: report.plan.md · sha256:${hashes.plan!.slice(7,19)}`));
-  assert.ok(appendix.includes('R3-F001')&&appendix.includes('verified but not re-reviewed')&&appendix.includes('src/task-1.ts'));
+  assert.ok(!appendix.includes('Review Fixes'));
   const nextDir=path.join(f.session,'.state/reviews/code-integration/round-4');
   writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
   writeJson(path.join(nextDir,'findings.json'),{review:'code-integration',round:4,findings:[],failed:[]});

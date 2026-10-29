@@ -118,9 +118,8 @@ function reviewFocus(view: WalkthroughView): string[] {
     departures.push(`- ${label} finding ${line(row.review)}:${line(row.id)}${row.rationale ? ` — ${line(row.rationale)}` : ''}`);
   }
   for (const fix of view.reviewFixes ?? []) {
-    if (fix.status !== 'verified but not re-reviewed') continue;
     const findings = fix.metadata.findings.length ? fix.metadata.findings.map(line).join(', ') : line(fix.commit).slice(0, 12);
-    departures.push(`- Cap-ending SHOULD fix ${findings}: verified but not re-reviewed`);
+    departures.push(`- Cap-ending SHOULD fix ${findings}: ${fix.status}`);
   }
   for (const file of view.unplannedPaths) departures.push(`- Unplanned path: ${line(file)}`);
   for (const item of view.openEscalations) departures.push(`- Open escalation ${line(item.id)}: ${line(item.summary)}`);
@@ -137,19 +136,6 @@ function reviewFocus(view: WalkthroughView): string[] {
     const evidence = line(bullet.evidence);
     lines.push(`- ${line(bullet.text)} — Evidence: [${evidence}](${evidence})`);
   }
-  return lines;
-}
-
-function reviewFixDetails(view: WalkthroughView): string[] {
-  const fixes = view.reviewFixes ?? [];
-  if (!fixes.length) return [];
-  const lines = ['### Review Fixes', ''];
-  if (view.reviewedCodeBaseline) lines.push(`Reviewed code baseline: ${codeSpan(view.reviewedCodeBaseline)}.`, '');
-  for (const fix of fixes) {
-    lines.push(`- Correction ${codeSpan(fix.commit)} from ${codeSpan(fix.metadata.from)}; findings ${codeSpan(fix.metadata.findings)}; changed paths ${codeSpan(fix.paths)}; status: ${codeSpan(fix.status)}; reason ${codeSpan(fix.reason)}; metadata ${codeSpan(fix.metadata)}.`);
-    if (fix.verification) lines.push(`  - Current evidence: tree ${codeSpan(fix.verification.tree)}; criteria ${codeSpan(fix.verification.criteria)}; contract ${codeSpan(fix.verification.contract)}${fix.verification.finalTree ? `; final tree ${codeSpan(fix.verification.finalTree)}; final checks ${codeSpan(fix.verification.finalChecks)}` : ''}.`);
-  }
-  lines.push('');
   return lines;
 }
 
@@ -229,6 +215,8 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
       ? `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; not delivered`
       : `source ${line(view.delivered.source)} · branch ${line(view.delivered.branch)} · ref ${line(view.delivered.ref)}`;
   out.push(
+    '## Deviations & Follow-ups', '', ...(deviations.length || followUps.length ? [...deviations, ...followUps] : ['None.']), '',
+    '## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), '',
     '## Appendix', '', '<details>', '', '<summary>Audit records</summary>', '',
     '### Provenance', '',
     `- Spec: ${line(view.specPath)} · ${hashPrefix(view.specHash)}`,
@@ -243,8 +231,6 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     for (const record of view.userRecords) out.push(`| ${record.seq} | ${cell(record.kind)} | ${cell(record.summary)} | ${cell(record.quote)} |`);
     out.push('');
   } else out.push('None.', '');
-  out.push('### Deviations & Follow-ups', '', ...(deviations.length || followUps.length ? [...deviations, ...followUps] : ['None.']), '',
-    '### Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), '',
-    ...reviewFixDetails(view), '</details>');
+  out.push('</details>');
   return `${out.join('\n').replace(/\s+$/, '')}\n`;
 }
