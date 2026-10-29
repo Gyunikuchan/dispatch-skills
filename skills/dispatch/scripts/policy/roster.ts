@@ -101,7 +101,9 @@ export type RosterInput = {
   liveness?: Readonly<Record<string, boolean>>;
 };
 
-export type Roster = { rounds: number; targets: readonly RosterSlot[]; reserves: readonly RosterSlot[] };
+export type Underfill = { host: string | null; configured: number | 'all'; resolved: number; excluded: string[] };
+/** `underfill` is present when native-only providers were excluded or breadth fell short of a numeric configuration. */
+export type Roster = { rounds: number; targets: readonly RosterSlot[]; reserves: readonly RosterSlot[]; underfill?: Underfill };
 
 type Candidate = Omit<RosterSlot, 'slot' | 'index' | 'reserve'>;
 
@@ -167,7 +169,8 @@ export function resolveRoster(input: RosterInput): Roster {
 
   const orchestrator = input.orchestrator ? { ...input.orchestrator, platform: normalizeProvider(input.orchestrator.platform) } : null;
   // A native-subagents-only platform serves only as the orchestrator's own native subagents.
-  const usable = candidates(input).filter((item) => !item.native || item.provider === orchestrator?.platform);
+  const all = candidates(input);
+  const usable = all.filter((item) => !item.native || item.provider === orchestrator?.platform);
 
   if (pins?.kind === 'providers') {
     const unknown = pins.keys.filter((key) => !usable.some((item) => item.provider === key));
@@ -181,5 +184,8 @@ export function resolveRoster(input: RosterInput): Roster {
   const ordered = collapse(demote(live, orchestrator, !explicit), input.overrides);
   const count = wanted === 'all' ? ordered.length : Math.min(wanted, ordered.length);
   const [targets = [], reserves = []] = identify(ordered.slice(0, count), ordered.slice(count));
-  return { rounds, targets, reserves };
+  const excluded = [...new Set(all.filter((item) => item.native && item.provider !== orchestrator?.platform).map((item) => item.provider))];
+  const short = wanted !== 'all' && count < wanted;
+  const underfill = excluded.length || short ? { host: orchestrator?.platform ?? null, configured: wanted, resolved: count, excluded } : undefined;
+  return { rounds, targets, reserves, ...(underfill ? { underfill } : {}) };
 }

@@ -31,7 +31,7 @@ Escalate through the [Decision Frame](decision-frame.md#review-escalation); reta
 
 Pruning, delivery and report completion require confirmed applicable MUST rejections. Bound plan/design and current integration-base reviews retain obligations across content edits and disabled phases. Duplicate rulings cannot close a pending original. Later target edits do not reopen a confirmed unchanged ruling. Rejection of the same finding under a new ruling needs fresh confirmation.
 
-Apply accepted fixes directly within governing scope. Identify every source, test, fixture, helper and generated path needed before editing. Verify fixes and record the resulting evidence. Resolve related findings as a coherent change; dependency ordering must follow actual interfaces.
+Apply accepted fixes directly within governing scope. Identify every source, test, fixture, helper and generated path needed before editing. Verify fixes and record the resulting evidence. Resolve related findings as a coherent change; dependency ordering must follow actual interfaces. For a defective predicate, fix the predicate so every failing state passes; do not patch only the listed case.
 
 Adjacent work and optional findings need user opt-in when outside approved scope; preserve unselected findings as follow-ups. In-scope acceptance supplies opt-in only for the selected bounded work. A recurring finding after an accepted fix escalates through the [Decision Frame](decision-frame.md#review-escalation).
 

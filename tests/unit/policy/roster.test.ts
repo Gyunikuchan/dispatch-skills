@@ -74,3 +74,23 @@ test('grammar-native-subagents-only: such platforms serve only as the orchestrat
   const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot', model: null } });
   assert.deepEqual(native.targets.filter((slot) => slot.provider === 'copilot').map((slot) => [slot.slot, slot.native]), [['copilot[0]', true]]);
 });
+
+// SECTION: Underfill
+
+test('underfill-native-exclusion: native-only providers of another host are listed once each in config order', () => {
+  const readDelegates = { ...base.readDelegates, copilot: { targets: [{ low: { model: 'gpt-4.1' } }, { low: { model: 'gpt-4.1-mini' } }], nativeSubagentsOnly: true } };
+  const policy = { rounds: { low: 1 }, targets: { low: 'all' as const } };
+  assert.deepEqual(resolveRoster({ ...base, readDelegates, policy }).underfill, { host: 'claude', configured: 'all', resolved: 5, excluded: ['copilot'] });
+  assert.deepEqual(resolveRoster({ ...base, readDelegates, policy, orchestrator: null }).underfill, { host: null, configured: 'all', resolved: 5, excluded: ['copilot'] });
+});
+
+test('underfill-clamp: a numeric target above the available count reports the configured number', () => {
+  const roster = resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 9 } } });
+  assert.deepEqual(roster.underfill, { host: 'claude', configured: 9, resolved: 5, excluded: [] });
+});
+
+test('underfill-absent-for-full-roster: a roster that meets its configured breadth reports no underfill', () => {
+  assert.equal(resolveRoster(base).underfill, undefined);
+  const readDelegates = { ...base.readDelegates, copilot: { targets: [{ low: { model: 'gpt-4.1' } }], nativeSubagentsOnly: true } };
+  assert.equal(resolveRoster({ ...base, readDelegates, orchestrator: { platform: 'copilot', model: null } }).underfill, undefined);
+});

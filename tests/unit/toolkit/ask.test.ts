@@ -129,3 +129,35 @@ test('ask run attributes reserve and cross-provider native answers to their actu
     } finally {f.cleanup();}
   }
 });
+
+function nativeExclusionFixture() {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+    codex: {targets: [{medium: {model: 'answer'}}]},
+    copilot: {nativeSubagentsOnly: true, targets: [{medium: {model: 'native'}}]},
+  }}));
+  f.deps.orchestrator = {platform: 'claude', model: null};
+  return f;
+}
+
+test('ask summary reports underfill for native-only providers excluded for another host', async () => {
+  const f = nativeExclusionFixture(); try {
+    f.script('codex', 'answer', 'Useful answer');
+    const result = await f.call();
+    assert.equal(result.exit, 0);
+    assert.deepEqual(result.value.underfill, {host: 'claude', configured: 1, resolved: 1, excluded: ['copilot']});
+    assert.equal(result.output.summary, 'ask: 1 answers, 0 failed; underfill 1/1 targets, host claude, excluded native-only: copilot');
+  } finally {f.cleanup();}
+});
+
+test('ask run refusal with zero targets names the underfill cause', async () => {
+  const f = nativeExclusionFixture(); try {
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+      copilot: {nativeSubagentsOnly: true, targets: [{medium: {model: 'native'}}]},
+    }}));
+    const refused = await f.call();
+    assert.equal(refused.exit, 1); assert.equal(refused.output.reason, 'invalid-input');
+    assert.equal(refused.output.summary, 'ask requires a read delegate; underfill 0/1 targets, host claude, excluded native-only: copilot');
+    assert.equal(f.launches.length, 0);
+  } finally {f.cleanup();}
+});

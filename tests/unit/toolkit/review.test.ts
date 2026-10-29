@@ -619,6 +619,52 @@ test('bound code review supersedes unrecorded plan and design edits during nativ
  }
 });
 
+async function underfillFixture() {
+  const f = await fixture();
+  fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+    'read-delegates': {
+      codex: {nativeSubagentsOnly: true, targets: [{low: {model: 'native'}}]},
+      agy: {targets: [{low: {model: 'fake'}}]},
+      copilot: {nativeSubagentsOnly: true, targets: [{low: {model: 'other'}}]},
+    },
+    phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
+  }));
+  f.deps.orchestrator = {platform: 'codex', model: 'native'} as typeof f.deps.orchestrator;
+  return f;
+}
+const underfilled = {host: 'codex', configured: 2, resolved: 2, excluded: ['copilot']};
+
+test('review native-pending and final results report underfill for excluded native-only providers', async () => {
+  const f = await underfillFixture();
+  try {
+    const pending = await f.call();
+    assert.equal(pending.exit, 4); assert.equal(pending.output.reason, 'native-pending');
+    assert.deepEqual(pending.value.underfill, underfilled);
+    assert.match(pending.output.summary, /; underfill 2\/2 targets, host codex, excluded native-only: copilot$/);
+    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+    const done = await f.call();
+    assert.equal(done.exit, 0);
+    assert.deepEqual(done.value.underfill, underfilled);
+    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: R1-F\d{3} SHOULD/);
+  } finally {f.cleanup();}
+});
+
+test('resumed review round keeps underfill from the roster it launched', async () => {
+  const f = await underfillFixture();
+  try {
+    const pending = await f.call();
+    assert.equal(pending.output.reason, 'native-pending');
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': {codex: {nativeSubagentsOnly: true, targets: [{low: {model: 'native'}}]}, agy: {targets: [{low: {model: 'fake'}}]}},
+      phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
+    }));
+    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+    const done = await f.call();
+    assert.equal(done.exit, 0);
+    assert.deepEqual(done.value.underfill, underfilled);
+  } finally {f.cleanup();}
+});
+
 test('review run summary lists first findings by severity', async () => {
   const f = await fixture();
   try {
@@ -636,4 +682,15 @@ test('review run summary lists first findings by severity', async () => {
     assert.match(first.output.summary, /; \+2 more in result$/);
     assert.ok(Buffer.byteLength(first.output.summary, 'utf8') <= 1024);
   } finally { f.cleanup(); }
+});
+
+test('review with zero resolved targets reports underfill in the failure message', async () => {
+  const f = await underfillFixture();
+  try {
+    f.deps.orchestrator = null;
+    f.deps.delegate = async () => ({outcome: {status: 'fail', cls: 'config', detail: 'Invalid launch'}, invocations: []});
+    const zero = await f.call();
+    assert.equal(zero.exit, 2); assert.equal(zero.output.reason, 'review-failed');
+    assert.match(JSON.stringify(zero.output), /Every review slot failed; underfill \d\/2 targets, host undetected, excluded native-only: codex, copilot/);
+  } finally {f.cleanup();}
 });

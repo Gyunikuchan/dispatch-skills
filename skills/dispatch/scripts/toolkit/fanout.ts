@@ -6,7 +6,7 @@ import { readManifest } from '../lib/session.ts';
 import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, reservePool, takeReserve } from '../policy/cascade.ts';
-import { resolveRoster, type Roster, type ReadDelegate, type PhasePolicy } from '../policy/roster.ts';
+import { resolveRoster, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome } from '../providers/types.ts';
 import type { CliDeps } from './cli.ts';
@@ -34,6 +34,12 @@ export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Le
   return resolveRoster({level, readDelegates: config['read-delegates'] as Record<string, ReadDelegate>,
     orchestrator: deps.orchestrator, liveness: deps.liveness,
     ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
+}
+
+export function underfillNote(roster: {underfill?: Underfill}): string {
+  const u = roster.underfill;
+  if (!u) return '';
+  return `; underfill ${u.resolved}/${u.configured} targets, host ${u.host ?? 'undetected'}, excluded native-only: ${u.excluded.join(', ') || 'none'}`;
 }
 
 function sessionOf(directory: string): string {

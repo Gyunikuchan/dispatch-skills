@@ -2,7 +2,7 @@
 
 Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`. Follow applicable host rules. Run no Git write commands.
 
-Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). Compare governed hashes with the values from `lint run`; raw file SHA-256 values differ.
+Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
 {{design}}
 Governing plan: `{{planPath}}` (governed hash {{planHash}}).
 

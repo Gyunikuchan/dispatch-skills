@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
-import { fanOut, resolveSlots } from './fanout.ts';
+import { fanOut, resolveSlots, underfillNote } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { ToolError } from './output.ts';
@@ -33,7 +33,7 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
     const attempt = last && !fs.existsSync(path.join(directory, 'attempt-' + last, 'answers.json')) ? last : last + 1;
     const dir = path.join(directory, 'attempt-' + attempt);
     const slots = resolveSlots('ask', selected as Level, deps);
-    if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate');
+    if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate' + underfillNote(slots));
     const outcomes = await fanOut({dir, slots, prompt: askPrompt(question, ''), cwd: manifest.repositoryRoot,
       validate(raw) {
         const text = sanitizeText(raw);
@@ -45,8 +45,8 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
       ...(outcome.responder ? {responder: outcome.responder} : {}), text: outcome.text}] : []);
     const failed = outcomes.filter(outcome => outcome.state === 'failed');
     const native = outcomes.filter(outcome => outcome.state === 'native');
-    const value = {answers, failed, native};
-    const summary = `ask: ${answers.length} answers, ${failed.length} failed`;
+    const value = {answers, failed, native, ...(slots.underfill ? {underfill: slots.underfill} : {})};
+    const summary = `ask: ${answers.length} answers, ${failed.length} failed` + underfillNote(slots);
     if (native.length) return {ok: false, exit: 4, reason: 'native-pending', summary, value};
     if (!answers.length) return {ok: false, exit: 2, reason: 'ask-failed', summary, value};
     const file = path.join(dir, 'answers.json');

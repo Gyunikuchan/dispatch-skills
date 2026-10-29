@@ -9,13 +9,13 @@ Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes an
 ### ask run
 
 Arguments: `ask run <question-file> --session <session> [--level <level>]`.
-Result path: answers, failed slots and native slots; successful captures also persist answers.json.
+Result path: answers, failed slots and native slots; successful captures also persist answers.json. An underfilled roster adds `underfill` and its summary clause, as in `review run`.
 Refusals: unreadable question, invalid level, level-unapproved, no read delegate, native-pending or ask-failed.
 
 ### review run
 
-Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`.
-Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
+Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`. Pass `--spec` until a spec is bound.
+Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. When the roster has fewer targets than configured or drops a native-only provider, the value adds `underfill` (`host`: detected orchestrator or null; `configured`; `resolved`; `excluded` providers), the summary header names it before any item list, and zero targets carry the same note in the refusal. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
 Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
@@ -44,7 +44,7 @@ Refusals: approval-chain or level gate, lint-errors, unknown task or no-open-lau
 
 Arguments: `worktree integrate <task> --session <session> [--ack-stale <rationale>]`.
 Result path: integration commit and task, or retained conflict paths.
-Refusals: approval-chain gate, no-candidate, stale candidate, pending integration or wrong task. Inspect conflict state before continuing.
+Refusals: approval-chain gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
 
 ### worktree continue
 
@@ -166,7 +166,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 ### lint run
 
-Arguments: `lint run <artifact> --session <session>`.
+Arguments: `lint run <artifact> --session <session>`. Pass the artifact as the positional argument, for example `node <skills-dir>/dispatch/scripts/dispatch.ts lint run .scratch/dispatch-skills/<folder>/<name>.plan.md --session <session>`.
 Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
 Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
 

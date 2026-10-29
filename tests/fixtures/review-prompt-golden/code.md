@@ -98,6 +98,7 @@ In `defect`, state the concrete consequence at the locus; in `requiredChange`, t
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
 author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
+Report one finding per defective predicate; list every failing state of it in `defect`.
 
 ### Reply
 Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain

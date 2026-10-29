@@ -5,7 +5,8 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { fanOut, resolveSlots, type SlotOutcome, type Validation } from './fanout.ts';
+import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
+import type { Underfill } from '../policy/roster.ts';
 import { parseReport } from './domain/report.ts';
 import { parsePlan, selectTaskBrief } from './domain/plan.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
@@ -23,7 +24,7 @@ import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type
 import { refreshFindingsSection } from './review-findings.ts';
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget};
+type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill};
 function read<T>(file: string): T | null {
   try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
@@ -212,7 +213,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const existing=slots.findIndex(slot=>slot.slot===source);if(existing>=0)slots.splice(existing,1);
         slots.push({...saved,reserve:false});
       }
-      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{})};
+      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -260,8 +261,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const captured = await capture();
       if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
-      if (native.length) return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native}, summary: 'review ' + review + ': ' + native.length + ' native slots pending'};
-      if (!replies.some(reply => reply.state === 'done')) throw new ToolError(2, 'review-failed', 'Every review slot failed');
+      if (native.length) return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + underfillNote(round)};
+      if (!replies.some(reply => reply.state === 'done')) throw new ToolError(2, 'review-failed', 'Every review slot failed' + underfillNote(round));
       const changedSince: Record<number, string[]> = {}, owners: Record<string, string[]> = {};
       if (kind === 'code' && requested === 'integration') {
         for (const [number, target] of Object.entries(priorTargets)) changedSince[Number(number)] = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(target), label(round.target)]));
@@ -339,8 +340,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       value: {
         path: file, review, round: n,
         ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
+        ...(round.underfill ? { underfill: round.underfill } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots${underfillNote(round)}`,
         ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity)
           .map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`))),
     };

@@ -382,6 +382,6 @@ test('brief labels governed hashes and names lint for comparison', async () => {
     assert.ok(markdown.includes(`mission.spec.md\` (governed hash ${f.hashes.spec})`));
     assert.ok(markdown.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
     assert.ok(markdown.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
-    assert.match(markdown, /Compare governed hashes with the values from `lint run`; raw file SHA-256 values differ/i);
+    assert.match(markdown, /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i);
   } finally { f.cleanup(); }
 });
