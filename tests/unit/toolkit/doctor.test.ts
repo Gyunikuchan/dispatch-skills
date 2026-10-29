@@ -8,7 +8,7 @@ import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts
 import { sessionFixture } from './helpers/session.ts';
 
 test('doctor report resolves writers and level and reports integrity and config failures', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
     fs.mkdirSync(skill);
@@ -55,7 +55,7 @@ test('doctor report resolves writers and level and reports integrity and config 
 });
 
 test('doctor reports explorers independent of level', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
     fs.mkdirSync(skill);

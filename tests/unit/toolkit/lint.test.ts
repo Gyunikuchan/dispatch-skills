@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { parsePlan } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { parseSpec } from '../../../skills/dispatch/scripts/toolkit/domain/spec.ts';
@@ -29,7 +30,6 @@ const CONTEXT_MAP = [
   '## Surprises', '- none — `src/file.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
 ].join('\n');
 async function lint(name: string, source: string) {
-  const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
   const f = {...scoped, cleanup: () => {}};
   f.lines.length = 0;
   try {
@@ -126,7 +126,6 @@ describe('lint severity', () => {
       const file = path.join(f.session, 'maps', 'root.context.md');
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, map);
-      const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
       const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
       const output = f.output();
       const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
@@ -151,7 +150,6 @@ describe('lint severity', () => {
         '## Surprises', '- none — `linked/secret.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
       ].join('\n');
       const file = f.artifact('linked.context.md', map);
-      const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
       const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
       const output = f.output();
       const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
@@ -202,7 +200,6 @@ describe('lint severity', () => {
     assert.deepEqual(after.result, before.result);
   });
   test('invalid artifact fields persist actionable input failures', async () => {
-    const { main } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
     const f = {...scoped, cleanup: () => {}};
     try {
       for (const artifact of [f.root + '/missing.plan.md', f.root, f.artifact('unknown.txt', 'text')]) {

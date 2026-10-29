@@ -7,7 +7,7 @@ import { foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 function fixture(native = false) {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
   fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({'read-delegates': {
     codex: {nativeSubagentsOnly: native, targets: [{medium: {model: 'answer'}}]},

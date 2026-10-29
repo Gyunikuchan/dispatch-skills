@@ -17,7 +17,7 @@ test('design-stage bindings require a spec and a plan or design while approval r
 });
 
 test('ledger records validate closed fields and user-only input', async () => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
  const input=f.artifact('record.json','');let n=0;
  const call=async(record:unknown)=>{f.lines.length=0;fs.writeFileSync(input,JSON.stringify(record));const exit=await main(['ledger','append','--session',f.session,input],f.deps);const output=f.output();return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};};
  const add=(kind:string,data:object,extra:object={})=>call({kind,data,by:'orchestrator',key:'k'+n++,...extra});

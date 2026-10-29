@@ -16,7 +16,7 @@ const writeJson = (file: string, value: unknown) => {
 };
 
 test('diagnostic storage failure preserves durable attempts and reports one bounded failure', async t => {
- const f=sessionFixture();try{
+ const f=sessionFixture({ memory: true });try{
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
   f.deps.delegate=async()=>({outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[{provider:'claude',model:'m',effort:null,mode:'cli',launched:true,outcome:'ok'}]});
   const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
@@ -77,7 +77,7 @@ test('diagnostics distinguish healthy observed captures from absent and damaged 
 });
 
 test('diagnostics aggregate subjects provenance and partial collection deterministically', async () => {
- const f=sessionFixture();try {
+ const f=sessionFixture({ memory: true });try {
   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);f.deps.skillRoot=skill;
   const fold={records:[],lastSeq:0,torn:null};let now=0;f.deps.clock=()=>now;
   for(const [version,concurrency] of [['1.2.3',2],['1.2.4',3]] as const){
@@ -348,7 +348,7 @@ test('enabled toolkit diagnostics retain attempts, normalized usage, time and re
 
 test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O cannot change a result', async () => {
   for (const enabled of [false,true]) {
-    const f = sessionFixture();
+    const f = sessionFixture({ memory: true });
     try {
       const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
       fs.writeFileSync(path.join(skill,'config.jsonc'), JSON.stringify({diagnostics:enabled}));
@@ -423,7 +423,7 @@ test('diagnostics preserve exception attempts and durable capture boundaries', a
 });
 
 test('diagnostics render writes the session report when enabled and reports off when disabled', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
     f.deps.skillRoot = skill;
@@ -445,7 +445,7 @@ test('diagnostics render writes the session report when enabled and reports off 
 });
 
 test('diagnostics render keeps an older report when the write fails', async t => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
     writeJson(path.join(skill, 'config.jsonc'), {diagnostics: true});

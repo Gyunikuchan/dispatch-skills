@@ -3,7 +3,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
-import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { foldLedger, currentHashes } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 const twoTasks=planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] src/file.ts\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/file.ts\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n\n## Verification Plan');
 type Repo=Awaited<ReturnType<typeof toolkitRepo>>;
@@ -57,7 +57,7 @@ describe('toolkit integration',()=>{
   it('acknowledges staleness and rejects a dirty integration tree',async()=>{
     const r=await toolkitRepo(); try {
       await r.level(); await candidate(r); const bind=foldLedger(r.session).records.find(x=>x.kind==='bind')!;
-      const {currentHashes}=await import('../../skills/dispatch/scripts/toolkit/ledger.ts'); const hashes=currentHashes(r.root,bind);
+      const hashes=currentHashes(r.root,bind);
       await r.edit({artifact:'plan',before:hashes.plan,after:hashes.plan,class:'non-intent',affects:['T1'],rationale:'changed context',diffRef:'none'});
       assert.equal((await r.run(['worktree','integrate','T1'])).output.reason,'stale-candidate');
       fs.writeFileSync(path.join(r.integration,'extra'),'dirty'); assert.equal((await r.run(['worktree','integrate','T1','--ack-stale','reviewed'])).output.reason,'integration-dirty'); fs.rmSync(path.join(r.integration,'extra'));
@@ -71,7 +71,6 @@ describe('toolkit integration',()=>{
       fs.writeFileSync(path.join(r.integration,'src/file.ts'),'integration\n'); await r.run(['worktree','commit','--reason','conflict']);
       await r.run(['worktree','integrate','T1']);
       assert.equal((await r.run(['worktree','abort','T1','--reason','reject'])).exit,0);
-      const {currentHashes}=await import('../../skills/dispatch/scripts/toolkit/ledger.ts');
       const hashes=currentHashes(r.root,foldLedger(r.session).records.find(x=>x.kind==='bind'));
       await r.edit({artifact:'plan',before:hashes.plan,after:hashes.plan,class:'non-intent',affects:['T2'],rationale:'changed context',diffRef:'none'});
       assert.equal((await r.run(['worktree','integrate','T2'])).output.reason,'stale-candidate');

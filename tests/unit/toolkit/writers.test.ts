@@ -2,19 +2,26 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import type { LedgerRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import {
+  isStale,
+  launches,
+  terminalWorktrees,
+  writerStates,
+} from '../../../skills/dispatch/scripts/toolkit/writers.ts';
+
 const row = (seq: number, kind: string, data: Record<string, any>): LedgerRecord => ({seq,kind,data,key:String(seq),at:'now',by:'tool'});
 const launch = row(2,'writer',{phase:'launched',task:'T1',path:'.state/worktrees/T1-1',base:{commit:'base',taskSection:'section',seq:1}});
 const fold = (...records: LedgerRecord[]): Fold => ({records,lastSeq:records.at(-1)?.seq ?? 0,torn:null});
+
 describe('writer records', () => {
-  it('detects task edits after the launch boundary only', async () => {
-    const {isStale}=await import('../../../skills/dispatch/scripts/toolkit/writers.ts');
+  it('detects task edits after the launch boundary only', () => {
     assert.equal(isStale(fold(launch),launch,'changed'),true);
     for (const [seq,affects,expected] of [[3,['T1'],true],[3,['T2'],false],[3,[],false],[1,['T1'],false]] as const) {
       assert.equal(isStale(fold(row(seq,'edit',{affects}),launch),launch,'section'),expected);
     }
   });
-  it('derives every writer state and retains superseded launches', async () => {
-    const {launches,writerStates}=await import('../../../skills/dispatch/scripts/toolkit/writers.ts');
+
+  it('derives every writer state and retains superseded launches', () => {
     const observe = () => ({exists:true,dirty:false,head:'base'});
     const state = (f: Fold, o=observe) => writerStates(f,['T1'],o).at(-1)!.state;
     assert.equal(state(fold()),'unlaunched');
@@ -31,8 +38,8 @@ describe('writer records', () => {
     assert.equal(state(fold(launch,finished,row(4,'integrate',{phase:'done',task:'T1',commit:'picked'}))),'integrated');
     assert.equal(state(fold(launch,finished,row(4,'integrate',{phase:'abandoned',task:'T1',candidate:'commit'}))),'integration-abandoned');
   });
-  it('cleanup retains unfinished writer work after delivery', async () => {
-    const {terminalWorktrees}=await import('../../../skills/dispatch/scripts/toolkit/writers.ts');
+
+  it('cleanup retains unfinished writer work after delivery', () => {
     const opened=row(1,'integrate',{phase:'opened',path:'integration'});
     const delivered=row(5,'integrate',{phase:'delivered',mode:'uncommitted',source:'head'});
     const observed={integration:{head:'head'}};

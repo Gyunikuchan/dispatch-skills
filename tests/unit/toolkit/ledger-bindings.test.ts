@@ -65,7 +65,6 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
 });
 
 test('ledger bindings approvals and input filters preserve validation and retries', async () => {
- const {currentHashes,foldLedger,latest}=await import('../../../skills/dispatch/scripts/toolkit/ledger.ts');
  const f=sessionFixture({ memory: true });try{
  const input=f.artifact('record.json','');let n=0;
  const call=async(record:unknown)=>{f.lines.length=0;fs.writeFileSync(input,JSON.stringify(record));const exit=await main(['ledger','append','--session',f.session,input],f.deps);const output=f.output();return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};};

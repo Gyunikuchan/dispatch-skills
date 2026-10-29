@@ -64,7 +64,7 @@ export function memoryNodeFs(root: string): () => void {
     const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file);
     return {size: entry.kind === 'file' ? bytes(file).length : 0, mode: entry.mode, isFile: () => entry.kind === 'file', isDirectory: () => entry.kind === 'directory', isSymbolicLink: () => entry.kind === 'symlink'};
   });
-  replace('lstatSync', (real, file) => inside(file) ? fs.statSync(file) : real(file));
+  replace('lstatSync', (real, file, ...args) => inside(file) ? (fs.statSync as any)(file, ...args) : (real as any)(file, ...args));
   const resolve = (real: any, file: string) => inside(file) ? (storage.exists(key(file)) ? key(file) : fail('ENOENT', file)) : real(file);
   const native = fs.realpathSync.native;
   const realpath = replace('realpathSync', resolve);

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {transientRepo as prepared,captureIntegrationReview as captureReview,transientTarget as target,transientPlanSource} from './helpers/toolkit-repo.ts';
 import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import {main} from '../../skills/dispatch/scripts/toolkit/cli.ts';
 const review:typeof captureReview=(r,...args)=>{const dir=captureReview(r,...args),file=path.join(dir,'round.json'),metadata=JSON.parse(fs.readFileSync(file,'utf8'));metadata.spec.path=path.join(r.root,'work.spec.md');fs.writeFileSync(file,JSON.stringify(metadata));return dir;};
 test('transient pruning preserves caller safety',async()=>{const r=await prepared();try{
  const caller=r.git(['rev-parse','HEAD']);assert.equal((await r.run(['worktree','deliver'])).output.reason,'pruning-required');
@@ -111,7 +112,7 @@ test('uncommitted delivery requires verified pruned delivery',async()=>{
 test('pruning accepts a session ancestor alias while preserving owned-path link guards',async()=>{
  const r=await prepared();const alias=r.root+'-alias';try{
   review(r);fs.symlinkSync(r.root,alias,process.platform==='win32'?'junction':'dir');
-  const lines:string[]=[];const {main}=await import('../../skills/dispatch/scripts/toolkit/cli.ts');const exit=await main(['worktree','prune','--session',path.join(alias,path.basename(r.session))],{...r.deps,stdout:line=>lines.push(line)});assert.equal(exit,0,lines.join('\n'));assert.equal(fs.existsSync(path.join(r.integration,target)),false);
+  const lines:string[]=[];const exit=await main(['worktree','prune','--session',path.join(alias,path.basename(r.session))],{...r.deps,stdout:line=>lines.push(line)});assert.equal(exit,0,lines.join('\n'));assert.equal(fs.existsSync(path.join(r.integration,target)),false);
   const held=path.join(r.session,'held-integration');fs.renameSync(r.integration,held);try{fs.symlinkSync(held,r.integration,process.platform==='win32'?'junction':'dir');assert.equal((await r.run(['worktree','prune'])).output.reason,'unsafe-integration');}finally{if(process.platform==='win32')fs.rmdirSync(r.integration);else fs.unlinkSync(r.integration);fs.renameSync(held,r.integration);}
  }finally{if(fs.existsSync(alias)){if(process.platform==='win32')fs.rmdirSync(alias);else fs.unlinkSync(alias);}r.cleanup();}
 });
