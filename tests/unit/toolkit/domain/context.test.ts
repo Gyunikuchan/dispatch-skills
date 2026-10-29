@@ -76,11 +76,12 @@ test('context lint passes a valid map', () => {
   assert.equal(result.map.strategy, 'single');
   assert.equal(result.map.sections.Map[0], '- Parser — `src/parser.ts:1-2`');
 });
+const mapSource = (strategy: string, sections: Record<string, string[]>) => [
+  '# Context map: parser', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** code-index', '',
+  ...['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Surprises', 'Not covered'].flatMap(section => [`## ${section}`, ...(sections[section] ?? []), '']),
+].join('\n');
+
 test('context merge unions entries and tags disputes', () => {
-  const mapSource = (strategy: string, sections: Record<string, string[]>) => [
-    '# Context map: parser', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** code-index', '',
-    ...['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Surprises', 'Not covered'].flatMap(section => [`## ${section}`, ...(sections[section] ?? []), '']),
-  ].join('\n');
   const leftSource = mapSource('outside-in', {
     Map: [
       '- Component — `src/shared.ts:1`',
@@ -141,4 +142,25 @@ test('context merge unions entries and tags disputes', () => {
   const checked = lintContextMap(merged.source, { readRepoFile: ref => repo.get(ref) ?? null });
   assert.equal(checked.ok, true, JSON.stringify(checked.defects));
   assert.deepEqual(checked.warnings, []);
+});
+
+test('context merge unions same-key coverage and precedent refs', () => {
+  const left = parseContextMap(mapSource('outside-in', {
+    Map: ['- Parser left — `src/left.ts:1`'],
+    Coverage: ['- tests: `tests/a.test.ts:1`'],
+    Precedent: ['- Parser analogue: `src/a.ts`'],
+  }));
+  const right = parseContextMap(mapSource('inside-out', {
+    Map: ['- Parser right — `src/right.ts:1`'],
+    Coverage: ['- tests: `tests/c.test.ts:1`', '- tests: `tests/b.test.ts:1`'],
+    Precedent: ['- Parser analogue: `src/b.ts`'],
+  }));
+  const merged = mergeContextMaps(left, right);
+  const parsed = parseContextMap(merged.source);
+  assert.deepEqual(parsed.sections.Coverage, ['- tests: `tests/a.test.ts:1`, `tests/b.test.ts:1`, `tests/c.test.ts:1`']);
+  assert.deepEqual(parsed.sections.Precedent, ['- Parser analogue: `src/a.ts`, `src/b.ts`']);
+  assert.ok(parsed.sections.Map.includes('- [disputed] Parser left — `src/left.ts:1`'));
+  assert.ok(parsed.sections.Map.includes('- [disputed] Parser right — `src/right.ts:1`'));
+  assert.equal(merged.disputed, 2);
+  assert.equal(mergeContextMaps(right, left).source, merged.source);
 });

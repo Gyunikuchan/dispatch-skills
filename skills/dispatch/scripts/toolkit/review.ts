@@ -17,7 +17,7 @@ import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
-import { ToolError } from './output.ts';
+import { summaryWithItems, ToolError } from './output.ts';
 import { redGaps } from './red.ts';
 import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection } from './review-findings.ts';
@@ -340,7 +340,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         path: file, review, round: n,
         ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
       },
-      summary: `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots`,
+        ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity)
+          .map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`))),
     };
   });
 }

@@ -90,7 +90,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 `explore-subagents` configures native, read-only explorers for domain grounding. Define one `{ model, effort?, deep? }` entry per platform; explorer choices do not depend on run level. `deep: true` launches two strategies for initial grounding. Dispatch can also launch one explorer for an unanswered question at any stage; `deep` does not affect these follow-ups.
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
-- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
+- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
 ## Provider-specific settings
 

@@ -2,13 +2,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts } from './domain/diagnostics.ts';
-import { latest, type Fold } from './ledger.ts';
+import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 import { generateSkillHashes, readVersion } from '../lib/integrity.ts';
 import { loadConfig } from '../lib/config.ts';
-import type { CliDeps, HandlerResult } from './cli.ts';
+import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; native?: boolean; reserve?: boolean};
 type SlotOutcome =
@@ -280,7 +280,7 @@ export function diagnosticsEnabled(skillRoot: string): boolean {
 /** Optional diagnostics stay outside workflow decisions and semantic result files. */
 export function diagnosticInstructions(skillRoot: string): {instructions?: string} {
   try {
-    return diagnosticsEnabled(skillRoot) ? {instructions:'Read references/diagnostics.md from the Dispatch skill root; collect retro observations before report completion.'} : {};
+    return diagnosticsEnabled(skillRoot) ? {instructions:'Read references/diagnostics.md from the Dispatch skill root; at each verb\'s final handoff, merge retro observations and run diagnostics render.'} : {};
   } catch { return {}; }
 }
 
@@ -386,4 +386,13 @@ export function observeTool(session: string, tool: string, action: string, kind:
 export function optionalDiagnostics(session: string, fold: Fold, outcome: string): string | undefined {
   try { return writeDiagnostics(session,sessionFacts(session,fold,outcome)); }
   catch { return undefined; }
+}
+
+// NOTE: Render is not captured as a tool observation, so it cannot describe its own run.
+export async function diagnosticsRender({session, args, deps}: HandlerContext): Promise<HandlerResult> {
+  if (args.length) throw new ToolError(1, 'invalid-input', 'diagnostics render takes no positional arguments');
+  if (!diagnosticsEnabled(deps.skillRoot)) return {ok: true, exit: 0, summary: 'diagnostics off', value: {path: null}};
+  const file = optionalDiagnostics(session, foldLedger(session), 'rendered');
+  if (file === undefined) return {ok: false, exit: 4, reason: 'diagnostics-failed', summary: 'diagnostics render failed; existing diagnostics.md unchanged', value: {path: null}};
+  return {ok: true, exit: 0, summary: 'diagnostics rendered: ' + file, value: {path: file}};
 }

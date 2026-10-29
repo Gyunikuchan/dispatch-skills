@@ -22,14 +22,14 @@ import { readManifest, type Manifest } from '../lib/session.ts';
 import { lintArtifact, repositoryReader } from './lint.ts';
 import { lintContextMap, mergeContextMaps, parseContextMap } from './domain/context.ts';
 import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
-import { capSummary, ToolError, writeResult, type ToolResult } from './output.ts';
+import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
-import { observeTool } from './diagnostics.ts';
+import { diagnosticsRender, observeTool } from './diagnostics.ts';
 import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
@@ -114,6 +114,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'review run': reviewRun,
   'report render': reportRender,
   'report complete': reportComplete,
+  'diagnostics render': diagnosticsRender,
   'brief render': renderBrief,
   'worktree integrate': integrate,
   'worktree continue': continueIntegration,
@@ -173,7 +174,8 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'artifact requires one path');
     const value = lintArtifact(path.resolve(args[0]!), { repositoryRoot: manifest.repositoryRoot });
     const ok = value.errors.length === 0;
-    return { ok, value, summary: value.kind + ': ' + value.errors.length + ' errors, ' + value.warnings.length + ' warnings; ' + value.hash,
+    const items = [...value.errors, ...value.warnings].map(defect => 'L' + (defect.line ?? '-') + ' ' + defect.code + ': ' + defect.message);
+    return { ok, value, summary: summaryWithItems(value.kind + ': ' + value.errors.length + ' errors, ' + value.warnings.length + ' warnings; ' + value.hash, items),
       exit: ok ? 0 : 4, ...(ok ? {} : { reason: 'lint-errors' }) };
   },
   'context merge': async ({ args, values, manifest }) => {
@@ -248,7 +250,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   }
   const kind = typeof parsed.values['kind'] === 'string' ? parsed.values['kind']
     : parsed.positionals[2]?.endsWith('.plan.md') ? 'plan' : parsed.positionals[2]?.endsWith('.design.md') ? 'design' : undefined;
-  const observation = tool === 'report' ? undefined : observeTool(session, tool, action, kind, deps);
+  const observation = tool === 'report' || tool === 'diagnostics' ? undefined : observeTool(session, tool, action, kind, deps);
   let outcome: HandlerResult;
   try {
     outcome = await (deps.handler ?? handlers[tool + ' ' + action]!)({

@@ -119,7 +119,7 @@ function markDisputed(entry: string): string {
   return /^-\s+/.test(entry) ? entry.replace(/^(-\s+)/, '$1[disputed] ') : `[disputed] ${entry}`;
 }
 
-/** Produces a stable union and marks claims whose cited files lack support from the other map. */
+/** Produces a stable union: same-key Coverage/Precedent claims merge unless `not covered` or a dispute opposes them; other one-sided claims are disputed. */
 export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { source: string; disputed: number } {
   if (a.commit !== b.commit) throw new Error(`Context maps have different commits: ${a.commit ?? '(missing)'} and ${b.commit ?? '(missing)'}.`);
 
@@ -128,17 +128,17 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
   const filesA = files(a);
   const filesB = files(b);
 
-  const coverageEntries = (map: ParsedContextMap): Map<string, string[]> => {
+  const keyed = (map: ParsedContextMap, section: ContextSection): Map<string, string[]> => {
     const grouped = new Map<string, string[]>();
-    for (const entry of map.sections.Coverage) {
+    for (const entry of map.sections[section]) {
       const key = coverageKey(entry);
       if (!key) continue;
       grouped.set(key, [...(grouped.get(key) ?? []), entry]);
     }
     return grouped;
   };
-  const coverageA = coverageEntries(a);
-  const coverageB = coverageEntries(b);
+  const coverageA = keyed(a, 'Coverage');
+  const coverageB = keyed(b, 'Coverage');
   const oneSidedCoverage = (entry: string, key: string, opposite: Map<string, string[]>): boolean =>
     !isNotCovered(entry) && (opposite.get(key) ?? []).some(isNotCovered);
 
@@ -146,13 +146,27 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
   const sections = new Map<ContextSection, string[]>();
   for (const section of CONTEXT_SECTIONS) {
     const candidates = new Map<string, string[]>();
+    // Same-key Coverage/Precedent claims that both maps cite become one undisputed entry; the first claim keeps its text, the other refs follow.
+    const shared = new Map<string, string>();
+    if (section === 'Coverage' || section === 'Precedent') {
+      const right = keyed(b, section);
+      for (const [key, left] of keyed(a, section)) {
+        const entries = [...left, ...(right.get(key) ?? [])];
+        if (!right.has(key) || entries.some(entry => isNotCovered(entry) || isDisputed(entry))) continue;
+        const [first, ...rest] = entries.map(normalizeWhitespace).sort(compareText);
+        const cited = (text: string): string[] => [...text.matchAll(/`([^`]+)`/g)].map(match => match[1]!);
+        const added = [...new Set(rest.flatMap(cited))].filter(ref => !cited(first!).includes(ref)).sort(compareText);
+        shared.set(key, [first!, ...added.map(ref => `\`${ref}\``)].join(', '));
+      }
+    }
     const collect = (map: ParsedContextMap, ownFiles: Set<string>, otherFiles: Set<string>, oppositeCoverage: Map<string, string[]>) => {
       for (const entry of map.sections[section]) {
         const identity = normalizeWhitespace(entry);
+        const key = coverageKey(entry);
+        if (key !== null && shared.has(key)) continue;
         const refs = sectionReferences(section, entry);
         const singleMapFile = refs.some(ref => ownFiles.has(ref.path) && !otherFiles.has(ref.path));
-        const key = section === 'Coverage' ? coverageKey(entry) : null;
-        const coverageDispute = key !== null && oneSidedCoverage(entry, key, oppositeCoverage);
+        const coverageDispute = section === 'Coverage' && key !== null && oneSidedCoverage(entry, key, oppositeCoverage);
         const marked = singleMapFile || coverageDispute || isDisputed(entry);
         const value = marked ? markDisputed(entry) : entry;
         candidates.set(identity, [...(candidates.get(identity) ?? []), value]);
@@ -160,6 +174,7 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
     };
     collect(a, filesA, filesB, coverageB);
     collect(b, filesB, filesA, coverageA);
+    for (const text of shared.values()) candidates.set(text, [text]);
 
     const merged = [...candidates.entries()]
       .sort(([left], [right]) => compareText(left, right))

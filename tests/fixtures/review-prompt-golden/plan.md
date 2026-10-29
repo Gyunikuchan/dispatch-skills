@@ -44,7 +44,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 
 - **spec** — Apply IEEE 29148 quality: requirements are unambiguous (one interpretation), consistent, verifiable, complete, feasible, and singular (one requirement per statement; identify non-singular requirements). Check completeness across behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Identify misplaced architecture or execution detail while retaining imposed design constraints. An open question that could change scope, behavior, or risk blocks approval; never invent intent, and route a gap through the user gate.
 
-- **usability** — Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line. Keep task and increment behaviour visible before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field.
+- **usability** — Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line. State each fact once; a summary must add a distinct view, not restate a later section. Keep task and increment behaviour visible before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field.
 
 ### Visual-aid bar
 

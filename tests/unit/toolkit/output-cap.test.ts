@@ -5,7 +5,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { test } from 'node:test';
 import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { capSummary } from '../../../skills/dispatch/scripts/toolkit/output.ts';
+import { capSummary, summaryWithItems } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 import {appendRecord,currentHashes,foldLedger,latest} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 
@@ -181,4 +181,26 @@ test('summary byte cap keeps all report rows in its result file', async () => {
     assert.deepEqual(result.deviations.edits.map((edit: {affects: string[]}) => edit.affects[0]), ids);
     assert.deepEqual(result.userRecords.map((record: {quote: string}) => record.quote), quotes);
   } finally { f.cleanup(); }
+});
+
+test('summary items keep totals and remaining count within the cap', () => {
+  const head = 'plan: 4 errors, 2 warnings; sha256:' + 'a'.repeat(64);
+  assert.equal(summaryWithItems(head, []), head);
+  const long = [
+    ...Array.from({length: 4}, (_, i) => `L${i} long-${i} ${'x'.repeat(600)}`),
+    ...Array.from({length: 4}, (_, i) => `L${i} multi-${i} ${'界'.repeat(300)}`),
+  ];
+  const summary = summaryWithItems(head, long);
+  assert.ok(Buffer.byteLength(summary, 'utf8') <= 1024);
+  assert.equal(capSummary(summary), summary);
+  assert.equal(Buffer.from(summary, 'utf8').toString('utf8'), summary);
+  assert.ok(summary.startsWith(head + '; first '));
+  const shown = Number(/; first (\d): /.exec(summary)![1]);
+  const omitted = Number(/; \+(\d+) more in result$/.exec(summary)![1]);
+  assert.ok(shown >= 1 && shown <= 5);
+  assert.equal(shown + omitted, long.length);
+  assert.ok(summary.includes('…'));
+  const short = Array.from({length: 8}, (_, i) => `L${i} short`);
+  const shortSummary = summaryWithItems(head, short);
+  assert.match(shortSummary, /; first 5: L0 short; L1 short; L2 short; L3 short; L4 short; \+3 more in result$/);
 });

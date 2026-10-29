@@ -257,3 +257,13 @@ describe('toolkit CLI contract', () => {
     } finally { f.cleanup(); }
   });
 });
+
+test('lint run summary lists first defects with remaining count', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const file = f.artifact('work.plan.md', '# Work\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n## Success Criteria\n');
+    assert.equal(await main(['lint', 'run', file, '--session', f.session], f.deps), 4);
+    assert.equal(f.output().reason, 'lint-errors');
+    assert.match(f.output().summary, /^plan: 4 errors, 2 warnings; sha256:[0-9a-f]{64}; first 5: L- proposed-changes: .*; L4 task-map: .*; L- verification-plan: .*; L5 success-criteria: .*; L- missing-section: .*; \+1 more in result$/);
+  } finally { f.cleanup(); }
+});

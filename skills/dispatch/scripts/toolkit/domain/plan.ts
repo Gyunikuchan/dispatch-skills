@@ -94,6 +94,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'transient-coverage':
     case 'criterion-retain-required':
     case 'transient-test-path':
+    case 'glance-restates-task-map':
       return 'warning';
     default: return unreachable(code);
   }
@@ -431,7 +432,8 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const lines = structuralLines(source);
   const out: LintDefect[] = [];
   const { changes, tasks: sections } = parseChanges(lines, out);
-  const tasks = joinTaskMap(sections, parseTaskMap(lines, out), out);
+  const taskRows = parseTaskMap(lines, out);
+  const tasks = joinTaskMap(sections, taskRows, out);
   const verification = parseVerification(lines, out);
   const criteria = parseCriteria(lines, changes, out);
   const seamDeclarations = parseSeamDeclarations(lines);
@@ -452,6 +454,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
   if (!sectionRanges(lines, '## At a Glance').length) out.push(lint('missing-section', null, 'Plan has no ## At a Glance section.'));
+  lintGlanceRestatesTaskMap(lines, taskRows, out);
   for (const { line, words } of lintLongParagraphs(lines)) out.push(lint('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
   out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
   for (const entry of lines) if (entry.text.trimEnd() === '## User Review Required') out.push(lint('retired-section', entry.line, 'Move user questions to the governing spec Open Questions.'));
@@ -780,6 +783,16 @@ function joinTaskMap(sections: readonly DraftTask[], rows: readonly AuthoredTask
     if (!rowIds.has(task.id)) out.push(lint('task-map', task.line, `Task ${task.id} has no Task Map row.`));
   }
   return rows.flatMap((row) => joined.has(row.id) ? [joined.get(row.id)!] : []);
+}
+
+/** A summary table that repeats Task Map IDs duplicates the map; the summary should link the map instead. */
+function lintGlanceRestatesTaskMap(lines: readonly StructuralLine[], rows: readonly AuthoredTaskRow[], out: LintDefect[]): void {
+  const range = sectionRanges(lines, '## At a Glance')[0];
+  const ids = new Set(rows.map((row) => row.id));
+  for (const entry of range ? lines.slice(range.start + 1, range.end) : []) {
+    const first = entry.fenced ? undefined : splitTaskMapRow(entry.text)?.[0]?.replace(/^`|`$/g, '').trim().toUpperCase();
+    if (first && ids.has(first)) out.push(lint('glance-restates-task-map', entry.line, `## At a Glance table row ${first} restates a Task Map row; link ## Task Map instead of repeating it.`));
+  }
 }
 
 /** Task headers accept visible behaviour and owned constraint/overlap fields; Task Map fields stay outside the header. */

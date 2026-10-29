@@ -21,7 +21,7 @@ For the final completed review round at or above the configured cap, apply accep
 
 ## Rulings and fix scope
 
-Append a ledger `ruling` record with subject `review:<review>:<finding>`, disposition `accepted`, `rejected`, `duplicate` or `deferred`, and evidence-backed rationale. Use the review identifier and finding ID from the result. Reject a repeated settled claim without new evidence by citing the prior ruling.
+Append a ledger `ruling` record with subject `review:<review>:<finding>` and `ruling` set to `accepted`, `rejected`, `duplicate` or `deferred`, and evidence-backed rationale. Use the review identifier and finding ID from the result. Reject a repeated settled claim without new evidence by citing the prior ruling.
 
 A rejected MUST remains pending until each original logical source slot, or its configured reserve/native substitute, explicitly agrees with an evidence-backed rationale. For a tool-only finding, use the first non-reserve reviewer in its original saved roster; if none exists, stop with `review-confirmation-required`. The next review sends each slot its own captured requests. Missing, malformed, failed or unattributed replies leave rejection pending; omission from ordinary findings is not agreement. SHOULD and CONSIDER rejections need no confirmation.
 

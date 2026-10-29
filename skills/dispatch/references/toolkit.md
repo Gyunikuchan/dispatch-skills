@@ -2,7 +2,7 @@
 
 Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
 
-Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
+Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
 
 ## Tool actions
 
@@ -15,7 +15,7 @@ Refusals: unreadable question, invalid level, level-unapproved, no read delegate
 ### review run
 
 Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`.
-Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
+Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
 Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
@@ -134,9 +134,9 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 
 ### verify run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract] [--final]`.
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract] [--final]`. `--criteria` IDs are comma-separated and trimmed.
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
-Refusals: unknown criterion, invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+Refusals: unknown criterion, which names each unknown ID and the valid IDs of the selected mode (`--final` on a transient plan selects final identities; otherwise checks), invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 After pruning, --final requires a validated current transition and runs every non-transient command, transient FINAL commands and contract checks on the committed pruned tree. Check identities are final:<criterion> and final:contract, with digests of their exact arrays. Empty executable rows are omitted. With --final, --criteria selects these final: identities; omission runs every projected row. A failed rerun invalidates an earlier final success. Historical transient evidence keeps its original source tree and full pre-prune digest; it verifies only through the exact recorded pure-deletion transition plus every successful final row. Durable evidence must describe the final tree. Manual completion and waivers do not establish final verification. Rendered status cites historical and final evidence separately.
 
@@ -167,14 +167,20 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 ### lint run
 
 Arguments: `lint run <artifact> --session <session>`.
-Result path: artifact kind/hash, parse errors and warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
+Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
 Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
 
 ### context merge
 
 Arguments: `context merge <a.context.md> <b.context.md> --out <merged.context.md> --session <session>`.
-Result path: writes the merged map to `--out`; the session result reports its path, disputed entry count, errors and warnings. Entries collapse only when their full lines match after whitespace normalization.
-Refusals: missing `--out`, non-context paths, unreadable or lint-invalid inputs, different commits, output paths that replace an input, or a merged map with lint errors. Entries whose refs appear in only one input and Coverage answers opposed by `not covered` are marked `[disputed]`.
+Result path: writes the merged map to `--out`; the session result reports its path, disputed entry count, errors and warnings. Entries collapse only when their full lines match after whitespace normalization. Same-key Coverage and Precedent entries merge into one undisputed entry whose refs are the union, when neither input says `not covered` for that key. A Coverage entry whose key the other input reports `not covered` is `[disputed]`. Other entries whose refs appear in only one input are `[disputed]`.
+Refusals: missing `--out`, non-context paths, unreadable or lint-invalid inputs, different commits, output paths that replace an input, or a merged map with lint errors.
+
+### diagnostics render
+
+Arguments: `diagnostics render --session <session>`. Takes no positional arguments.
+Result path: `diagnostics.md` in the session folder, rendered from the whole session as `report complete` renders it; the summary gives its path. When diagnostics are off, the summary is `diagnostics off` and no file is written.
+Refusals: positional arguments. `diagnostics-failed` (exit 4) leaves an existing `diagnostics.md` unchanged; treat it as a non-blocking note.
 
 ## Ledger records
 

@@ -618,3 +618,22 @@ test('bound code review supersedes unrecorded plan and design edits during nativ
   }finally{f.cleanup();}
  }
 });
+
+test('review run summary lists first findings by severity', async () => {
+  const f = await fixture();
+  try {
+    const finding = (severity: string, i: number) => ({severity, tag: 'reliability', locus: '§ Work ' + i,
+      defect: severity + ' defect ' + i, requiredChange: 'Fix defect ' + i});
+    const findings = [finding('CONSIDER', 1), finding('SHOULD', 2), finding('MUST', 3), finding('SHOULD', 4),
+      finding('CONSIDER', 5), finding('SHOULD', 6), finding('MUST', 7)];
+    const text = JSON.stringify({status: 'FINDINGS', findings});
+    f.deps.delegate = async () => ({outcome: {status: 'ok', text, resume: null, sessionId: null}, invocations: []});
+    const first = await f.call();
+    assert.equal(first.exit, 0, JSON.stringify(first));
+    assert.match(first.output.summary, /round 1\/2: 2 MUST, 3 SHOULD, 2 CONSIDER, /);
+    const listed = [...first.output.summary.matchAll(/R1-F\d{3} (MUST|SHOULD|CONSIDER): /g)].map(match => match[1]);
+    assert.deepEqual(listed, ['MUST', 'MUST', 'SHOULD', 'SHOULD', 'SHOULD']);
+    assert.match(first.output.summary, /; \+2 more in result$/);
+    assert.ok(Buffer.byteLength(first.output.summary, 'utf8') <= 1024);
+  } finally { f.cleanup(); }
+});

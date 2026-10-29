@@ -65,7 +65,7 @@ In `diagnostics.md`, `—` marks an unavailable value, not zero. Captured CLI at
 
 When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Summed tool-call durations can overlap; intervals can include work, pauses and scheduling and do not establish active reasoning time. Host reasoning, user wait, writer usage and work before enablement remain unavailable. Session-cumulative usage is excluded to avoid double counting.
 
-While diagnostics is on, follow the returned retrospective instructions before report completion. A valid empty array records no observed friction; missing, unreadable, malformed and invalid input remain distinct collection states. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, follow the returned retrospective instructions at each verb's final handoff, before `report complete` or `diagnostics render`. A valid empty array records no observed friction; missing, unreadable, malformed and invalid input remain distinct collection states. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
 
 Captures in `.state/diagnostics/` retain sanitized implementation version/content identity and effective configuration snapshots from collection time. Distinct snapshots remain separate; historical unknown identity stays unknown. Reports retain valid captures when others are discarded as corrupt or unreadable, and show partial or interrupted collection. No findings does not prove complete collection or absence of defects. Total storage loss can also prevent its failure marker from being stored and is unobservable.
 

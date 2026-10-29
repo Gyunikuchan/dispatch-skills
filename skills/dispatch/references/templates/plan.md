@@ -15,7 +15,7 @@ Separate each box field with blank `>` lines so it renders as its own paragraph.
 >
 > **Risk:** <low|med|high> — <reason>
 >
-> **Scope:** <paths or components>
+> **Scope:** <components or top-level paths>
 
 ## At a Glance
 - **What:** <plain-language change and why it matters>
@@ -127,7 +127,9 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 
 - Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Place `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections; select their type under those rules.
 
-- At a Glance: **What** is the plan's only outcome summary; **How it works** gives the method in one line without repeating the outcome. Put orientation visuals here when the visual-aid bar admits them.
+- At a Glance: **What** is the plan's only outcome summary; **How it works** gives the method in one line without repeating the outcome. Put orientation visuals here when the visual-aid bar admits them. An At a Glance table whose rows repeat Task Map IDs is a `glance-restates-task-map` warning; link `## Task Map` instead.
+
+- Scope: name components or top-level paths, not per-criterion file lists; each criterion's files belong in its Changes and Tests.
 
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
 - Keep the template section order: At a Glance first, then shared context and decisions, then task outcomes and execution detail. A present section out of order is a `section-order` warning; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.

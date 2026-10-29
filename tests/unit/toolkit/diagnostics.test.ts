@@ -421,3 +421,47 @@ test('diagnostics preserve exception attempts and durable capture boundaries', a
  assert.doesNotMatch(JSON.stringify(read()),/private/);
  }finally{f.cleanup();}
 });
+
+test('diagnostics render writes the session report when enabled and reports off when disabled', async () => {
+  const f = sessionFixture();
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    f.deps.skillRoot = skill;
+    writeJson(path.join(skill, 'config.jsonc'), {diagnostics: false});
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    assert.deepEqual([f.output().ok, f.output().summary], [true, 'diagnostics off']);
+    assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), false);
+
+    writeJson(path.join(skill, 'config.jsonc'), {diagnostics: true});
+    f.lines.length = 0;
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    const output = f.output();
+    assert.equal(output.ok, true);
+    const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+    assert.equal(result.path, path.join(f.session, 'diagnostics.md'));
+    assert.match(fs.readFileSync(result.path, 'utf8'), /## Overview/);
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false, 'render is not captured as a tool observation');
+  } finally { f.cleanup(); }
+});
+
+test('diagnostics render keeps an older report when the write fails', async t => {
+  const f = sessionFixture();
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), {diagnostics: true});
+    f.deps.skillRoot = skill;
+    const file = path.join(f.session, 'diagnostics.md');
+    fs.writeFileSync(file, 'older report\n');
+    const rename = fs.renameSync;
+    t.mock.method(fs, 'renameSync', ((from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to) === file) throw new Error('rename failure');
+      return rename(from, to);
+    }) as typeof fs.renameSync);
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 4);
+    const output = f.output();
+    assert.equal(output.reason, 'diagnostics-failed');
+    assert.equal(output.summary, 'diagnostics render failed; existing diagnostics.md unchanged');
+    assert.equal(JSON.parse(fs.readFileSync(output.path!, 'utf8')).path ?? null, null);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'older report\n');
+  } finally { t.mock.restoreAll(); f.cleanup(); }
+});

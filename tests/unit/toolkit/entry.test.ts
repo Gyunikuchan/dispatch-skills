@@ -96,7 +96,7 @@ test('session instructions always point at grounding and add diagnostics only wh
         const instructions = value.instructions;
         if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
         assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md: launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
-        if (enabled) assert.match(instructions,/references\/diagnostics\.md/);
+        if (enabled) assert.match(instructions,/references\/diagnostics\.md.*diagnostics render/);
         else assert.doesNotMatch(instructions,/references\/diagnostics\.md/);
         assert.ok(!instructions.includes(f.root));
         assert.ok(Buffer.byteLength(instructions) <= 2048);

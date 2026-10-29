@@ -21,8 +21,9 @@ export async function verifyRun(ctx: HandlerContext): Promise<HandlerResult> {
   if(artifacts){plan=loadPlan(session,manifest);assertArtifacts();}
   const final=values['final']===true;
   const all=final && hasTransient(plan)?finalChecks(plan):checks(plan);
-  const ids=typeof values['criteria']==='string' ? values['criteria'].split(',') : all.map(c=>c.criterion);
-  if(ids.some(id=>!all.some(c=>c.criterion===id))) throw new ToolError(1,'invalid-input','Unknown criterion');
+  const ids=typeof values['criteria']==='string' ? values['criteria'].split(',').map(id=>id.trim()).filter(Boolean) : all.map(c=>c.criterion);
+  const unknown=ids.filter(id=>!all.some(c=>c.criterion===id));
+  if(unknown.length) throw new ToolError(1,'invalid-input','Unknown criterion: '+unknown.join(', ')+'; valid: '+all.map(c=>c.criterion).join(', '));
   const selected=all.filter(c=>ids.includes(c.criterion));
   const integration=await withLedger(session,'verify run',deps,async tx=>{
     if(final && hasTransient(plan))await pruneTransition(ctx,tx.fold,plan);

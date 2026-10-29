@@ -63,3 +63,15 @@ test('transient verification refuses artifact mutation during a successful comma
   assert.equal(foldLedger(f.session).records.filter(row=>row.kind==='evidence' && row.data['exit']===0).length,0);
  }finally{f.cleanup();}
 });
+
+test('verify run trims criteria and names unknown criteria', async () => {
+  const f = await toolkitRepo(); try {
+    const trimmed = await f.run(['verify','run','--criteria',' SC1, ']);
+    assert.equal(trimmed.exit,0); assert.equal(trimmed.output.ok,true);
+    const before = foldLedger(f.session).records.length;
+    const refused = await f.run(['verify','run','--criteria','SC9, SC1, SC8']);
+    assert.equal(refused.exit,1); assert.equal(refused.output.reason,'invalid-input');
+    assert.equal(refused.output.summary,'Unknown criterion: SC9, SC8; valid: SC1, contract');
+    assert.equal(foldLedger(f.session).records.length,before);
+  } finally {f.cleanup();}
+});
