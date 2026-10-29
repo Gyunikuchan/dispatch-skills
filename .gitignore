@@ -4,7 +4,8 @@ dist/
 *.log
 .env
 .env.*
-skills/dispatch-implement/config.jsonc
-skills/dispatch-implement/config.local.jsonc
+.scratch/*
+
+!.scratch/dispatch-skills/
 skills/dispatch/config.jsonc
 skills/dispatch/config.local.jsonc
