@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-29
+
+- Intent grounding uses native explorers and context maps to verify assumptions and requirements before selecting workflow level.
+- Live review findings and concise behavioral summaries provide clear visibility into ongoing review waves.
+- Canonical documents (specs, plans, walkthroughs) are streamlined and easier to read.
+- Automatic retries handle transient file lock and rename issues on Windows during atomic file operations.
+- Worktree cleanup reliably removes merged worktrees across platforms without leaving orphan junctions or directories.
+
 ## [0.8.0] - 2026-10-27
 
 - Dispatch handles routine planning and delivery decisions with fewer approval pauses, while preserving user approval for intent changes, new dependencies, runtime prerequisites, and discarded work.
