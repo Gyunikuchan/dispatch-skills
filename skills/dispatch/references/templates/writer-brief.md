@@ -1,6 +1,6 @@
 # Writer task {{task}}
 
-Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`. Follow applicable host rules. Run no Git write commands.
+Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may update only their own cache or index and must never create an index, change repository source or config, or violate a stricter host rule. Follow applicable host rules. Run no Git write commands.
 
 Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
 {{design}}

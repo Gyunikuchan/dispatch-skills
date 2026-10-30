@@ -4,17 +4,23 @@
 
 {{objective}}
 
+Map the landscape around the planned decision (constraints, consumers, reuse candidates, conventions and precedent) so grilling, design and planning do not miss load-bearing details ([grounding intent](../grounding.md)).
+
 ## Questions
 
 {{questions}}
 
-Answer these questions about the planned decision; do not return a general repository survey.
+Answer these questions about the planned decision; do not return a general repository survey. Report material facts the questions missed under `Surprises`.
 
 ## Strategy
 
 {{strategy}} — `single`, `outside-in` or `inside-out`.
 
 For `deep`, both explorers answer the same questions and complete the full Coverage checklist.
+
+## Host rules and tools
+
+Apply the [host rule discovery rule](quality-bar.md#shared). Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow [native slots](../providers.md#native-slots). List any named tool or skill that cannot run under `Not covered`. Name the tool used in the map's `Tool` field.
 
 ## Tool order
 
@@ -39,7 +45,7 @@ For each item, give refs or `Not covered — <reason>`:
 - string-keyed sites
 - platform branches
 
-Find the closest precedent and list every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
+For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
 
 ## Map, budget and output
 

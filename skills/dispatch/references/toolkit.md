@@ -173,8 +173,8 @@ Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ
 ### context merge
 
 Arguments: `context merge <a.context.md> <b.context.md> --out <merged.context.md> --session <session>`.
-Result path: writes the merged map to `--out`; the session result reports its path, disputed entry count, errors and warnings. Entries collapse only when their full lines match after whitespace normalization. Same-key Coverage and Precedent entries merge into one undisputed entry whose refs are the union, when neither input says `not covered` for that key. A Coverage entry whose key the other input reports `not covered` is `[disputed]`. Other entries whose refs appear in only one input are `[disputed]`.
-Refusals: missing `--out`, non-context paths, unreadable or lint-invalid inputs, different commits, output paths that replace an input, or a merged map with lint errors.
+Result path: writes the merged map to `--out`; the session result reports its path, disputed entry count, errors and warnings. Entries collapse only when their full lines match after whitespace normalization. Same-key Coverage and Precedent entries merge into one undisputed entry whose refs are the union, when neither input says `not covered` for that key. A Coverage entry whose key the other input reports `not covered` is `[disputed]`. Other entries whose refs appear in only one input, including Conventions, are `[disputed]`. When both commits have at least 7 hex characters and one is a case-insensitive SHA prefix of the other, the merged header keeps the longer value.
+Refusals: missing `--out`, non-context paths, unreadable or lint-invalid inputs, commits that are neither equal nor both SHA values with at least 7 hex characters where one is a case-insensitive prefix of the other, output paths that replace an input, or a merged map with lint errors.
 
 ### diagnostics render
 

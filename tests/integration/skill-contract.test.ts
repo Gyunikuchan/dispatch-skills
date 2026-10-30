@@ -205,3 +205,36 @@ test('uncommitted delivery contract', () => {
   const concepts=read(root+'references/readme/concepts.md');
   assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
 });
+
+test('grounding contracts carry conventions host tools and follow-up guidance', () => {
+  const grounding = read(root + 'references/grounding.md');
+  const explorer = read(root + 'references/templates/explorer-brief.md');
+  const contextMap = read(root + 'references/templates/context-map.md');
+  const providers = read(root + 'references/providers.md');
+  const reviewPrompt = read(root + 'references/templates/review-prompt.md');
+  const writerBrief = read(root + 'references/templates/writer-brief.md');
+
+  assert.match(grounding, /landscape/i);
+  assert.match(grounding, /load-bearing/i);
+  assert.match(grounding, /any step.*ask/i);
+  assert.match(grounding, /deep never applies/i);
+  assert.match(grounding, /cited range/i);
+  assert.match(grounding, /deep applies only to initial grounding/i);
+  assert.doesNotMatch(grounding, /may write only its context map/);
+  assert.ok(grounding.includes('providers.md#native-slots'));
+
+  assert.ok(explorer.includes('## Host rules and tools'));
+  assert.ok(explorer.includes('quality-bar.md#shared'));
+  assert.ok(explorer.includes('../providers.md#native-slots'));
+  assert.match(explorer, /Conventions/);
+  assert.match(explorer, /Surprises/);
+  assert.ok(contextMap.includes('## Conventions'));
+
+  assert.match(providers, /own cache or index/i);
+  assert.match(providers, /never create an index/i);
+  assert.match(reviewPrompt, /own cache or index/i);
+  assert.match(writerBrief, /own cache or index/i);
+  assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
+  assert.ok(read(root + 'references/verbs/implement.md').includes('grounding.md#follow-up-explorers'));
+  assert.doesNotMatch(providers, /reviewers are read-only/);
+});

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { sectionRanges, structuralLines } from './plan.ts';
 import type { ParsedPlan } from './types.ts';
 
-export const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Surprises', 'Not covered'] as const;
+export const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
 export type ContextSection = typeof CONTEXT_SECTIONS[number];
 export type ContextStrategy = 'single' | 'outside-in' | 'inside-out' | 'merged';
 
@@ -33,7 +33,8 @@ export type ContextLintOptions = { readRepoFile: (relativePath: string) => strin
 type ContextReference = { path: string; start: number | null; end: number | null };
 type ContextEntry = { line: number; text: string };
 
-const REQUIRED_LINE_SECTIONS = new Set<ContextSection>(['Map', 'Flows', 'Invariants', 'Surprises']);
+const REQUIRED_LINE_SECTIONS = new Set<ContextSection>(['Map', 'Flows', 'Invariants', 'Conventions', 'Surprises']);
+const OPTIONAL_SECTIONS = new Set<ContextSection>(['Conventions']);
 const REF_LINE = /^(.+):(\d+)(?:-(\d+))?$/;
 
 function entries(lines: ReturnType<typeof structuralLines>, section: ContextSection): ContextEntry[] {
@@ -121,7 +122,15 @@ function markDisputed(entry: string): string {
 
 /** Produces a stable union: same-key Coverage/Precedent claims merge unless `not covered` or a dispute opposes them; other one-sided claims are disputed. */
 export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { source: string; disputed: number } {
-  if (a.commit !== b.commit) throw new Error(`Context maps have different commits: ${a.commit ?? '(missing)'} and ${b.commit ?? '(missing)'}.`);
+  const isSha = (commit: string | null): commit is string => commit !== null && /^[0-9a-f]{7,}$/i.test(commit);
+  const commitsMatch = (left: string | null, right: string | null) => left === right || (
+    isSha(left) && isSha(right)
+    && (left.toLowerCase().startsWith(right.toLowerCase()) || right.toLowerCase().startsWith(left.toLowerCase()))
+  );
+  if (!commitsMatch(a.commit, b.commit)) {
+    throw new Error(`Context maps have different commits: ${a.commit ?? '(missing)'} and ${b.commit ?? '(missing)'}.`);
+  }
+  const mergedCommit = (a.commit?.length ?? -1) >= (b.commit?.length ?? -1) ? a.commit : b.commit;
 
   const files = (map: ParsedContextMap): Set<string> => new Set(CONTEXT_SECTIONS.flatMap(section =>
     map.sections[section].flatMap(entry => sectionReferences(section, entry).map(ref => ref.path))));
@@ -187,7 +196,7 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
   const tools = [...new Set([a.tool, b.tool].filter((value): value is string => Boolean(value)))].sort(compareText);
   const lines = [
     `# Context map: ${title}`, '',
-    `> **Commit:** ${a.commit ?? ''}`,
+    `> **Commit:** ${mergedCommit ?? ''}`,
     '>',
     '> **Strategy:** merged',
     '>',
@@ -246,7 +255,7 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
   for (const section of CONTEXT_SECTIONS) {
     const sectionRangesForName = sectionRanges(lines, `## ${section}`);
     if (!sectionRangesForName.length) {
-      add('warning', 'context-missing-section', null, `Context map has no ## ${section} section.`);
+      if (!OPTIONAL_SECTIONS.has(section)) add('warning', 'context-missing-section', null, `Context map has no ## ${section} section.`);
       continue;
     }
     for (const entry of entries(lines, section)) {

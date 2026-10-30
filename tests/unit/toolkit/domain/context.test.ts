@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { lintContextMap, mergeContextMaps, parseContextMap } from '../../../../skills/dispatch/scripts/toolkit/domain/context.ts';
+import { contextCoverageWarnings, lintContextMap, mergeContextMaps, parseContextMap } from '../../../../skills/dispatch/scripts/toolkit/domain/context.ts';
 
 const MAP = [
   '# Context map: parser',
@@ -76,9 +76,39 @@ test('context lint passes a valid map', () => {
   assert.equal(result.map.strategy, 'single');
   assert.equal(result.map.sections.Map[0], '- Parser — `src/parser.ts:1-2`');
 });
+
+test('context lint checks conventions refs and treats the section as optional', () => {
+  const withoutConventions = lint(MAP);
+  assert.equal(withoutConventions.ok, true);
+  assert.equal(withoutConventions.warnings.some(issue => issue.message.includes('## Conventions')), false);
+
+  const withConventions = MAP.replace('## Surprises', [
+    '## Conventions',
+    '- reuse: parser helper — `src/parser.ts:1-2`',
+    '- style: function exports — `src/entry.ts:1`',
+    '',
+    '## Surprises',
+  ].join('\n'));
+  const valid = lint(withConventions);
+  assert.equal(valid.ok, true, JSON.stringify(valid.defects));
+  assert.deepEqual(valid.defects, []);
+
+  const invalid = lint(withConventions
+    .replace('- reuse: parser helper — `src/parser.ts:1-2`', '- reuse: parser helper — `src/parser.ts:2-3`')
+    .replace('- style: function exports — `src/entry.ts:1`', '- style: function exports'));
+  assert.ok(invalid.defects.some(issue => issue.code === 'context-ref-range' && issue.message.includes('src/parser.ts')));
+  assert.ok(invalid.warnings.some(issue => issue.code === 'context-missing-ref' && issue.message.includes('Conventions')));
+
+  const map = parseContextMap(mapSource('outside-in', {
+    Conventions: ['- reuse: helper — `src/only-conventions.ts:1`'],
+  }));
+  const plan = { changes: [] } as unknown as Parameters<typeof contextCoverageWarnings>[1];
+  assert.deepEqual(contextCoverageWarnings(map, plan, ''), []);
+});
+
 const mapSource = (strategy: string, sections: Record<string, string[]>) => [
   '# Context map: parser', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** code-index', '',
-  ...['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Surprises', 'Not covered'].flatMap(section => [`## ${section}`, ...(sections[section] ?? []), '']),
+  ...['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'].flatMap(section => [`## ${section}`, ...(sections[section] ?? []), '']),
 ].join('\n');
 
 test('context merge unions entries and tags disputes', () => {
@@ -163,4 +193,49 @@ test('context merge unions same-key coverage and precedent refs', () => {
   assert.ok(parsed.sections.Map.includes('- [disputed] Parser right — `src/right.ts:1`'));
   assert.equal(merged.disputed, 2);
   assert.equal(mergeContextMaps(right, left).source, merged.source);
+});
+
+test('context merge keeps conventions entries and disputes one-sided ones', () => {
+  const left = parseContextMap(mapSource('outside-in', {
+    Conventions: [
+      '- reuse: parser helper — `src/shared.ts:1`',
+      '- style: left uses camelCase — `src/left.ts:1`',
+    ],
+  }));
+  const right = parseContextMap(mapSource('inside-out', {
+    Conventions: [
+      '- reuse: parser helper — `src/shared.ts:1`',
+      '- style: right uses camelCase — `src/right.ts:1`',
+    ],
+  }));
+
+  const merged = mergeContextMaps(left, right);
+  const parsed = parseContextMap(merged.source);
+  assert.equal(parsed.sections.Conventions.length, 3);
+  assert.ok(parsed.sections.Conventions.includes('- [disputed] style: left uses camelCase — `src/left.ts:1`'));
+  assert.ok(parsed.sections.Conventions.includes('- [disputed] style: right uses camelCase — `src/right.ts:1`'));
+  assert.ok(parsed.sections.Conventions.includes('- reuse: parser helper — `src/shared.ts:1`'));
+  assert.equal(merged.disputed, 2);
+  assert.equal(mergeContextMaps(right, left).source, merged.source);
+});
+
+test('context merge accepts a short commit prefix of the full commit', () => {
+  const fullCommit = 'abcdef0123456789abcdef0123456789abcdef01';
+  const shortCommit = fullCommit.slice(0, 7);
+  const atCommit = (commit: string, strategy: string) => parseContextMap(
+    mapSource(strategy, {}).replace('> **Commit:** abc123', `> **Commit:** ${commit}`),
+  );
+
+  const merged = mergeContextMaps(atCommit(shortCommit, 'outside-in'), atCommit(fullCommit, 'inside-out'));
+  assert.equal(parseContextMap(merged.source).commit, fullCommit);
+  const reverse = mergeContextMaps(atCommit(fullCommit, 'outside-in'), atCommit(shortCommit.toUpperCase(), 'inside-out'));
+  assert.equal(parseContextMap(reverse.source).commit, fullCommit);
+  assert.throws(
+    () => mergeContextMaps(atCommit('abc1234', 'outside-in'), atCommit('abd1234567890123456789012345678901234567', 'inside-out')),
+    /Context maps have different commits/,
+  );
+  assert.throws(
+    () => mergeContextMaps(atCommit('abcdef', 'outside-in'), atCommit(fullCommit, 'inside-out')),
+    /Context maps have different commits/,
+  );
 });

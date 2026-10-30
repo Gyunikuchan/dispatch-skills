@@ -10,7 +10,7 @@ Configured model and mode combinations cascade on failure; exhausted voices use 
 
 ## Native slots
 
-For `native-pending`, read the result's slot descriptors. Launch each configured native slot with its `promptPath`, model, effort and permitted attachments; write its output to `replyPath`, then rerun the same tool call. Keep handles until terminal results. Native explorers follow [grounding's map output rule](grounding.md#publish); reviewers are read-only, and task writers use only assigned worktree paths and run no Git write commands. If the host cannot launch the configured slot, report the capability blocker with retained evidence.
+For `native-pending`, read the result's slot descriptors. Launch each configured native slot with its `promptPath`, model, effort and permitted attachments; write its output to `replyPath`, then rerun the same tool call. Keep handles until terminal results. Native explorers follow [grounding's map output rule](grounding.md#publish). Native explorers, reviewers and writers may run host read tools whose only writes go to the tool's own cache or index, such as an incremental code-index refresh. This exception permits no other write: such a tool must never create an index or change repository source or config, and a stricter host rule wins. Each agent's own write boundary otherwise stands: explorers write only their map, reviewers edit no repository files, and task writers edit only assigned paths and run no Git write commands. If the host cannot launch the configured slot, report the capability blocker with retained evidence.
 
 ## Quota
 
