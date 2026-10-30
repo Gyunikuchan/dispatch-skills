@@ -1,11 +1,8 @@
-import { loadPlan, hasTransient, checks } from './plan-view.ts';
-import { pruneTransition } from './prune.ts';
-import { criterionStatuses } from './evidence.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger } from './ledger.ts';
-import { git, gitOk, changedPaths, testedTree, headTree } from './git.ts';
+import { git, gitOk, changedPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
 import { pending, reason, result, refuse } from './integrate.ts';
@@ -50,14 +47,8 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
       return result({mode:'uncommitted',dest,from:last.data['from'],source:recorded,ref,paths:(await entriesOf(dest.path,recorded)).map(e=>e.path),delivered:false,...(last.data['noop']?{noop:true}:{})});
     }
     if(source===undefined)refuse('no-integration','Integration worktree is missing and no completed delivery is recorded');
-    const plan=loadPlan(ctx.session,ctx.manifest);
     const checkSource=async()=>{
       if(loadRejections(ctx.session,tx.fold,applicableReviewIds(ctx.manifest,tx.fold)).some(state=>state.state!=='confirmed'))refuse('review-confirmation-required');
-      if(hasTransient(plan)){
-        const transition=await pruneTransition(ctx,tx.fold,plan,true);
-        const current={headTree:await headTree(ctx.deps,cwd),testedTree:await testedTree(ctx.deps,ctx.session,cwd)};
-        if(criterionStatuses(tx.fold,checks(plan),current,transition).some(r=>(transition!.transient.includes(r.criterion)||transition!.final.some(c=>c.criterion==='final:'+r.criterion))&&r.state!=='verified'))refuse('final-checks-required');
-      }
       const [head,dirty,cached]=await Promise.allSettled([read(cwd,['rev-parse','HEAD']),changedPaths(ctx.deps,cwd,'HEAD'),read(cwd,['diff','--cached','--name-only','--no-renames','-z','HEAD','--'])]);
       if(value(head)!==source)blocked('Integration source changed during delivery');
       if(value(dirty).length||value(cached).length)refuse('integration-dirty');

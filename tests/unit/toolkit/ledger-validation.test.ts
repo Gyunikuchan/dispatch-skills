@@ -125,7 +125,7 @@ test('invalid-record rejections name the field and its expected shape', () => {
     [{kind:'writer',by:'tool',data:{phase:'launched',task:'t',path:'p'}},/^data\.base is invalid; expected required an object with commit, taskSection, seq$/],
     [{kind:'evidence',by:'tool',data:{clean:'yes'}},/^data\.criterion is invalid; expected required a non-blank string$/],
     [{kind:'note',by:'tool',quote:7,data:{text:'t'}},/^record\.quote is invalid; expected a string$/],
-    [{kind:'integrate',by:'tool',data:{phase:'prune-started',operation:hash,artifacts:{spec:hash,plan:hash},from:'a'.repeat(40),sourceTree:'a'.repeat(40),targets:[],pre:{},final:[],review:hash}},/^data\.pre is invalid; expected an array of an object with criterion, commands, commandDigest$/],
+    [{kind:'integrate',by:'tool',data:{phase:'test-cleanup',from:'a'.repeat(40),fromTree:'b'.repeat(40),to:'c'.repeat(40),removed:'SC1',deleted:1,merged:0}},/^data.removed is invalid; expected .*$/],
   ];
   for(const [record,message] of cases)assert.throws(()=>validateRecord(record),(error: Error)=>message.test(error.message),String(message));
 });

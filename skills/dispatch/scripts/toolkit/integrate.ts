@@ -7,7 +7,8 @@ import { validateReviewFix, type LedgerRecord, type ReviewFix } from './records.
 import { git, gitOk, changedPaths } from './git.ts';
 import { ensureIntegration } from './integration.ts';
 import { launches, isStale, abandonedRef } from './writers.ts';
-import { loadPlan, taskSection } from './plan-view.ts';
+import { checks, loadPlan, taskSection } from './plan-view.ts';
+import { eligibility } from './evidence.ts';
 import { ToolError } from './output.ts';
 import { stableValue } from './domain/stable-value.ts';
 
@@ -49,6 +50,22 @@ function readReviewFix(ctx: HandlerContext): ReviewFix | undefined {
     if (error instanceof ToolError) throw error;
     throw new ToolError(1, 'invalid-input', 'input requires a readable review-fix JSON object');
   }
+}
+type TestCleanup = { removed: string[]; deleted: number; merged: number };
+const TRAILER = 'Dispatch-Test-Cleanup-Data: ';
+function readTestCleanup(ctx: HandlerContext): TestCleanup | undefined {
+  const file = ctx.values['test-cleanup'];
+  if (file === undefined) return undefined;
+  const invalid = () => new ToolError(1, 'invalid-input', 'input requires a readable test-cleanup JSON object: {"removed": ["SC<n>"], "deleted": <count>, "merged": <count>}');
+  if (typeof file !== 'string' || !file.trim()) throw invalid();
+  let value: any;
+  try { value = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8')); } catch { throw invalid(); }
+  const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join() !== 'deleted,merged,removed' ||
+      !Array.isArray(value.removed) || value.removed.some((id: unknown) => typeof id !== 'string' || !id.trim()) || new Set(value.removed).size !== value.removed.length ||
+      !count(value.deleted) || !count(value.merged)) throw invalid();
+  if (!value.removed.length && !value.deleted && !value.merged) refuse('test-cleanup-empty');
+  return { removed: value.removed, deleted: value.deleted, merged: value.merged };
 }
 function task(ctx: HandlerContext): string {
   if(ctx.args.length!==1)throw new ToolError(1,'invalid-input','One task ID is required');
@@ -146,19 +163,45 @@ export async function continueIntegration(ctx: HandlerContext): Promise<HandlerR
   });
 }
 export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
-  const why=reason(ctx); let reviewFix=readReviewFix(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
+  const why=reason(ctx); let reviewFix=readReviewFix(ctx); const cleanup=readTestCleanup(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
+  if(cleanup && reviewFix)throw new ToolError(1,'invalid-input','--test-cleanup and --review-fix are mutually exclusive');
   return withLedger(ctx.session,'worktree commit',ctx.deps,async tx=>{
     const active=pending(tx.fold); if(active)refuse('integration-pending',active.data['task']);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     let hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
-    if((await changedPaths(ctx.deps,cwd,'HEAD')).length) {
+    const dirty=(await changedPaths(ctx.deps,cwd,'HEAD')).length>0;
+    const message=dirty?'':await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
+    const lines=message.split('\n');
+    const cleanupTrailer=lines.find(line=>line.startsWith(TRAILER));
+    if(cleanup) {
+      // SECTION: test cleanup commit; a clean tree recovers an interrupted commit from its trailer
+      if(tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='test-cleanup'))refuse('test-cleanup-recorded');
+      const trailer=TRAILER+stableValue(cleanup);
+      if(!dirty && (lines[0]!=='fix(dispatch): '+why || !lines.includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || cleanupTrailer!==trailer))refuse('no-changes');
+      const from=dirty?hash:await gitOk(ctx.deps,cwd,['rev-parse','HEAD^']);
+      const fromTree=await gitOk(ctx.deps,cwd,['rev-parse',from+'^{tree}']);
+      const plan=loadPlan(ctx.session,ctx.manifest);
+      const known=cleanup.removed.filter(id=>plan.criteria.some(c=>c.id===id));
+      const verified=eligibility(tx.fold,checks(plan).filter(c=>known.includes(c.criterion)),{headTree:fromTree,testedTree:fromTree},true);
+      if(known.length!==cleanup.removed.length || verified.some(row=>row.state!=='verified'))refuse('test-cleanup-evidence-required','Every removed criterion needs a plan criterion with successful current evidence on the pre-cleanup tree');
+      const changed=new Set((await gitOk(ctx.deps,cwd,dirty?['diff','-z','--name-only','--no-renames','HEAD','--']:['diff','-z','--name-only','--no-renames',from,'HEAD','--'])).split('\0').filter(Boolean));
+      const untouched=cleanup.removed.filter(id=>!plan.criteria.find(c=>c.id===id)!.tests.some(file=>changed.has(file)));
+      if(untouched.length)refuse('test-cleanup-paths-unchanged','No declared Tests path changed for '+untouched.join(', '));
+      if(dirty) {
+        await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,'-m',trailer]);
+        await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
+      }
+      await tx.append({kind:'integrate',by:'tool',data:{phase:'test-cleanup',from,fromTree,to:hash,...cleanup}});
+      return result({commit:hash,reason:why,from,...cleanup});
+    }
+    if(dirty) {
       const metadata=reviewFix?reviewFixIdentity(reviewFix):undefined;
       const identity=metadata?['-m','Dispatch-Review-Fix: '+metadata.digest,'-m','Dispatch-Review-Fix-Data: '+metadata.data]:[];
       await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
       await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     } else {
-      const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
-      if(message.split('\n')[0]!=='fix(dispatch): '+why || !message.split('\n').includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
+      if(cleanupTrailer!==undefined || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='test-cleanup' && r.data['to']===hash))refuse('no-changes');
+      if(lines[0]!=='fix(dispatch): '+why || !lines.includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
       const recorded=reviewFixFromCommit(message);
       if(recorded && reviewFix && stableValue(recorded)!==stableValue(reviewFix))refuse('no-changes');
       if(recorded)reviewFix=recorded;

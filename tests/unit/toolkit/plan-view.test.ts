@@ -16,4 +16,3 @@ describe('plan view', () => {
   });
 });
 
-test('final checks preserve retained contracts',async()=>{const {checks,finalChecks,commandDigest}=await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');const base=parsed();const plan={...base,criteria:[{...base.criteria[0]!,retain:'transient' as const,verify:[{command:'step',final:false},{command:'retained',final:true}]},{...base.criteria[0]!,id:'SC2',verify:[{command:'durable',final:false}]}]};const rows=finalChecks(plan);assert.deepEqual(rows.map(c=>[c.criterion,c.commands]),[['final:SC1',['retained']],['final:SC2',['durable']],['final:contract',checks(plan).at(-1)!.commands]]);assert.equal(rows[0]!.commandDigest,commandDigest({criterion:'final:SC1',commands:['retained']}));assert.notEqual(rows[0]!.commandDigest,checks(plan)[0]!.commandDigest);});

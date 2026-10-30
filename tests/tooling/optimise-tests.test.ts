@@ -353,7 +353,7 @@ test('comparison validates deletion categories', async () => {
   for (const category of ['trivial-spec', 'coverage-padding', 'transient-leak', 'unknown-category']) {
     const ledger = snapshot.files.map((entry, index) => action(`delete-${index}`, 'delete', [ref(entry.path, entry.tests[0]!.name)], [], 'No severe contract is protected by this scaffolding.', category));
     const result = compare(snapshot, inventory([]), ledger);
-    assert.equal(result.ok, category !== 'unknown-category', result.markdown);
+    assert.equal(result.ok, ['trivial-spec', 'coverage-padding'].includes(category), result.markdown);
   }
 });
 

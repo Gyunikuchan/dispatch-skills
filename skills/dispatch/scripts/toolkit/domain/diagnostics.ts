@@ -87,14 +87,14 @@ const files = (dir: string, names: string, ext: string) => names.split(' ').map(
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
-  ...files('references/templates', 'context-map design explorer-brief plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan spec walkthrough writer-brief', '.md'),
+  ...files('references/templates', 'context-map design explorer-brief plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan spec test-cleanup-brief walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review', '.md'),
   ...files('references', 'decision-frame diagnostics glossary grounding providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
-  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts prune records red report review review-findings status types verify walkthrough writers', '.ts'),
+  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-findings review-identity status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
 ]);
 

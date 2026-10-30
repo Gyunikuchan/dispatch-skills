@@ -13,7 +13,7 @@ import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthr
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
-  'writer-brief.md', 'quality-bar.md', 'context-map.md', 'explorer-brief.md',
+  'writer-brief.md', 'quality-bar.md', 'context-map.md', 'explorer-brief.md', 'test-cleanup-brief.md',
 ];
 
 test('code review evidence is actionable with and without a bound plan', () => {
@@ -131,9 +131,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
     assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
     assert.equal((template.match(/^>$/gm) ?? []).length, 3);
     assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
-    for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Retain:', 'Covered by:', 'Seams:']) assert.ok(template.includes(label));
+    for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:', 'Overlap:', 'Seams:']) assert.ok(template.includes(label));
     let source = template.split('````markdown\n')[1]!.split('````')[0]!;
-    source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Satisfies: REQ-1\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
+    source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Satisfies: REQ-1\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test`\n  - Evidence: verify\n\n');
     source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
     const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>': '`governing.spec.md` · sha256:' + 'a'.repeat(64), '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task title>': 'Keep output usable', '<Plain-language outcome>': 'Keep output usable.', '<Observable behaviour this task implements and how it works.>': 'Keep output usable.', '<optional task-specific constraints, including why each non-obvious prerequisite is needed>': 'Keep API.', 'SC<n>[, SC<n>...]': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate', '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task' };
     for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
@@ -174,12 +174,6 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
     const text = readFileSync(new URL(name, root), 'utf8');
     for (const token of [/<!--/, /rebuttal/i, /consensus/i]) assert.ok(!token.test(text), `${name} contains ${String(token)}`);
   }
-});
-
-test('templates: plan.md shows [FINAL] after the Verify code span', () => {
-  const plan = readFileSync(new URL('plan.md', root), 'utf8');
-  assert.ok(plan.includes('- Verify: `<command>` [FINAL]'));
-  assert.ok(!/Verify: `[^`\n]*\[FINAL\]`/.test(plan));
 });
 
 test('templates: plan.md owns task metadata in its map and keeps generated inputs under task details', () => {
@@ -258,11 +252,17 @@ test('code review flags unrequested consumer-boundary behaviour as intent', () =
   assert.ok(rules.includes('For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).'));
 });
 
-test('templates: plan template defines the durable bar and isolates transient test files', () => {
-  const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(plan.includes('- Retain: <transient|durable>'));
-  for (const text of ['required on every criterion whose Changes names a test path', 'prefer `transient`', 'explicit nonempty `[FINAL]` Verify command', 'even when Covered by names a durable criterion', 'remove declared transient test files', 'required only when Tests names files retained as durable', "[quality bar's code test policy](quality-bar.md#code)", 'each test and its distinct boundary', 'Transient criteria require `Covered by:`', '`[NEW]`', 'x.transient.test.ts', 'plan-id-in-test-name']) assert.ok(plan.includes(text), text);
-  assert.equal(plan.match(/\[quality bar's code test policy\]\(quality-bar\.md#code\)/g)?.length, 1);
+test('templates: plan template carries no test classification fields', () => {
+  const plan = readFileSync(new URL('plan.md', root), 'utf8');
+  for (const retired of ['Retain:', 'Covered by:', 'Test rationale:', '[FINAL]']) assert.ok(!plan.includes(retired), retired);
+});
+
+test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
+  const brief = readFileSync(new URL('test-cleanup-brief.md', root), 'utf8');
+  assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
+  assert.ok(brief.includes('git diff <base>..HEAD'));
+  assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
+  assert.ok(brief.includes('quality-bar.md#code'));
 });
 
 test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });

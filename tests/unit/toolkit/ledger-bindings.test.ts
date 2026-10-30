@@ -39,7 +39,7 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
       return {exit, output: f.output()};
     };
     for (const args of [['worktree', 'create', 'T1'], ['brief', 'render', 'T1'], ['worktree', 'integrate', 'T1'],
-      ['worktree', 'commit', '--reason', 'repair'], ['verify', 'run'], ['worktree', 'prune'], ['report', 'render'],
+      ['worktree', 'commit', '--reason', 'repair'], ['verify', 'run'], ['report', 'render'],
       ['review', 'run', 'integration', '--kind', 'code', '--level', 'low']]) {
       const result = await call(args);
       assert.equal(result.exit, 4, args.join(' '));

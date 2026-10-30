@@ -6,7 +6,7 @@ import type { Failure, Inventory } from './inventory.ts';
 
 export type TestReference = { file: string; name: string; line?: number };
 export type ActionKind = 'delete' | 'merge' | 'add' | 'rewrite' | 'move' | 'split';
-export type DeletionCategory = 'redundant-behavior' | 'implementation-coupled-assertion' | 'self-derived-assertion' | 'synthetic/no-required-contract' | 'trivial-spec' | 'coverage-padding' | 'transient-leak';
+export type DeletionCategory = 'redundant-behavior' | 'implementation-coupled-assertion' | 'self-derived-assertion' | 'synthetic/no-required-contract' | 'trivial-spec' | 'coverage-padding';
 
 export interface ActionEvidence {
   kind: 'action';
@@ -181,7 +181,7 @@ function validateAction(value: Record<string, unknown>, index: number, before: I
   const afterMembers = resolveMembers(value['after'], after, `${where}.after`, errors);
   const category = value['category'];
   const needsCategory = action === 'delete' || action === 'merge';
-  const categories: readonly string[] = ['redundant-behavior', 'implementation-coupled-assertion', 'self-derived-assertion', 'synthetic/no-required-contract', 'trivial-spec', 'coverage-padding', 'transient-leak'];
+  const categories: readonly string[] = ['redundant-behavior', 'implementation-coupled-assertion', 'self-derived-assertion', 'synthetic/no-required-contract', 'trivial-spec', 'coverage-padding'];
   if (needsCategory && !categories.includes(String(category))) errors.push(`${where}: deletion category is missing or unsupported`);
   if (!needsCategory && category !== undefined) errors.push(`${where}: category applies only to delete and merge actions`);
   if (beforeMembers && afterMembers) {

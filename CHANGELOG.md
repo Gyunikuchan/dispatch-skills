@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- A test cleanup stage runs after integrated checks and before the final code review. A low-cost writer deletes, merges or rewrites lower-value tests the run touched; `worktree commit --test-cleanup` records removed criteria and counts, and their pre-cleanup evidence stays valid.
+- The quality bar states two test tiers: disposable implementation tests and retained tests that specify a current consumer contract.
+- **Breaking:** Plan-time transient test marking, `worktree prune` and `verify run --final` are removed. `Retain:`, `Covered by:`, `Test rationale:` and `[FINAL]` are retired plan fields, and sessions with prune records need a new session.
+
 ## [0.8.1] - 2026-10-29
 
 - Intent grounding uses native explorers and context maps to verify assumptions and requirements before selecting workflow level.

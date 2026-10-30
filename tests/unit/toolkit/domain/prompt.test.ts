@@ -272,23 +272,22 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 
 // SECTION: Durable test bar and plan-free naming
 
-test('quality selection: reviews hold retained tests to the durable bar', () => {
+test('quality selection: reviews hold tests to the two-tier bar', () => {
   for (const kind of ['code', 'plan'] as const) {
     const text = ruleText(kind);
-    assert.ok(text.includes('Apply one behavioral bar to new, changed, and retained tests.'), kind);
+    assert.ok(text.includes('Apply one two-tier bar.'), kind);
+    assert.ok(text.includes('Retained tests are the executable spec of a current consumer contract that is severe if broken or non-obvious'), kind);
+    for (const retired of ['Test rationale', 'Retain:', '[FINAL]']) assert.ok(!text.includes(retired), `${kind}: ${retired}`);
     if (kind === 'plan') {
-      for (const term of ["code section's test policy", 'repair the rationale or test', 'demote the criterion to transient', 'remove it when redundant']) assert.ok(text.includes(term), `${kind}: ${term}`);
       const prompt = flat(kind);
       for (const term of [
         '`<skills-dir>/dispatch/references/templates/plan.md#field-notes`',
         'test selectors and named-test matching',
-        '`[FINAL]` gate classification',
-        'transient-test placement',
         'treat any violation as a defect',
       ]) assert.ok(prompt.includes(term), `${kind}: ${term}`);
     }
   }
-  assert.ok(ruleText('code').includes('classify intermediate step, helper and branch-permutation checks as transient for removal after review'));
+  assert.ok(ruleText('code').includes('Implementation tests drive TDD: each fails RED for the right reason'));
 });
 
 test('review prompts: prompts keep plan IDs out of tests', () => {

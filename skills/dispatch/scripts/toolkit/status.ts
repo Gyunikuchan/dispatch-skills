@@ -1,7 +1,4 @@
-import { ToolError } from './output.ts';
-import { pruneTransition } from './prune.ts';
-import { hasTransient } from './plan-view.ts';
-import { criterionStatuses, eligibility } from './evidence.ts';
+import { cleanupBinding, latestCleanup, criterionStatuses, eligibility } from './evidence.ts';
 import { currentHashes, foldLedger, gate, latest } from './ledger.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,11 +53,10 @@ export async function statusReport(session: string, repositoryRoot: string, deps
       if(exists && plan) {
         try {
           const tree={headTree:await headTree(deps,cwd),testedTree:await testedTree(deps,session,cwd)};
-          let transition;
-          try{transition=hasTransient(plan)?await pruneTransition({session,manifest:{repositoryRoot} as import('../lib/session.ts').Manifest,deps,args:[],values:{}},fold,plan):null;}
-          catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;evidenceStatuses=checks(plan).map(check=>({criterion:check.criterion,state:'missing',reason:error.reason}));}
-          if(!evidenceStatuses.length)evidenceStatuses=criterionStatuses(fold,checks(plan),tree,transition);
-          criteria=(hasTransient(plan)?evidenceStatuses:eligibility(fold,checks(plan),tree)).filter(row=>row.state!=='verified').map(row=>row.criterion);
+          const cleanup=cleanupBinding(fold),all=checks(plan);
+          evidenceStatuses=criterionStatuses(fold,all,tree,cleanup);
+          const kept=eligibility(fold,all.filter(check=>!cleanup?.removed.includes(check.criterion)),tree);
+          criteria=all.map(check=>evidenceStatuses.find(row=>row.criterion===check.criterion&&cleanup?.removed.includes(check.criterion))??kept.find(row=>row.criterion===check.criterion)!).filter(row=>row.state!=='verified').map(row=>row.criterion);
         } catch {criteria=checks(plan).map(c=>c.criterion);}
       }
     }
@@ -71,6 +67,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
     gate: gate(fold, current, level),
     escalations: [...escalations.values()].filter(record => record['state'] === 'open'),
     recordCount: fold.records.length, tornTail: fold.torn !== null,
+    testCleanup: (() => { const row = latestCleanup(fold); return row ? {from: row.data['from'], removed: row.data['removed'], deleted: row.data['deleted'], merged: row.data['merged']} : null; })(),
     ...sections,
   };
 }

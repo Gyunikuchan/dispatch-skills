@@ -50,20 +50,6 @@ describe('toolkit verify', () => {
   });
 });
 
-test('transient verification refuses artifact mutation during a successful command',async()=>{
- const source=planSource.replace('  - Evidence: verify','  - Retain: transient\n  - Covered by: FINAL\n  - Evidence: verify');
- const f=await toolkitRepo(source);try{
-  const original=f.deps.run;let changed=false;
-  f.deps.run=async(argv,options)=>{
-   const result=await original(argv,options);
-   if(!changed && argv[0]!=='git'){changed=true;fs.appendFileSync(path.join(f.root,'work.spec.md'),'\nChanged during command.\n');}
-   return result;
-  };
-  const result=await f.run(['verify','run']);assert.equal(changed,true);assert.equal(result.output.reason,'artifacts-changed');
-  assert.equal(foldLedger(f.session).records.filter(row=>row.kind==='evidence' && row.data['exit']===0).length,0);
- }finally{f.cleanup();}
-});
-
 test('verify run trims criteria and names unknown criteria', async () => {
   const f = await toolkitRepo(); try {
     const trimmed = await f.run(['verify','run','--criteria',' SC1, ']);

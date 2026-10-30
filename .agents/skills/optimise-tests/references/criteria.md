@@ -25,7 +25,7 @@ An action record has this shape:
 {"kind":"retain","contract":"The transfer consumer rejects a repeated transaction without debiting the balance twice.","plausibleDefect":"A replay debits the account twice and corrupts its balance.","observableOutcome":"The caller receives the replay error and the account balance stays unchanged.","distinctContribution":"Covers durable replay protection after commit; static types cannot guarantee runtime transaction uniqueness.","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects replay without changing the balance"}]}
 ```
 
-`action` is one of `delete`, `merge`, `add`, `rewrite`, `move`, or `split`. IDs are unique. Every record has `before`, `after`, and a nonblank `reason`; arrays may be empty only where the action allows it. `delete` and `merge` also require one `category` from this closed set: `redundant-behavior`, `implementation-coupled-assertion`, `self-derived-assertion`, `synthetic/no-required-contract`, `trivial-spec`, `coverage-padding`, or `transient-leak`. No other category is valid.
+`action` is one of `delete`, `merge`, `add`, `rewrite`, `move`, or `split`. IDs are unique. Every record has `before`, `after`, and a nonblank `reason`; arrays may be empty only where the action allows it. `delete` and `merge` also require one `category` from this closed set: `redundant-behavior`, `implementation-coupled-assertion`, `self-derived-assertion`, `synthetic/no-required-contract`, `trivial-spec`, or `coverage-padding`. No other category is valid.
 
 - `delete` needs at least one before reference. A `redundant-behavior` deletion also names one or more surviving tests in `after` and explains the same-defect coverage. A hollow deletion may have an empty `after`; its reason must name the missing required contract.
 - `merge` needs before and surviving after references. Its `before` list contains only absorbed tests; exclude tests that survive unchanged. Explain why the survivors detect the same defect.
@@ -54,7 +54,7 @@ The names in examples must resolve in the inventories for a real run. These reco
 
 ## Deletion and retention judgment
 
-Use `trivial-spec` for mechanical contracts without plausible severe failure, `coverage-padding` for checks whose purpose is line or branch execution, and `transient-leak` for intermediate scaffolding left in the delivered suite. Coverage percentages never justify durable retention or gate deletion. Review the actual consumer behavior before using these categories.
+Use `trivial-spec` for mechanical contracts without plausible severe failure, and `coverage-padding` for checks whose purpose is line or branch execution. Coverage percentages never justify durable retention or gate deletion. Review the actual consumer behavior before using these categories.
 
 ## Proof and savings
 

@@ -40,10 +40,10 @@ export type LintDefectCode =
   | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-verify' | 'missing-seams'
   // Plan criteria
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
-  | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
+  | 'criterion-change-path' | 'criterion-verify' | 'criterion-evidence'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
   | 'criterion-review' | 'criterion-critical-review'
-  | 'transient-coverage' | 'criterion-retain-required' | 'transient-test-path' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
+  | 'retired-field' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
   | 'task-heading' | 'task-summary' | 'task-behaviour' | 'increment-behaviour' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap' | 'glance-restates-task-map'
   // Design
@@ -60,7 +60,7 @@ export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning';
 export type EvidenceClass = 'red' | 'verify' | 'review';
 export type ChangeAction = 'NEW' | 'MODIFY' | 'DELETE' | 'GENERATED';
 
-export type PlanCommand = { command: string; final: boolean };
+export type PlanCommand = { command: string };
 
 export type PlanCriterion = {
   satisfies?: readonly string[];
@@ -76,12 +76,8 @@ export type PlanCriterion = {
   redException: string | null;
   /** Focused failing-test command from `RED:`; `{files}` expands to declared `Tests:` paths. A missing command downgrades red evidence to verify. */
   red: string | null;
-  testRationale: string | null;
   review: string | null;
   enforcementInfeasibility: string | null;
-  /** Retention choice for declared tests; a transient criterion's `coveredBy` names its durable SC# or FINAL gate. */
-  retain: 'durable' | 'transient';
-  coveredBy: string | null;
 };
 
 export type PlanChange = { action: ChangeAction; path: string; note: string; command: string | null; line: number };
@@ -118,7 +114,6 @@ export type ParsedPlan = {
   tasks: readonly PlanTask[];
   changes: readonly PlanChange[];
   verification: { automated: readonly string[]; none: string | null; manual: readonly string[] };
-  finalCommands: readonly string[];
   /** Plan-level test entry points that criteria verify through. */
   seams: readonly string[];
   warnings: readonly PlanWarning[];

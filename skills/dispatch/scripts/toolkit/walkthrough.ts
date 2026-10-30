@@ -11,7 +11,7 @@ type ReviewFixReport = {
   metadata: ReviewFix;
   status: 'verified but not re-reviewed' | 'not verified';
   paths: readonly string[];
-  verification?: { tree: string; criteria: readonly string[]; contract: readonly string[]; finalTree?: string; finalChecks?: readonly string[] };
+  verification?: { tree: string; criteria: readonly string[]; contract: readonly string[] };
 };
 
 export type WalkthroughView = {
@@ -49,6 +49,8 @@ export type WalkthroughView = {
   reviewRounds: readonly RoundLink[];
   reviewFixes?: readonly ReviewFixReport[];
   reviewedCodeBaseline?: string;
+  /** Criteria whose tests the cleanup commit removed keep evidence verified at `from`. */
+  testCleanup?: { from: string; removed: readonly string[]; deleted: number; merged: number };
 };
 
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
@@ -82,7 +84,7 @@ function statusTable(statuses: readonly Status[], state: Status['state']): strin
   const out = ['| SC | Evidence |', '| --- | --- |'];
   for (const row of rows) {
     let evidence = 'no eligible evidence';
-    if (row.state === 'verified') evidence = (row.reason?.startsWith('historical pre-prune') && row.evidence ? '[source evidence]('+row.evidence+')' : row.evidence ?? 'verified evidence')+(row.reason ? '; '+row.reason : '');
+    if (row.state === 'verified') evidence = (row.reason?.endsWith('tests removed in cleanup') && row.evidence ? '[source evidence]('+row.evidence+')' : row.evidence ?? 'verified evidence')+(row.reason ? '; '+row.reason : '');
     out.push(`| ${cell(row.criterion)} | ${cell(evidence)} |`);
   }
   return out;
@@ -199,7 +201,12 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     out.push('### Unplanned changes', '', '- No planned task owns these changed paths.', '', '<details>', '', ...unplannedChanges.map(changeLine), '', '</details>', '');
   }
 
-  out.push('## Verification', '', `- **Status:** ${exceptionCount ? 'exceptions recorded' : 'complete'}`, '');
+  out.push('## Verification', '', `- **Status:** ${exceptionCount ? 'exceptions recorded' : 'complete'}`);
+  if (view.testCleanup) {
+    const cleanup = view.testCleanup;
+    out.push(`- **Test cleanup:** deleted ${cleanup.deleted} · merged ${cleanup.merged} tests after verification at ${line(cleanup.from).slice(0, 12)}; criteria with tests removed: ${cleanup.removed.length ? cleanup.removed.map(line).join(', ') : 'none'}`);
+  }
+  out.push('');
   out.push(...exceptionSection(statuses, 'manual'), ...exceptionSection(statuses, 'waived'), ...exceptionSection(statuses, 'missing'));
 
   const deviations = view.edits.map((edit) =>

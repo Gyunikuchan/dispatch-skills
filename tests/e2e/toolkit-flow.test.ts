@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {toolkitRepo,planSource,transientRepo,captureIntegrationReview} from './helpers/toolkit-repo.ts';
+import {toolkitRepo,planSource,captureIntegrationReview} from './helpers/toolkit-repo.ts';
 import {appendRecord,currentHashes,foldLedger,latest} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 describe('toolkit status sections', () => {
@@ -148,8 +148,6 @@ const capturePlanSource = [
   '  - Verify: `node -e "process.exit(0)"`',
   '  - RED: `node -e "process.stdout.write(\'raw stdout\'); process.stderr.write(\'raw stderr\'); process.exit(7)" {files}`',
   '  - Evidence: red',
-  '  - Retain: durable',
-  '  - Test rationale: Captured bytes and exit status prove subprocess evidence is retained.',
   '',
   '## Verification Plan',
   'Seams: tests/e2e/toolkit-flow.test.ts',
@@ -265,4 +263,3 @@ test('captured RED command preserves raw output and status and its report clears
   } finally { f.cleanup(); }
 });
 
-test('recovery status preserves transient history',async()=>{const r=await transientRepo();try{captureIntegrationReview(r);assert.equal((await r.run(['worktree','prune'])).output.ok,true);assert.ok((await r.run(['status','show'])).value.criteria.includes('SC1'));assert.equal((await r.run(['verify','run','--final'])).output.ok,true);assert.deepEqual((await r.run(['status','show'])).value.criteria,[]);const report=await r.run(['report','render']);assert.match(report.value.statuses[0].reason,/historical pre-prune/);fs.appendFileSync(path.join(r.root,'work.spec.md'),'changed');assert.ok((await r.run(['status','show'])).value.criteria.includes('SC1'));}finally{r.cleanup();}});

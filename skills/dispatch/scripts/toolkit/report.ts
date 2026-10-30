@@ -1,10 +1,9 @@
-import { pruneTransition, reviewIdentity, type ReviewIdentity } from './prune.ts';
-import { hasTransient } from './plan-view.ts';
+import { reviewIdentity, type ReviewIdentity } from './review-identity.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { criterionStatuses, verifiedStage, type CriterionStatus, type PruneEvidence } from './evidence.ts';
+import { cleanupBinding, criterionStatuses, latestCleanup, verifiedStage, type CriterionStatus } from './evidence.ts';
 import { git, gitOk, headTree, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
@@ -27,7 +26,7 @@ type ReviewFixReport = {
   metadata: ReviewFix;
   status: 'verified but not re-reviewed' | 'not verified';
   paths: string[];
-  verification?: { tree: string; criteria: string[]; contract: string[]; finalTree?: string; finalChecks?: string[] };
+  verification?: { tree: string; criteria: string[]; contract: string[] };
 };
 type Snapshot = {
   risk: string;
@@ -51,6 +50,7 @@ type Snapshot = {
   confirmationError: string | undefined;
   reviewedCodeBaseline: string | undefined;
   reviewFixes: ReviewFixReport[];
+  testCleanup: WalkthroughView['testCleanup'];
 };
 type ReportFacts = Snapshot & {
   view: WalkthroughView;
@@ -100,42 +100,31 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     }
   }
   const checkRows = checks(plan);
-  let transition:PruneEvidence|null|undefined;
-  let invalidPruning=false;
-  if(hasTransient(plan)) {try{transition=await pruneTransition(ctx,fold,plan,true);}catch(error){if(!(error instanceof ToolError && error.exit===4))throw error;invalidPruning=true;}}
+  const cleanup=cleanupBinding(fold),cleanupRecord=latestCleanup(fold);
   let fixRecords=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['reviewFix']);
   let reviewedCodeBaseline:string|undefined;
   let corrections:ReviewIdentity|undefined;
-  const completedPrune=fold.records.findLast(record=>record.kind==='integrate'&&record.data['phase']==='pruned');
-  const reviewHead=typeof completedPrune?.data['from']==='string'?completedPrune.data['from']:head;
-  if(fixRecords.length&&integrationPath&&integration&&reviewHead&&typeof integration.data['base']==='string') {
+  if(fixRecords.length&&integrationPath&&integration&&head&&typeof integration.data['base']==='string') {
     try {
-      corrections=await reviewIdentity(ctx,fold,integrationPath,reviewHead,integration.data['base']);
+      corrections=await reviewIdentity(ctx,fold,integrationPath,head,integration.data['base']);
       reviewedCodeBaseline=corrections.baseline;
     } catch(error) {
-      if(!(error instanceof ToolError&&error.reason==='prune-review-required'))throw error;
+      if(!(error instanceof ToolError&&error.reason==='review-required'))throw error;
     }
   }
   if(corrections)fixRecords=fixRecords.filter(record=>record.seq>corrections!.startSeq);
   const correctionVerified=():boolean=>{
     if(!fixRecords.length||!corrections||!checkRows.length)return false;
-    if(hasTransient(plan)) {
-      if(!transition||!current||current.headTree!==current.testedTree)return false;
-      const history={...fold,records:fold.records.filter(record=>record.seq<transition!.sourceSeq)};
-      const source={headTree:transition.sourceTree,testedTree:transition.sourceTree};
-      return verifiedStage(history,checkRows,source,transition.artifacts)&&verifiedStage(fold,transition.final,current,transition.artifacts);
-    }
-    return !!current&&verifiedStage(fold,checkRows,current,undefined);
+    return !!current&&verifiedStage(fold,checkRows,current,cleanup);
   };
   const hasCurrentVerification=correctionVerified();
   const reviewFixes:ReviewFixReport[]=fixRecords.map(record=>{
     const metadata=record.data['reviewFix'] as ReviewFix;
     const accepted=corrections?.corrections.find(correction=>correction.commit===record.data['commit']&&correction.seq===record.seq);
     const verification=accepted&&hasCurrentVerification?{
-      tree:transition?.sourceTree??current!.headTree,
+      tree:current!.headTree,
       criteria:checkRows.filter(check=>check.criterion!=='contract').map(check=>check.criterion),
       contract:checkRows.filter(check=>check.criterion==='contract').map(check=>check.criterion),
-      ...(transition?{finalTree:current!.headTree,finalChecks:transition.final.map(check=>check.criterion)}:{}),
     }:undefined;
     return {
       commit:String(record.data['commit']),reason:String(record.data['reason']),metadata,
@@ -143,7 +132,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
       ...(verification?{verification}:{}),
     };
   });
-  const statusRows = invalidPruning?checkRows.map(c=>({criterion:c.criterion,state:'missing' as const,reason:'pruning or final verification required'})):criterionStatuses(fold, checkRows, current,transition);
+  const statusRows = criterionStatuses(fold, checkRows, current, cleanup);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
   const deliveredAtHead = Boolean(delivered && head && delivered.data['source'] === head);
   const planTaskIds = new Set(plan.tasks.map((task) => task.id));
@@ -161,6 +150,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     risk,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
     integrated: integrated.size,rejectionConfirmations,confirmationError,reviewedCodeBaseline,reviewFixes,
+    testCleanup: cleanupRecord ? {from:cleanupRecord.data['from'],removed:cleanupRecord.data['removed'],deleted:cleanupRecord.data['deleted'],merged:cleanupRecord.data['merged']} : undefined,
   };
 }
 
@@ -275,6 +265,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     reviewRounds: review.rounds,
     reviewFixes: snapshot.reviewFixes,
     ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
+    ...(snapshot.testCleanup ? { testCleanup: snapshot.testCleanup } : {}),
   };
   return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, userRecords };
 }

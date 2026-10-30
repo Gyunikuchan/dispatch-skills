@@ -1,7 +1,7 @@
 // Plan parse + lint + governed text (spec §8.1). Shared Markdown helpers are exported for domain/design.ts.
 
 import type {
-  ChangeAction, EvidenceClass, Glance, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion, PlanTask, PlanWarning,
+  ChangeAction, EvidenceClass, Glance, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCriterion, PlanTask, PlanWarning,
 } from './types.ts';
 import { criterionHeading, isCriterionId } from './criterion-id.ts';
 
@@ -38,7 +38,6 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'criterion-mapping':
     case 'criterion-change-path':
     case 'criterion-verify':
-    case 'final-in-code-span':
     case 'duplicate-id':
     case 'task-heading':
     case 'task-ownership':
@@ -71,7 +70,6 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'increment-behaviour':
     case 'task-overlap':
     case 'automated-test-duplicates-verify':
-    case 'criterion-test-rationale':
     case 'criterion-critical-review':
     case 'change-path-excluded':
     case 'generated-command':
@@ -91,9 +89,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'cycle':
     case 'execution-status':
     case 'generated-inputs':
-    case 'transient-coverage':
-    case 'criterion-retain-required':
-    case 'transient-test-path':
+    case 'retired-field':
     case 'glance-restates-task-map':
       return 'warning';
     default: return unreachable(code);
@@ -404,9 +400,9 @@ const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 // Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/i;
 export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
-// Lint hint only: paths under these segments look like support files, so transient naming and `undeclared-test-path` checks skip them.
+// Lint hint only: paths under these segments look like support files, so the `undeclared-test-path` check skips them.
 const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//i;
-/** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` and transient naming lints; a RED stage that changes or needs it must still list it in `Tests:`. */
+/** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` lint; a RED stage that changes or needs it must still list it in `Tests:`. */
 export const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
 
 /** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
@@ -419,7 +415,7 @@ export function planIdPattern(ids: readonly string[]): RegExp | null {
 const FINDING_ID = /\bR\d+-F\d+\b/gi;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
-type Criterion = PlanCriterion & { satisfies: readonly string[]; retainLine: number | null; verifyLines: number[]; testsLine: number | null; redCommandLine: number | null; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; coveredLine: number; critical: boolean; valid: boolean };
+type Criterion = PlanCriterion & { satisfies: readonly string[]; verifyLines: number[]; testsLine: number | null; redCommandLine: number | null; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; critical: boolean; valid: boolean };
 
 export type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
@@ -442,10 +438,6 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     const range = sectionRanges(lines, '## Verification Plan')[0];
     out.push(lint('missing-seams', range ? lines[range.start]?.line ?? null : null, 'Automated criteria have no test seams; declare Seams: <entry points> or Seams: none when inapplicable.'));
   }
-  const finalCommands = criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command));
-  lintTransientCoverage(criteria, finalCommands, out);
-  if(criteria.some(c=>c.retain==='transient') && !finalCommands.some(c=>c.trim()) && !out.some(d=>d.code==='transient-coverage'&&d.message.includes('[FINAL]'))) out.push(lint('transient-coverage',null,'Transient criteria require at least one plan-level [FINAL] Verify command.'));
-  lintTransientTestPaths(criteria, changes, out);
   lintUndeclaredTestPaths(criteria, out);
   const planIds = collectPlanIds(lines, criteria);
   lintPlanIdNames(criteria, changes, planIds, out);
@@ -473,12 +465,11 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
     box: boxValues(source),
     glance: parseGlance(lines),
     keyDecisions: bullets(lines, '## Key Decisions & Context'),
-    criteria: criteria.map(({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy }) =>
-      ({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, testRationale, review, enforcementInfeasibility, retain, coveredBy })),
+    criteria: criteria.map(({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, review, enforcementInfeasibility }) =>
+      ({ id, title, line, satisfies, changes: paths, tests, verify, evidence, preExisting, redException, red, review, enforcementInfeasibility })),
     tasks: tasks.map(({ id, title, summary, behaviour, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps }) => ({ id, title, summary, behaviour, constraints, line, prerequisites, criteria: ids, paths, generated, overlaps })),
     changes,
     verification,
-    finalCommands,
     seams,
     warnings: overlapWarnings,
     traceability: keyValues(lines, '## Technical-Design Traceability'),
@@ -924,12 +915,14 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
   return criteria;
 }
 
+const RETIRED_FINAL = 'The [FINAL] marker is retired; the post-integration test cleanup replaces it. Remove the marker.';
+
 function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
   const id = criterionHeading(text);
   const base: Criterion = {
-    id: '', title: text, line, satisfies: [], changes: [], tests: [], verify: [], evidence: null, preExisting: null, redException: null, red: null, testRationale: null,
-    review: null, enforcementInfeasibility: null, retain: 'durable', retainLine: null, verifyLines: [], testsLine: null, redCommandLine: null, coveredBy: null, integration: null, mapped: false, evidenceRaw: null,
-    evidenceLine: line, redLine: line, reviewLine: line, coveredLine: line,
+    id: '', title: text, line, satisfies: [], changes: [], tests: [], verify: [], evidence: null, preExisting: null, redException: null, red: null,
+    review: null, enforcementInfeasibility: null, verifyLines: [], testsLine: null, redCommandLine: null, integration: null, mapped: false, evidenceRaw: null,
+    evidenceLine: line, redLine: line, reviewLine: line,
     critical: CRITICAL.test(text), valid: false,
   };
   if (!id) { out.push(lint('criterion-id', line, 'Success criterion requires a stable [SC#] identifier.')); return base; }
@@ -983,13 +976,11 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   const verify = field('Verify');
   if (verify !== undefined) {
     current.mapped = true;
-    const command = /^`([^`]+)`\s*(\[FINAL\])?\s*$/.exec(verify);
-    if (!command?.[1]) out.push(lint('criterion-verify', entry.line, 'Verify requires exactly one inline-code command, optionally followed by [FINAL].'));
-    else if (/\s*\[FINAL\]\s*$/.test(command[1])) {
-      out.push(lint('final-in-code-span', entry.line, `[FINAL] sits inside the code span; write \`${command[1].replace(/\s*\[FINAL\]\s*$/, '')}\` [FINAL] with the marker after the closing backtick.`));
-    } else {
-      const next: PlanCommand = { command: command[1].trim(), final: Boolean(command[2]) };
-      current.verify = [...current.verify, next];
+    const command = /^`([^`]+?)(\s+\[FINAL\])?\s*`\s*(\[FINAL\])?\s*$/.exec(verify);
+    if (!command?.[1]) out.push(lint('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
+    else {
+      if (command[2] || command[3]) out.push(lint('retired-field', entry.line, RETIRED_FINAL));
+      current.verify = [...current.verify, { command: command[1].trim() }];
       current.verifyLines = [...current.verifyLines, entry.line];
     }
   }
@@ -1005,12 +996,6 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
     if (!/^(yes|no)$/i.test(preExisting)) out.push(lint('criterion-format', entry.line, 'Pre-existing must be yes or no.'));
     current.preExisting = /^yes$/i.test(preExisting);
   }
-  const rationale = field('Test rationale');
-  if (rationale !== undefined) {
-    if (current.testRationale !== null) out.push(lint('criterion-test-rationale', entry.line, 'Criterion requires exactly one Test rationale.'));
-    if (rationale.length < 12) out.push(lint('criterion-test-rationale', entry.line, 'Test rationale must concretely explain signal and regression value or why a retained test is low-signal.'));
-    current.testRationale = rationale;
-  }
   const review = field('Review');
   if (review !== undefined) { current.review = review; current.reviewLine = entry.line; }
   const red = field('RED exception');
@@ -1019,52 +1004,12 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   if (integration !== undefined) current.integration = integration;
   const enforcement = field('Enforcement infeasibility');
   if (enforcement !== undefined && enforcement.trim()) current.enforcementInfeasibility = enforcement.trim();
-  const retain = field('Retain');
-  if (retain !== undefined) {
-    if (current.retainLine !== null) out.push(lint('criterion-format', entry.line, 'Criterion requires exactly one Retain.'));
-    current.retainLine = entry.line;
-    const value = retain.replace(/`/g, '').trim().toLowerCase();
-    if (value === 'durable' || value === 'transient') current.retain = value;
-    else out.push(lint('criterion-format', entry.line, 'Retain must be durable or transient.'));
-  }
-  const covered = field('Covered by');
-  if (covered !== undefined) { current.coveredBy = covered.replace(/`/g, '').trim().toUpperCase() || null; current.coveredLine = entry.line; }
-}
-
-/** A durable criterion or the FINAL gate keeps the behaviour covered beyond a transient test's intermediate step. */
-function lintTransientCoverage(criteria: readonly Criterion[], finalCommands: readonly string[], out: LintDefect[]): void {
-  const byId = new Map(criteria.map((criterion) => [criterion.id, criterion]));
-  for (const criterion of criteria) {
-    const target = criterion.coveredBy;
-    const fail = (message: string) => out.push(lint('transient-coverage', criterion.coveredLine, `Criterion ${criterion.id} ${message}`));
-    if (criterion.retain === 'durable') { if (target !== null) fail('sets Covered by without Retain: transient.'); continue; }
-    if (target === null) { fail('is Retain: transient and requires Covered by: <SC#|FINAL>.'); continue; }
-    if (target !== 'FINAL' && !isCriterionId(target)) { fail(`names Covered by "${target}"; use a criterion ID (SC#) or FINAL.`); continue; }
-    if (target === 'FINAL') { if (!finalCommands.length) fail('is Covered by FINAL, but the plan has no [FINAL] Verify command.'); continue; }
-    const covering = byId.get(target);
-    if (!covering) fail(`is Covered by unknown criterion ${target}.`);
-    else if (covering.retain === 'transient') fail(`is Covered by ${target}, which is also transient; name a durable criterion or FINAL.`);
+  for (const name of ['Test rationale', 'Retain', 'Covered by']) {
+    if (field(name) !== undefined) out.push(lint('retired-field', entry.line, `${name} is retired; the post-integration test cleanup replaces it. Remove the line.`));
   }
 }
 
-/** Transient tests belong in a [NEW], transient-named file that no durable criterion lists; support-shaped paths are exempt from the naming lint as a hint. */
-function lintTransientTestPaths(criteria: readonly Criterion[], changes: readonly PlanChange[], out: LintDefect[]): void {
-  const actions = new Map(changes.map((change) => [change.path, change.action]));
-  const durable = new Set(criteria.filter((criterion) => criterion.retain === 'durable').flatMap((criterion) => criterion.changes));
-  for (const criterion of criteria) {
-    if (criterion.retain !== 'transient') continue;
-    if(criterion.tests.length && criterion.tests.every(isTestSupportPath))out.push(lint('transient-test-path',criterion.retainLine ?? criterion.line,`Criterion ${criterion.id} needs at least one non-support transient test file.`));
-    for (const path of criterion.tests.filter((file) => !isTestSupportPath(file))) {
-      const fail = (reason: string) => out.push(lint('transient-test-path', criterion.retainLine ?? criterion.line, `Criterion ${criterion.id} transient test ${path} ${reason}`));
-      const action = actions.get(path);
-      if (action !== 'NEW') fail(`is [${action ?? 'unknown'}]; transient tests need a [NEW] file.`);
-      else if (!/transient/i.test(path.slice(path.lastIndexOf('/') + 1))) fail('needs "transient" in its file name.');
-      else if (durable.has(path)) fail('is also listed by a durable criterion; isolate transient tests in their own file.');
-    }
-  }
-}
-
-/** A test-like Changes path outside every `Tests:` cannot feed RED capture or transient-test checks, so the author declares it or confirms it is not a test. */
+/** A test-like Changes path outside every `Tests:` cannot feed RED capture, so the author declares it or confirms it is not a test. */
 function lintUndeclaredTestPaths(criteria: readonly Criterion[], out: LintDefect[]): void {
   const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
   const warned = new Set<string>();
@@ -1136,7 +1081,6 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   if (!current.mapped) out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
   if (current.evidenceRaw === null) out.push(lint('criterion-evidence', current.line, `Criterion ${name} requires exactly one Evidence mapping: red, verify, or review.`));
   else if (!current.evidence) out.push(lint('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidenceRaw}"; accepted classes are red, verify, review.`));
-  if (current.tests.length > 0 && current.retain === 'durable' && current.testRationale === null) out.push(lint('criterion-test-rationale', current.line, 'Criterion with durable declared tests requires a Test rationale.'));
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(lint('criterion-red-exception', current.redLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   }
@@ -1149,9 +1093,6 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   }
   if (current.evidence === 'red' && current.redException === null && current.red === null) {
     out.push(lint('red-downgraded', current.line, `Criterion ${name} declares no RED: \`<command>\`; its red evidence downgrades to verify.`));
-  }
-  if (current.retainLine === null && current.tests.length) {
-    out.push(lint('criterion-retain-required', current.line, `Criterion ${name} changes tests; state Retain: transient or Retain: durable (durable tests meet the durable bar in the plan template).`));
   }
   if (current.evidence !== 'review') return;
   if (current.review === null) { out.push(lint('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.')); return; }

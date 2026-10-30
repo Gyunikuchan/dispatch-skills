@@ -45,14 +45,11 @@ const PLAN = `# Add retry budget
   - Verify: \`node --test tests/fetch.test.ts\`
   - RED: \`node --test {files}\`
   - Evidence: red
-  - Test rationale: fails today because the loop never stops retrying.
-  - Retain: durable
 - [SC2] Whole suite stays green
   - Satisfies: REQ-1
   - Changes: src/fetch.ts
-  - Verify: \`npm test\` [FINAL]
+  - Verify: \`npm test\`
   - Evidence: verify
-  - Test rationale: aggregate regression gate over every package.
 
 ## Verification Plan
 ### Automated Tests
@@ -70,7 +67,7 @@ const defects = (source: string) => {
 };
 
 test('presentation and traceability findings are warnings while structural findings block', () => {
-  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'retired-section', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'criterion-test-rationale', 'criterion-critical-review'] as const) {
+  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'retired-section', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'retired-field', 'criterion-critical-review'] as const) {
     assert.equal(lint(code, null, 'finding').severity, 'warning', code);
   }
   const result = parsePlan(PLAN.replace('> **Risk:** low — isolated helper\n', '').replaceAll('  - Satisfies: REQ-1\n', ''));
@@ -99,15 +96,12 @@ test('plan: summary box without TL;DR lints clean', () => {
   assert.deepEqual(result.warnings.filter(({ code }) => code === 'summary-label'), []);
 });
 
-test('numeric criterion grammar stays shared across headings task mappings and transient coverage', () => {
+test('numeric criterion grammar stays shared across headings and task mappings', () => {
   const numeric = PLAN.replaceAll('SC1', 'SC14').replaceAll('SC2', 'SC205');
   assert.deepEqual(parsed(numeric).criteria.map((row) => row.id), ['SC14', 'SC205']);
-  const transient = numeric.replace('  - Retain: durable', '  - Retain: transient\n  - Covered by: SC205').replaceAll('tests/fetch.test.ts', 'tests/fetch.transient.test.ts');
-  assert.equal(parsed(transient).criteria[0]?.coveredBy, 'SC205');
   for (const id of ['SC0', 'SC01', 'SC14a']) {
     assert.ok(defects(numeric.replaceAll('SC14', id)).includes('criterion-id'));
     assert.ok(defects(numeric.replace('SC14, SC205', `${id}, SC205`)).includes('task-criteria'));
-    assert.ok(defects(transient.replace('Covered by: SC205', `Covered by: ${id}`)).includes('transient-coverage'));
   }
 });
 
@@ -118,7 +112,6 @@ test('readable plan syntax: nested and mixed entries preserve executable contrac
   assert.deepEqual(nested.changes, plain.changes);
   assert.deepEqual(nested.tasks, plain.tasks);
   assert.deepEqual(nested.criteria, plain.criteria);
-  assert.deepEqual(nested.finalCommands, plain.finalCommands);
   assert.equal(nested.governedText, governedPlanText(readable()));
   assert.deepEqual(parsed(readable().replace('- #### [NEW]', '#### [NEW]').replace('  - Purpose:', '- Purpose:')).changes, plain.changes);
   assert.deepEqual(parsed(readable().replace('- #### [NEW]', '- #### [DELETE]')).changes.map(c => c.action), ['MODIFY', 'DELETE', 'GENERATED']);
@@ -181,7 +174,7 @@ test('readable plan syntax: invariant-only notes stay single and unlabeled detai
 
 // SECTION: Plan parsing and validation
 
-test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, FINAL, traceability', () => {
+test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, traceability', () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));
   const { plan } = result;
@@ -190,25 +183,15 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
   assert.deepEqual(plan.keyDecisions, ['Cap at three attempts (user)']);
   assert.deepEqual(plan.criteria.map((item) => [item.id, item.evidence]), [['SC1', 'red'], ['SC2', 'verify']]);
   assert.deepEqual(plan.criteria[0]?.changes, ['src/fetch.ts', 'tests/fetch.test.ts']);
-  assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test', final: true }]);
-  assert.deepEqual(plan.finalCommands, ['npm test']);
+  assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test' }]);
   assert.deepEqual(plan.changes.map((item) => [item.action, item.path]), [['MODIFY', 'src/fetch.ts'], ['NEW', 'tests/fetch.test.ts'], ['GENERATED', 'docs/api.md']]);
   assert.equal(plan.changes[2]?.command, 'npm run docs');
   assert.deepEqual(plan.verification.automated, ['npm run lint']);
   assert.deepEqual(plan.traceability, { 'Approved revision': 'none' });
 });
 
-test('implement-plan-lint: [FINAL] inside the code span is a defect naming the fix', () => {
-  const result = parsePlan(PLAN.replace('`npm test` [FINAL]', '`npm test [FINAL]`'));
-  assert.equal(result.ok, false);
-  const defect = !result.ok ? result.defects.find((item) => item.code === 'final-in-code-span') : undefined;
-  assert.ok(defect);
-  assert.match(defect.message, /`npm test` \[FINAL\]/);
-});
-
 test('implement-plan-lint: missing criterion fields, unknown markers, and GENERATED without Command fail', () => {
   assert.ok(defects(PLAN.replace('  - Evidence: verify\n', '')).includes('criterion-evidence'));
-  assert.ok(defects(PLAN.replace('  - Test rationale: fails today because the loop never stops retrying.\n', '')).includes('criterion-test-rationale'));
   assert.ok(defects(PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [ADD] tests/fetch.test.ts')).includes('unknown-change-marker'));
   assert.ok(defects(PLAN.replace('- Command: `npm run docs`\n', '')).includes('generated-command'));
   assert.ok(defects(PLAN.replace('> **Risk:** low — isolated helper\n', '')).includes('summary-label'));
@@ -298,25 +281,21 @@ const TASKS = `# Shared contract with consumers
   - Changes: src/contract.ts
   - Verify: \`node --test tests/contract.test.ts\`
   - Evidence: verify
-  - Test rationale: pins the exported shape consumers rely on.
 - [SC2] Reader consumes the contract
   - Satisfies: REQ-1
   - Changes: src/reader.ts
   - Verify: \`node --test tests/reader.test.ts\`
   - Evidence: verify
-  - Test rationale: covers the reader path through the contract.
 - [SC3] Writer consumes the contract
   - Satisfies: REQ-1
   - Changes: src/writer.ts
   - Verify: \`node --test tests/writer.test.ts\`
   - Evidence: verify
-  - Test rationale: covers the writer path through the contract.
 - [SC4] Reader and writer round-trip
   - Satisfies: REQ-1
-  - Verify: \`node --test tests/roundtrip.test.ts\` [FINAL]
+  - Verify: \`node --test tests/roundtrip.test.ts\`
   - Evidence: verify
   - Integration: spans reader and writer tasks.
-  - Test rationale: proves both consumers agree on the encoding.
 
 ## Verification Plan
 ### Automated Tests
@@ -433,7 +412,7 @@ test('a task-owned criterion without changes fails lint with a fix hint unless i
   assert.equal(found[0]?.severity, 'defect');
   assert.equal(found[0]?.line, verifyOnly.split('\n').indexOf('- [SC2] Reader consumes the contract') + 1);
   assert.match(found[0]?.message ?? '', /SC2.*Changes.*Integration/);
-  const integration = verifyOnly.replace('  - Evidence: verify\n  - Test rationale: covers the reader path', '  - Evidence: verify\n  - Integration: spans the reader.\n  - Test rationale: covers the reader path');
+  const integration = verifyOnly.replace('tests/reader.test.ts`\n  - Evidence: verify\n', 'tests/reader.test.ts`\n  - Evidence: verify\n  - Integration: spans the reader.\n');
   assert.notDeepEqual(defects(integration), [], 'the mapped Integration variant still fails on its task mapping');
   assert.deepEqual(taskChanges(integration), []);
   const clean = parsePlan(TASKS);
@@ -611,12 +590,7 @@ test('no overlap warning for transitively ordered tasks', () => {
   assert.deepEqual(overlapCodes(source), []);
 });
 
-// SECTION: Seams and transient criteria
-
-const SC1_RATIONALE = '  - Test rationale: fails today because the loop never stops retrying.\n';
-// Replaces SC1's Retain line and isolates its test file, so the transient criterion owns a [NEW] transient-named path.
-const transient = (fields: string, source = PLAN) =>
-  source.replace(`${SC1_RATIONALE}  - Retain: durable\n`, `${SC1_RATIONALE}${fields}`).replaceAll('tests/fetch.test.ts', 'tests/fetch.transient.test.ts');
+// SECTION: Seams
 
 test('parses seams', () => {
   assert.deepEqual(parsed(PLAN).seams, []);
@@ -660,120 +634,14 @@ test('seam advisory rejects structural decoys', () => {
   assert.equal(seamWarnings(PLAN.replace('## Key Decisions & Context\n', '## Key Decisions & Context\n- Seams: none\n')).length, 1);
 });
 
-test('seam advisory includes FINAL-only Verify', () => {
+test('seam advisory counts a Verify on a later criterion', () => {
   const source = PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`\n', '')
     .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.equal(seamWarnings(source).length, 1);
 });
 
-test('parses transient retain and coverage', () => {
-  const plan = parsed(transient('  - Retain: transient\n  - Covered by: `sc2`\n'));
-  assert.deepEqual(plan.criteria.map((criterion) => [criterion.id, criterion.retain, criterion.coveredBy]), [['SC1', 'transient', 'SC2'], ['SC2', 'durable', null]]);
-  assert.equal(parsed(transient('  - Retain: transient\n  - Covered by: FINAL\n')).criteria[0]?.coveredBy, 'FINAL');
-  assert.equal(parsed(transient('  - Retain: durable\n')).criteria[0]?.retain, 'durable');
-  assert.ok(defects(transient('  - Retain: sometimes\n')).includes('criterion-format'), 'unknown Retain value');
-});
-
-test('rejects transient criterion without coverage', () => {
-  const cases: [string, string][] = [
-    ['  - Retain: transient\n', 'requires Covered by'],
-    ['  - Retain: transient\n  - Covered by: SC9\n', 'unknown criterion SC9'],
-    ['  - Retain: transient\n  - Covered by: SC1\n', 'also transient'],
-    ['  - Retain: transient\n  - Covered by: the suite\n', 'use a criterion ID'],
-    ['  - Covered by: SC2\n', 'without Retain: transient'],
-  ];
-  for (const [fields, message] of cases) {
-    const found = defectsOf(transient(fields), 'transient-coverage');
-    assert.equal(found.length, 1, fields);
-    assert.match(found[0]?.message ?? '', new RegExp(message), fields);
-  }
-});
-
-test('rejects final coverage without final command', () => {
-  const source = transient('  - Retain: transient\n  - Covered by: FINAL\n');
-  assert.ok(parsePlan(source).ok);
-  const found = defectsOf(source.replace('`npm test` [FINAL]', '`npm test`'), 'transient-coverage');
-  assert.deepEqual(found.map((item) => item.message), ['Criterion SC1 is Covered by FINAL, but the plan has no [FINAL] Verify command.']);
-});
-
-test('rejects a second Retain line on one criterion', () => {
-  const found = defectsOf(PLAN.replace('  - Retain: durable\n', '  - Retain: durable\n  - Retain: durable\n'), 'criterion-format');
-  assert.deepEqual(found.map((item) => item.message), ['Criterion requires exactly one Retain.']);
-});
-
-test('requires explicit Retain on a criterion that changes tests', () => {
-  const found = defectsOf(PLAN.replace('  - Retain: durable\n', ''), 'criterion-retain-required');
-  assert.deepEqual(found.map((item) => item.message), ['Criterion SC1 changes tests; state Retain: transient or Retain: durable (durable tests meet the durable bar in the plan template).']);
-});
-
-test('declared test paths: Retain is required only when Tests names a path', () => {
-  const undeclared = PLAN.replace('  - Retain: durable\n', '').replace(TESTS_LINE, '');
-  assert.deepEqual(defectsOf(undeclared, 'criterion-retain-required'), []);
-  const productionOnly = PLAN.replace('  - Retain: durable\n', '').replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts').replace(TESTS_LINE, '')
-    .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
-  assert.equal(parsed(productionOnly).criteria[0]?.retain, 'durable');
-});
-
-test('test rationale follows durable test retention', () => {
-  const missingDurableRationale = defectsOf(PLAN.replace(SC1_RATIONALE, ''), 'criterion-test-rationale');
-  assert.equal(missingDurableRationale.length, 1);
-  assert.match(missingDurableRationale[0]?.message ?? '', /Test rationale/);
-
-  const withoutTests = (evidence: 'verify' | 'review') => PLAN.replace(SC1_RATIONALE, '')
-    .replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts')
-    .replace(TESTS_LINE, '')
-    .replace('  - Evidence: red\n', evidence === 'review'
-      ? '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: plan inspection; pass: rationale scope follows durable tests\n'
-      : '  - Evidence: verify\n')
-    .replace('  - RED: `node --test {files}`\n', '');
-  assert.deepEqual(defectsOf(withoutTests('verify'), 'criterion-test-rationale'), []);
-  assert.deepEqual(defectsOf(withoutTests('review'), 'criterion-test-rationale'), []);
-
-  const transientWithoutRationale = transient('  - Retain: transient\n  - Covered by: SC2\n').replace(SC1_RATIONALE, '');
-  assert.deepEqual(defectsOf(transientWithoutRationale, 'criterion-test-rationale'), []);
-  assert.equal(defectsOf(transient('  - Retain: transient\n'), 'transient-coverage').length, 1);
-
-  const malformed = defectsOf(PLAN.replace(SC1_RATIONALE, '  - Test rationale: short\n'), 'criterion-test-rationale');
-  assert.equal(malformed.length, 1);
-  assert.match(malformed[0]?.message ?? '', /concretely explain/);
-  const duplicate = defectsOf(PLAN.replace(SC1_RATIONALE, `${SC1_RATIONALE}  - Test rationale: a second concrete rationale for retaining the tests\n`), 'criterion-test-rationale');
-  assert.equal(duplicate.length, 1);
-  assert.match(duplicate[0]?.message ?? '', /exactly one Test rationale/);
-});
-
-const isolated = transient('  - Retain: transient\n  - Covered by: SC2\n');
-const transientPathDefects = (source: string) => defectsOf(source, 'transient-test-path');
-const NEW_TRANSIENT = '#### [NEW] tests/fetch.transient.test.ts\n- Purpose: pins the retry cap.';
-
-test('isolates transient test files: an owned NEW transient-named file passes', () => {
-  assert.deepEqual(transientPathDefects(isolated), []);
-  assert.equal(parsed(isolated).criteria[0]?.retain, 'transient');
-});
-
-test('isolates transient test files: rejects non-NEW markers', () => {
-  const headings = ['#### [MODIFY] tests/fetch.transient.test.ts', '#### [GENERATED] tests/fetch.transient.test.ts\n- Command: `npm run gen`\n- Inputs: src/fetch.ts'];
-  for (const heading of headings) assert.equal(transientPathDefects(isolated.replace(NEW_TRANSIENT, heading)).length, 1, heading);
-});
-
-test('isolates transient test files: rejects a basename without transient', () => {
-  assert.equal(transientPathDefects(isolated.replaceAll('tests/fetch.transient.test.ts', 'tests/fetch.test.ts')).length, 1);
-});
-
-test('isolates transient test files: rejects a path a durable criterion also lists', () => {
-  const source = isolated.replace('- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: src/fetch.ts\n', '- [SC2] Whole suite stays green\n  - Satisfies: REQ-1\n  - Changes: tests/fetch.transient.test.ts\n  - Retain: durable\n');
-  assert.equal(transientPathDefects(source).length, 1);
-});
-
-test('isolates transient test files: exempts a declared MODIFY support file from naming rules', () => {
-  const fixture = 'tests/fixtures/fetch.json';
-  const source = isolated.replace(NEW_TRANSIENT, `${NEW_TRANSIENT}\n#### [MODIFY] ${fixture}\n- Changes: adds a retry case.`)
-    .replace('  - Changes: src/fetch.ts, tests/fetch.transient.test.ts\n  - Tests: tests/fetch.transient.test.ts\n', `  - Changes: src/fetch.ts, tests/fetch.transient.test.ts, ${fixture}\n  - Tests: tests/fetch.transient.test.ts, ${fixture}\n`);
-  assert.deepEqual(parsed(source).criteria[0]?.tests, ['tests/fetch.transient.test.ts', fixture]);
-  assert.deepEqual(transientPathDefects(source), []);
-});
-
 test('detects test paths across runners', () => {
-  for (const path of ['test_x.py', 'pkg/x_transient_test.go', 'tests/x.rs', 'tests/test_x_transient.py', 'src/x.transient.test.ts']) assert.ok(isTestPath(path), path);
+  for (const path of ['test_x.py', 'pkg/x_unit_test.go', 'tests/x.rs', 'tests/test_x_unit.py', 'src/x.unit.test.ts']) assert.ok(isTestPath(path), path);
   for (const path of ['src/testing.ts', 'src/contest.ts']) assert.ok(!isTestPath(path), path);
 });
 
@@ -808,10 +676,7 @@ test('declared test paths: a red criterion without Tests warns criterion-red-tes
   assert.match(JSON.stringify(found[0]), /red evidence downgrades to verify/);
 });
 
-test('declared test paths: transient and plan-ID file checks read Tests, not path shape', () => {
-  const modified = isolated.replace(NEW_TRANSIENT, '#### [MODIFY] tests/fetch.transient.test.ts');
-  assert.equal(transientPathDefects(modified).length, 1);
-  assert.deepEqual(transientPathDefects(modified.replace('  - Tests: tests/fetch.transient.test.ts\n', '')), []);
+test('declared test paths: plan-ID file checks read Tests, not path shape', () => {
   const named = PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts');
   const heading = criterionLine(named, '#### [NEW] tests/sc1.test.ts');
   assert.ok(namedDefects(named).some((item) => item.line === heading));
@@ -884,7 +749,6 @@ test('plan validation: keeps plan IDs out of test selectors and files', () => {
   assert.equal(namedDefects(withFinding('R1-F001').replace('`node --test tests/fetch.test.ts`', '`node --test --test-name-pattern="R1-F001" tests/fetch.test.ts`')).length, 1);
 
   for (const name of ['SC10', 'ESC1', 'R1-F001']) assert.deepEqual(namedDefects(withPattern(name)), [], name);
-  assert.deepEqual(namedDefects(isolated), []);
 });
 
 test('records criterion and finding IDs as plan IDs', () => {
@@ -1024,6 +888,35 @@ test('plan summary: Parent accepts spec pin and design increment pin', () => {
   assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok);
 });
 
+test('retired test classification fields and the FINAL marker warn once each and are otherwise ignored', () => {
+  const retired = PLAN
+    .replace('  - Evidence: red\n', '  - Evidence: red\n  - Test rationale: pins the retry cap for the cleanup stage.\n  - Retain: durable\n  - Covered by: SC2\n')
+    .replace('  - Verify: `npm test`', '  - Verify: `npm test` [FINAL]');
+  const result = parsePlan(retired);
+  assert.ok(result.ok, JSON.stringify(result));
+  const warnings = result.warnings.filter((item) => item.code === 'retired-field');
+  assert.equal(warnings.length, 4);
+  assert.deepEqual(new Set(warnings.map((item) => item.severity)), new Set(['warning']));
+  for (const label of ['Test rationale', 'Retain', 'Covered by', '[FINAL]']) assert.ok(warnings.some((item) => item.message.includes(label)), label);
+  assert.ok(warnings.every((item) => /test cleanup/i.test(item.message)));
+  assert.deepEqual(result.warnings.filter((item) => item.code !== 'retired-field').map((item) => item.code), parsePlan(PLAN).warnings.map((item) => item.code));
+  const { plan } = result;
+  // Added retired lines shift later source line numbers only.
+  const withoutLines = (rows: readonly { line: number }[]) => rows.map(({ line: _line, ...row }) => row);
+  assert.deepEqual(withoutLines(plan.criteria), withoutLines(parsed(PLAN).criteria));
+  assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test' }]);
+  assert.deepEqual(parsePlan(PLAN).warnings.filter((item) => item.code === 'retired-field'), []);
+});
+
+test('FINAL marker inside the Verify code span warns and is stripped from the command', () => {
+  for (const span of ['`npm test [FINAL]`', '`npm test [FINAL] `']) {
+    const result = parsePlan(PLAN.replace('  - Verify: `npm test`', `  - Verify: ${span}`));
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(result.warnings.filter((item) => item.code === 'retired-field' && item.message.includes('[FINAL]')).length, 1, span);
+    assert.deepEqual(result.plan.criteria[1]?.verify, [{ command: 'npm test' }], span);
+  }
+});
+
 test('plan retired section user review required', () => assert.ok(defects(PLAN + '\n## User Review Required\nNone.').includes('retired-section')));
 
 test('plan criterion satisfies ids parsed', () => {
@@ -1032,18 +925,6 @@ test('plan criterion satisfies ids parsed', () => {
 });
 
 test('plan criterion missing satisfies rejected', () => { for (const value of ['', '  - Satisfies: \n', '  - Satisfies: REQ-1, DEC-1\n']) assert.ok(defects(PLAN.replace('  - Satisfies: REQ-1\n', value)).includes('missing-satisfies')); });
-
-test('warns when transient coverage names a durable criterion without FINAL verification',()=>{
- const source=transient('  - Retain: transient\n  - Covered by: SC2\n').replace('`npm test` [FINAL]','`npm test`');
- const result=okPlan(source);assert.ok(result.warnings.some(w=>w.code==='transient-coverage'&&w.message.includes('plan-level')));
- assert.equal(okPlan(transient('  - Retain: transient\n  - Covered by: SC2\n')).warnings.some(w=>w.code==='transient-coverage'),false);
-});
-
-
-test('transient tests require a non-support test target',()=>{
- const source=isolated.replaceAll('tests/fetch.transient.test.ts','tests/fixtures/fetch.json');
- assert.equal(transientPathDefects(source).length,1);
-});
 
 test('plan human layout: At a Glance is required and shared sections precede the Task Map', () => {
   assert.ok(parsePlan(PLAN).warnings.some(row => row.code === 'missing-section'));

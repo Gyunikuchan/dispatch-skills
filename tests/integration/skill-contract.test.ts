@@ -29,10 +29,10 @@ test('skill contract keeps router entries and resolving reference links', () => 
   }
 });
 
-test('plan guidance documents test retention and verification fields', () => {
+test('plan guidance documents test and verification fields', () => {
   const plan = read(root + 'references/templates/plan.md').replace(/\r\n/g, '\n');
   const notes = plan.split('## Field notes\n')[1]!;
-  for (const field of ['Tests', 'RED', 'Retain', 'Automated Tests', '`[GENERATED]`']) assert.ok(notes.includes('- ' + field + ':'), field);
+  for (const field of ['Tests', 'RED', 'Automated Tests', '`[GENERATED]`']) assert.ok(notes.includes('- ' + field + ':'), field);
 });
 
 test('audit catalog points to existing toolkit and reference entry points', () => {

@@ -1,8 +1,8 @@
-import { stableValue } from './domain/stable-value.ts';
 import type { Fold } from './ledger.ts';
 import type { Check } from './plan-view.ts';
 
-export type PruneEvidence = {sourceTree:string; tree:string; pre:Check[]; final:Check[]; transient:string[]; sourceSeq:number; artifacts:unknown};
+/** Criteria whose tests a cleanup commit removed keep their evidence on the pre-cleanup tree. */
+export type CleanupBinding = {from:string; fromTree:string; removed:string[]};
 type CurrentTree = { headTree: string; testedTree: string };
 type EvidenceRecord = Fold['records'][number];
 export type CriterionStatus = {
@@ -16,7 +16,7 @@ export type CriterionStatus = {
 
 function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree, strict=false): EvidenceRecord | undefined {
   if (current.testedTree !== current.headTree) return undefined;
-  if(strict || check.criterion.startsWith('final:')) {
+  if(strict) {
     const row=fold.records.findLast(r=>r.kind==='evidence'&&r.data['criterion']===check.criterion&&r.data['commandDigest']===check.commandDigest);
     return row && row.data['exit']===0 && row.data['clean']===true && row.data['before']===row.data['after'] && row.data['tree']===current.headTree ? row : undefined;
   }
@@ -33,27 +33,33 @@ export function eligibility(fold: Fold, checks: readonly Check[], current: Curre
   }));
 }
 
-export function verifiedStage(fold:Fold, checks:readonly Check[], current:CurrentTree, artifacts:unknown):boolean {
-  return checks.every(check=>{
-    const row=eligibleEvidence(fold,check,current,true);
-    return !!row && stableValue(row.data['artifacts'])===stableValue(artifacts);
-  });
+export function latestCleanup(fold: Fold): EvidenceRecord | undefined {
+  return fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='test-cleanup');
 }
 
-export function criterionStatuses(fold: Fold, checks: readonly Check[], current: CurrentTree | null, prune?: PruneEvidence | null): CriterionStatus[] {
-  const history=prune ? {...fold,records:fold.records.filter(r=>r.seq<prune.sourceSeq)} : fold;
-  const source=prune ? {headTree:prune.sourceTree,testedTree:prune.sourceTree} : null;
-  const allFinal=prune && current && current.headTree===prune.tree && verifiedStage(fold,prune.final,current,prune.artifacts);
-  return checks.filter(check=>!prune || check.criterion!=='contract' || check.commands.length).map((check) => {
-    const projected=prune?.final.find(c=>c.criterion==='final:'+check.criterion);
-    const historical=prune && (prune.transient.includes(check.criterion) || !check.commands.length);
-    const original=prune?.pre.find(c=>c.criterion===check.criterion && c.commandDigest===check.commandDigest);
-    const evidence = prune ? allFinal && (historical ? original && verifiedStage(history,[original],source!,prune.artifacts) && eligibleEvidence(history,original,source!,true) : projected && current && eligibleEvidence(fold,projected,current)) : current && eligibleEvidence(fold,check,current);
+export function cleanupBinding(fold: Fold): CleanupBinding | null {
+  const record=latestCleanup(fold);
+  return record ? {from:record.data['from'],fromTree:record.data['fromTree'],removed:record.data['removed']} : null;
+}
+
+function boundEvidence(fold: Fold, check: Check, current: CurrentTree | null, cleanup: CleanupBinding | null | undefined, strict: boolean): EvidenceRecord | undefined {
+  const row=current ? eligibleEvidence(fold,check,current,strict) : undefined;
+  if(row || !cleanup?.removed.includes(check.criterion)) return row;
+  return eligibleEvidence(fold,check,{headTree:cleanup.fromTree,testedTree:cleanup.fromTree},true);
+}
+
+export function verifiedStage(fold:Fold, checks:readonly Check[], current:CurrentTree, cleanup?:CleanupBinding|null):boolean {
+  return checks.every(check=>!!boundEvidence(fold,check,current,cleanup,true));
+}
+
+export function criterionStatuses(fold: Fold, checks: readonly Check[], current: CurrentTree | null, cleanup?: CleanupBinding | null): CriterionStatus[] {
+  return checks.map((check) => {
+    const evidence = boundEvidence(fold,check,current,cleanup,false);
     if (evidence) {
       return {
         criterion: check.criterion,
         state: 'verified',
-        ...(historical ? {reason:'historical pre-prune evidence via validated pruning; source tree '+prune!.sourceTree+'; final evidence '+prune!.final.map(c=>'['+c.criterion+']('+eligibleEvidence(fold,c,current!)?.data['path']+')').join(', ')} : {}),
+        ...(cleanup?.removed.includes(check.criterion) ? {reason:'verified at '+cleanup.from+'; tests removed in cleanup'} : {}),
         ...(typeof evidence.data['path'] === 'string' ? { evidence: evidence.data['path'] } : {}),
       };
     }

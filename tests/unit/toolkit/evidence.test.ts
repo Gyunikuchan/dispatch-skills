@@ -118,44 +118,20 @@ describe('evidence eligibility', () => {
   });
 });
 
-test('pruned evidence requires exact transition and final tree',async()=>{
+test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
  const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
- const pre=[{criterion:'SC1',commands:['step'],commandDigest:'pre'}],final=[{criterion:'final:contract',commands:['retained'],commandDigest:'final'}];
- const artifacts={spec:'spec',plan:'plan'};
- const rows=[{criterion:'SC1',commandDigest:'pre',tree:'source',before:'source',after:'source',clean:true,exit:0,path:'history.json',artifacts},{criterion:'final:contract',commandDigest:'final',tree:'target',before:'target',after:'target',clean:true,exit:0,path:'final.json',artifacts}];
- const fold=(data=rows)=>({lastSeq:2,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
- const transition={sourceTree:'source',tree:'target',pre,final,transient:['SC1'],sourceSeq:2,artifacts};
+ const checks=[{criterion:'SC1',commands:['step'],commandDigest:'one'},{criterion:'SC2',commands:['kept'],commandDigest:'two'}];
+ const row=(criterion:string,commandDigest:string,tree:string,patch={})=>({criterion,commandDigest,tree,before:tree,after:tree,clean:true,exit:0,path:criterion+'.json',...patch});
+ const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
+ const cleanup={from:'source-commit',fromTree:'source',removed:['SC1']};
  const current={headTree:'target',testedTree:'target'};
- const status=criterionStatuses(fold(),pre,current,transition)[0]!;assert.equal(status.state,'verified');assert.equal(status.evidence,'history.json');assert.match(status.reason!,/source tree source; final evidence \[final:contract\]\(final.json\)/);
- assert.equal(criterionStatuses(fold(),pre,current)[0]!.state,'missing');
- for(const patch of [{sourceTree:'other'},{tree:'other'},{sourceSeq:1},{artifacts:{spec:'changed'}},{pre:[{...pre[0]!,commandDigest:'changed'}]}])assert.equal(criterionStatuses(fold(),pre,current,{...transition,...patch})[0]!.state,'missing');
- for(const patch of [{exit:1},{after:'mutated'},{commandDigest:'stale'},{clean:false},{tree:'unrelated'}])assert.equal(criterionStatuses(fold([rows[0]!,{...rows[1]!,...patch}]),pre,current,transition)[0]!.state,'missing');
- assert.equal(criterionStatuses(fold(),pre,{...current,testedTree:'dirty'},transition)[0]!.state,'missing');
-});
-
-test('final evidence cannot reuse an older success after a failed rerun',async()=>{
- const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
- const check={criterion:'SC1',commands:['step'],commandDigest:'step'},final={criterion:'final:SC1',commands:['retained'],commandDigest:'retained'},artifacts={spec:'s',plan:'p'};
- const rows=[{criterion:'SC1',commandDigest:'step',tree:'source',before:'source',after:'source',clean:true,exit:0,artifacts},{criterion:'final:SC1',commandDigest:'retained',tree:'target',before:'target',after:'target',clean:true,exit:0,artifacts}];
- const fold=(data=rows)=>({lastSeq:data.length,torn:null,records:data.map((data,index)=>({seq:index+1,key:String(index),kind:'evidence',by:'tool',at:'',data}))});
- const transition={sourceTree:'source',tree:'target',pre:[check],final:[final],transient:['SC1'],sourceSeq:2,artifacts},current={headTree:'target',testedTree:'target'};
- assert.equal(criterionStatuses(fold(),[check],current,transition)[0]!.state,'verified');
- assert.equal(criterionStatuses(fold([...rows,{...rows[1]!,exit:7}]),[check],current,transition)[0]!.state,'missing');
- assert.equal(criterionStatuses(fold([{...rows[0]!,artifacts:{spec:'changed',plan:'p'}},rows[1]!]),[check],current,transition)[0]!.state,'missing');
- const durable={...check,criterion:'SC2'};assert.equal(criterionStatuses(fold([{...rows[0]!,criterion:'SC2',tree:'target',before:'target',after:'target'},rows[1]!]),[durable],current,{...transition,transient:[]})[0]!.state,'missing');
-});
-
-
-test('pruned review-only criteria retain validated historical evidence without an empty final row',async()=>{
- const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
- const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,index)=>({seq:index+1,key:String(index),kind:'evidence',by:'tool',at:'',data}))});
- const check={criterion:'SC2',commands:[],commandDigest:'review'},final={criterion:'final:contract',commands:['retained'],commandDigest:'retained'},artifacts={spec:'s',plan:'p'};
- const source={criterion:'SC2',commandDigest:'review',tree:'source',before:'source',after:'source',clean:true,exit:0,artifacts,path:'review-source.json'};
- const target={criterion:'final:contract',commandDigest:'retained',tree:'target',before:'target',after:'target',clean:true,exit:0,artifacts};
- const transition={sourceTree:'source',tree:'target',pre:[check],final:[final],transient:['SC1'],sourceSeq:2,artifacts};
- const current={headTree:'target',testedTree:'target'};
- const status=(rows:Record<string,unknown>[],patch={})=>criterionStatuses(fold(rows),[check],current,{...transition,...patch})[0]!;
- assert.equal(status([source,target]).state,'verified');assert.equal(status([source,target]).evidence,'review-source.json');assert.match(status([source,target]).reason!,/historical pre-prune/);
- for(const rows of [[source],[{...source,exit:1},target],[{...source,artifacts:{spec:'changed'}},target],[source,{...target,exit:1}],[target]])assert.equal(status(rows).state,'missing');
- assert.equal(status([source,target],{sourceSeq:1}).state,'missing');assert.equal(status([source,target],{tree:'other'}).state,'missing');
+ const state=(rows:Record<string,unknown>[],binding:typeof cleanup|null=cleanup,tree=current)=>criterionStatuses(fold(rows),checks,tree,binding).map(s=>s.state).join();
+ const rows=[row('SC1','one','source'),row('SC2','two','target')];
+ const [removed,kept]=criterionStatuses(fold(rows),checks,current,cleanup);
+ assert.equal(removed!.state,'verified');assert.equal(removed!.evidence,'SC1.json');assert.match(removed!.reason!,/verified at source-commit; tests removed in cleanup/);
+ assert.equal(kept!.state,'verified');assert.equal(kept!.reason,undefined);
+ assert.equal(state(rows,null),'missing,verified');
+ assert.equal(state([row('SC1','one','source'),row('SC2','two','source')]),'verified,missing');
+ for(const patch of [{exit:1},{after:'mutated'},{clean:false},{commandDigest:'stale'},{tree:'other'}])assert.equal(state([row('SC1','one','source',patch),rows[1]!]),'missing,verified');
+ assert.equal(state(rows,cleanup,{...current,testedTree:'dirty'}),'verified,missing');
 });

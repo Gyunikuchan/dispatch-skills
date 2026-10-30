@@ -45,7 +45,7 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
       { phase: 'done', task: 'task', commit },
       { phase: 'abandoned', task: 'task', candidate: commit, reason: 'Retry' },
       { phase: 'fix', commit, reason: 'Review repair' },
-      ...['prune-started','pruned'].map(phase=>({phase,operation:hash,artifacts:{spec:hash,plan:hash},from:commit,sourceTree:commit,targets:['step.test.js'],pre:[{criterion:'SC1',commands:['step'],commandDigest:hash}],final:[{criterion:'final:SC1',commands:['retained'],commandDigest:hash}],review:hash,...(phase==='pruned'?{to:commit,tree:commit}:{})})),
+      { phase: 'test-cleanup', from: commit, fromTree: commit, to: commit, removed: ['SC1'], deleted: 1, merged: 0 },
       { phase: 'deliver-started', mode: 'uncommitted', dest, from: commit, source: commit },
       { phase: 'delivered', mode: 'uncommitted', dest, from: commit, source: commit },
       { phase: 'closed', reason: 'Session complete' },

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Manifest } from '../lib/session.ts';
-import { parsePlan, selectTaskBrief, isTestSupportPath } from './domain/plan.ts';
+import { parsePlan, selectTaskBrief } from './domain/plan.ts';
 import type { ParsedPlan } from './domain/types.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { foldLedger, latest } from './ledger.ts';
@@ -36,14 +36,4 @@ export function checks(plan: ParsedPlan): Check[] {
   const rows = plan.criteria.map(c=>({criterion:c.id,commands:c.verify.map(v=>v.command)}));
   rows.push({criterion:'contract',commands:plan.verification.automated.filter(c=>!listed.has(c))});
   return rows.map(row=>({...row,commandDigest:commandDigest(row)}));
-}
-
-export const hasTransient = (plan: ParsedPlan) => plan.criteria.some(c=>c.retain==='transient');
-export function transientTargets(plan: ParsedPlan): string[] {
-  return [...new Set(plan.criteria.filter(c=>c.retain==='transient').flatMap(c=>c.tests.filter(file=>!isTestSupportPath(file))))].sort();
-}
-export function finalChecks(plan: ParsedPlan): Check[] {
-  const rows=plan.criteria.map(c=>({criterion:'final:'+c.id,commands:c.verify.filter(v=>c.retain!=='transient'||v.final).map(v=>v.command)}));
-  rows.push({criterion:'final:contract',commands:checks(plan).find(c=>c.criterion==='contract')!.commands});
-  return rows.filter(row=>row.commands.length).map(row=>({...row,commandDigest:commandDigest(row)}));
 }

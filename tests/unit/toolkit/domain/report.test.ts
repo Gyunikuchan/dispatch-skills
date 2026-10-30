@@ -636,7 +636,7 @@ test('retro observations: rejects foreign component', () => {
   assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
   for (const component of shipped) assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
   assert.equal(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]).values.length, 1);
-  assert.equal(retroObservations([observation({component:'scripts/toolkit/prune.ts'})]).values[0]?.component,'scripts/toolkit/prune.ts');
+  assert.equal(retroObservations([observation({component:'scripts/toolkit/review-identity.ts'})]).values[0]?.component,'scripts/toolkit/review-identity.ts');
   assert.equal(retroObservations([observation({ component: 'references/templates/writer-brief.md' })]).values.length, 1);
 });
 

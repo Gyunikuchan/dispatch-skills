@@ -12,7 +12,6 @@ import { runDelegate, type RunnerFs } from '../providers/runner.ts';
 import { nodeProcess } from '../providers/node-process.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import type { DelegateRequest, ModeId, ProviderId, RunResult } from '../providers/types.ts';
-import { prune } from './prune.ts';
 import { verifyRun } from './verify.ts';
 import { renderBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
@@ -121,7 +120,6 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree commit': commit,
   'worktree abort': abort,
   'worktree deliver': deliver,
-  'worktree prune': prune,
   'worktree close': close,
   'worktree cleanup': cleanup,
   'worktree create': create,
@@ -237,12 +235,12 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      final: {type:'boolean'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'}, out: {type: 'string'},
+      'test-cleanup': {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'}, out: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
     if (parsed.values['out'] !== undefined && (tool !== 'context' || action !== 'merge')) throw new Error('--out is only for context merge');
-    if(parsed.values['final']!==undefined && (tool!=='verify'||action!=='run'))throw new Error('--final is only for verify run');
+    if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
     if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);

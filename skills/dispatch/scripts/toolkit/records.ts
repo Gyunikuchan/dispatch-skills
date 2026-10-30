@@ -93,16 +93,9 @@ const writers: Record<string, Record<string, Rule>> = {
   finished: { task: text, launch, candidate: git },
   abandoned: { task: text, launch, reason: text },
 };
-const checkRow = { criterion: text, commands: array, commandDigest: hash };
-const checkRows: Rule = shaped('an array of ' + describe(checkRow), (value, field) => {
-  if (!Array.isArray(value)) invalid(field, shapeOf(checkRows));
-  for (const row of value as unknown[]) object(row, checkRow, [], field);
-});
-const pruning = { operation: hash, artifacts, from:git, sourceTree:git, targets:array, pre:checkRows, final:checkRows, review:hash };
 const integrations: Record<string, Record<string, Rule>> = {
   opened: { path: text, branch: text, base: git, dest },
-  'prune-started': pruning,
-  pruned: {...pruning,to:git,tree:git},
+  'test-cleanup': { from: git, fromTree: git, to: git, removed: array, deleted: seq, merged: seq },
   started: { task: text, candidate: git },
   conflict: { task: text, paths: array },
   done: { task: text, commit: git },

@@ -54,9 +54,25 @@ Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-in
 
 ### worktree commit
 
-Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file>]`.
-Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes.
-Refusals: blank reason, integration-pending, no-changes or invalid review-fix metadata.
+Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive.
+Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](#test-cleanup).
+Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
+
+#### Test cleanup
+
+The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Verify commands no longer run any test, and non-negative counts of deleted and merged tests. The commit message is `fix(dispatch): <reason>` with trailers `Dispatch-Fix: <session>` and `Dispatch-Test-Cleanup-Data: <stable JSON of {removed, deleted, merged}>`.
+
+The tool appends one `integrate` record with phase `test-cleanup` and data `{from, fromTree, to, removed, deleted, merged}` instead of a `fix` record. `from` is the commit's parent. A clean-tree retry whose HEAD carries matching trailers and no `test-cleanup` record appends the record without a second commit. A clean-tree `worktree commit` without `--test-cleanup` refuses no-changes when HEAD carries the cleanup trailer or a `test-cleanup` record names HEAD.
+
+Refusals: test-cleanup-evidence-required (a `removed` ID is not a plan criterion or lacks successful strict evidence on the `from` tree: current command digest, clean, unchanged), test-cleanup-paths-unchanged (a `removed` criterion declares no `Tests:` path that the commit deletes or modifies), test-cleanup-recorded (a `test-cleanup` record exists) and test-cleanup-empty (`removed` is empty and both counts are 0).
+
+A removed criterion counts as verified from evidence on the current tree or the `from` tree, with reason `verified at <from>; tests removed in cleanup`. Every other criterion needs evidence on the current tree. `status` lists removed criteria as verified at `from`; `report` and the walkthrough render them with the deleted and merged counts. `verify run --criteria` naming a removed criterion refuses test-cleanup-removed; `verify run` without `--criteria` skips removed criteria. Without a `test-cleanup` record, every criterion needs current-tree evidence.
+
+#### Cap-ending SHOULD corrections
+
+For a final completed review round at or above the configured cap, a contiguous chain of recorded SHOULD correction commits may settle without another review solely for those fixes. This includes a final round reached after a MUST-driven continuation. Each integration fix record may include reviewFix metadata with review (the review ID), round (the round number), generation (the generation number), findings (a nonempty list of finding IDs) and from (the full reviewed code commit). worktree commit validates the metadata structure; report completion checks the accepted SHOULD findings and correction scope against the saved final full review, requires no later review and current verification, and refuses unrelated or unverified changes. Unrelated changes and unverified corrections do not qualify.
+
+Keep the reviewed commit as the baseline and report each correction as verified but not re-reviewed. Accepted MUST fixes still require review, pending MUST rejections still require confirmation, and CONSIDER handling is unchanged.
 
 ### worktree abort
 
@@ -64,35 +80,15 @@ Arguments: `worktree abort <task> --session <session> --reason <reason>`.
 Result path: preserved candidate and abandoned state.
 Refusals: blank reason, wrong-task, no-candidate or already-integrated. Obtain user authority before discarded accepted work.
 
-### worktree prune
-
-Arguments: `worktree prune --session <session>`.
-Result path: declared targets and source/result commits, or an idempotent completed result.
-Refusals: unsafe-transient-target, unsafe-integration, missing-final-command, transient-command-dependency, integration-pending, prune-unintegrated-tasks, prune-open-writers, integration-dirty, prune-prechecks-required, prune-review-required or prune-transition-stale. No-transient plans keep existing verification and delivery behavior.
-
-Run after all tasks integrate and checks pass. A completed full review normally covers the exact committed integration HEAD. The narrow cap-ending SHOULD exception below is the only alternate review baseline. Review must inspect retained durable or FINAL coverage; explicit command-path checks cannot prove opaque runner or glob semantics. Settle command corrections, rerun checks and re-review before pruning. At least one nonempty FINAL command is required even with a durable Covered by criterion. A projected command that explicitly names a deletion target blocks pruning.
-
-The tool preflights the whole declared set before recording: only tracked NEW transient Tests may be deleted. It refuses support files, durable sharing, baseline files, path escapes, case collisions, links and directories. It rechecks containment before each unlink. Preflight refusal deletes nothing. A later failure retains already completed declared deletions for recovery; this is not an atomic filesystem transaction.
-
-#### Cap-ending SHOULD corrections
-
-For a final completed review round at or above the configured cap, a contiguous chain of recorded SHOULD correction commits may settle without another review solely for those fixes. This includes a final round reached after a MUST-driven continuation. Each integration fix record may include reviewFix metadata with review (the review ID), round (the round number), generation (the generation number), findings (a nonempty list of finding IDs) and from (the full reviewed code commit). worktree commit validates the metadata structure; prune checks the accepted SHOULD findings and correction scope against the saved final full review, requires no later review and current verification, and refuses unrelated or unverified changes. Unrelated changes and unverified corrections do not qualify.
-
-Keep the reviewed commit as the baseline and report each correction as verified but not re-reviewed. Accepted MUST fixes still require review, pending MUST rejections still require confirmation, and CONSIDER handling is unchanged.
-
-The integrate prune-started record binds artifact hashes, exact reviewed commit/tree, target list and command projections. pruned adds the pure-deletion commit/tree. Retry the same call after interruption: only the recorded deletions may be missing or dirty; unrelated edits or stale identities block recovery. Keep the old pruning records and evidence.
-
-For a post-prune artifact correction, preserve edited artifact bytes and all evidence; delivery refuses the stale transition. In an otherwise clean integration worktree, restore only absent declared targets from the recorded source commit, then commit that restoration with worktree commit. Reverify and re-review the corrected artifact tuple before a new prune attempt. Preserve unrelated work and old records.
-
 ### worktree deliver
 
 Arguments: `worktree deliver --session <session>`.
 Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
-Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, pruning-required, prune-transition-stale, final-checks-required, review-confirmation-required or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
+Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
 
-Pending or escalated applicable MUST rejections refuse delivery before caller writes or a delivered record. The same closure query gates pruning and report completion; see [review rules](review-rules.md#rulings-and-fix-scope).
+Pending or escalated applicable MUST rejections refuse delivery before caller writes or a delivered record. The same closure query gates report completion; see [review rules](review-rules.md#rulings-and-fix-scope).
 
-Delivery makes no caller commit and stages nothing. It restores the verified source tree into the caller working tree as unstaged changes; caller HEAD stays at from. New files appear as untracked (`??`) in `git status`. Internal writer and integration commits stay in the session. Transient plans require absent targets and successful final-tree checks before any caller write. Same-tree delivery writes nothing and records noop.
+Delivery makes no caller commit and stages nothing. It restores the verified source tree into the caller working tree as unstaged changes; caller HEAD stays at from. New files appear as untracked (`??`) in `git status`. Internal writer and integration commits stay in the session. Same-tree delivery writes nothing and records noop.
 
 Require the original caller branch and HEAD and an empty index, including intent-to-add entries, for every delivery including no-op. Caller changes outside the delivered paths remain, including tracked edits, untracked and ignored files. Delivery refuses caller-dirty when a tracked-modified, untracked or ignored caller path equals, contains or is contained by a delivered path. It refuses unsupported-sparse when the caller uses sparse checkout, and unsupported-entry when a delivered path is a gitlink; both refuse before any caller write. Git writes the files through a session-owned temporary index; the caller index is never used. It rechecks source, branch, HEAD, index and delivered paths after the pre-apply step and before it records delivered; a mismatch refuses caller-dirty without recording delivered. The check and the write are separate operations, so concurrent external edits in that interval remain a race limit.
 
@@ -134,11 +130,10 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 
 ### verify run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract] [--final]`. `--criteria` IDs are comma-separated and trimmed.
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed.
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
-Refusals: unknown criterion, which names each unknown ID and the valid IDs of the selected mode (`--final` on a transient plan selects final identities; otherwise checks), invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+Refusals: unknown criterion, which names each unknown ID and the valid IDs, test-cleanup-removed (a named criterion was removed by test cleanup), invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
-After pruning, --final requires a validated current transition and runs every non-transient command, transient FINAL commands and contract checks on the committed pruned tree. Check identities are final:<criterion> and final:contract, with digests of their exact arrays. Empty executable rows are omitted. With --final, --criteria selects these final: identities; omission runs every projected row. A failed rerun invalidates an earlier final success. Historical transient evidence keeps its original source tree and full pre-prune digest; it verifies only through the exact recorded pure-deletion transition plus every successful final row. Durable evidence must describe the final tree. Manual completion and waivers do not establish final verification. Rendered status cites historical and final evidence separately.
 
 ### ledger append
 
@@ -161,7 +156,7 @@ Refusals: positional arguments or invalid configuration. Inspect ok and reason f
 ### status show
 
 Arguments: `status show --session <session>`.
-Result path: ledger summary, artifact hashes, worktrees, writers and integration state.
+Result path: ledger summary, artifact hashes, worktrees, writers, integration state and `testCleanup` (`{from, removed, deleted, merged}` of the latest test-cleanup record, `null` when none; an empty `removed` still reports).
 Refusals: positional arguments, invalid state or Git/filesystem fault. Use this after interruption before deciding what to resume.
 
 ### lint run
@@ -240,7 +235,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; prune-started {operation,artifacts,from,sourceTree,targets,pre,final,review}; pruned adds {to,tree} to that snapshot. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged}. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

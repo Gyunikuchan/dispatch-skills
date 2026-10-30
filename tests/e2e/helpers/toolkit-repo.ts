@@ -30,40 +30,19 @@ function getBaseTemplate(): string {
   return baseTemplate;
 }
 
-export const transientTarget='tests/step.transient.test.ts';
-export const transientPlanSource=planSource.replace('#### [MODIFY] src/file.ts','#### [NEW] '+transientTarget).replace('  - Changes: src/file.ts','  - Changes: '+transientTarget+'\n  - Tests: '+transientTarget+'\n  - Retain: transient\n  - Covered by: FINAL').replace('  - Evidence: verify','  - Verify: `node -e "process.exit(0)"` [FINAL]\n  - Evidence: verify');
-
-let transientTemplate: string | null = null;
-function getTransientTemplate(): string {
-  if (!transientTemplate) {
-    transientTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-transient-template-'));
-    process.on('exit', () => { try { fs.rmSync(transientTemplate!, { recursive: true, force: true }); } catch {} });
-    fs.cpSync(getBaseTemplate(), transientTemplate, { recursive: true });
-    fs.writeFileSync(path.join(transientTemplate, 'work.plan.md'), transientPlanSource);
-    const git = (args: string[]) => { const r = spawnSync('git', args, { cwd: transientTemplate!, encoding: 'utf8', windowsHide: true }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
-    git(['add', '.']);
-    git(['commit', '--amend', '-m', 'base']);
-  }
-  return transientTemplate;
-}
-
 export async function toolkitRepo(source = planSource, files: Record<string,string> = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(),'toolkit-git-'));
   const session = path.join(root, '20261023T0000Z-test');
   const git = (args: string[], cwd = root) => { const r = spawnSync('git',args,{cwd,encoding:'utf8',windowsHide:true}); assert.equal(r.status,0,r.stderr); return r.stdout.trim(); };
-  if (source === transientPlanSource && Object.keys(files).length === 0) {
-    fs.cpSync(getTransientTemplate(), root, { recursive: true });
-  } else {
-    fs.cpSync(getBaseTemplate(), root, { recursive: true });
-    if (source !== planSource || Object.keys(files).length > 0) {
-      if (source !== planSource) fs.writeFileSync(path.join(root, 'work.plan.md'), source);
-      for (const [file, text] of Object.entries(files)) {
-        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-        fs.writeFileSync(path.join(root, file), text);
-      }
-      git(['add', '.']);
-      git(['commit', '--amend', '-m', 'base']);
+  fs.cpSync(getBaseTemplate(), root, { recursive: true });
+  if (source !== planSource || Object.keys(files).length > 0) {
+    if (source !== planSource) fs.writeFileSync(path.join(root, 'work.plan.md'), source);
+    for (const [file, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), text);
     }
+    git(['add', '.']);
+    git(['commit', '--amend', '-m', 'base']);
   }
   fs.mkdirSync(session);
   fs.writeFileSync(path.join(session,'manifest.json'),JSON.stringify({schemaVersion:1,folderName:path.basename(session),sessionId:'test',safeSessionId:'test',repositoryRoot:root}));
@@ -88,13 +67,6 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   return {root,session,deps,git,run,spawned,concurrent,approve,level,edit, integration:path.join(session,'.state/worktrees/integration'), cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 
-export async function transientRepo(source=transientPlanSource,writerFiles:Record<string,string>={}) {
- const r=await toolkitRepo(source); await r.level(); const made=await r.run(['worktree','create','T1']);
- assert.equal(made.output.ok,true,JSON.stringify(made));const writer=path.join(r.session,made.value.path);
- for(const [file,text] of Object.entries({[transientTarget]:'step\n',...writerFiles})){fs.mkdirSync(path.dirname(path.join(writer,file)),{recursive:true});fs.writeFileSync(path.join(writer,file),text);}
- assert.equal((await r.run(['worktree','submit','T1'])).exit,0);assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
- assert.equal((await r.run(['verify','run'])).output.ok,true);return r;
-}
 export function captureIntegrationReview(r:Awaited<ReturnType<typeof toolkitRepo>>,round=1,findings:Record<string,unknown>[]=[]){
  const dir=path.join(r.session,'.state/reviews/code-integration/round-'+round);fs.mkdirSync(path.join(dir,'gen-1/slots'),{recursive:true});
  const hashes=currentHashes(r.root,latest(foldLedger(r.session),'bind'));
