@@ -34,7 +34,7 @@ Check that `git status --porcelain` lists no changes under `tests/`, `skills/`, 
 node <skill>/scripts/inventory.ts --out <work>/before --coverage
 ```
 
-It writes `<work>/before/inventory.json` (`totals`, `files`, `coverage`, `candidates`, `failures`), `<work>/before/events.jsonl`, and one packet per unit at `<work>/before/packets/<id>.json`. The id is the unit path with `/` replaced by `-` (`tests-unit-policy`); a unit over `packetLineBudget` splits into `<id>-1`, `<id>-2`, … by file-name prefix cluster. Recorded `failures` are a red baseline: note each one and leave those tests unchanged; report any proposed action on them as a blocker for lead review.
+It writes `<work>/before/inventory.json` (`totals`, `files`, `coverage`, `candidates`, `failures`), `<work>/before/events.jsonl`, and one packet per unit at `<work>/before/packets/<id>.json`. The id is the unit path with `/` replaced by `-` (`tests-unit-policy`); a unit over `packetLineBudget` splits into `<id>-1`, `<id>-2`, … by file-name prefix cluster. Packet candidates surface duplicate titles, shared imports, merge clusters, budget overruns (`budgetOverruns`), and dense files (`denseFiles`). Recorded `failures` are a red baseline: note each one and leave those tests unchanged; report any proposed action on them as a blocker for lead review.
 
 **Done when:** `inventory.json` exists with nonzero `totals.tests`, a nonempty `coverage` map, and a packet for every configured unit.
 
@@ -44,13 +44,15 @@ Launch one native writer per packet, in parallel, at most `maxParallelWriters` a
 
 ```
 Optimise packet <id> of the dispatch-skills test suite. Read <skill>/references/criteria.md and follow it.
-Packet: <work>/before/packets/<id>.json. You own only the packet's files in <unit>. <new-files>
+Mandate: aggressively prune low-signal tests under the high-value test bar. Challenge every test's right to exist. Delete or merge any test that cannot defend a plausible severe defect distinct from static types or adjacent tests.
+Packet: <work>/before/packets/<id>.json. Inspect candidate telemetry (budgetOverruns, denseFiles, slowestTests) to target slow and test-dense files for pruning, consolidation, or splitting.
+Scope: you own only the packet's files in <unit>. <new-files>
 Verify: the focused Node test command from AGENTS.md § Verification Details over the files you own.
 Ledger: append complete action and retained-scenario JSON records to <work>/ledger/<id>.jsonl. Classify every baseline test. The lead owns optional savings records after the full after snapshot.
 Never run git write commands. Return only completion (ledger path, verify result, any lead-owned request) or a blocker.
 ```
 
-Set `<new-files>` to "You may add new test files in <unit>." when the unit has one packet. When a unit is split into several packets, set it to "Do not create files; propose required `move` or `split` actions with explicit before and intended after references for the lead." so parallel writers never pick the same new path.
+Set `<new-files>` to "Single-packet unit: you may add new test files in <unit> to split dense or slow files in-place." when the unit has one packet. When a unit is split into several packets, set it to "Multi-packet unit: do not create files; propose required `move` or `split` actions with explicit before and intended after references in the ledger for the lead." so parallel writers never pick the same new path.
 
 Pass the packet only; leave your own suspicions out so each writer judges its tests from the evidence. Writer questions about intent (a test may be the only evidence of a documented contract) go to the user; keep the other writers running meanwhile.
 
@@ -60,19 +62,19 @@ Pass the packet only; leave your own suspicions out so each writer judges its te
 
 As each writer returns, run checks 2 and 3a for its packet. Run check 3b for a unit once all of its writers have returned, and check 1 once every writer has returned, so no in-flight writer's edits are judged:
 
-1. Compare `git status --porcelain` against the union of all packets' owned paths (packet files, plus new files in single-packet units). Ignore paths listed in `<work>/baseline-status.txt` and under `.scratch/`. Revert a remaining changed path under `tests/` that no packet owns, and record it as a rejected edit. Report any other remaining changed path to the user instead of reverting it, since a shared tree gives no per-writer attribution; never revert another packet's owned path.
+1. Compare `git status --porcelain` against the union of all packets' owned paths (packet files, plus new files created in single-packet units). Ignore paths listed in `<work>/baseline-status.txt` and under `.scratch/`. Revert a remaining changed path under `tests/` that no packet owns, and record it as a rejected edit. Report any other remaining changed path to the user instead of reverting it, since a shared tree gives no per-writer attribution; never revert another packet's owned path.
 2. Check its evidence against [criteria.md](references/criteria.md): every baseline test has an action or positive retain record; records are structurally complete; and duplicate or hollow deletion claims have the required evidence. Check same-defect claims against the named surviving tests. Resolve after references against the full after inventory in step 5. Return incomplete or unsupported evidence to the writer. An uncertain required contract stays unchanged and remains a blocker outside the gate ledger.
 3. Run the focused command from `AGENTS.md` § Verification Details:
-   a. Over the returning packet's owned files. If red, send the failing output back to that writer once; if still red, restore only that packet's failing files and record the gap.
+   a. Over the returning packet's owned files (including any in-place split files created by single-packet writers). If red, send the failing output back to that writer once; if still red, restore only that packet's failing files and record the gap.
    b. Over the whole unit, after all its writers return. If red, attribute each failing file to its owning packet and handle it as in 3a.
 
 **Done when:** every unit's 3b run is green, and every rejected or restored change is recorded.
 
 ## 4. Move pass
 
-After all units pass step 3, apply ledger `move` actions and any `split` that needs a new file serially as lead-owned work. Move or split tests to match their after references, update imports, and remove superseded source tests. Writers propose moves and leave files in place; they may split tests within files they own. Apply helper and fixture requests as lead-owned work. Run the focused command over every file touched, then confirm each after reference against the final inventory.
+After all units pass step 3, apply ledger `move` actions and multi-packet `split` actions serially as lead-owned work. Move or split tests to match their after references, update imports, and remove superseded source tests. Single-packet writers already split files directly in Step 2; multi-packet writers propose moves and splits in their ledger while leaving files in place. Apply helper and fixture requests as lead-owned work. Run the focused command over every file touched, then confirm each after reference against the final inventory.
 
-**Done when:** every `move`, new-file `split`, and lead-owned request is applied or declined with a recorded reason, its evidence matches the resulting tests, and the touched files are green.
+**Done when:** every `move`, multi-packet `split`, and lead-owned request is applied or declined with a recorded reason, its evidence matches the resulting tests, and the touched files are green.
 
 ## 5. Gate
 

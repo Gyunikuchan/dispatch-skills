@@ -26,7 +26,15 @@ export interface Failure { file: string; name: string; line: number }
 export interface DuplicateTitle { name: string; files: { path: string; line: number }[] }
 export interface SharedImports { imports: string[]; files: string[] }
 export interface MergeCluster { file: string; prefix: string; tests: { name: string; line: number }[] }
-export interface Candidates { duplicateTitles: DuplicateTitle[]; sharedImports: SharedImports[]; mergeClusters?: MergeCluster[] }
+export interface BudgetOverrun { path: string; durationMs: number }
+export interface DenseFile { path: string; testCount: number }
+export interface Candidates {
+  duplicateTitles: DuplicateTitle[];
+  sharedImports: SharedImports[];
+  mergeClusters?: MergeCluster[];
+  budgetOverruns?: BudgetOverrun[];
+  denseFiles?: DenseFile[];
+}
 export interface Inventory {
   totals: { files: number; tests: number; durationMs: number };
   files: FileEntry[];
@@ -53,6 +61,8 @@ const SKILL_DIR = path.dirname(SCRIPT_DIR);
 export const REPO_ROOT = path.resolve(SKILL_DIR, '../../..');
 export const CONFIG: Config = JSON.parse(fs.readFileSync(path.join(SKILL_DIR, 'config.json'), 'utf8')) as Config;
 const SLOW_TEST_LIMIT = 20;
+const BUDGET_OVERRUN_THRESHOLD_MS = 800;
+const DENSE_FILE_TEST_THRESHOLD = 15;
 const toPosix = (file: string) => file.replace(/\\/g, '/');
 
 // SECTION: Pure analysis
@@ -116,7 +126,17 @@ export function findCandidates(files: readonly FileEntry[]): Candidates {
   }
   mergeClusters.sort((a, b) => a.file.localeCompare(b.file) || a.prefix.localeCompare(b.prefix));
 
-  return { duplicateTitles, sharedImports, mergeClusters };
+  const budgetOverruns: BudgetOverrun[] = files
+    .filter((file) => file.durationMs >= BUDGET_OVERRUN_THRESHOLD_MS)
+    .map((file) => ({ path: file.path, durationMs: file.durationMs }))
+    .sort((a, b) => b.durationMs - a.durationMs || a.path.localeCompare(b.path));
+
+  const denseFiles: DenseFile[] = files
+    .filter((file) => file.tests.length > DENSE_FILE_TEST_THRESHOLD)
+    .map((file) => ({ path: file.path, testCount: file.tests.length }))
+    .sort((a, b) => b.testCount - a.testCount || a.path.localeCompare(b.path));
+
+  return { duplicateTitles, sharedImports, mergeClusters, budgetOverruns, denseFiles };
 }
 
 const prefixOf = (file: string) => path.posix.basename(file).replace(/\.test\.ts$/, '').split('-')[0] ?? '';
@@ -127,6 +147,8 @@ function scopeCandidates(candidates: Candidates, paths: ReadonlySet<string>): Ca
     duplicateTitles: candidates.duplicateTitles.filter((entry) => entry.files.some((file) => paths.has(file.path))),
     sharedImports: candidates.sharedImports.filter((entry) => entry.files.some((file) => paths.has(file))),
     mergeClusters: (candidates.mergeClusters ?? []).filter((entry) => paths.has(entry.file)),
+    budgetOverruns: (candidates.budgetOverruns ?? []).filter((entry) => paths.has(entry.path)),
+    denseFiles: (candidates.denseFiles ?? []).filter((entry) => paths.has(entry.path)),
   };
 }
 

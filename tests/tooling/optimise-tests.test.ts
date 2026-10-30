@@ -105,6 +105,23 @@ test('packetize scopes mergeClusters to the packet that owns the file', async ()
   assert.deepEqual(packet?.candidates.mergeClusters, [cluster]);
 });
 
+test('packetize scopes budgetOverruns and denseFiles to the packet that owns the file', async () => {
+  const { packetize } = await loadInventory();
+  const unit = 'tests/tooling';
+  const overrun = { path: `${unit}/a.test.ts`, durationMs: 850 };
+  const dense = { path: `${unit}/a.test.ts`, testCount: 20 };
+  const [packet] = packetize(inventory([file(`${unit}/a.test.ts`, unit)], {
+    candidates: {
+      duplicateTitles: [],
+      sharedImports: [],
+      budgetOverruns: [overrun, { path: 'tests/e2e/other.test.ts', durationMs: 900 }],
+      denseFiles: [dense, { path: 'tests/e2e/other.test.ts', testCount: 25 }],
+    },
+  }), 500);
+  assert.deepEqual(packet?.candidates.budgetOverruns, [overrun]);
+  assert.deepEqual(packet?.candidates.denseFiles, [dense]);
+});
+
 // SECTION: findCandidates
 
 test('findCandidates reports a test title shared by two files with each location', async () => {
@@ -147,6 +164,32 @@ test('findCandidates groups 3 or more tests with repetitive prefixes into mergeC
       { name: 'rejects invalid format', line: 6 },
     ],
   }]);
+});
+
+test('findCandidates identifies files with duration >= 800ms as budgetOverruns', async () => {
+  const { findCandidates } = await loadInventory();
+  const slow = file('tests/unit/core/slow.test.ts', 'tests/unit/core', { durationMs: 950 });
+  const boundary = file('tests/unit/core/boundary.test.ts', 'tests/unit/core', { durationMs: 800 });
+  const under = file('tests/unit/core/fast.test.ts', 'tests/unit/core', { durationMs: 799 });
+  const { budgetOverruns } = findCandidates([under, boundary, slow]);
+  assert.deepEqual(budgetOverruns, [
+    { path: 'tests/unit/core/slow.test.ts', durationMs: 950 },
+    { path: 'tests/unit/core/boundary.test.ts', durationMs: 800 },
+  ]);
+});
+
+test('findCandidates identifies files with more than 15 tests as denseFiles', async () => {
+  const { findCandidates } = await loadInventory();
+  const makeTests = (count: number) => Array.from({ length: count }, (_, i) => ({ name: `test ${i}`, durationMs: 1, line: i + 1 }));
+  const dense = file('tests/unit/core/dense.test.ts', 'tests/unit/core', { tests: makeTests(16) });
+  const veryDense = file('tests/unit/core/very-dense.test.ts', 'tests/unit/core', { tests: makeTests(20) });
+  const boundary = file('tests/unit/core/boundary.test.ts', 'tests/unit/core', { tests: makeTests(15) });
+  const small = file('tests/unit/core/small.test.ts', 'tests/unit/core', { tests: makeTests(3) });
+  const { denseFiles } = findCandidates([small, boundary, dense, veryDense]);
+  assert.deepEqual(denseFiles, [
+    { path: 'tests/unit/core/very-dense.test.ts', testCount: 20 },
+    { path: 'tests/unit/core/dense.test.ts', testCount: 16 },
+  ]);
 });
 
 // SECTION: collectFailures
