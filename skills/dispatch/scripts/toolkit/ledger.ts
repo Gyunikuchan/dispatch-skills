@@ -168,7 +168,9 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
       }
     }
     if (record.kind === 'edit' && !Object.hasOwn(bind?.data ?? {}, record.data['artifact'])) {
-      throw new ToolError(1, 'invalid-record', 'data.artifact is not bound');
+      const boundKinds = Object.keys(bind?.data ?? {}).sort();
+      const boundSummary = boundKinds.length ? boundKinds.join(', ') : 'none';
+      throw new ToolError(1, 'invalid-record', `data.artifact "${record.data['artifact']}" is not bound; append a bind record that includes it first. Currently bound artifact kinds: ${boundSummary}.`);
     }
 
     const file = ledgerPath(session);
@@ -202,16 +204,16 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
 
 export function queryLedger(fold: Fold, filter: { kind?: unknown; key?: unknown; since?: unknown } = {}): LedgerRecord[] {
   if (filter.kind !== undefined && !KINDS.includes(filter.kind as typeof KINDS[number])) {
-    throw new ToolError(1, 'invalid-input', 'filter.kind is invalid');
+    throw new ToolError(1, 'invalid-input', `filter.kind must be one of: ${KINDS.join(', ')}.`);
   }
   let since = 0;
   if (filter.since !== undefined) {
     if (typeof filter.since !== 'string' && typeof filter.since !== 'number') {
-      throw new ToolError(1, 'invalid-input', 'filter.since is invalid');
+      throw new ToolError(1, 'invalid-input', 'filter.since must be a nonnegative safe integer.');
     }
     since = Number(filter.since);
     if (String(filter.since).trim() === '' || !Number.isSafeInteger(since) || since < 0) {
-      throw new ToolError(1, 'invalid-input', 'filter.since is invalid');
+      throw new ToolError(1, 'invalid-input', 'filter.since must be a nonnegative safe integer.');
     }
   }
   return fold.records.filter(row =>

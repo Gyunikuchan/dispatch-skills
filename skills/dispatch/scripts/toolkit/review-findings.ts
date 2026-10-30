@@ -3,7 +3,7 @@ import path from 'node:path';
 import { nodeLinkFs } from '../lib/node-fs-ext.ts';
 import type { Manifest } from '../lib/session.ts';
 import { reviewId, loadRejections, type RejectionState } from './confirmations.ts';
-import { readReviews } from './diagnostics.ts';
+import { readReviews, type ReviewRound } from './diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
 import { sectionRanges, structuralLines } from './domain/plan.ts';
@@ -17,11 +17,20 @@ export type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
 const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
   .replace(/\r\n?/g, '\n').replace(/\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
-// A slot's model may be a fallback list; the first entry is the configured one.
-const slotLabel = (slot: Record<string, unknown> | undefined, id: string): string => {
-  const model = Array.isArray(slot?.['model']) ? slot['model'][0] : slot?.['model'];
-  if (typeof model !== 'string') return id;
-  return typeof slot?.['effort'] === 'string' ? `${model}/${slot['effort']}` : model;
+// Only captured responder metadata identifies the model; roster effort needs a matching CLI slot.
+const slotLabel = (round: ReviewRound, id: string): string => {
+  const sourceSlot = round.roster.find(slot => slot.slot === id);
+  const outcome = round.slots.find(slot => slot.slot === id);
+  const responder = outcome?.state === 'done' ? outcome.responder : undefined;
+  const physicalSlot = responder && round.roster.find(slot => slot.slot === responder.slot);
+  const provider = responder?.provider || sourceSlot?.provider || 'provider unavailable';
+  const model = typeof responder?.model === 'string' && responder.model.trim()
+    ? responder.model
+    : `unknown (${provider}/${responder?.slot ?? id})`;
+  const effort = responder?.native === false && physicalSlot?.provider === responder.provider && physicalSlot.native !== true
+    ? physicalSlot.effort
+    : undefined;
+  return typeof effort === 'string' ? `${model}/${effort}` : model;
 };
 
 const clip = (value: string, limit: number): string => {
@@ -60,7 +69,7 @@ export function reviewRows(
         round: round.round,
         severity: typeof finding.severity === 'string' ? finding.severity : 'unknown',
         sources: (Array.isArray(finding.sources) ? finding.sources : []).filter((id): id is string => typeof id === 'string')
-          .map((id) => slotLabel(round.roster.find((slot) => slot.slot === id), id)),
+          .map((id) => slotLabel(round, id)),
         ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as ReviewRow['ruling'] : null,
         rationale: (confirmation && confirmation.state !== 'confirmed' ? `[${confirmation.state} reviewer confirmation] ` : '') +
           (typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),

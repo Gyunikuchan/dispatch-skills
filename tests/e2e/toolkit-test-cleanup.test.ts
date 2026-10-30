@@ -4,15 +4,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { toolkitRepo, planSource, captureIntegrationReview } from './helpers/toolkit-repo.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { readManifest } from '../../skills/dispatch/scripts/lib/session.ts';
+import { checks, loadPlan } from '../../skills/dispatch/scripts/toolkit/plan-view.ts';
 
 const target = 'tests/step.test.ts';
 const source = planSource
   .replace('#### [MODIFY] src/file.ts', '#### [MODIFY] src/file.ts\n- Purpose: implements behavior.\n#### [NEW] ' + target)
   .replace('  - Changes: src/file.ts', '  - Changes: src/file.ts, ' + target + '\n  - Tests: ' + target);
+const reviewSource = source.replace(
+  '  - Evidence: verify',
+  '  - Evidence: review\n  - Review: artifact: tests/step.test.ts; scenario: inspect the test change; pass: the user records the result',
+);
 
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
-async function integrated(verify = true) {
-  const r = await toolkitRepo(source);
+async function integrated(verify = true, plan = source) {
+  const r = await toolkitRepo(plan);
   await r.level();
   const made = await r.run(['worktree', 'create', 'T1']);
   assert.equal(made.output.ok, true, JSON.stringify(made));
@@ -33,6 +39,25 @@ const commit = (r: Repo, data: object, hook?: Parameters<Repo['run']>[1]) =>
   r.run(['worktree', 'commit', '--reason', 'remove step tests', '--test-cleanup', cleanupFile(r, data)], hook);
 const cleanups = (r: Repo) => foldLedger(r.session).records.filter(row => row.data['phase'] === 'test-cleanup');
 const removal = { removed: ['SC1'], deleted: 2, merged: 1 };
+
+test('test cleanup cannot use historical tool evidence for a review-only criterion', async () => {
+  const r = await integrated(true, reviewSource);
+  try {
+    const check = checks(loadPlan(r.session, readManifest(r.session))).find(row => row.criterion === 'SC1')!;
+    const tree = r.git(['rev-parse', 'HEAD^{tree}'], r.integration);
+    const evidenceFile = path.join(r.session, 'legacy-review-evidence.json');
+    fs.writeFileSync(evidenceFile, JSON.stringify({
+      kind: 'evidence', key: 'legacy-review-evidence', by: 'tool',
+      data: { criterion: 'SC1', commandDigest: check.commandDigest, tree, clean: true, before: tree, after: tree, exit: 0, path: '.state/evidence/legacy-review.json' },
+    }));
+    assert.equal((await r.run(['ledger', 'append', evidenceFile])).exit, 0);
+
+    fs.rmSync(path.join(r.integration, target));
+    const result = await commit(r, removal);
+    assert.equal(result.output.reason, 'test-cleanup-evidence-required');
+    assert.equal(cleanups(r).length, 0);
+  } finally { r.cleanup(); }
+});
 
 test('test cleanup commit records removed criteria and counts once', async () => {
   const r = await integrated();

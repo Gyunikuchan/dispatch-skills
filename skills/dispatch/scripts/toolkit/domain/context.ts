@@ -45,6 +45,9 @@ function metadata(lines: ReturnType<typeof structuralLines>, label: 'Commit' | '
   const marker = new RegExp(`^>\\s*\\*\\*${label}:\\*\\*\\s*(.*?)\\s*$`);
   return lines.map(entry => marker.exec(entry.original)?.[1]?.trim() ?? null).find(value => value !== null) ?? null;
 }
+function isValidCommit(commit: string | null): commit is string {
+  return commit !== null && /^[0-9a-f]{7,64}$/i.test(commit);
+}
 
 function strategyValue(value: string | null): ContextStrategy | null {
   return value === 'single' || value === 'outside-in' || value === 'inside-out' || value === 'merged' ? value : null;
@@ -119,13 +122,13 @@ function markDisputed(entry: string): string {
   return /^-\s+/.test(entry) ? entry.replace(/^(-\s+)/, '$1[disputed] ') : `[disputed] ${entry}`;
 }
 
+export const commitsMatch = (left: string | null, right: string | null): boolean => (left === null && right === null) || (
+    isValidCommit(left) && isValidCommit(right)
+      && (left.toLowerCase().startsWith(right.toLowerCase()) || right.toLowerCase().startsWith(left.toLowerCase()))
+  );
+
 /** Produces a stable union: same-key Coverage/Precedent claims merge unless `not covered` or a dispute opposes them; other one-sided claims are disputed. */
 export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { source: string; disputed: number } {
-  const isSha = (commit: string | null): commit is string => commit !== null && /^[0-9a-f]{7,}$/i.test(commit);
-  const commitsMatch = (left: string | null, right: string | null) => left === right || (
-    isSha(left) && isSha(right)
-    && (left.toLowerCase().startsWith(right.toLowerCase()) || right.toLowerCase().startsWith(left.toLowerCase()))
-  );
   if (!commitsMatch(a.commit, b.commit)) {
     throw new Error(`Context maps have different commits: ${a.commit ?? '(missing)'} and ${b.commit ?? '(missing)'}.`);
   }
@@ -195,7 +198,7 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
   const tools = [...new Set([a.tool, b.tool].filter((value): value is string => Boolean(value)))].sort(compareText);
   const lines = [
     `# Context map: ${title}`, '',
-    `> **Commit:** ${mergedCommit ?? ''}`,
+    ...(mergedCommit === null ? [] : [`> **Commit:** ${mergedCommit}`]),
     '>',
     '> **Strategy:** merged',
     '>',
@@ -214,6 +217,10 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
   const add = (severity: ContextLintIssue['severity'], code: string, line: number | null, message: string) => {
     (severity === 'defect' ? defects : warnings).push({ code, severity, line, message });
   };
+  if (map.commit !== null && !isValidCommit(map.commit)) {
+    const line = lines.find(entry => /^>\s*\*\*Commit:\*/.test(entry.original))?.line ?? null;
+    add('defect', 'context-commit', line, 'Commit must be a bare hexadecimal revision from 7 to 64 characters.');
+  }
   const fileCache = new Map<string, string | null>();
   const read = (ref: string): string | null => {
     if (fileCache.has(ref)) return fileCache.get(ref)!;

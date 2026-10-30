@@ -35,6 +35,6 @@ Authors, reviewers and writers read the whole governing spec. Writers also read 
 
 ## Revision protocol
 
-An intent edit requires a recorded user quote; record the decision in the spec, record a new `confirm` for the revised spec hash, and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Record the before/after hashes, classification, diff reference and rationale in a ledger edit record.
+An intent edit requires a recorded user quote; record the decision in the spec, record a new `confirm` for the revised spec hash, and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Use the [toolkit edit contract](toolkit.md#edit) for edit provenance; it defines canonical hashes, diff references, rationale and the bind-then-append order for confirmed pre-bind revisions.
 
 Edit canonical artifacts in place; continue with unaffected writers. Notify only affected writers through the implementation rules. Preserve candidates, live handles, evidence and review history. Update dependent intent references and verification obligations before their next use; report changes in walkthrough deviations.

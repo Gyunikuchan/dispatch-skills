@@ -20,7 +20,7 @@ Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-erro
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
 
-Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion. Worktree round counts are per HEAD commit; a new commit starts a new review.
+Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. For a confirmed spec edit during standalone review that cannot be recorded in a validated bound edit chain, follow the [note fallback](#note). Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion. Worktree round counts are per HEAD commit; a new commit starts a new review.
 
 ### report render
 
@@ -130,9 +130,9 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 
 ### verify run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed.
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed. Without `--criteria`, verification skips criteria marked `Evidence: review`.
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
-Refusals: unknown criterion, which names each unknown ID and the valid IDs, test-cleanup-removed (a named criterion was removed by test cleanup), invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+Refusals: unknown criterion, which names each unknown ID and the valid IDs; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 
 ### ledger append
@@ -145,7 +145,7 @@ Refusals: unreadable JSON, invalid-record, missing-key, user-only, key conflict 
 
 Arguments: `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`.
 Result path: matching full records.
-Refusals: positional arguments or invalid filters.
+Refusals: positional arguments or invalid filters. Invalid `kind` names the allowed record kinds; invalid `since` gives the nonnegative safe-integer shape.
 
 ### doctor run
 
@@ -215,7 +215,7 @@ data: `subject`, `ruling`, `rationale`. Allowed by: user, orchestrator, tool. A 
 
 ### note
 
-data: text. Allowed by: user, orchestrator, tool.
+data: text. For a confirmed standalone spec edit that cannot be recorded as a validated bound edit chain, include the spec path, before and after canonical hashes, diff reference, rationale and standalone review result path in the note. This fallback is weaker than a validated edit chain and grants no edit or approval authority. Allowed by: user, orchestrator, tool.
 
 ### focus
 
@@ -223,11 +223,11 @@ data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` i
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 
-data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path, optional artifacts tuple. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. User-only manual records are separate.
+data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path, optional artifacts tuple. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. Review-only criteria never accept tool evidence, including older empty-command records; they remain missing until a user `manual-complete` or applicable waiver record exists. Criterion status is `verified` for eligible tool evidence, `manual` for `manual-complete`, `waived` for waiver, and `missing` otherwise; only `missing` blocks the criteria completion gate. The automated `verifiedStage` check excludes review-only criteria and requires successful, clean, unchanged-tree evidence on current commands for every other check; `manual` and `waived` statuses do not satisfy it.
 
 ### writer
 

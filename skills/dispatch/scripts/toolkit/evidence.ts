@@ -15,6 +15,7 @@ export type CriterionStatus = {
 };
 
 function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree, strict=false): EvidenceRecord | undefined {
+  if (check.evidenceClass === 'review') return undefined;
   if (current.testedTree !== current.headTree) return undefined;
   if(strict) {
     const row=fold.records.findLast(r=>r.kind==='evidence'&&r.data['criterion']===check.criterion&&r.data['commandDigest']===check.commandDigest);
@@ -49,7 +50,7 @@ function boundEvidence(fold: Fold, check: Check, current: CurrentTree | null, cl
 }
 
 export function verifiedStage(fold:Fold, checks:readonly Check[], current:CurrentTree, cleanup?:CleanupBinding|null):boolean {
-  return checks.every(check=>!!boundEvidence(fold,check,current,cleanup,true));
+  return checks.filter(check=>check.evidenceClass!=='review').every(check=>!!boundEvidence(fold,check,current,cleanup,true));
 }
 
 export function criterionStatuses(fold: Fold, checks: readonly Check[], current: CurrentTree | null, cleanup?: CleanupBinding | null): CriterionStatus[] {

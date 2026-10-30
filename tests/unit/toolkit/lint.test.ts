@@ -23,7 +23,7 @@ const PLAN = [
 ].join('\n');
 const SPEC = '# Spec\n## Requirements\n### REQ-1 — Works\n- Acceptance: works\n## Decisions\n### DEC-1 — Use it\n';
 const CONTEXT_MAP = [
-  '# Context map: file', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+  '# Context map: file', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
   '## Map', '- File — `src/file.ts:1`', '', '## Flows', '- file: `src/file.ts:1`', '',
   '## Invariants', '- File exists — `src/file.ts:1` — "File"', '',
   '## Coverage', '- entry-points: `src/file.ts:1`', '', '## Precedent', '- File: `src/file.ts`', '',
@@ -109,7 +109,7 @@ describe('lint severity', () => {
       fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
       fs.writeFileSync(path.join(f.root, 'src', 'entry.ts'), 'export function main() {}\n');
       const map = [
-        '# Context map: root', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '# Context map: root', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
         '## Map', '- Entry — `src/entry.ts:1`', '', '## Flows', '- entry: `src/entry.ts:1`', '',
         '## Invariants', '- Entry exists — `src/entry.ts:1` — "export function main() {}"', '',
         '## Coverage', '- entry-points: `src/entry.ts:1`', '', '## Precedent', '- Entry: `src/entry.ts`', '',
@@ -128,6 +128,32 @@ describe('lint severity', () => {
     } finally { f.cleanup(); }
   });
 
+  test('lint run rejects malformed Commit metadata and accepts valid or missing metadata', async () => {
+    fs.mkdirSync(path.join(scoped.root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(scoped.root, 'src', 'file.ts'), 'File\n');
+    const validSources = [
+      CONTEXT_MAP,
+      CONTEXT_MAP.replace('> **Commit:** abcdef0', `> **Commit:** ${'a'.repeat(40)}`),
+      CONTEXT_MAP.replace('> **Commit:** abcdef0\n', ''),
+    ];
+    for (const [index, source] of validSources.entries()) {
+      const result = await lint(`valid-${index}.context.md`, source);
+      assert.equal(result.exit, 0, result.output.summary);
+      assert.deepEqual(result.result.errors, []);
+    }
+
+    for (const [index, commit] of ['', 'abcdefg', 'abcdef', 'a'.repeat(65), 'abcdef0 trailing text'].entries()) {
+      const result = await lint(`invalid-${index}.context.md`, CONTEXT_MAP.replace('> **Commit:** abcdef0', `> **Commit:** ${commit}`));
+      assert.equal(result.exit, 4, result.output.summary);
+      assert.equal(result.output.reason, 'lint-errors');
+      const issue = result.result.errors.find((issue: { code: string; message: string; line?: number }) =>
+        issue.code === 'context-commit');
+      assert.ok(issue, JSON.stringify(result.result.errors));
+      assert.equal(issue.line, 3);
+      assert.match(issue.message, /7 to 64/);
+    }
+  });
+
   test('lint run rejects context references through links outside the repository root', async () => {
     const f = sessionFixture();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'context-outside-'));
@@ -135,7 +161,7 @@ describe('lint severity', () => {
       fs.writeFileSync(path.join(outside, 'secret.ts'), 'export const secret = true;\n');
       fs.symlinkSync(outside, path.join(f.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
       const map = [
-        '# Context map: linked path', '', '> **Commit:** abc123', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '# Context map: linked path', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
         '## Map', '- Secret — `linked/secret.ts:1`', '', '## Flows', '- secret: `linked/secret.ts:1`', '',
         '## Invariants', '- Secret exists — `linked/secret.ts:1` — "export const secret = true;"', '',
         '## Coverage', '- entry-points: `linked/secret.ts:1`', '', '## Precedent', '- Secret: `linked/secret.ts`', '',

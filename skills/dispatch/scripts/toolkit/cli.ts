@@ -19,7 +19,7 @@ import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, type Manifest } from '../lib/session.ts';
 import { lintArtifact, repositoryReader } from './lint.ts';
-import { lintContextMap, mergeContextMaps, parseContextMap } from './domain/context.ts';
+import { commitsMatch, lintContextMap, mergeContextMaps, parseContextMap } from './domain/context.ts';
 import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
@@ -207,7 +207,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     };
     const left = readMap(inputs[0]!);
     const right = readMap(inputs[1]!);
-    if (left.commit !== right.commit) throw new ToolError(1, 'invalid-input', 'Context maps have different commits.');
+    if (!commitsMatch(left.commit, right.commit)) throw new ToolError(1, 'invalid-input', 'Context maps have different commits.');
     const merged = mergeContextMaps(left, right);
     const checked = lintContextMap(merged.source, { readRepoFile: repositoryReader(manifest.repositoryRoot) });
     if (checked.defects.length) throw new ToolError(4, 'lint-errors', `Merged context map has lint errors: ${out}`);

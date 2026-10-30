@@ -5,7 +5,7 @@ import { lintContextMap, mergeContextMaps, parseContextMap } from '../../../../s
 const MAP = [
   '# Context map: parser',
   '',
-  '> **Commit:** abc123',
+  '> **Commit:** abcdef0',
   '>',
   '> **Strategy:** single',
   '>',
@@ -67,7 +67,6 @@ test('context lint reports bad refs quotes and size', () => {
   assert.ok(hardLimit.defects.some(issue => issue.code === 'context-size'));
 });
 
-
 test('context lint checks conventions refs and treats the section as optional', () => {
   const withoutConventions = lint(MAP);
   assert.equal(withoutConventions.ok, true);
@@ -96,7 +95,7 @@ test('context lint checks conventions refs and treats the section as optional', 
 });
 
 const mapSource = (strategy: string, sections: Record<string, string[]>) => [
-  '# Context map: parser', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** code-index', '',
+  '# Context map: parser', '', '> **Commit:** abcdef0', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** code-index', '',
   ...['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'].flatMap(section => [`## ${section}`, ...(sections[section] ?? []), '']),
 ].join('\n');
 
@@ -212,7 +211,7 @@ test('context merge accepts a short commit prefix of the full commit', () => {
   const fullCommit = 'abcdef0123456789abcdef0123456789abcdef01';
   const shortCommit = fullCommit.slice(0, 7);
   const atCommit = (commit: string, strategy: string) => parseContextMap(
-    mapSource(strategy, {}).replace('> **Commit:** abc123', `> **Commit:** ${commit}`),
+    mapSource(strategy, {}).replace('> **Commit:** abcdef0', `> **Commit:** ${commit}`),
   );
 
   const merged = mergeContextMaps(atCommit(shortCommit, 'outside-in'), atCommit(fullCommit, 'inside-out'));
@@ -225,6 +224,15 @@ test('context merge accepts a short commit prefix of the full commit', () => {
   );
   assert.throws(
     () => mergeContextMaps(atCommit('abcdef', 'outside-in'), atCommit(fullCommit, 'inside-out')),
+    /Context maps have different commits/,
+  );
+  assert.throws(
+    () => mergeContextMaps(atCommit('abcdef', 'outside-in'), atCommit('abcdef', 'inside-out')),
+    /Context maps have different commits/,
+  );
+  const overlongCommit = 'a'.repeat(65);
+  assert.throws(
+    () => mergeContextMaps(atCommit(overlongCommit, 'outside-in'), atCommit(overlongCommit, 'inside-out')),
     /Context maps have different commits/,
   );
 });

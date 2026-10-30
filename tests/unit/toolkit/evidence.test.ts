@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import type { Check } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 describe('evidence eligibility', () => {
   test('only clean passing current tree and command evidence verifies a check', async () => {
     const { eligibility } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const checks = [{ criterion: 'SC1', commands: ['node a'], commandDigest: 'digest' }];
+    const checks: Check[] = [{ criterion: 'SC1', commands: ['node a'], commandDigest: 'digest', evidenceClass: 'verify' }];
     const good = { criterion: 'SC1', commandDigest: 'digest', tree: 'tree', clean: true, before: 'tree', after: 'tree', exit: 0 };
     const fold = (data: object[]) => ({ records: data.map((data, i) => ({ seq: i + 1, key: '' + i, at: '', kind: 'evidence', by: 'tool', data })), lastSeq: data.length, torn: null });
     const trees = { headTree: 'tree', testedTree: 'tree' };
@@ -18,17 +19,18 @@ describe('evidence eligibility', () => {
 
   test('criterion statuses', async () => {
     const { criterionStatuses } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const checks = [
-      { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified' },
-      { criterion: 'manual', commands: [], commandDigest: 'digest-manual' },
-      { criterion: 'manual-only', commands: [], commandDigest: 'digest-manual-only' },
-      { criterion: 'waived', commands: [], commandDigest: 'digest-waived' },
-      { criterion: 'failed', commands: ['node fail.ts'], commandDigest: 'digest-failed' },
-      { criterion: 'mutated', commands: ['node mutate.ts'], commandDigest: 'digest-mutated' },
-      { criterion: 'older-tree', commands: ['node old.ts'], commandDigest: 'digest-older' },
-      { criterion: 'stale-command', commands: ['node stale.ts'], commandDigest: 'digest-stale' },
-      { criterion: 'dirty-checkout', commands: ['node dirty.ts'], commandDigest: 'digest-dirty' },
-      { criterion: 'contract', commands: [], commandDigest: 'digest-contract' },
+    const checks: Check[] = [
+      { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified', evidenceClass: 'verify' },
+      { criterion: 'manual', commands: [], commandDigest: 'digest-manual', evidenceClass: 'review' },
+      { criterion: 'manual-only', commands: [], commandDigest: 'digest-manual-only', evidenceClass: 'review' },
+      { criterion: 'waived', commands: [], commandDigest: 'digest-waived', evidenceClass: 'review' },
+      { criterion: 'review-tool', commands: ['node review.ts'], commandDigest: 'digest-review-tool', evidenceClass: 'review' },
+      { criterion: 'failed', commands: ['node fail.ts'], commandDigest: 'digest-failed', evidenceClass: 'verify' },
+      { criterion: 'mutated', commands: ['node mutate.ts'], commandDigest: 'digest-mutated', evidenceClass: 'verify' },
+      { criterion: 'older-tree', commands: ['node old.ts'], commandDigest: 'digest-older', evidenceClass: 'verify' },
+      { criterion: 'stale-command', commands: ['node stale.ts'], commandDigest: 'digest-stale', evidenceClass: 'verify' },
+      { criterion: 'dirty-checkout', commands: ['node dirty.ts'], commandDigest: 'digest-dirty', evidenceClass: 'verify' },
+      { criterion: 'contract', commands: [], commandDigest: 'digest-contract', evidenceClass: 'contract' },
     ];
     const evidence = (criterion: string, patch: Record<string, unknown> = {}) => ({
       criterion,
@@ -62,6 +64,7 @@ describe('evidence eligibility', () => {
       { kind: 'waiver', by: 'user', quote: 'waiver quote', data: { criterion: 'manual', reason: 'waiver reason' } },
       { kind: 'manual-complete', by: 'user', quote: 'manual only quote', data: { criterion: 'manual-only', evidence: 'manual/only.md' } },
       { kind: 'waiver', by: 'user', quote: 'waived quote', data: { criterion: 'waived', reason: 'approved exception' } },
+      { kind: 'evidence', data: evidence('review-tool') },
       { kind: 'evidence', data: evidence('failed', { exit: 1 }) },
       { kind: 'evidence', data: evidence('mutated', { after: 'other-tree' }) },
       { kind: 'evidence', data: evidence('older-tree', { tree: 'old-tree' }) },
@@ -73,7 +76,7 @@ describe('evidence eligibility', () => {
     const byCriterion = new Map(rows.map((row) => [row.criterion, row]));
 
     assert.deepEqual([...byCriterion].map(([criterion, row]) => [criterion, row.state]), [
-      ['verified', 'verified'], ['manual', 'manual'], ['manual-only', 'manual'], ['waived', 'waived'],
+      ['verified', 'verified'], ['manual', 'manual'], ['manual-only', 'manual'], ['waived', 'waived'], ['review-tool', 'missing'],
       ['failed', 'missing'], ['mutated', 'missing'], ['older-tree', 'missing'], ['stale-command', 'missing'],
       ['dirty-checkout', 'missing'], ['contract', 'verified'],
     ]);
@@ -93,12 +96,12 @@ describe('evidence eligibility', () => {
     assert.equal(byCriterion.get('contract')?.evidence, 'evidence/contract.md');
     const manualContract = criterionStatuses(fold([
       { kind: 'manual-complete', by: 'user', quote: 'contract manual quote', data: { criterion: 'contract', evidence: 'manual/contract.md' } },
-    ]), [checks[9]!], { headTree: 'head-tree', testedTree: 'head-tree' });
+    ]), [checks[10]!], { headTree: 'head-tree', testedTree: 'head-tree' });
     assert.deepEqual(
       { state: manualContract[0]?.state, quote: manualContract[0]?.quote, evidence: manualContract[0]?.evidence },
       { state: 'manual', quote: 'contract manual quote', evidence: 'manual/contract.md' },
     );
-    assert.equal(criterionStatuses(fold([]), [checks[9]!], { headTree: 'head-tree', testedTree: 'head-tree' })[0]?.state, 'missing');
+    assert.equal(criterionStatuses(fold([]), [checks[10]!], { headTree: 'head-tree', testedTree: 'head-tree' })[0]?.state, 'missing');
 
     const withoutIntegration = criterionStatuses(fold([
       { kind: 'evidence', data: evidence('verified') },
@@ -107,20 +110,20 @@ describe('evidence eligibility', () => {
       { kind: 'waiver', by: 'user', quote: 'contract exception', data: { criterion: 'contract', reason: 'no contract test' } },
     ]), checks, null);
     assert.deepEqual(withoutIntegration.map(({ criterion, state }) => [criterion, state]), [
-      ['verified', 'missing'], ['manual', 'manual'], ['manual-only', 'missing'], ['waived', 'waived'],
+      ['verified', 'missing'], ['manual', 'manual'], ['manual-only', 'missing'], ['waived', 'waived'], ['review-tool', 'missing'],
       ['failed', 'missing'], ['mutated', 'missing'], ['older-tree', 'missing'], ['stale-command', 'missing'],
       ['dirty-checkout', 'missing'], ['contract', 'waived'],
     ]);
     const dirtyCheckout = criterionStatuses(fold([
       { kind: 'evidence', data: evidence('dirty-checkout') },
-    ]), [checks[8]!], { headTree: 'head-tree', testedTree: 'dirty-tree' });
+    ]), [checks[9]!], { headTree: 'head-tree', testedTree: 'dirty-tree' });
     assert.equal(dirtyCheckout[0]?.state, 'missing');
   });
 });
 
 test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
  const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
- const checks=[{criterion:'SC1',commands:['step'],commandDigest:'one'},{criterion:'SC2',commands:['kept'],commandDigest:'two'}];
+ const checks: Check[]=[{criterion:'SC1',commands:['step'],commandDigest:'one',evidenceClass:'verify'},{criterion:'SC2',commands:['kept'],commandDigest:'two',evidenceClass:'verify'}];
  const row=(criterion:string,commandDigest:string,tree:string,patch={})=>({criterion,commandDigest,tree,before:tree,after:tree,clean:true,exit:0,path:criterion+'.json',...patch});
  const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
  const cleanup={from:'source-commit',fromTree:'source',removed:['SC1']};
@@ -134,4 +137,25 @@ test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
  assert.equal(state([row('SC1','one','source'),row('SC2','two','source')]),'verified,missing');
  for(const patch of [{exit:1},{after:'mutated'},{clean:false},{commandDigest:'stale'},{tree:'other'}])assert.equal(state([row('SC1','one','source',patch),rows[1]!]),'missing,verified');
  assert.equal(state(rows,cleanup,{...current,testedTree:'dirty'}),'verified,missing');
+});
+
+test('review evidence never qualifies on the current or cleanup tree', async () => {
+  const { eligibility, criterionStatuses, verifiedStage } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+  const checks: Check[] = [
+    { criterion: 'SC1', commands: ['step'], commandDigest: 'one', evidenceClass: 'verify' },
+    { criterion: 'SC2', commands: ['review'], commandDigest: 'two', evidenceClass: 'review' },
+    { criterion: 'contract', commands: [], commandDigest: 'contract-digest', evidenceClass: 'contract' },
+  ];
+  const row = (criterion: string, commandDigest: string, tree: string) => ({ criterion, commandDigest, tree, before: tree, after: tree, clean: true, exit: 0, path: criterion + '.json' });
+  const records = [row('SC1', 'one', 'source'), row('SC2', 'two', 'source'), row('contract', 'contract-digest', 'target')];
+  const fold = { lastSeq: records.length, torn: null, records: records.map((data, index) => ({ seq: index + 1, key: String(index), at: '', kind: 'evidence', by: 'tool', data })) };
+  const cleanup = { from: 'source-commit', fromTree: 'source', removed: ['SC1', 'SC2'] };
+  const current = { headTree: 'target', testedTree: 'target' };
+
+  assert.deepEqual(eligibility(fold, [checks[1]!], current, true), [{ criterion: 'SC2', state: 'missing' }]);
+  assert.deepEqual(criterionStatuses(fold, checks, current, cleanup).map(({ criterion, state }) => [criterion, state]), [
+    ['SC1', 'verified'], ['SC2', 'missing'], ['contract', 'verified'],
+  ]);
+  assert.equal(verifiedStage(fold, checks, current, cleanup), true);
+  assert.equal(eligibility(fold, [checks[2]!], { headTree: 'target', testedTree: 'dirty' })[0]?.state, 'missing');
 });

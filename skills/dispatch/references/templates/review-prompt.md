@@ -15,6 +15,7 @@ Populate the template variables (kind blocks declare the rest):
 
 ### Context
 <<slot:context>>
+The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: <User Focus Areas>
 - Scope: <Review Scope>
 - Advisory Tool Turn Target: <Tool Turn Budget>

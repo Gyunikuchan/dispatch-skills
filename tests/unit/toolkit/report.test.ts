@@ -46,13 +46,13 @@ function planSource(count = 4): string {
   return lines.join('\n');
 }
 
-async function fixture(count = 4) {
+async function fixture(count = 4, source = planSource(count)) {
   const f = sessionFixture({ memory: true });
   const skillRoot = path.join(f.root, 'isolated-skill');
   fs.mkdirSync(skillRoot);
   f.deps.skillRoot = skillRoot;
   f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', planSource(count));
+  f.artifact('report.plan.md', source);
   await appendRecord(f.session, {
     kind: 'bind', by: 'tool', key: 'bind:report',
     data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
@@ -110,6 +110,35 @@ test('report render writes every missing criterion without Git and rewrites the 
     const second = await invoke(f, 'report', 'render');
     assert.equal(second.exit, 0);
     assert.equal(fs.readFileSync(walkthrough, 'utf8'), initial);
+  } finally { f.cleanup(); }
+});
+
+test('report render keeps tool evidence for review criteria in the missing section', async () => {
+  const source = planSource(1).replace(
+    '  - Evidence: verify',
+    '  - Evidence: review\n  - Review: artifact: src/task-1.ts; scenario: inspect the change; pass: the user records review evidence',
+  );
+  const f = await fixture(1, source);
+  try {
+    fs.mkdirSync(path.join(f.session, '.state', 'worktrees', 'integration'), { recursive: true });
+    const state = { session: f.session, head: HEAD, tree: TREE, testedTree: TREE, changes: [], calls: [] };
+    f.deps.run = fakeGit(state);
+    await appendRecord(f.session, {
+      kind: 'integrate', by: 'tool', key: 'integrate:opened:review-report',
+      data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'dispatch/test/integration', base: 'c'.repeat(40), dest: { path: f.root, branch: 'main' } },
+    }, f.deps);
+
+    for (const check of checks(loadPlan(f.session, readManifest(f.session)))) {
+      await appendRecord(f.session, {
+        kind: 'evidence', by: 'tool', key: `review-report:${check.criterion}`,
+        data: { criterion: check.criterion, commandDigest: check.commandDigest, tree: TREE, clean: true, before: TREE, after: TREE, exit: 0, path: `.state/evidence/${check.criterion}.json` },
+      }, f.deps);
+    }
+
+    const result = await invoke(f, 'report', 'render');
+    assert.match(result.output.summary, /SC verified 1, manual 0, waived 0, missing 1/);
+    const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
+    assert.match(walkthrough, /- SC1 · no eligible evidence/);
   } finally { f.cleanup(); }
 });
 

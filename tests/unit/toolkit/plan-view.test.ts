@@ -14,5 +14,24 @@ describe('plan view', () => {
     assert.deepEqual(checks(plan).map(c => [c.criterion,c.commands.length]), [['SC1',1],['contract',1]]);
     assert.throws(() => ownedPaths(plan,'T99'), /unknown task/i);
   });
+
+  test('checks retain evidence class without changing executable or contract digests', async () => {
+    const { checks, commandDigest } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
+    const executableChecks = checks(parsed());
+    const reviewPlan = parsed(PLAN.replace('  - Evidence: verify', '  - Evidence: review\n  - Review: artifact: src/file.ts; scenario: inspect the change; pass: user records the result'));
+    const reviewChecks = checks(reviewPlan);
+    const executable = executableChecks[0]!;
+    const review = reviewChecks[0]!;
+    const contract = executableChecks[1]!;
+
+    assert.equal(executable.evidenceClass, 'verify');
+    assert.equal(review.evidenceClass, 'review');
+    assert.deepEqual(review.commands, executable.commands);
+    assert.equal(review.commandDigest, executable.commandDigest);
+    assert.deepEqual({ evidenceClass: contract.evidenceClass, commands: contract.commands }, {
+      evidenceClass: 'contract', commands: [`node -e "process.stdout.write('contract')"`],
+    });
+    assert.equal(contract.commandDigest, commandDigest({ criterion: contract.criterion, commands: contract.commands }));
+  });
 });
 

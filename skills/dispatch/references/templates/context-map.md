@@ -38,6 +38,7 @@ This is a claims artifact, not governing authority. Verify each claim you rely o
 
 - Use repository-relative paths with forward slashes. Map, Flow, Invariant, Surprise and Conventions entries need line refs. Coverage and Precedent may use path-only refs.
 - Quote invariant source text verbatim inside double quotes. Lint compares whitespace-normalised text within the cited range.
+- Commit is optional; when present, use a bare 7–64-character hexadecimal SHA.
 - Use plain text before the — separator in Precedent and Conventions entries, including symbol names and dotted helpers; reserve backticks for repository refs.
 - Conventions is optional and does not produce plan-coverage warnings.
 - Tool may name a host read tool.

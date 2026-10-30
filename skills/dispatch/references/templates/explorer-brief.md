@@ -47,6 +47,8 @@ For each item, give refs or `Not covered — <reason>`:
 - string-keyed sites
 - platform branches
 
+For a template or prompt edit, trace its renderer and generated consumers; cite them in the `callers` and `generated` coverage entries.
+
 For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
 
 ## Map, budget and output

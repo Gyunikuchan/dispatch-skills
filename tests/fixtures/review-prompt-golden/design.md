@@ -8,6 +8,7 @@ code has been written yet.
 - Design: .scratch/example/example.design.md
 - Spec Path: .scratch/example/example.spec.md
 - Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: General review
 - Scope: Full review
 - Advisory Tool Turn Target: Unspecified

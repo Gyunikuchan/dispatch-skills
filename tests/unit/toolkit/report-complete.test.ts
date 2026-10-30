@@ -54,14 +54,14 @@ function planSource(count = 4, risk?: string): string {
 
 let eventNumber = 0;
 
-async function fixture(count = 4, risk?: string) {
+async function fixture(count = 4, risk?: string, source = planSource(count, risk)) {
   const f = sessionFixture({memory:true});
   const skillRoot = path.join(f.root, 'isolated-skill');
   fs.mkdirSync(skillRoot);
   fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
   f.deps.skillRoot = skillRoot;
   f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', planSource(count, risk));
+  f.artifact('report.plan.md', source);
   await append(f, {
     kind: 'bind', by: 'tool', key: `bind:${++eventNumber}`,
     data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
@@ -127,6 +127,30 @@ async function deliver(f: ReturnType<typeof sessionFixture>, head: string, dest 
     data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
   });
 }
+
+test('review tool rows do not complete a report, while manual evidence does', async () => {
+  const source = planSource(1).replace(
+    '  - Evidence: verify',
+    '  - Evidence: review\n  - Review: artifact: src/task-1.ts; scenario: inspect the delivered source; pass: the user records review evidence',
+  );
+  const f = await fixture(1, undefined, source);
+  try {
+    await integrate(f, gitState(f.session));
+    await evidenceForPlan(f, TREE_A);
+    await deliver(f, HEAD_A);
+
+    const rendered = await invoke(f, 'report', 'render');
+    assert.match(rendered.output.summary, /SC verified 1, manual 0, waived 0, missing 1/);
+    const blocked = await invoke(f, 'report', 'complete');
+    assert.equal(blocked.output.reason, 'criteria-unmet');
+
+    await append(f, {
+      kind: 'manual-complete', by: 'user', quote: 'I reviewed the delivered source against the scenario.',
+      data: { criterion: 'SC1', evidence: 'manual/SC1-review.md' },
+    });
+    assert.equal((await invoke(f, 'report', 'complete')).exit, 0);
+  } finally { f.cleanup(); }
+});
 
 test('pending MUST rejection prevents report completion until attributed agreement', async () => {
   const f=await fixture(1);try {

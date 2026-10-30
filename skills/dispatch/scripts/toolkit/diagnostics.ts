@@ -12,7 +12,7 @@ import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
 type SlotOutcome =
-  | {slot: string; state: 'done'}
+  | {slot: string; state: 'done'; responder?: {slot: string; provider: string; model: string | null; native: boolean}}
   | {slot: string; state: 'native'}
   | {slot: string; state: 'failed'; cls: string};
 type ReviewedFinding = {

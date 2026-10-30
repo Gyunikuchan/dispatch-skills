@@ -7,8 +7,9 @@ import type { ParsedPlan } from './domain/types.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
-export type Check = { criterion: string; commands: string[]; commandDigest: string };
-export const commandDigest = (check: {criterion: string; commands: readonly string[]}) => 'sha256:' + crypto.createHash('sha256').update(stableValue(check)).digest('hex');
+type CheckEvidenceClass = ParsedPlan['criteria'][number]['evidence'] | 'contract';
+export type Check = { criterion: string; commands: string[]; commandDigest: string; evidenceClass: CheckEvidenceClass };
+export const commandDigest = (check: {criterion: string; commands: readonly string[]}) => 'sha256:' + crypto.createHash('sha256').update(stableValue({criterion:check.criterion,commands:check.commands})).digest('hex');
 export function loadPlan(session: string, manifest: Manifest): ParsedPlan {
   const bind = latest(foldLedger(session), 'bind');
   if (!bind?.data['plan']) throw new ToolError(4,'lint-errors','No bound plan');
@@ -33,7 +34,7 @@ export function taskSection(plan: ParsedPlan, id: string): string {
 }
 export function checks(plan: ParsedPlan): Check[] {
   const listed = new Set(plan.criteria.flatMap(c=>c.verify.map(v=>v.command)));
-  const rows = plan.criteria.map(c=>({criterion:c.id,commands:c.verify.map(v=>v.command)}));
-  rows.push({criterion:'contract',commands:plan.verification.automated.filter(c=>!listed.has(c))});
+  const rows: Omit<Check,'commandDigest'>[] = plan.criteria.map(c=>({criterion:c.id,commands:c.verify.map(v=>v.command),evidenceClass:c.evidence}));
+  rows.push({criterion:'contract',commands:plan.verification.automated.filter(c=>!listed.has(c)),evidenceClass:'contract'});
   return rows.map(row=>({...row,commandDigest:commandDigest(row)}));
 }

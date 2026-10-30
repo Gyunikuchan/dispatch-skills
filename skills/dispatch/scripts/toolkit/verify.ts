@@ -18,12 +18,14 @@ export async function verifyRun(ctx: HandlerContext): Promise<HandlerResult> {
   const all=checks(loadPlan(session,manifest));
   const removed=cleanupBinding(foldLedger(session))?.removed??[];
   const named=typeof values['criteria']==='string' ? values['criteria'].split(',').map(id=>id.trim()).filter(Boolean) : null;
-  const ids=named ?? all.map(c=>c.criterion).filter(id=>!removed.includes(id));
+  const ids=named ?? all.filter(c=>c.evidenceClass!=='review').map(c=>c.criterion).filter(id=>!removed.includes(id));
   const unknown=ids.filter(id=>!all.some(c=>c.criterion===id));
   if(unknown.length) throw new ToolError(1,'invalid-input','Unknown criterion: '+unknown.join(', ')+'; valid: '+all.map(c=>c.criterion).join(', '));
   const gone=ids.filter(id=>removed.includes(id));
   if(gone.length) throw new ToolError(4,'test-cleanup-removed','Test cleanup removed the tests for '+gone.join(', ')+'; their evidence stays bound to the pre-cleanup tree');
   const selected=all.filter(c=>ids.includes(c.criterion));
+  const review=selected.filter(c=>c.evidenceClass==='review').map(c=>c.criterion);
+  if(review.length) throw new ToolError(1,'invalid-input','Review-only criteria need user evidence and cannot be verified by tool evidence: '+review.join(', '));
   const integration=await withLedger(session,'verify run',deps,tx=>ensureIntegration(tx,ctx));
   const directory=path.join(session,'.state/evidence'); fs.mkdirSync(directory,{recursive:true});
   const records: Record<string,unknown>[]=[];

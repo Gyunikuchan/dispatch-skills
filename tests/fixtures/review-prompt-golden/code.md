@@ -7,6 +7,7 @@ success criteria well, not merely whether it matches the plan.
 - Spec Path: .scratch/example/example.spec.md
 - Spec Hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 - Plan: .scratch/example/example.plan.md
+The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: General review
 - Scope: Full review
 - Advisory Tool Turn Target: Unspecified

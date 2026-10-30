@@ -21,11 +21,17 @@ function fixture() {
   };
 }
 
-function addRound(session: string, review: string, round: number, findings: readonly object[], roster: readonly object[] = []): void {
+function addRound(session: string, review: string, round: number, findings: readonly object[], roster: readonly object[] = [], generation = 1): void {
   const directory = path.join(session, '.state', 'reviews', review, `round-${round}`);
   fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ round, generation: 1, cap: 2, roster }));
+  fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ round, generation, cap: 2, roster }));
   fs.writeFileSync(path.join(directory, 'findings.json'), JSON.stringify({ review, round, findings }));
+}
+
+function addSlotOutcome(session: string, review: string, round: number, generation: number, physicalSlot: string, outcome: object): void {
+  const directory = path.join(session, '.state', 'reviews', review, `round-${round}`, `gen-${generation}`, 'slots');
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${physicalSlot}.json`), JSON.stringify(outcome) + '\n');
 }
 
 function bind(f: ReturnType<typeof fixture>): void {
@@ -54,18 +60,54 @@ test('completed CLEAN rounds render with per-round relative links', () => {
   } finally { f.cleanup(); }
 });
 
-test('rows name each source slot as model/effort from the round roster', () => {
+test('findings sources use current responder metadata and explicit unknowns', () => {
   const f = fixture();
   try {
     const review = 'plan-work.plan';
-    addRound(f.session, review, 1, [{ id: 'R1-F001', severity: 'MUST', sources: ['claude[0]', 'codex[0]', 'gone[0]'] }], [
-      { slot: 'claude[0]', model: 'claude-opus-5-5', effort: 'low' },
-      { slot: 'codex[0]', model: ['gpt-6.1-sol', 'gpt-6'] },
-    ]);
+    const sources = ['reviewer[0]', 'reserve-target[0]', 'native[0]', 'historical[0]', 'null[0]'];
+    addRound(f.session, review, 1, [{ id: 'R1-F001', severity: 'MUST', sources }], [
+      { slot: 'reviewer[0]', provider: 'claude', model: ['configured-first', 'configured-fallback'], effort: 'low' },
+      { slot: 'reserve-target[0]', provider: 'claude', model: ['target-configured'], effort: 'low' },
+      { slot: 'reserve[0]', provider: 'codex', model: ['reserve-configured'], effort: 'xhigh', reserve: true },
+      { slot: 'native[0]', provider: 'codex', model: ['native-configured'], effort: 'low', native: true },
+      { slot: 'historical[0]', provider: 'claude', model: ['legacy-first', 'legacy-fallback'], effort: 'medium' },
+      { slot: 'null[0]', provider: 'opencode', model: ['opencode-configured'], effort: 'medium' },
+    ], 2);
+    addSlotOutcome(f.session, review, 1, 1, 'reviewer[0]', {
+      slot: 'reviewer[0]', state: 'done', text: 'stale',
+      responder: { slot: 'reviewer[0]', provider: 'claude', model: 'stale-generation-model', native: false },
+    });
+    addSlotOutcome(f.session, review, 1, 2, 'reviewer[0]', {
+      slot: 'reviewer[0]', state: 'done', text: 'fallback response',
+      responder: { slot: 'reviewer[0]', provider: 'claude', model: 'actual-fallback', native: false },
+    });
+    addSlotOutcome(f.session, review, 1, 2, 'reserve[0]', {
+      slot: 'reserve-target[0]', state: 'done', text: 'reserve response',
+      responder: { slot: 'reserve[0]', provider: 'codex', model: 'reserve-actual', native: false },
+    });
+    addSlotOutcome(f.session, review, 1, 2, 'native[0]', {
+      slot: 'native[0]', state: 'done', text: 'native response',
+      responder: { slot: 'native[0]', provider: 'codex', model: 'native-model', native: true },
+    });
+    addSlotOutcome(f.session, review, 1, 2, 'historical[0]', {
+      slot: 'historical[0]', state: 'done', text: 'historical response',
+    });
+    addSlotOutcome(f.session, review, 1, 2, 'null[0]', {
+      slot: 'null[0]', state: 'done', text: 'null-model response',
+      responder: { slot: 'null[0]', provider: 'opencode', model: null, native: false },
+    });
     const result = reviewRows(f.session, foldLedger(f.session), [], [review]);
 
-    assert.deepEqual(result.rows[0]!.sources, ['claude-opus-5-5/low', 'gpt-6.1-sol', 'gone[0]']);
-    assert.match(renderFindingsSection(result.rows, [], f.docs), /\| MUST \| claude-opus-5-5\/low, gpt-6\.1-sol, gone\[0\] \| Open \|/);
+    const expected = [
+      'actual-fallback/low',
+      'reserve-actual/xhigh',
+      'native-model',
+      'unknown (claude/historical[0])',
+      'unknown (opencode/null[0])/medium',
+    ];
+    assert.deepEqual(result.rows[0]!.sources, expected);
+    const rendered = renderFindingsSection(result.rows, [], f.docs);
+    assert.ok(rendered.includes(`| MUST | ${expected.join(', ')} | Open |`));
   } finally { f.cleanup(); }
 });
 
@@ -80,8 +122,14 @@ test('plan and design refresh only the findings section and preserve governed ha
       [design, '# Strategy\r\n\r\n## Review Findings & Resolutions\r\nOld findings\r\n\r\n## Next\r\nKeep this design.\r\n'],
     ]);
     for (const [file, source] of before) fs.writeFileSync(file, source);
-    addRound(f.session, 'plan-work.plan', 1, [{ id: 'R1-F001', severity: 'SHOULD' }]);
+    addRound(f.session, 'plan-work.plan', 1, [{ id: 'R1-F001', severity: 'SHOULD', sources: ['plan-reviewer[0]'] }], [
+      { slot: 'plan-reviewer[0]', provider: 'claude', model: ['configured-plan-reviewer'], effort: 'medium' },
+    ]);
     addRound(f.session, 'design-strategy.design', 1, [{ id: 'R1-F001', severity: 'MUST' }]);
+    addSlotOutcome(f.session, 'plan-work.plan', 1, 1, 'plan-reviewer[0]', {
+      slot: 'plan-reviewer[0]', state: 'done', text: 'plan finding',
+      responder: { slot: 'plan-reviewer[0]', provider: 'claude', model: 'actual-plan-reviewer', native: false },
+    });
 
     for (const [kind, file, review] of [
       ['plan', plan, 'plan-work.plan'],
@@ -97,6 +145,7 @@ test('plan and design refresh only the findings section and preserve governed ha
       assert.ok(updated.endsWith(suffix));
       assert.equal(artifactHash(kind, updated), hash);
       assert.match(updated, /Round 1/);
+      if (kind === 'plan') assert.match(updated, /\| SHOULD \| actual-plan-reviewer\/medium \| Open \|/);
       assert.equal(refreshFindingsSection(f.session, f.manifest, review), 'unchanged');
     }
   } finally { f.cleanup(); }
