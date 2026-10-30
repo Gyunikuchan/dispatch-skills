@@ -26,6 +26,6 @@ When both deep maps pass lint, merge them with `context merge <slug>.outside-in.
 
 An explorer edits no repository source or config. It writes only its map to the brief's `outputPath`, except host tool caches under [native slots](providers.md#native-slots). Do not run a `git status` check. Return the whole map inline only when the host has no write-capable agent type; the orchestrator then saves it verbatim to `outputPath`, runs `lint run` and fixes only reported defects. Context-map lint is the deterministic check.
 
-Save the initial map used for planning as `<session>/<slug>.context.md`: the single map, merged map or surviving strategy map. For a surviving strategy map, use the canonical filename and put the missing strategy under `Not covered`. Plan lint reads this canonical path.
+Save the initial map used for planning as `<session>/<slug>.context.md`: the single map, merged map or surviving strategy map. For a surviving strategy map, use the canonical filename and put the missing strategy under `Not covered`.
 
 When no explorer is configured for the host, or no map survives recovery, self-ground with the same questions, Coverage checklist, source refs, load-bearing checks and Surprise handling; save the result at the canonical path.

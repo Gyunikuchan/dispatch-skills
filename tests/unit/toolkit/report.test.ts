@@ -308,9 +308,12 @@ test('report render fills review focus and visuals from ledger and design',async
   const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
   assert.match(text,/- \*\*What:\*\* Plan output is delivered without a legacy summary\./);assert.doesNotMatch(text,/TL;DR/);
   const focus=text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes'));
-  assert.match(focus,/Risk: med/);assert.match(focus,/Rejected finding review-alpha:R1-F001/);assert.match(focus,/Deferred finding review-alpha:R1-F002/);
+  assert.match(focus,/Risk: med/);assert.match(focus,/Rejected SHOULD finding review-alpha:R1-F001/);assert.doesNotMatch(focus,/R1-F002|deferred|More evidence is needed/i);
   assert.match(focus,/Inspect the delivered retry boundary\. — Evidence: \[evidence\/retry-boundary\.md\]\(evidence\/retry-boundary\.md\)/);
-  assert.match(focus,/R3-F001.*verified but not re-reviewed/);
+  assert.match(focus,/Cap-ending SHOULD fix R3-F001: verified but not re-reviewed — see Deviations & Follow-ups/);
+  const deviations=text.slice(text.indexOf('## Deviations & Follow-ups'),text.indexOf('## Review Findings & Resolutions'));
+  assert.match(deviations,/- Follow-up: deferred review-alpha:R1-F002/);
+  assert.match(deviations,/- Deviation: cap-ending SHOULD fix R3-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/task-1\.ts, src\/shared\.ts/);
   const visuals=text.slice(text.indexOf('## Visuals'),text.indexOf('## Review Focus'));
   assert.ok(visuals.includes('| Component | Boundary |'));assert.ok(visuals.includes('```mermaid\nflowchart LR\n  Gateway --> Store\n```'));
   const bind=latest(foldLedger(f.session),'bind')!;const hashes=currentHashes(f.root,bind),appendix=text.slice(text.indexOf('## Appendix'));

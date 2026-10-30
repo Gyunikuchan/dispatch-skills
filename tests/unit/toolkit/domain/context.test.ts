@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contextCoverageWarnings, lintContextMap, mergeContextMaps, parseContextMap } from '../../../../skills/dispatch/scripts/toolkit/domain/context.ts';
+import { lintContextMap, mergeContextMaps, parseContextMap } from '../../../../skills/dispatch/scripts/toolkit/domain/context.ts';
 
 const MAP = [
   '# Context map: parser',
@@ -99,11 +99,6 @@ test('context lint checks conventions refs and treats the section as optional', 
   assert.ok(invalid.defects.some(issue => issue.code === 'context-ref-range' && issue.message.includes('src/parser.ts')));
   assert.ok(invalid.warnings.some(issue => issue.code === 'context-missing-ref' && issue.message.includes('Conventions')));
 
-  const map = parseContextMap(mapSource('outside-in', {
-    Conventions: ['- reuse: helper — `src/only-conventions.ts:1`'],
-  }));
-  const plan = { changes: [] } as unknown as Parameters<typeof contextCoverageWarnings>[1];
-  assert.deepEqual(contextCoverageWarnings(map, plan, ''), []);
 });
 
 const mapSource = (strategy: string, sections: Record<string, string[]>) => [

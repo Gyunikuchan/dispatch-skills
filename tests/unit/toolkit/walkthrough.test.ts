@@ -60,7 +60,7 @@ test('walkthrough follows reviewer order and states counts once', () => {
   assert.doesNotMatch(rendered, /^## (Changes Made|User-Attributed Records)$/m);
 });
 
-test('walkthrough review focus lists departures and authored evidence', () => {
+test('walkthrough review focus points to attention details in their owning sections', () => {
   const rendered = renderWalkthrough(view({
     risk: 'high',
     focus: { bullets: [{ text: 'Inspect this<!-- hidden --> path.', evidence: 'notes/review-focus.md' }] },
@@ -70,25 +70,54 @@ test('walkthrough review focus lists departures and authored evidence', () => {
       { criterion: 'SC3', state: 'waived' as const, seq: 3, reason: 'approved exception', quote: 'waived by user' },
       { criterion: 'SC4', state: 'missing' as const },
     ],
-    edits: [{ seq: 1, artifact: 'plan', class: 'clarification', rationale: 'Added a missing case.', diffRef: 'diff/plan.patch', affects: ['T1'] }],
+    edits: [
+      { seq: 1, artifact: 'plan', class: 'non-intent', rationale: 'No user decision is needed.', diffRef: 'diff/plan.patch', affects: ['T1'] },
+      { seq: 2, artifact: 'plan', class: 'intent', rationale: 'The user must approve this intent change.', diffRef: 'diff/intent.patch', affects: ['T1'] },
+      { seq: 3, artifact: 'design', class: 'dependency', rationale: 'The user must approve this dependency.', diffRef: 'diff/dependency.patch', affects: ['T1'] },
+      { seq: 4, artifact: 'plan', class: 'discard', rationale: 'The user must approve this discard.', diffRef: 'diff/discard.patch', affects: ['T1'] },
+    ],
     unplannedPaths: ['src/orphan.ts'],
     openEscalations: [{ id: 'E-1', summary: 'Confirm the remaining owner.' }],
     deferredRulings: [{ review: 'review-alpha', finding: 'R1-F011' }],
     reviewRows: [
+      { review: 'review-alpha', id: 'R1-F009', round: 1, severity: 'MUST', ruling: null, rationale: '' },
       { review: 'review-alpha', id: 'R1-F010', round: 1, severity: 'SHOULD', ruling: 'rejected' as const, rationale: 'The proposed change is not needed.' },
       { review: 'review-alpha', id: 'R1-F011', round: 1, severity: 'SHOULD', ruling: 'deferred' as const, rationale: 'The evidence is incomplete.' },
+      { review: 'review-alpha', id: 'R1-F012', round: 1, severity: 'CONSIDER', ruling: 'rejected' as const, rationale: 'The rejected CONSIDER stays with findings.' },
     ],
-    reviewFixes: [{ commit: 'd'.repeat(40), reason: 'repair accepted SHOULD', metadata: { review: 'review-alpha', round: 2, generation: 1, findings: ['R2-F001'], from: 'c'.repeat(40) }, status: 'verified but not re-reviewed', paths: ['src/report.ts'] }],
+    reviewFixes: [{ commit: 'd'.repeat(40), reason: 'repair accepted SHOULD', metadata: { review: 'review-alpha', round: 2, generation: 1, findings: ['R2-F001'], from: 'c'.repeat(40) }, status: 'verified but not re-reviewed', paths: ['src/report.ts'] }, { commit: 'e'.repeat(40), reason: 'unverified correction', metadata: { review: 'review-alpha', round: 2, generation: 1, findings: ['R2-F002'], from: 'c'.repeat(40) }, status: 'not verified', paths: [] }],
   }));
 
   const focus = section(rendered, '## Review Focus', '## Behaviour Changes');
+  assert.deepEqual(focus.split('\n').filter((line) => line.startsWith('- ')), [
+    '- Risk: high',
+    '- Open escalation E-1 — see Deviations & Follow-ups',
+    '- Open finding review-alpha:R1-F009 (MUST) — see Review Findings & Resolutions',
+    '- Manual criterion SC2 — see Verification',
+    '- Waived criterion SC3 — see Verification',
+    '- Missing criterion SC4 — see Verification',
+    '- Cap-ending SHOULD fix R2-F001: verified but not re-reviewed — see Deviations & Follow-ups',
+    '- Cap-ending SHOULD fix R2-F002: not verified — see Deviations & Follow-ups',
+    '- Unplanned path src/orphan.ts — see Deviations & Follow-ups',
+    '- Rejected SHOULD finding review-alpha:R1-F010 — see Review Findings & Resolutions',
+    '- Plan edit (intent) seq 2 — see Deviations & Follow-ups',
+    '- Design edit (dependency) seq 3 — see Deviations & Follow-ups',
+    '- Plan edit (discard) seq 4 — see Deviations & Follow-ups',
+    '- Inspect this&lt;!-- hidden --&gt; path. — Evidence: [notes/review-focus.md](notes/review-focus.md)',
+  ]);
+
+  const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
+  for (const detail of ['manual approval', 'approved exception', 'SC4']) assert.ok(verification.includes(detail), detail);
+  const deviations = section(rendered, '## Deviations & Follow-ups', '## Review Findings & Resolutions');
   for (const detail of [
-    'Risk: high', 'Plan edit (clarification)', 'Manual criterion SC2', 'Waived criterion SC3', 'Missing criterion SC4',
-    'Rejected finding review-alpha:R1-F010', 'Deferred finding review-alpha:R1-F011',
-    'verified but not re-reviewed', 'Unplanned path: src/orphan.ts',
-    'Open escalation E-1: Confirm the remaining owner.',
-    'Inspect this&lt;!-- hidden --&gt; path.', '[notes/review-focus.md](notes/review-focus.md)',
-  ]) assert.ok(focus.includes(detail), detail);
+    'No user decision is needed.', 'diff/plan.patch', 'Confirm the remaining owner.', 'review-alpha:R1-F011', 'src/orphan.ts',
+    '- Deviation: cap-ending SHOULD fix R2-F001: verified but not re-reviewed; commit dddddddddddd; paths src/report.ts',
+    '- Deviation: cap-ending SHOULD fix R2-F002: not verified; commit eeeeeeeeeeee; paths none',
+  ]) assert.ok(deviations.includes(detail), detail);
+  const findings = section(rendered, '## Review Findings & Resolutions', '## Appendix');
+  for (const detail of ['R1-F011', 'The evidence is incomplete.', 'R1-F012', 'The rejected CONSIDER stays with findings.']) {
+    assert.ok(findings.includes(detail), detail);
+  }
 });
 
 test('walkthrough review focus collapses when delivery matched the plan', () => {

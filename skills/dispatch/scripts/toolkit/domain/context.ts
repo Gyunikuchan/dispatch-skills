@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { sectionRanges, structuralLines } from './plan.ts';
-import type { ParsedPlan } from './types.ts';
 
 export const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
 export type ContextSection = typeof CONTEXT_SECTIONS[number];
@@ -204,34 +203,6 @@ export function mergeContextMaps(a: ParsedContextMap, b: ParsedContextMap): { so
   ];
   for (const section of CONTEXT_SECTIONS) lines.push(`## ${section}`, ...(sections.get(section) ?? []), '');
   return { source: lines.join('\n'), disputed };
-}
-
-function containsExactPath(text: string, file: string): boolean {
-  const pathCharacter = /[A-Za-z0-9_./-]/;
-  for (let offset = text.indexOf(file); offset !== -1; offset = text.indexOf(file, offset + 1)) {
-    const before = offset === 0 ? '' : text[offset - 1]!;
-    const afterIndex = offset + file.length;
-    const after = afterIndex >= text.length ? '' : text[afterIndex]!;
-    if (!pathCharacter.test(before) && !pathCharacter.test(after)) return true;
-  }
-  return false;
-}
-
-/** Warns once for each covered or precedent file that the plan neither changes nor excludes exactly. */
-export function contextCoverageWarnings(map: ParsedContextMap, plan: ParsedPlan, outOfScopeText: string): ContextLintIssue[] {
-  const proposed = new Set(plan.changes.map(change => change.path));
-  const files = new Set<ContextReference['path']>();
-  for (const section of ['Coverage', 'Precedent'] as const) {
-    for (const entry of map.sections[section]) {
-      for (const ref of sectionReferences(section, entry)) if (safeRelativePath(ref.path)) files.add(ref.path);
-    }
-  }
-  return [...files].filter(file => !proposed.has(file) && !containsExactPath(outOfScopeText, file))
-    .sort(compareText)
-    .map(file => ({
-      code: 'context-uncovered', severity: 'warning', line: null,
-      message: `Context map file ${file} appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.`,
-    }));
 }
 
 /** Checks map refs and invariant quotes through the caller's repository reader. */

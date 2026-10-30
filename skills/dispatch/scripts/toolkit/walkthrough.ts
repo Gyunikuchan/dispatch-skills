@@ -77,6 +77,8 @@ const hashPrefix = (value: string | undefined): string => {
   const hex = value.replace(/^sha256:/, '');
   return `sha256:${hex.slice(0, 12)}`;
 };
+const reviewFixFindings = (fix: ReviewFixReport): string =>
+  fix.metadata.findings.length ? fix.metadata.findings.map(line).join(', ') : line(fix.commit).slice(0, 12);
 
 function statusTable(statuses: readonly Status[], state: Status['state']): string[] {
   const rows = statuses.filter((row) => row.state === state);
@@ -104,35 +106,35 @@ function exceptionSection(statuses: readonly Status[], state: Extract<Status['st
 
 function reviewFocus(view: WalkthroughView): string[] {
   const tier = view.risk ?? 'low';
-  const departures: string[] = [];
-  for (const edit of view.edits) {
-    const artifact = edit.artifact === 'plan' ? 'Plan' : edit.artifact === 'design' ? 'Design' : line(edit.artifact);
-    departures.push(`- ${artifact} edit (${line(edit.class)}): ${line(edit.rationale)}; diff ${line(edit.diffRef)}`);
+  const attention: string[] = [];
+  for (const item of view.openEscalations) {
+    attention.push(`- Open escalation ${line(item.id)} — see Deviations & Follow-ups`);
+  }
+  for (const row of view.reviewRows) {
+    if (row.ruling === null) attention.push(`- Open finding ${line(row.review)}:${line(row.id)} (${line(row.severity)}) — see Review Findings & Resolutions`);
   }
   for (const row of view.statuses) {
     if (row.state === 'verified') continue;
     const label = row.state[0]!.toUpperCase() + row.state.slice(1);
-    departures.push(`- ${label} criterion ${line(row.criterion)}`);
-  }
-  for (const row of view.reviewRows) {
-    if (row.ruling !== 'rejected' && row.ruling !== 'deferred') continue;
-    const label = row.ruling[0]!.toUpperCase() + row.ruling.slice(1);
-    departures.push(`- ${label} finding ${line(row.review)}:${line(row.id)}${row.rationale ? ` — ${line(row.rationale)}` : ''}`);
+    attention.push(`- ${label} criterion ${line(row.criterion)} — see Verification`);
   }
   for (const fix of view.reviewFixes ?? []) {
-    const findings = fix.metadata.findings.length ? fix.metadata.findings.map(line).join(', ') : line(fix.commit).slice(0, 12);
-    departures.push(`- Cap-ending SHOULD fix ${findings}: ${fix.status}`);
+    attention.push(`- Cap-ending SHOULD fix ${reviewFixFindings(fix)}: ${fix.status} — see Deviations & Follow-ups`);
   }
-  for (const file of view.unplannedPaths) departures.push(`- Unplanned path: ${line(file)}`);
-  for (const item of view.openEscalations) departures.push(`- Open escalation ${line(item.id)}: ${line(item.summary)}`);
-  const deferredRows = new Set(view.reviewRows.filter((row) => row.ruling === 'deferred').map((row) => `${row.review}:${row.id}`));
-  for (const item of view.deferredRulings) {
-    const key = `${item.review}:${item.finding}`;
-    if (!deferredRows.has(key)) departures.push(`- Deferred follow-up ${line(key)}`);
+  for (const file of view.unplannedPaths) attention.push(`- Unplanned path ${line(file)} — see Deviations & Follow-ups`);
+  for (const row of view.reviewRows) {
+    if (row.ruling === 'rejected' && (row.severity === 'MUST' || row.severity === 'SHOULD')) {
+      attention.push(`- Rejected ${line(row.severity)} finding ${line(row.review)}:${line(row.id)} — see Review Findings & Resolutions`);
+    }
+  }
+  for (const edit of view.edits) {
+    if (!['intent', 'dependency', 'discard'].includes(edit.class)) continue;
+    const artifact = edit.artifact === 'plan' ? 'Plan' : edit.artifact === 'design' ? 'Design' : line(edit.artifact);
+    attention.push(`- ${artifact} edit (${line(edit.class)}) seq ${edit.seq} — see Deviations & Follow-ups`);
   }
 
-  const lines = departures.length
-    ? [`- Risk: ${tier}`, ...departures]
+  const lines = attention.length
+    ? [`- Risk: ${tier}`, ...attention]
     : [`- Risk: ${tier} · Delivery matched the plan and all criteria are verified.`];
   for (const bullet of view.focus?.bullets ?? []) {
     const evidence = line(bullet.evidence);
@@ -212,6 +214,8 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   const deviations = view.edits.map((edit) =>
     `- Deviation: ${line(edit.artifact)} edit (${line(edit.class)}) seq ${edit.seq}: ${line(edit.rationale)}; diff ${line(edit.diffRef)}; affects ${edit.affects.length ? edit.affects.map(line).join(', ') : 'none'}`);
   deviations.push(...view.unplannedPaths.map((path) => `- Deviation: unplanned change ${line(path)}`));
+  deviations.push(...(view.reviewFixes ?? []).map((fix) =>
+    `- Deviation: cap-ending SHOULD fix ${reviewFixFindings(fix)}: ${fix.status}; commit ${line(fix.commit).slice(0, 12)}; paths ${fix.paths.length ? fix.paths.map(line).join(', ') : 'none'}`));
   const followUps = [
     ...view.openEscalations.map((item) => `- Follow-up: escalation ${line(item.id)}: ${line(item.summary)}`),
     ...view.deferredRulings.map((item) => `- Follow-up: deferred ${line(item.review)}:${line(item.finding)}`),

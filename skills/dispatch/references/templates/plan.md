@@ -46,7 +46,7 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 *Tactical assumptions and defaults. Open user questions belong in the governing spec Open Questions.*
 
 ## Out of Scope
-*Plan-local exclusions and deferred follow-ups.*
+*Plan-local exclusions and deferred follow-ups only.*
 
 ## Task Map
 
@@ -113,7 +113,7 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 - Manual steps, edge cases, and failure scenarios.
 
 ## Rollback & Blast Radius
-*Caller impacts, migrations, and rollback paths; omit when empty.*
+*Include inspected callers or consumers the plan leaves unchanged when they matter for review, plus migrations and rollback paths; omit when empty.*
 
 ## Review Findings & Resolutions
 *No reviews conducted yet.*
@@ -127,6 +127,7 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 - At a Glance: **What** is the plan's only outcome summary; **How it works** gives the method in one line without repeating the outcome. Put orientation visuals here when the visual-aid bar admits them. An At a Glance table whose rows repeat Task Map IDs is a `glance-restates-task-map` warning; link `## Task Map` instead.
 
 - Scope: name components or top-level paths, not per-criterion file lists; each criterion's files belong in its Changes and Tests.
+- Out of Scope and Rollback & Blast Radius: keep Out of Scope to plan-local exclusions and deferred follow-ups; put inspected callers or consumers left unchanged in Rollback & Blast Radius when they matter for review.
 
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
 - Keep the template section order: At a Glance first, then shared context and decisions, then task outcomes and execution detail. A present section out of order is a `section-order` warning; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.

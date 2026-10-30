@@ -40,18 +40,25 @@ async function lint(name: string, source: string) {
   } finally { f.cleanup(); }
 }
 describe('lint severity', () => {
-  test('presentation warnings retain parsed plans and governed hashes', async () => {
-    scoped.artifact('a.context.md', CONTEXT_MAP);
-    scoped.artifact('b.context.md', CONTEXT_MAP);
+  test('lint results carry only kind hash errors and warnings', async () => {
     const a = await lint('a.plan.md', PLAN + '\n## Review Findings & Resolutions\nold\n');
     const b = await lint('b.plan.md', PLAN + '\n## Review Findings & Resolutions\nnew\n');
+    const spec = await lint('shape.spec.md', SPEC);
+    const design = await lint('shape.design.md', '# Design\n## Increment Dependency Graph\n');
+    fs.mkdirSync(path.join(scoped.root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(scoped.root, 'src', 'file.ts'), 'File\n');
+    const context = await lint('shape.context.md', CONTEXT_MAP);
+
     assert.equal(a.exit, 0);
     assert.deepEqual(a.result.errors, []);
     assert.ok(a.result.warnings.some((x: { code: string }) => x.code === 'missing-summary-box'));
     assert.ok(a.result.warnings.some((x: { code: string }) => x.code === 'missing-satisfies'));
-    assert.equal(a.result.parsed.tasks[0].paths[0], 'src/file.ts');
     assert.match(a.output.summary, new RegExp(a.result.hash));
     assert.equal(a.result.hash, b.result.hash);
+    for (const [kind, checked] of [['spec', spec], ['plan', a], ['design', design], ['context', context]] as const) {
+      assert.equal(checked.result.kind, kind);
+      assert.deepEqual(Object.keys(checked.result).sort(), ['errors', 'hash', 'kind', 'warnings']);
+    }
   });
   test('parse critical plan defects refuse lint', async () => {
     const refused = await lint('bad.plan.md', PLAN.replace('- [SC1]', '- [SCx]'));
@@ -84,7 +91,6 @@ describe('lint severity', () => {
     scoped.artifact('a.context.md', CONTEXT_MAP);
     const envelope = await lint('a.design.md', graph);
     assert.equal(envelope.exit, 0);
-    assert.equal(envelope.result.parsed.increments.length, 0);
     assert.ok(envelope.result.warnings.some((x: {code: string}) => x.code === 'missing-increments'));
     for (const [rows, count, code] of [
       ['| I01 | 1 | First | I02 | src/a.ts |\n| I02 | 2 | Second | I01 | src/b.ts |', 2, 'cycle'],
@@ -96,20 +102,6 @@ describe('lint severity', () => {
       assert.equal(r.design.increments.length, count);
       assert.ok(r.warnings.some(x => x.code === code));
     }
-  });
-  test('plan and design lint accept a missing sibling context map', async () => {
-    const design = '# Design\n## Increment Dependency Graph\n';
-    const absentPlan = await lint('solo.plan.md', PLAN);
-    assert.equal(absentPlan.exit, 0);
-    assert.deepEqual(absentPlan.result.errors, []);
-    const absentDesign = await lint('solo.design.md', design);
-    assert.equal(absentDesign.exit, 0);
-    assert.deepEqual(absentDesign.result.errors, []);
-
-    scoped.artifact('solo.context.md', CONTEXT_MAP.replaceAll('src/file.ts', 'docs/uncovered.md'));
-    const presentPlan = await lint('solo.plan.md', PLAN);
-    assert.deepEqual(presentPlan.result.errors, []);
-    assert.ok(presentPlan.result.warnings.some((x: { code: string }) => x.code === 'context-uncovered'));
   });
   test('lint run checks a context map against the repository root', async () => {
     const f = sessionFixture();
@@ -159,45 +151,6 @@ describe('lint severity', () => {
       f.cleanup();
       fs.rmSync(outside, { recursive: true, force: true });
     }
-  });
-  test('plan lint warns for context map files the plan omits', async () => {
-    const context = (strategy: string, coverage: string[], precedent: string[], gap: string) => [
-      '# Context map: coverage', '', '> **Commit:** abc123', '>', `> **Strategy:** ${strategy}`, '>', '> **Tool:** text', '',
-      '## Map', '- Entry — `src/file.ts:1`', '', '## Flows', '- entry: `src/file.ts:1`', '',
-      '## Invariants', '- Entry is available — `src/file.ts:1` — "Entry"', '',
-      '## Coverage', ...coverage, '', '## Precedent', ...precedent, '',
-      '## Surprises', '- none — `src/file.ts:1`', '', '## Not covered', `- ${gap}`, '',
-    ].join('\n');
-    const plan = PLAN.replace('## Task Map', [
-      '## Out of Scope', '- `docs/exact.md` is handled elsewhere.', '- `docs/target.mdx` is excluded.', '', '## Task Map',
-    ].join('\n'));
-    scoped.artifact('coverage.context.md', context('outside-in', [
-      '- changed: `src/file.ts:1`',
-      '- exact exclusion: `docs/exact.md`',
-      '- longer exclusion: `docs/target.md`',
-      '- unlisted test: `tests/unlisted.test.ts`',
-    ], [
-      '- changed analogue: `src/file.ts`',
-      '- prior docs: `docs/analogue.md`',
-      '- repeated test: `tests/unlisted.test.ts`',
-    ], 'inside-out strategy map was not produced'));
-    scoped.artifact('coverage.outside-in.context.md', context('outside-in', ['- strategy-only: `docs/outside-only.md`'], [], 'none'));
-    scoped.artifact('coverage.inside-out.context.md', context('inside-out', ['- strategy-only: `docs/inside-only.md`'], [], 'none'));
-
-    const checked = await lint('coverage.plan.md', plan);
-    const uncovered = checked.result.warnings.filter((issue: { code: string }) => issue.code === 'context-uncovered');
-    assert.deepEqual(uncovered.map((issue: { message: string }) => issue.message).sort(), [
-      'Context map file docs/analogue.md appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
-      'Context map file docs/target.md appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
-      'Context map file tests/unlisted.test.ts appears in Coverage or Precedent but not in Proposed Changes or Out of Scope.',
-    ]);
-
-    scoped.artifact('plain.context.md', context('single', [], [], 'none'));
-    const before = await lint('plain.plan.md', PLAN);
-    scoped.artifact('plain.outside-in.context.md', context('outside-in', ['- strategy-only: `docs/outside-only.md`'], [], 'none'));
-    scoped.artifact('plain.inside-out.context.md', context('inside-out', ['- strategy-only: `docs/inside-only.md`'], [], 'none'));
-    const after = await lint('plain.plan.md', PLAN);
-    assert.deepEqual(after.result, before.result);
   });
   test('invalid artifact fields persist actionable input failures', async () => {
     const f = {...scoped, cleanup: () => {}};
