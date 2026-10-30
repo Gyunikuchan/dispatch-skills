@@ -21,7 +21,7 @@ Your current agent is the **host agent**. It routes work to configured read dele
 
 A typical run:
 
-1. **Understand the request.** Dispatch explores the relevant code first, using native explorer agents when `explore-subagents` is configured. If the [`grilling`](https://github.com/mattpocock/skills) skill is installed, it then asks you questions until no open decision remains. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
+1. **Understand the request.** Dispatch explores the relevant code first, using native explorer agents when `explore-subagents` is configured. After grounding, if the [`grilling`](https://github.com/mattpocock/skills) skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
 2. **Write and review.** Dispatch writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
 3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
 4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.

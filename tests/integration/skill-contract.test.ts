@@ -99,6 +99,46 @@ test('phase prose places each workflow rule in its canonical home', () => {
   for (const term of ['ledger', 'result file', 'tool']) assert.ok(ref('glossary').includes('**' + term + '**'), term);
 });
 
+test('spec stage critiques the request premise before confirmation', () => {
+  const stage = read(root + 'references/spec-stage.md');
+  const groundStep = stage.indexOf('1. **Ground.**');
+  const refineStep = stage.indexOf('2. **Critique and refine.**');
+  const authorStep = stage.indexOf('3. **Author.**');
+  const confirmStep = stage.indexOf('4. **Confirm.**');
+  const refine = stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '';
+  const author = stage.split('3. **Author.**')[1]?.split('\n4. **Confirm.**')[0] ?? '';
+  const confirm = stage.split('4. **Confirm.**')[1]?.split('\n\n## ')[0] ?? '';
+
+  assert.ok(groundStep >= 0 && refineStep > groundStep && authorStep > refineStep && confirmStep > authorStep, 'ground, critique, author and confirm in order');
+  for (const lens of ['**problem**', '**approach**', '**scope**', '**cost and risk**']) assert.ok(refine.includes(lens), lens);
+  assert.match(refine, /materially better/i);
+  assert.match(refine, /not worse on intent/i);
+  assert.match(refine, /in one line that the premise holds, with the reason/i);
+  assert.match(refine, /after grounding[\s\S]*first-round/i);
+  assert.match(refine, /each with a recommended answer/i);
+  assert.match(refine, /For `plan`, `design`, or an `implement` that authors its plan or design/i);
+  assert.match(refine, /skip[^.]*`review` without a spec/i);
+  assert.match(refine, /add no other clarification round/i);
+  assert.doesNotMatch(stage, /grilling.{0,80}first decision-tree node/i);
+
+  assert.match(author, /DEC[\s\S]*Options[\s\S]*Rejected[\s\S]*user's actual quote/i);
+  assert.match(author, /user's choice governs/i);
+  assert.match(author, /critique alone never blocks progress/i);
+
+  assert.match(confirm, /when `grilling` was unavailable[\s\S]*Confirm exchange/i);
+  assert.match(confirm, /If the reply settles a presented alternative in this fallback/i);
+  const update = confirm.indexOf('first update the canonical spec and its DEC');
+  const lint = confirm.indexOf('lint the updated spec', update);
+  const recordText = "Record the user's reply as a `confirm` ledger record with the spec hash";
+  const record = confirm.indexOf(recordText, lint);
+  assert.ok(update >= 0 && lint > update && record > lint, 'update and lint the fallback spec before recording confirm');
+  assert.equal((confirm.match(/Record the user's reply as a `confirm` ledger record with the spec hash/g) ?? []).length, 1);
+  assert.match(confirm, /once, using the resulting hash if this fallback update ran, or the current spec hash otherwise/i);
+  assert.match(confirm, /reply is both the decision and confirmation/i);
+  assert.match(confirm, /no extra exchange/i);
+  assert.match(confirm, /revision protocol/i);
+});
+
 test('aliases preserve entry mappings', () => {
   const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code'};
   for (const [name, verb] of Object.entries(mapping)) {

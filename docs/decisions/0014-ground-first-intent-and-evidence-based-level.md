@@ -10,7 +10,9 @@ Dispatch recommended `plan` or `design` and selected a run level before it under
 
 ## Decision
 
-For every new spec, Dispatch grounds the domain from questions in the request, invokes `grilling` when the host provides it, writes the spec, then confirms stated and assumed intent. It recommends `plan` or `design` from the scope check in that confirmation. An explicit verb stays unless the scope check contradicts it. When `grilling` is unavailable, Dispatch confirms intent after grounding. This applies to `review` when no spec exists.
+For every new spec, Dispatch grounds the domain from questions in the request, invokes `grilling` when the host provides it, writes the spec, then confirms stated and assumed intent. It recommends `plan` or `design` from the grounded scope assessment in that confirmation. An explicit verb stays unless that assessment contradicts it. This applies to `review` when no spec exists.
+
+For `plan`, `design` and `implement` runs that author a plan or design, Dispatch critiques the request after grounding so the critique uses verified facts. It checks problem, approach, scope, and cost/risk, and presents an alternative only when it is materially better on a lens and not worse on intent; otherwise it states in one line why the premise holds. When `grilling` is available, the critique opens refinement as its first-round premise question before detailed questions and spec authoring. Without `grilling`, Confirm carries the critique. If the reply settles a presented alternative, Dispatch updates the canonical spec and its DEC with the user's actual quote, lints the spec, then records `confirm` against the resulting hash; the same reply decides and confirms the intent without an extra exchange.
 
 Each platform has one explorer configuration entry. `deep` applies to initial grounding; follow-up questions can use a single explorer at any stage. The operational sequence lives in the [spec stage reference](../../skills/dispatch/references/spec-stage.md).
 
@@ -20,4 +22,4 @@ The `brainstorming` skill was rejected because it repeats grounding, writes a fo
 
 ## Consequences
 
-Scope and assumptions are checked before planning, and the level follows the artifact that needs reviews. Explorer configuration no longer depends on the level, and the spec template no longer varies by level. Hosts without `grilling` use intent confirmation after grounding; `ask` and standalone `review` keep their existing level resolution.
+Premise flaws surface before intent confirmation and plan or design authoring, not at plan or design review. Grounding gives the critique verified facts. Scope and assumptions are checked before planning, and the level follows the artifact that needs reviews. Explorer configuration no longer depends on the level, and the spec template no longer varies by level. Hosts without `grilling` use Confirm for the critique; `ask` and standalone `review` keep their existing level resolution.
