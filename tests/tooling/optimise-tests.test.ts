@@ -52,10 +52,6 @@ test('unitOf maps only configured test tiers across path separators', async () =
   }
   assert.equal(unitOf('tests/helpers/play.ts'), undefined);
   assert.equal(unitOf('unknown/example.test.ts'), undefined);
-});
-
-test('unitOf prefers the longest matching unit', async () => {
-  const { unitOf } = await loadInventory();
   assert.equal(unitOf('tests/unit/core/a.test.ts', ['tests/unit', 'tests/unit/core']), 'tests/unit/core');
 });
 

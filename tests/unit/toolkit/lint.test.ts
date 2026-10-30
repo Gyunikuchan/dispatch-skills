@@ -9,7 +9,7 @@ import { parsePlan } from '../../../skills/dispatch/scripts/toolkit/domain/plan.
 import { parseSpec } from '../../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 import { parseDesign } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
 
-const scoped = sessionFixture();
+const scoped = sessionFixture({ memory: true });
 after(() => scoped.cleanup());
 
 const PLAN = [
@@ -104,7 +104,7 @@ describe('lint severity', () => {
     }
   });
   test('lint run checks a context map against the repository root', async () => {
-    const f = sessionFixture();
+    const f = sessionFixture({ memory: true });
     try {
       fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
       fs.writeFileSync(path.join(f.root, 'src', 'entry.ts'), 'export function main() {}\n');

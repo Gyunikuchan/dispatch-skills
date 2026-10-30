@@ -79,9 +79,6 @@ test('delegates-sandbox-strict: sandbox on an unsupported host fails the slot wi
     assert.equal(run.outcome.status === 'fail' && run.outcome.cls, 'sandbox-unsupported', id);
     assert.equal(p.launches, 0);
   }
-});
-
-test('delegates-sandbox-strict: a sandbox-inactive signature or a rejected sandbox flag yields sandbox-unsupported', async () => {
   const inactive = ports(env('linux'), { ...okResult, stderrTail: 'Sandbox disabled: sandbox is not active on this host' });
   const run = await runDelegate(SPECS.claude, delegate, 'cli', inactive);
   assert.equal(run.outcome.status === 'fail' && run.outcome.cls, 'sandbox-unsupported');

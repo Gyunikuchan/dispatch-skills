@@ -56,20 +56,18 @@ test('glob candidates sort newest versions first', () => {
 });
 
 test('Windows bare binary candidates use PATHEXT', () => {
-  const win: PlatformEnv = { ...env, os: 'win32', path: ['C:\\bin'], pathExt: ['.exe', '.cmd'] };
-  const probes = table({ 'C:\\bin\\codex.cmd': 'exec' });
-  assert.deepEqual(createDiscovery(SPECS, win, probes).resolve('codex', 'cli'), { status: 'path', path: 'C:\\bin\\codex.cmd' });
+  const win: PlatformEnv = { ...env, os: 'win32', path: ['C:\\bin'], pathExt: ['.exe', '.cmd'], home: 'C:\\Users\\test' };
+  const candidate = 'C:\\Users\\test\\AppData\\Local\\Programs\\Codex\\resources\\bin\\codex.exe';
+  const probes = table({
+    'C:\\bin\\codex.cmd': 'exec',
+    [candidate]: 'exec',
+  });
+  const discovery = createDiscovery(SPECS, win, probes);
+  assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'path', path: 'C:\\bin\\codex.cmd' });
+  assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
 
   const upperWin: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };
   const upperDiscovery = createDiscovery(SPECS, upperWin, { list: () => [], exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd', executable: () => true });
   assert.equal(upperDiscovery.resolve('claude', 'cli').status, 'path');
-});
-
-test('resolves codex desktop candidate paths on Windows', () => {
-  const win: PlatformEnv = { ...env, os: 'win32', home: 'C:\\Users\\test' };
-  const candidate = 'C:\\Users\\test\\AppData\\Local\\Programs\\Codex\\resources\\bin\\codex.exe';
-  const fs = table({ [candidate]: 'exec' });
-  const discovery = createDiscovery(SPECS, win, fs);
-  assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
 });
 

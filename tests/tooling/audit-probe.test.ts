@@ -97,11 +97,7 @@ test('probe cleanup reason: success retains bounded removal options and no reaso
   const io = { rmSync: (...args: unknown[]) => { calls.push(args); } };
   assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'complete', reason: null });
   assert.deepEqual(calls, [[fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }]]);
-});
-
-test('probe cleanup reason: no fixture needs no removal', () => {
-  const io = { rmSync: () => { assert.fail('no fixture to remove'); } };
-  assert.deepEqual(probe.cleanupFixture(null, [], io), { status: 'complete', reason: null });
+  assert.deepEqual(probe.cleanupFixture(null, [], { rmSync: () => assert.fail('no fixture to remove') }), { status: 'complete', reason: null });
 });
 
 // SECTION: Selection

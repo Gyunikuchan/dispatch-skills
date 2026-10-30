@@ -68,19 +68,13 @@ test('context lint reports bad refs quotes and size', () => {
 });
 
 
-test('context lint passes a valid map', () => {
-  const result = lint(MAP);
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.defects, []);
-  assert.deepEqual(result.warnings, []);
-  assert.equal(result.map.strategy, 'single');
-  assert.equal(result.map.sections.Map[0], '- Parser — `src/parser.ts:1-2`');
-});
-
 test('context lint checks conventions refs and treats the section as optional', () => {
   const withoutConventions = lint(MAP);
   assert.equal(withoutConventions.ok, true);
-  assert.equal(withoutConventions.warnings.some(issue => issue.message.includes('## Conventions')), false);
+  assert.deepEqual(withoutConventions.defects, []);
+  assert.deepEqual(withoutConventions.warnings, []);
+  assert.equal(withoutConventions.map.strategy, 'single');
+  assert.equal(withoutConventions.map.sections.Map[0], '- Parser — `src/parser.ts:1-2`');
 
   const withConventions = MAP.replace('## Surprises', [
     '## Conventions',

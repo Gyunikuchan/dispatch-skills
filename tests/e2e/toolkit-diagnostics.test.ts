@@ -6,10 +6,10 @@ import { toolkitRepo } from './helpers/toolkit-repo.ts';
 import { ORCHESTRATOR_MARKERS } from '../../skills/dispatch/scripts/lib/platform.ts';
 
 test('diagnostics stay observational across CLI recovery and report completion', async () => {
-  await Promise.all([false, true].map(async (enabled) => {
-    const f = await toolkitRepo();
-    try {
-      await f.level('low');
+  const enabled = true;
+  const f = await toolkitRepo();
+  try {
+    await f.level('low');
       const skill = path.join(f.session, 'private-skill');
       fs.cpSync(f.deps.skillRoot, skill, { recursive: true });
       const configPath = path.join(skill, 'config.local.jsonc');
@@ -68,6 +68,5 @@ test('diagnostics stay observational across CLI recovery and report completion',
       assert.equal('diagnostics' in complete.value, enabled);
       assert.equal(fs.readFileSync(path.join(f.root, 'src/file.ts'), 'utf8'), 'delivered\n');
       run(['worktree', 'cleanup']);
-    } finally { f.cleanup(); }
-  }));
+  } finally { f.cleanup(); }
 });

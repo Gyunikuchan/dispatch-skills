@@ -55,18 +55,17 @@ test('test cleanup commit records removed criteria and counts once', async () =>
 });
 
 test('test cleanup commit refuses missing evidence, unchanged test paths and empty cleanup', async () => {
-  const unverified = await integrated(false);
+  const r = await integrated(false);
   try {
-    fs.rmSync(path.join(unverified.integration, target));
-    const head = unverified.git(['rev-parse', 'HEAD'], unverified.integration);
-    assert.equal((await commit(unverified, removal)).output.reason, 'test-cleanup-evidence-required');
-    assert.equal((await commit(unverified, { removed: ['SC9'], deleted: 1, merged: 0 })).output.reason, 'test-cleanup-evidence-required');
-    assert.equal(unverified.git(['rev-parse', 'HEAD'], unverified.integration), head);
-    assert.equal(cleanups(unverified).length, 0);
-  } finally { unverified.cleanup(); }
-  const r = await integrated();
-  try {
+    fs.rmSync(path.join(r.integration, target));
     const head = r.git(['rev-parse', 'HEAD'], r.integration);
+    assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-evidence-required');
+    assert.equal((await commit(r, { removed: ['SC9'], deleted: 1, merged: 0 })).output.reason, 'test-cleanup-evidence-required');
+    assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
+    assert.equal(cleanups(r).length, 0);
+
+    fs.writeFileSync(path.join(r.integration, target), 'step\n');
+    assert.equal((await r.run(['verify', 'run'])).output.ok, true);
     fs.writeFileSync(path.join(r.integration, 'src/other.ts'), 'other\n');
     assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-paths-unchanged');
     assert.equal((await commit(r, { removed: [], deleted: 0, merged: 0 })).output.reason, 'test-cleanup-empty');

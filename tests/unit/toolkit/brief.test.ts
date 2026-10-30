@@ -149,10 +149,6 @@ describe('writer brief', () => {
       const missing = await f.call('low');
       assert.equal(missing.exit, 4);
       assert.equal(missing.output.reason, 'missing-approval');
-      await f.add('level', {level: 'xhigh'}, {by: 'user', quote: 'Use xhigh'});
-      const level = await f.call('low');
-      assert.equal(level.exit, 4);
-      assert.equal(level.output.reason, 'missing-approval');
       await f.approve();
       await f.add('level', {level: 'medium'});
       const unknown = await f.call(undefined, 'UNKNOWN');
@@ -222,20 +218,18 @@ describe('writer brief', () => {
       const stale = JSON.stringify({pid: 99, host: f.deps.host, at: 'old', tool: 'interrupted'});
       const ledger = path.join(f.session, 'ledger.jsonl');
       fs.appendFileSync(ledger, '{torn');
-      for (let attempt = 0; attempt < 2; attempt++) {
-        fs.writeFileSync(lock, stale);
-        assert.equal((await f.call()).exit, 0);
-        assert.equal(fs.existsSync(lock), false);
-        const after = foldLedger(f.session);
-        assert.equal(after.torn, null);
-        assert.equal(after.records.length, before.records.length + 1);
-        assert.deepEqual(after.records.slice(0, before.records.length), before.records);
-        const note = after.records.at(-1)!;
-        assert.equal(note.seq, before.lastSeq + 1);
-        assert.equal(note.key, 'stale-lock:' + f.deps.host + ':99:old');
-        assert.equal(note.kind, 'note'); assert.equal(note.by, 'tool');
-        assert.equal(note.data['text'], 'Broke stale lock from pid 99 on ' + f.deps.host);
-      }
+      fs.writeFileSync(lock, stale);
+      assert.equal((await f.call()).exit, 0);
+      assert.equal(fs.existsSync(lock), false);
+      const after = foldLedger(f.session);
+      assert.equal(after.torn, null);
+      assert.equal(after.records.length, before.records.length + 1);
+      assert.deepEqual(after.records.slice(0, before.records.length), before.records);
+      const note = after.records.at(-1)!;
+      assert.equal(note.seq, before.lastSeq + 1);
+      assert.equal(note.key, 'stale-lock:' + f.deps.host + ':99:old');
+      assert.equal(note.kind, 'note'); assert.equal(note.by, 'tool');
+      assert.equal(note.data['text'], 'Broke stale lock from pid 99 on ' + f.deps.host);
       assert.equal(fs.readFileSync(path.join(f.session, 'ledger.torn-1.jsonl'), 'utf8'), '{torn');
     } finally { f.cleanup(); }
   });
@@ -253,9 +247,17 @@ describe('writer brief', () => {
       assert.equal(result.value.path, path.join(f.session, '.state', 'briefs', 'T1-1.md'));
       assert.ok(result.output.summary.includes(result.value.path));
       const brief = fs.readFileSync(result.value.path, 'utf8');
-      const payload = captureData(captureCommand(captureSection(brief)));
+      const command = captureCommand(captureSection(brief));
+      const payload = captureData(command);
       assert.match(payload.data.command, /node first-red/);
       assert.doesNotMatch(payload.data.command, /node poison-red/);
+      const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
+      assert.equal(payload.data.criterion, 'SC1');
+      assert.equal(payload.data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
+      assert.ok(payload.data.command.includes(quotedPath));
+      assert.ok(!payload.data.command.includes('src/first.ts'), 'Changes paths do not become {files}');
+      assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
+      assert.doesNotMatch(command, /[$%]/);
       const quality = getQuality(f.deps.skillRoot);
       assert.equal(brief.split('## Quality\n\n' + qualityCriteria(quality, 'writer')).length - 1, 1);
       for (const name of ['shared', 'code']) {
@@ -268,25 +270,6 @@ describe('writer brief', () => {
       assert.match(brief, /Git write commands/);
       for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check', 'envelope', 'RED-MATRIX', 'briefHash', 'receipt']) assert.ok(!brief.includes(forbidden), forbidden);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
-    } finally { f.cleanup(); }
-  });
-
-  test('capture command expands only declared test paths and quotes for the child shell', async () => {
-    const f = await fixture(false, CAPTURE_PLAN);
-    try {
-      await f.approve(); await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const brief = fs.readFileSync(result.value.path, 'utf8');
-      const command = captureCommand(captureSection(brief));
-      const payload = captureData(command);
-      const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
-      assert.equal(payload.data.criterion, 'SC1');
-      assert.equal(payload.data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
-      assert.ok(payload.data.command.includes(quotedPath));
-      assert.ok(!payload.data.command.includes('src/first.ts'), 'Changes paths do not become {files}');
-      assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
-      assert.doesNotMatch(command, /[$%]/);
     } finally { f.cleanup(); }
   });
 

@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import { SENTINEL, finding, opportunity, report, captured, recordTriage, unchanged, status } from '../helpers/audit-report.ts';
 
 test('audit report batch refuses untriaged items and unselected opportunities', () => {
+  const empty = report(SENTINEL);
+  assert.match(captured(() => status.cmdBatch(empty.root, empty.file, ['batch'])), /No actionable items/);
   const { root, file } = report(finding('A-1'), opportunity());
   assert.doesNotMatch(captured(() => status.cmdBatch(root, file, ['batch'])), /# Batch:/);
   unchanged(file, () => recordTriage(root, file, 'O-1'), /selection/); recordTriage(root, file, 'A-1');
@@ -55,9 +57,6 @@ test('audit report batch legacy dispatched notes require an explicit tree inspec
   unchanged(file, () => recordTriage(root, file, 'A-1'), /legacyInspection/);
   recordTriage(root, file, 'A-1', { legacyInspection: 'Checked current source; fix absent.' });
   assert.match(captured(() => status.cmdBatch(root, file, ['batch'])), /# Batch: A-1/);
-});
-test('audit report batch zero items prints a completion result', () => {
-  const { root, file } = report(SENTINEL); assert.match(captured(() => status.cmdBatch(root, file, ['batch'])), /No actionable items/);
 });
 test('audit report batch distinguishes blocked accepted items from missing triage', () => {
   const { root, file } = report(finding('A-1') + finding('A-2') + finding('A-3'));

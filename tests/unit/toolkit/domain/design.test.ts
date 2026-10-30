@@ -96,14 +96,10 @@ test('design increments warn when behaviour is missing or only a file count', ()
     assert.ok(result.ok, JSON.stringify(result));
     assert.ok(result.warnings.some((item) => item.code === 'increment-behaviour'), JSON.stringify(result.warnings));
   }
-});
-
-test('design increment behaviour accepts prose that starts with a file count', () => {
-  const source = DESIGN.replace('- I01 behaviour is implemented.', '- 2 files are compared by content before delivery.');
-  const result = parseDesign(source);
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.design.increments[0]?.behaviour, ['2 files are compared by content before delivery.']);
-  assert.ok(!result.warnings.some((item) => item.code === 'increment-behaviour'));
+  const accepted = parseDesign(DESIGN.replace('- I01 behaviour is implemented.', '- 2 files are compared by content before delivery.'));
+  assert.ok(accepted.ok);
+  assert.deepEqual(accepted.design.increments[0]?.behaviour, ['2 files are compared by content before delivery.']);
+  assert.ok(!accepted.warnings.some((item) => item.code === 'increment-behaviour'));
 });
 
 test('design presentation findings are warnings', () => {
@@ -119,7 +115,10 @@ test('design: parses graph, details, and Execution Status', () => {
   assert.deepEqual(design.increments.map((row) => [row.id, row.priority, row.prerequisites]), [['I01', 1, []], ['I02', 2, ['I01']]]);
   assert.deepEqual(design.increments[1]?.paths, ['src/load.ts', 'src/db.ts']);
   assert.equal(design.details['I02']?.['Outcome'], 'I02 outcome delivered');
-  assert.deepEqual(design.executionStatus?.rows.map((row) => [row.id, row.state]), [['I01', 'complete'], ['I02', 'ready']]);
+  assert.deepEqual(design.executionStatus?.rows, [
+    { id: 'I01', state: 'complete', nextAction: '-' },
+    { id: 'I02', state: 'ready', nextAction: 'implement:I02' },
+  ]);
   assert.equal(design.executionStatus?.nextAction, 'implement:I02');
 });
 
@@ -235,16 +234,8 @@ test('design: summary box without TL;DR lints clean and parses', () => {
   assert.equal(asParsedDesign(result.design), result.design);
 });
 
-test('Execution Status reads ID, State and Next Action', () => {
-  const result = parseDesign(DESIGN);
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.design.executionStatus?.rows, [
-    { id: 'I01', state: 'complete', nextAction: '-' },
-    { id: 'I02', state: 'ready', nextAction: 'implement:I02' },
-  ]);
-});
-
 test('design summary: Parent rejects invalid pins', () => {
+  assert.ok(parseDesign(layeredDesign()).ok);
   for (const parent of [
     'user request',
     '`notes.txt` · sha256:' + 'a'.repeat(64),
@@ -254,7 +245,6 @@ test('design summary: Parent rejects invalid pins', () => {
     assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label'), parent);
   }
 });
-test('design summary: Parent accepts spec pin', () => assert.ok(parseDesign(layeredDesign()).ok));
 test('design retired sections context and goals', () => { for (const heading of ['Context & Intent', 'Goals & Requirements']) assert.ok(codes(layeredDesign() + '\n## ' + heading + '\nOld.').includes('retired-section')); });
 test('design approach requires REQ reference', () => assert.ok(codes(layeredDesign().replace('REQ-1 importer', 'Importer')).includes('missing-requirement-ref')));
 test('design approach precedes alternatives', () => assert.ok(codes(layeredDesign().replace('## Approach\nREQ-1 importer\n\n', '').replace('## Alternatives & Decisions\nChosen.', '## Alternatives & Decisions\nChosen.\n\n## Approach\nREQ-1 importer')).includes('section-order')));

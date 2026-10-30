@@ -34,15 +34,17 @@ test('repository root: ancestor Git metadata identifies the root; absence return
 
 test('numeric suffix -1 on name collision', () => {
   const { root, temp } = repo();
-  const dir = initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
+  const created = initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
+  assert.equal(created.reused, false);
+  const dir = created.path;
   assert.equal(path.basename(dir), '20260929T1754Z-demo');
   assert.equal(readManifest(dir).location, 'workspace');
+  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now, tempRoot: temp }), { path: dir, reused: true });
   assert.equal(initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now, tempRoot: temp }), dir);
 
   // Another session holding the same name in the same minute forces a numeric title suffix -1.
   const suffixed = initializeSession({ repositoryRoot: root, sessionId: 's2', sessionTitle: 'demo', now, tempRoot: temp });
   assert.equal(path.basename(suffixed), '20260929T1754Z-demo-1');
-
 });
 
 test('session matching skips corrupt unrelated directories and matches by manifest', () => {
@@ -101,9 +103,3 @@ test('session reactivate validates repository and rejects external locations', (
   assert.throws(() => reactivateSession(external, root), /outside the workspace session root/);
 });
 
-test('init reports reused false when it creates the folder and true when it returns it', () => {
-  const { root, temp } = repo();
-  const created = initSession({ repositoryRoot: root, sessionId: 'u1', sessionTitle: 'demo', now, tempRoot: temp });
-  assert.equal(created.reused, false);
-  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 'u1', sessionTitle: 'demo', now, tempRoot: temp }), { path: created.path, reused: true });
-});

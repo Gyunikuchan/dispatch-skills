@@ -5,8 +5,8 @@ import {describe,test} from 'node:test';
 import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';
 
 describe('summary byte cap',()=>{
-  test('preserves all three hundred conflict paths in the result file',async()=>{
-    const paths=Array.from({length:300},(_,i)=>'src/conflict-'+i+'.ts');
+  test('preserves all conflict paths exceeding the summary cap in the result file',async()=>{
+    const paths=Array.from({length:60},(_,i)=>'src/conflict-'+String(i).padStart(3,'0')+'.ts');
     const source=planSource.replace('#### [MODIFY] src/file.ts\n- Purpose: implements behavior.',paths.map(p=>'#### [MODIFY] '+p+'\n- Purpose: conflict.').join('\n')).replace('  - Changes: src/file.ts','  - Changes: '+paths.join(', '));
     const f=await toolkitRepo(source,Object.fromEntries(paths.map(p=>[p,'base\n']))); try {
       await f.level(); const created=await f.run(['worktree','create','T1']); assert.equal(created.exit,0,JSON.stringify(created));

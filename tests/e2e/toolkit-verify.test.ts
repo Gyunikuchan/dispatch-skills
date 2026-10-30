@@ -21,6 +21,14 @@ describe('toolkit verify', () => {
       r=await f.run(['verify','run','--criteria','SC1']); assert.equal(r.output.reason,'dirty');
       assert.equal(rows().at(-1)!.data['clean'],false); assert.notEqual(rows().at(-1)!.data['tree'],first['tree']);
       assert.equal((await f.run(['verify','run','--criteria','SC99'])).output.reason,'invalid-input');
+      fs.rmSync(path.join(f.integration,'new.txt'));
+      const trimmed = await f.run(['verify','run','--criteria',' SC1, ']);
+      assert.equal(trimmed.exit,0); assert.equal(trimmed.output.ok,true);
+      const before = rows().length;
+      const refused = await f.run(['verify','run','--criteria','SC9, SC1, SC8']);
+      assert.equal(refused.exit,1); assert.equal(refused.output.reason,'invalid-input');
+      assert.equal(refused.output.summary,'Unknown criterion: SC9, SC8; valid: SC1, contract');
+      assert.equal(rows().length,before);
     } finally {f.cleanup();}
   });
   test('records mutation and stops a criterion at its first failing command', async () => {
@@ -50,14 +58,4 @@ describe('toolkit verify', () => {
   });
 });
 
-test('verify run trims criteria and names unknown criteria', async () => {
-  const f = await toolkitRepo(); try {
-    const trimmed = await f.run(['verify','run','--criteria',' SC1, ']);
-    assert.equal(trimmed.exit,0); assert.equal(trimmed.output.ok,true);
-    const before = foldLedger(f.session).records.length;
-    const refused = await f.run(['verify','run','--criteria','SC9, SC1, SC8']);
-    assert.equal(refused.exit,1); assert.equal(refused.output.reason,'invalid-input');
-    assert.equal(refused.output.summary,'Unknown criterion: SC9, SC8; valid: SC1, contract');
-    assert.equal(foldLedger(f.session).records.length,before);
-  } finally {f.cleanup();}
-});
+

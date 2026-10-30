@@ -41,8 +41,9 @@ test('ask run returns sanitized source answers and launches a new completed atte
 
 test('ask run refuses missing input and unapproved high levels before launch', async () => {
   const f = fixture(); try {
-    assert.equal((await f.call('--level', 'xhigh')).output.reason, 'level-unapproved');
-    assert.equal((await f.call('--level', 'xhigh')).exit, 4);
+    const unapproved = await f.call('--level', 'xhigh');
+    assert.equal(unapproved.output.reason, 'level-unapproved');
+    assert.equal(unapproved.exit, 4);
     fs.unlinkSync(f.question);
     const missing = await f.call();
     assert.equal(missing.exit, 1); assert.equal(missing.output.reason, 'invalid-input');

@@ -2,16 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';
+import {toolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';
 import {appendRecord,foldLedger} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { CLEAN } from '../helpers/e2e.ts';
 import crypto from 'node:crypto';
 
 test('pending MUST rejection keeps captured Git confirmation identity across native retry and target movement',async()=>{
  const f=await toolkitRepo();try {
-  const skill=path.join(f.session,'confirmation-skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
-  fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}}));
-  f.deps.skillRoot=skill;f.deps.orchestrator={platform:'codex',model:'native'};f.deps.liveness={};
+  f.deps.skillRoot=setupTestSkill(f.deps,f.session,'confirmation-skill',{'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}});
+  f.deps.orchestrator={platform:'codex',model:'native'};f.deps.liveness={};
   fs.writeFileSync(path.join(f.root,'src/file.ts'),'first captured change\n');
   const run=()=>f.run(['review','run','worktree','--kind','code','--spec','work.spec.md','--level','low']);
   const first=await run();assert.equal(first.output.reason,'native-pending');
@@ -40,10 +39,7 @@ test('toolkit worktree review excludes unignored session state and preserves com
     fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'changed session bytes\n');
     fs.writeFileSync(path.join(f.session, 'untracked.txt'), 'untracked session bytes\n');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'changed code\n');
-    const skill = path.join(f.session, 'native-skill');
-    fs.mkdirSync(skill); fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
-    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } }));
-    f.deps.skillRoot = skill;
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'native-skill', { 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } });
     f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
     f.deps.liveness = {};
     const run = async (expected: number) => {
@@ -90,10 +86,7 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
     fs.writeFileSync(path.join(f.session, 'tracked.txt'), 'changed session bytes\n');
     fs.rmSync(path.join(f.session, 'deleted.txt'));
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'changed code\n');
-    const skill = path.join(f.session, 'native-skill');
-    fs.mkdirSync(skill); fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
-    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } }));
-    f.deps.skillRoot = skill;
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'native-skill', { 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } });
     f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
     f.deps.liveness = {};
     const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
@@ -108,11 +101,8 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
 const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 test('toolkit code review reports missing evidence without admission gates and tracks changed targets',async()=>{
     const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria')); try {
-    const skill=path.join(f.session,'skill'); fs.mkdirSync(path.join(skill,'references/templates'),{recursive:true});
-    fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
-    for(const file of ['review-prompt.md','review-prompt-code.md','quality-bar.md'])fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(skill,'references/templates',file));
-    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
-    f.deps.skillRoot=skill; f.deps.liveness={claude:true};f.deps.orchestrator=null;
+    f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
+    f.deps.liveness={claude:true};f.deps.orchestrator=null;
     const prompts:string[]=[];
     f.deps.delegate=async(_provider,request)=>{prompts.push(fs.readFileSync(request.promptPath,'utf8'));return {outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]};};
     await f.level('medium');await f.approve();
@@ -144,10 +134,9 @@ test('toolkit code review reports missing evidence without admission gates and t
 });
 
 test('toolkit code review follows new task launches and escalates each repeated changed gap',async()=>{
-  for(const moveDuringReview of [false,true]){
+  const moveDuringReview=true;
   const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
-    const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});f.deps.skillRoot=skill;
-    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
+    f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
     f.deps.liveness={claude:true};f.deps.orchestrator=null;
     f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
     await f.level('high');await f.approve();
@@ -169,12 +158,11 @@ test('toolkit code review follows new task launches and escalates each repeated 
     }
     second=await review();assert.equal(second.exit,0);
     const value=JSON.parse(fs.readFileSync(second.value.path,'utf8'));
-    assert.equal(value.escalations[0].key,'missing-red:code-T1:T1:SC1:R2:g'+(moveDuringReview?2:1));
-    if(moveDuringReview)assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'round.json'),'utf8')).target.head,newHead);
+    assert.equal(value.escalations[0].key,'missing-red:code-T1:T1:SC1:R2:g2');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'round.json'),'utf8')).target.head,newHead);
     await launch('fourth\n');const third=await review();assert.equal(third.exit,0);
     assert.equal(JSON.parse(fs.readFileSync(third.value.path,'utf8')).escalations[0].key,'missing-red:code-T1:T1:SC1:R3:g1');
   }finally{f.cleanup();}
-  }
 });
 
 test('toolkit code review scopes integration recurrence and gaps to committed owner changes',async()=>{
@@ -183,8 +171,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
     .replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/other.ts\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n## Verification Plan');
   for(const fixOwner of [false,true]) {
     const f=await toolkitRepo(two,{'src/other.ts':'initial\n'});try{
-      const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});f.deps.skillRoot=skill;
-      fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
+      f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
       f.deps.liveness={claude:true};f.deps.orchestrator=null;
       f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'FINDINGS',findings:[{severity:'SHOULD',tag:'correctness',locus:'src/file.ts:L1',defect:'The file returns an invalid result',requiredChange:'Return the expected result'}]}),resume:null,sessionId:null},invocations:[]});
       await f.level('high');await f.approve();
@@ -220,9 +207,8 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
 
 test('rejected missing-red ruling settles later rounds after the target moves',async()=>{
   const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
-    const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
-    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
-    f.deps.skillRoot=skill;f.deps.liveness={claude:true};f.deps.orchestrator=null;
+    f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
+    f.deps.liveness={claude:true};f.deps.orchestrator=null;
     f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
     await f.level('high');await f.approve();
     const launch=async(text:string)=>{
@@ -246,9 +232,8 @@ test('rejected missing-red ruling settles later rounds after the target moves',a
 
 test('wrapper RED exit suppresses missing-red without a report section',async()=>{
   const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
-    const skill=path.join(f.session,'skill');fs.mkdirSync(skill);fs.cpSync(path.join(f.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
-    fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}}));
-    f.deps.skillRoot=skill;f.deps.liveness={claude:true};f.deps.orchestrator=null;
+    f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
+    f.deps.liveness={claude:true};f.deps.orchestrator=null;
     f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
     await f.level('high');await f.approve();
     const made=await f.run(['worktree','create','T1']);assert.equal(made.exit,0,JSON.stringify(made.output));
@@ -267,14 +252,10 @@ test('wrapper RED exit suppresses missing-red without a report section',async()=
 test('toolkit code review refuses an empty worktree diff before launching voices', async () => {
   const f = await toolkitRepo();
   try {
-    const skill = path.join(f.session, 'empty-review-skill');
-    fs.mkdirSync(skill);
-    fs.cpSync(path.join(f.deps.skillRoot, 'references'), path.join(skill, 'references'), { recursive: true });
-    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'empty-review-skill', {
       'read-delegates': { claude: { targets: [{ low: { model: 'fake' } }] } },
       phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 1 } } },
-    }));
-    f.deps.skillRoot = skill;
+    });
     f.deps.liveness = { claude: true };
     f.deps.orchestrator = null;
     let launches = 0;

@@ -9,27 +9,53 @@ import { SPEC_SOURCE } from './spec-fixture.ts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const STUB = path.resolve(ROOT, 'tests/helpers/stub-provider.ts');
 export const CLEAN = { status: 'CLEAN', findings: [] };
+
+let baseRepoTemplate: string | null = null;
+let baseOverlayTemplate: string | null = null;
+
+function getBaseRepoTemplate(): string {
+  if (!baseRepoTemplate) {
+    baseRepoTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-repo-'));
+    process.on('exit', () => { try { fs.rmSync(baseRepoTemplate!, { recursive: true, force: true }); } catch {} });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: baseRepoTemplate!, encoding: 'utf8', windowsHide: true });
+    git('init', '-q');
+    fs.appendFileSync(path.join(baseRepoTemplate, '.git/config'), '\n[core]\n\tautocrlf = false\n[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n');
+    fs.mkdirSync(path.join(baseRepoTemplate, 'src')); fs.writeFileSync(path.join(baseRepoTemplate, 'src/a.ts'), 'export const value = 1;\n');
+    fs.writeFileSync(path.join(baseRepoTemplate, 'governing.spec.md'), SPEC_SOURCE);
+    fs.writeFileSync(path.join(baseRepoTemplate, '.gitignore'), '.scratch/\n');
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+  }
+  return baseRepoTemplate;
+}
+
+function getBaseOverlayTemplate(): string {
+  if (!baseOverlayTemplate) {
+    baseOverlayTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-overlay-'));
+    process.on('exit', () => { try { fs.rmSync(baseOverlayTemplate!, { recursive: true, force: true }); } catch {} });
+    fs.cpSync(path.join(ROOT, 'skills/dispatch'), path.join(baseOverlayTemplate, 'skills/dispatch'), { recursive: true });
+    const config = {
+      'read-delegates': { opencode: { sandbox: false, targets: [{ low: { model: 'stub' } }] } },
+      'write-subagents': { codex: { low: { model: 'native-stub', effort: 'low' } } },
+      phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } },
+    };
+    fs.writeFileSync(path.join(baseOverlayTemplate, 'skills/dispatch/config.local.jsonc'), JSON.stringify(config));
+    hashes(baseOverlayTemplate);
+  }
+  return baseOverlayTemplate;
+}
+
 export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-')), repo = path.join(dir, 'repo'), overlay = path.join(dir, 'overlay');
-  fs.mkdirSync(repo); fs.mkdirSync(overlay); fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
-  fs.cpSync(path.join(ROOT, 'skills/dispatch'), path.join(overlay, 'skills/dispatch'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
+  fs.cpSync(getBaseOverlayTemplate(), overlay, { recursive: true });
   const skill = path.join(overlay, 'skills/dispatch'), bin = path.join(dir, 'bin'), scenarioPath = path.join(dir, 'scenario.json');
   fs.mkdirSync(bin); fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
   const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const shim = process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${STUB}" "${scenarioPath}" %*\r\n` : `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(STUB)} ${shellQuote(scenarioPath)} "$@"\n`;
   fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'opencode.cmd' : 'opencode'), shim, { mode: 0o700 });
-  const config = {
-    'read-delegates': { opencode: { sandbox: false, targets: [{ low: { model: 'stub' } }] } },
-    'write-subagents': { codex: { low: { model: 'native-stub', effort: 'low' } } },
-    phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } },
-  };
-  fs.writeFileSync(path.join(skill, 'config.local.jsonc'), JSON.stringify(config)); hashes(overlay);
+  fs.cpSync(getBaseRepoTemplate(), repo, { recursive: true });
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
-  git('init', '-q');
-  fs.appendFileSync(path.join(repo, '.git/config'), '\n[core]\n\tautocrlf = false\n[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n');
-  fs.mkdirSync(path.join(repo, 'src')); fs.writeFileSync(path.join(repo, 'src/a.ts'), 'export const value = 1;\n');
-  fs.writeFileSync(path.join(repo, 'governing.spec.md'), SPEC_SOURCE);
-  fs.writeFileSync(path.join(repo, '.gitignore'), '.scratch/\n'); git('add', '.'); git('commit', '-qm', 'fixture');
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}`, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' };
   for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete (env as Record<string, string | undefined>)[key];
   const entry = path.join(skill, 'scripts/dispatch.ts');

@@ -35,6 +35,10 @@ function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): Runn
 const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({ exit, signal: null, stdout, stdoutPath: '/log', stderrTail, durationMs: 1, timedOut: false, truncated: false });
 
 test('`Variant unavailable` retries once without effort', async () => {
+  const outcome = opencode.parse(result('', 1, 'Error: Variant unavailable for model'), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'config');
+  assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
+
   const p = ports([result('', 1, 'Error: Variant unavailable for model'), result('R')]);
   const run = await runDelegate(opencode, base, 'cli', p);
   assert.equal(run.outcome.status, 'ok');
@@ -44,12 +48,6 @@ test('`Variant unavailable` retries once without effort', async () => {
   const twice = await runDelegate(opencode, base, 'cli', ports([result('', 1, 'Variant unavailable'), result('', 1, 'Variant unavailable')]));
   assert.equal(twice.attempts, 2);
   assert.equal(twice.outcome.status, 'fail');
-});
-
-test('`Variant unavailable` with effort classifies as config, not model-not-found', () => {
-  const outcome = opencode.parse(result('', 1, 'Error: Variant unavailable for model'), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'config');
-  assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
 });
 
 test('a missing subscription classifies as auth, not empty-output', () => {

@@ -96,6 +96,9 @@ test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked 
   assert.equal(findSensitiveMatch('/repo/notes.txt', () => '/home/u/.ssh/id_rsa'), 'file');
   assert.equal(findSensitiveMatch('/repo/link', () => '/home/u/.aws/config'), 'dir');
   assert.equal(findSensitiveMatch('/repo/my-token-service/app.ts', (f) => f), null);
+  const none = (f: string): string | null => f;
+  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token']) assert.ok(findSensitiveMatch('/repo/' + name, none), name);
+  for (const name of ['tokenizer.ts', 'secretary.md']) assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
 });
 
 test('attachments respect per-file and total caps inside nonce DATA tags; sensitive files are rejected', () => {
@@ -152,21 +155,6 @@ test('timeout on Windows kills the process tree with taskkill /T /F', async () =
   assert.equal((await run).result?.timedOut, true);
 });
 
-test('output over the cap fails as buffer even when the process exits', async () => {
-  const capped = harness(posix);
-  const second = runDelegate(claude, req, 'cli', capped.ports);
-  await flush();
-  capped.finish(ok({ exit: 1, stdout: 'x'.repeat(100), truncated: true }));
-  const out = await second;
-  assert.equal(out.outcome.status === 'fail' && out.outcome.cls, 'buffer');
-});
-
-test('delegates-sensitive-file-guardrail: token/secret basenames match across _ separators, not inside words', () => {
-  const none = (f: string): string | null => f;
-  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token']) assert.ok(findSensitiveMatch('/repo/' + name, none), name);
-  for (const name of ['tokenizer.ts', 'secretary.md']) assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
-});
-
 test('batch launchers go through cmd.exe with escaped verbatim args, never a raw shell', () => {
   const inv = batchInvocation('C:\\bin\\agy.cmd', ['--print', 'a & calc | x "q"'], 'cmd.exe');
   assert.deepEqual(inv.args.slice(0, 3), ['/d', '/s', '/c']);
@@ -186,6 +174,12 @@ test('parsed success retains process timeout and truncation failures', async () 
     assert.equal(result.outcome.status, 'fail', limit);
     assert.equal(result.outcome.status === 'fail' && result.outcome.cls, expected, limit);
   }
+  const capped = harness(posix);
+  const second = runDelegate(claude, req, 'cli', capped.ports);
+  await flush();
+  capped.finish(ok({ exit: 1, stdout: 'x'.repeat(100), truncated: true }));
+  const out = await second;
+  assert.equal(out.outcome.status === 'fail' && out.outcome.cls, 'buffer');
 });
 
 test('runner waits for asynchronous lease release before returning', async () => {
@@ -211,12 +205,10 @@ test('runDelegate records one invocation per launch attempt, including the effor
     { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, outcome: 'config' },
     { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, outcome: 'ok' },
   ]);
-});
 
-test('runDelegate attaches attempt records to a launch that throws', async () => {
-  const h = harness(posix);
-  h.ports.process.start = () => { throw new Error('spawn EACCES'); };
-  const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', h.ports).then(() => null, (thrown: unknown) => thrown as { invocations?: unknown });
+  const throwingHarness = harness(posix);
+  throwingHarness.ports.process.start = () => { throw new Error('spawn EACCES'); };
+  const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', throwingHarness.ports).then(() => null, (thrown: unknown) => thrown as { invocations?: unknown });
   assert.deepEqual(error?.invocations, [{ provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: false, outcome: 'launch-failed' }]);
 });
 

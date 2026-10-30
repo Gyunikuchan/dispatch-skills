@@ -74,10 +74,13 @@ test('integrity drift reports ts whitespace and markdown or json meaning changes
     ['references/data.json', '{"b": 1, "a": [1, 3]}\n'],
     ['references/broken.json', '{"a": 2,}\n'],
   ];
+  const skill = skillWith(SKILL_FILES);
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
   for (const [file, changed] of cases) {
-    const skill = skillWith(SKILL_FILES);
-    fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
-    fs.writeFileSync(path.join(skill, file), changed);
+    const target = path.join(skill, file);
+    const original = SKILL_FILES[file]!;
+    fs.writeFileSync(target, changed);
     assert.deepEqual(checkIntegrity(skill), { status: 'drift', violations: [file] }, file);
+    fs.writeFileSync(target, original);
   }
 });

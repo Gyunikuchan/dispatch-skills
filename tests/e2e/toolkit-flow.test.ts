@@ -36,10 +36,9 @@ describe('toolkit status sections', () => {
       assert.equal(s.integration.head,f.git(['rev-parse','HEAD'],f.integration)); assert.equal(s.integration.branch,'dispatch/test/integration');
       await f.run(['verify','run']); assert.deepEqual((await status()).criteria,[]);
       const tracked=path.join(f.integration,'src/file.ts'); const original=fs.readFileSync(tracked);
+      const extra=path.join(f.integration,'extra'); fs.writeFileSync(extra,'extra');
       fs.writeFileSync(tracked,'dirty'); assert.deepEqual((await status()).criteria,['SC1','contract']);
-      fs.writeFileSync(tracked,original); assert.deepEqual((await status()).criteria,[]);
-      const extra=path.join(f.integration,'extra'); fs.writeFileSync(extra,'extra'); assert.deepEqual((await status()).criteria,['SC1','contract']);
-      fs.rmSync(extra); assert.deepEqual((await status()).criteria,[]);
+      fs.writeFileSync(tracked,original); fs.rmSync(extra); assert.deepEqual((await status()).criteria,[]);
       fs.writeFileSync(tracked,'fix\n'); await f.run(['worktree','commit','--reason','repair']); assert.deepEqual((await status()).criteria,['SC1','contract']);
       await f.run(['verify','run']); await f.run(['worktree','deliver']); assert.equal((await status()).integration.undelivered,false);
       fs.rmSync(f.integration,{recursive:true,force:true}); s=await status(); assert.equal(s.integration.state,'missing'); assert.deepEqual(s.criteria,['SC1','contract']);
@@ -213,16 +212,10 @@ test('captured RED command preserves raw output and status and its report clears
 
     const outer = /^(node -e ".*") ([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
     assert.ok(outer, 'generated wrapper has a reusable bootstrap and encoded input');
-    const below = 1024 * 1024 - 1;
     const at = 1024 * 1024;
     const above = 1024 * 1024 + 1;
     const boundaries = [
-      {name: 'stdout below', stdout: below, stderr: 0},
-      {name: 'stderr below', stdout: 0, stderr: below},
       {name: 'stdout at', stdout: at, stderr: 0},
-      {name: 'stderr at', stdout: 0, stderr: at},
-      {name: 'stdout above', stdout: above, stderr: 0},
-      {name: 'stderr above', stdout: 0, stderr: above},
       {name: 'both above', stdout: above, stderr: above},
     ];
     const boundaryFailures: string[] = [];

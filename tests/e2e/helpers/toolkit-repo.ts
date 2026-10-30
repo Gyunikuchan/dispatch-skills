@@ -75,3 +75,11 @@ export function captureIntegrationReview(r:Awaited<ReturnType<typeof toolkitRepo
  fs.writeFileSync(path.join(dir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
  fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'code-integration',round,failed:[],findings}));return dir;
 }
+
+export function setupTestSkill(deps: CliDeps, session: string, name = 'skill', config: object = {}) {
+  const skill = path.join(session, name);
+  fs.mkdirSync(path.join(skill, 'references'), { recursive: true });
+  fs.cpSync(path.join(deps.skillRoot, 'references/templates'), path.join(skill, 'references/templates'), { recursive: true });
+  fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify(config));
+  return skill;
+}

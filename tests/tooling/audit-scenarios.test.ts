@@ -107,16 +107,13 @@ test('audit scenarios explicit narrowing selects only named scopes and labels th
   const decision = selection.scopes[0]?.scenarios.find((s) => s.class === 'decision');
   assert.equal(decision?.id, 'plan-decision-b');
   assert.match(decision?.reason ?? '', /explicit/);
-});
 
-test('audit scenarios --scenarios alone narrows to the named scenarios and records omitted scopes and classes as gaps', async () => {
-  const { selectScenarios } = await load();
-  const selection = selectScenarios({ catalog: catalog([entry('plan', 'decision', 'b')]), exists, scope: { scenarios: ['plan-decision-b', 'shared-review-to-fix-a'] } });
-  assert.equal(selection.partial, true);
-  assert.deepEqual(selection.selected, ['plan-decision-b', 'shared-review-to-fix-a']);
-  for (const omitted of ['ask', 'design', 'review', 'implement']) assert.ok(selection.gaps.includes(`scope ${omitted} not selected (user-narrowed run)`), omitted);
-  for (const cls of ['normal', 'recovery']) assert.ok(selection.gaps.includes(`scope plan class ${cls} not selected (user-narrowed run)`), cls);
-  for (const cls of ['design-to-plan', 'plan-to-implement', 'interruption-to-resume']) assert.ok(selection.gaps.includes(`scope shared class ${cls} not selected (user-narrowed run)`), cls);
+  const scenarioOnly = selectScenarios({ catalog: catalog([entry('plan', 'decision', 'b')]), exists, scope: { scenarios: ['plan-decision-b', 'shared-review-to-fix-a'] } });
+  assert.equal(scenarioOnly.partial, true);
+  assert.deepEqual(scenarioOnly.selected, ['plan-decision-b', 'shared-review-to-fix-a']);
+  for (const omitted of ['ask', 'design', 'review', 'implement']) assert.ok(scenarioOnly.gaps.includes(`scope ${omitted} not selected (user-narrowed run)`), omitted);
+  for (const cls of ['normal', 'recovery']) assert.ok(scenarioOnly.gaps.includes(`scope plan class ${cls} not selected (user-narrowed run)`), cls);
+  for (const cls of ['design-to-plan', 'plan-to-implement', 'interruption-to-resume']) assert.ok(scenarioOnly.gaps.includes(`scope shared class ${cls} not selected (user-narrowed run)`), cls);
 });
 
 test('audit scenarios reject an invalid catalog', async () => {

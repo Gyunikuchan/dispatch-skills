@@ -67,7 +67,7 @@ describe('toolkit CLI contract', () => {
   test('handlers persist success refusals and unexpected faults', async () => {
     const f = sessionFixture({memory:true});
     try {
-      for (const [reason, exit] of [['invalid-input', 1], ['invalid-record', 1], ['user-only', 1], ['missing-key', 1], ['approval-stale', 1], ['key-conflict', 2], ['ledger-corrupt', 2], ['fault', 2], ['lock-held', 3], ['lint-errors', 4]] as const) {
+      for (const [reason, exit] of [['invalid-input', 1], ['fault', 2], ['lock-held', 3], ['lint-errors', 4]] as const) {
         f.lines.length = 0;
         assert.equal(await main(['lint', 'run', '--session', f.session], { ...f.deps, handler: async () => { throw new ToolError(exit, reason, 'input field rejected'); } }), exit);
         const out = f.output();

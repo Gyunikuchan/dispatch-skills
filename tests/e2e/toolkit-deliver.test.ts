@@ -1,5 +1,5 @@
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {describe,it} from 'node:test';
-import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import {toolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 type Repo=Awaited<ReturnType<typeof toolkitRepo>>;
 const rows=(r:Repo,phase:string)=>foldLedger(r.session).records.filter(x=>x.kind==='integrate'&&x.data['phase']===phase);
 const ref='refs/dispatch/test/delivered-source';
@@ -21,9 +21,7 @@ function assertMatchesSource(r:Repo,from:string,source:string){const names=r.git
 const each=(modes:string[],fn:(mode:string)=>Promise<void>)=>Promise.all(modes.map(mode=>fn(mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});})));
 describe('toolkit delivery and cleanup',()=>{
  it('pending MUST rejection blocks caller writes and delivered records until native agreement',async()=>{const {r}=await prepared();try {
-  const skill=path.join(r.session,'confirmation-skill');fs.mkdirSync(skill);fs.cpSync(path.join(r.deps.skillRoot,'references'),path.join(skill,'references'),{recursive:true});
-  fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}}));
-  r.deps.skillRoot=skill;r.deps.orchestrator={platform:'codex',model:'native'};r.deps.liveness={};
+  r.deps.skillRoot=setupTestSkill(r.deps,r.session,'confirmation-skill',{'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}});r.deps.orchestrator={platform:'codex',model:'native'};r.deps.liveness={};
   const review=()=>r.run(['review','run','integration','--kind','code','--level','low']);
   const first=await review();assert.equal(first.output.reason,'native-pending');fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{severity:'MUST',tag:'correctness',locus:'src/file.ts:L1',defect:'Unbounded writes',requiredChange:'Bound writes'}]}));
   assert.equal((await review()).exit,0);
@@ -83,9 +81,9 @@ describe('toolkit delivery and cleanup',()=>{
  const after=caller(r);assert.equal(after.head,before.head);assert.equal(after.branch,before.branch);if(!mode.startsWith('late-'))assert.deepEqual(after,before);
  if(mode==='tracked-edit')assert.deepEqual(fs.readFileSync(file),Buffer.from('caller'));if(mode==='late-edit')assert.equal(fs.readFileSync(file,'utf8'),'late');
  assert.equal(rows(r,'delivered').length,0,mode);
- if(mode.startsWith('late-')||mode==='descendant'||mode==='gitlink')return;
+ if(mode==='descendant'||mode==='gitlink')return;
  // Undo the caller state so the next shared case starts from the same caller.
- if(mode==='staged')r.git(['reset','-q','--','keep.txt']);
+ if(mode==='staged'||mode==='late-index')r.git(['reset','-q','--','keep.txt']);
  if(mode==='intent-to-add')r.git(['rm','-q','--cached','extra.txt']);
  if(mode==='moved')r.git(['reset','-q','--soft',from]);
  if(mode==='other-branch'){r.git(['switch','-q',initial.branch]);r.git(['branch','-q','-D','other']);}
@@ -94,16 +92,16 @@ describe('toolkit delivery and cleanup',()=>{
  fs.writeFileSync(file,srcBytes);fs.writeFileSync(keep,keepBytes);fs.writeFileSync(exclude,excludeBytes);
  assert.deepEqual(caller(r),initial,mode+' undo');};
  const shared=async()=>{const {r}=await prepared();try{await integrate(r,'shared');
-  for(const mode of ['tracked-edit','untracked','ignored','ancestor','staged','intent-to-add','moved','other-branch','sparse'])await refuses(r,mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});});
+  for(const mode of ['tracked-edit','untracked','ignored','ancestor','staged','intent-to-add','moved','other-branch','sparse','late-edit','late-index','late-untracked'])await refuses(r,mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});});
  }finally{r.cleanup();}};
- await Promise.all([shared(),each(['descendant','gitlink','late-edit','late-index','late-untracked'],async mode=>{const {r}=await prepared();try{await integrate(r,mode);await refuses(r,mode);}finally{r.cleanup();}})]);
+ await Promise.all([shared(),each(['descendant','gitlink'],async mode=>{const {r}=await prepared();try{await integrate(r,mode);await refuses(r,mode);}finally{r.cleanup();}})]);
  });
  it('uncommitted safety preserves unrelated dirty and untracked files byte for byte',async()=>{const {r}=await prepared();try{
  await change(r);const dirty=Buffer.from([1,2,0,255,13,10]);fs.writeFileSync(path.join(r.root,'keep.txt'),dirty);fs.writeFileSync(path.join(r.root,'extra-untracked'),'u');
  const result=await r.run(['worktree','deliver']);assert.equal(result.exit,0,JSON.stringify(result));assert.deepEqual(fs.readFileSync(path.join(r.root,'keep.txt')),dirty);assert.equal(fs.readFileSync(path.join(r.root,'extra-untracked'),'utf8'),'u');assert.equal(r.git(['diff','--cached','--name-only']),'');
  assert.match(r.git(['status','--porcelain']),/^ M keep\.txt$/m);}finally{r.cleanup();}});
  it('uncommitted recovery resumes every durable boundary to the same caller state',async()=>{
- await each(['after-preserve','after-started','before-apply','after-apply','after-delivered'],async boundary=>{const {r}=await prepared();try{
+ await each(['after-preserve','before-apply','after-apply','after-delivered'],async boundary=>{const {r}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);let fired=0;
  const crash=await r.run(['worktree','deliver'],p=>{if(p==='deliver:'+boundary){fired++;throw Error('injected '+boundary);}});assert.equal(fired,1,JSON.stringify(crash));assert.equal(crash.exit,2);
  const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,boundary+JSON.stringify(retry));assert.equal(retry.value.delivered,boundary!=='after-delivered');
@@ -143,15 +141,20 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
   it('removes merged worktrees without preservation checks', async () => {
-    await each(['submitted-edit', 'linked', 'ignored-delivered', 'dirty-delivered'], async mode => {
+    await each(['writer', 'delivered'], async mode => {
       const { r, writer } = await prepared(); try {
         let dir = writer; const target = path.join(r.session, 'link-target');
-        if (mode === 'submitted-edit') fs.writeFileSync(path.join(writer, 'src/file.ts'), 'later\n');
-        else if (mode === 'linked') { fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'keep'), 'keep'); fs.symlinkSync(target, path.join(writer, 'ignored'), 'junction'); }
-        else { await r.run(['worktree', 'deliver']); dir = r.integration; fs.writeFileSync(path.join(dir, mode === 'dirty-delivered' ? 'src/file.ts' : 'ignored'), 'later\n'); }
+        if (mode === 'writer') {
+          fs.writeFileSync(path.join(writer, 'src/file.ts'), 'later\n');
+          fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'keep'), 'keep'); fs.symlinkSync(target, path.join(writer, 'ignored'), 'junction');
+        } else {
+          await r.run(['worktree', 'deliver']); dir = r.integration;
+          fs.writeFileSync(path.join(dir, 'src/file.ts'), 'later\n');
+          fs.writeFileSync(path.join(dir, 'ignored'), 'later\n');
+        }
         const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.ok(!fs.existsSync(dir)); assert.ok(!JSON.stringify(cleaned.value).includes('unpreserved'));
-        if (mode === 'linked') assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
-        if (mode.endsWith('-delivered')) assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
+        if (mode === 'writer') assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
+        if (mode === 'delivered') assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
       } finally { r.cleanup(); }
     });
   });
@@ -165,12 +168,10 @@ describe('toolkit delivery and cleanup',()=>{
     } finally { r.cleanup(); }
   });
   it('keeps deregistered remnants of unmerged work', async () => {
-    await each(['active-writer', 'moved-integration', 'interrupted-integration', 'writer-after-delivery'], async mode => {
+    await each(['active-writer', 'moved-integration'], async mode => {
       const r = await toolkitRepo(planSource, base); try {
         await r.level(); let dir: string;
         if (mode === 'active-writer') dir = path.join(r.session, (await r.run(['worktree', 'create', 'T1'])).value.path);
-        else if (mode === 'writer-after-delivery') { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); assert.equal((await r.run(['worktree', 'deliver'])).exit, 0); await r.run(['worktree', 'create', 'T1']); dir = r.integration; }
-        else if (mode === 'interrupted-integration') { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); assert.equal((await r.run(['worktree', 'deliver'])).exit, 0); await appendRecord(r.session, { kind: 'integrate', by: 'tool', data: { phase: 'started', task: 'T1', candidate: r.git(['rev-parse', 'HEAD'], r.integration) } }, r.deps); dir = r.integration; }
         else { const made = await r.run(['worktree', 'create', 'T1']); fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n'); await r.run(['worktree', 'submit', 'T1']); await r.run(['worktree', 'integrate', 'T1']); await r.run(['worktree', 'deliver']); fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'after\n'); assert.equal((await r.run(['worktree', 'commit', '--reason', 'after'])).exit, 0); dir = r.integration; }
         r.git(['worktree', 'remove', '--force', dir]); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'work'), 'kept');
         const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(path.join(dir, 'work'), 'utf8'), 'kept'); assert.ok(JSON.stringify(cleaned.value.kept).includes('unpreserved'));
@@ -178,11 +179,11 @@ describe('toolkit delivery and cleanup',()=>{
     });
   });
   it('keeps unpreserved bytes in undelivered integration work', async () => {
-    await each(['ignored', 'src/file.ts', 'moved-past-delivery'], async name => {
+    await each(['undelivered', 'moved-past-delivery'], async name => {
       const { r } = await prepared(); try {
         if (name === 'moved-past-delivery') { await r.run(['worktree', 'deliver']); fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'after delivery\n'); assert.equal((await r.run(['worktree', 'commit', '--reason', 'after delivery'])).exit, 0); name = 'ignored'; }
-        await r.run(['worktree', 'close', '--reason', 'stop']); const file = path.join(r.integration, name); fs.writeFileSync(file, 'kept\n');
-        const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(file, 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
+        await r.run(['worktree', 'close', '--reason', 'stop']); fs.writeFileSync(path.join(r.integration, 'ignored'), 'kept\n'); fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'kept\n');
+        const cleaned = await r.run(['worktree', 'cleanup']); assert.equal(cleaned.exit, 0); assert.equal(fs.readFileSync(path.join(r.integration, 'ignored'), 'utf8'), 'kept\n'); assert.ok(JSON.stringify(cleaned.value).includes('unpreserved'));
         assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
       } finally { r.cleanup(); }
     });

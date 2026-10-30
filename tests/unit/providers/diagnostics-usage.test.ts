@@ -5,7 +5,14 @@ import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 
-const fixture = (provider: string) => JSON.parse(fs.readFileSync(new URL(`./fixtures/diagnostics-${provider}.json`, import.meta.url), 'utf8')) as { cliVersion: string; stdout: string };
+const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
+  codex: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8')),
+  claude: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-claude.json', import.meta.url), 'utf8')),
+};
+const fixture = (provider: string): { cliVersion: string; stdout: string } => {
+  const base = rawFixtures[provider]!;
+  return { cliVersion: base.cliVersion, stdout: base.stdout };
+};
 
 test('Codex completed turn maps token usage and retains cache overlap semantics', () => {
   const f = fixture('codex'), result = codex.usage!(f.stdout);
@@ -19,13 +26,6 @@ test('Codex completed turn maps token usage and retains cache overlap semantics'
     cacheWrite: 0,
     reasoning: 70,
   });
-});
-
-test('recorded Claude 2.1.268 failed invocation accounts whole-tree model usage', () => {
-  const f = fixture('claude'), result = claude.usage!(f.stdout);
-  assert.equal(result?.input, 2759);
-  assert.equal(result?.actualModels?.[0], 'claude-haiku-4-5-20251001');
-  assert.equal(result?.inputSemantics, 'uncached');
 });
 
 test('repeated completed summaries never add counters', () => {
@@ -48,7 +48,12 @@ test('Claude whole-tree thinking counters remain separate and reject unsafe sums
 });
 
 test('Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
-  const event = JSON.parse(fixture('claude').stdout);
+  const f = fixture('claude'), base = claude.usage!(f.stdout);
+  assert.equal(base?.input, 2759);
+  assert.equal(base?.actualModels?.[0], 'claude-haiku-4-5-20251001');
+  assert.equal(base?.inputSemantics, 'uncached');
+
+  const event = JSON.parse(f.stdout);
   event.modelUsage['claude-opus-4-1'] = { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 30, cacheCreationInputTokens: 40 };
   const result = claude.usage!(JSON.stringify(event));
   assert.deepEqual(result?.models, {

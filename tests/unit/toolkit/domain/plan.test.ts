@@ -602,7 +602,7 @@ test('parses seams', () => {
 const seamWarnings = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'missing-seams');
 const withSeams = (declaration: string) => PLAN.replace('## Verification Plan\n', `## Verification Plan\n${declaration}`);
 
-test('seam advisory warns for absent and empty declarations', () => {
+test('seam advisory validates declarations, rejecting decoys and empty declarations while permitting explicit none', () => {
   for (const source of [PLAN, withSeams('- Seams:\n'), withSeams('- Seams: ``, ,\n')]) {
     const warnings = seamWarnings(source);
     assert.equal(warnings.length, 1);
@@ -611,33 +611,26 @@ test('seam advisory warns for absent and empty declarations', () => {
     assert.match(warnings[0]?.message ?? '', /Seams:.*none/);
     assert.deepEqual(parsed(source).seams, []);
   }
-});
+  for (const declaration of ['```text\n- Seams: none\n```\n', '<!--\n- Seams: none\n-->\n', '> - Seams: none\n']) {
+    assert.equal(seamWarnings(withSeams(declaration)).length, 1);
+  }
+  assert.equal(seamWarnings(PLAN.replace('### Automated Tests\n', '### Automated Tests\n- Seams: none\n')).length, 1);
+  assert.equal(seamWarnings(PLAN.replace('## Key Decisions & Context\n', '## Key Decisions & Context\n- Seams: none\n')).length, 1);
 
-test('seam advisory permits explicit none and populated declarations', () => {
   for (const declaration of ['- Seams: none\n', '* seams: NoNe\n', '- Seams: `tests/fetch.test.ts`\n']) {
     assert.deepEqual(seamWarnings(withSeams(declaration)), []);
   }
   assert.deepEqual(parsed(withSeams('- Seams: `tests/fetch.test.ts`\n')).seams, ['tests/fetch.test.ts']);
 });
 
-test('seam advisory ignores review-only criteria', () => {
-  const source = PLAN.replace(/  - Verify:.*\n/g, '').replace(/  - Evidence: (red|verify)/g,
+test('seam advisory accounts for review-only and verify-backed criteria', () => {
+  const reviewOnly = PLAN.replace(/  - Verify:.*\n/g, '').replace(/  - Evidence: (red|verify)/g,
     '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
-  assert.deepEqual(seamWarnings(source), []);
-});
+  assert.deepEqual(seamWarnings(reviewOnly), []);
 
-test('seam advisory rejects structural decoys', () => {
-  for (const declaration of ['```text\n- Seams: none\n```\n', '<!--\n- Seams: none\n-->\n', '> - Seams: none\n']) {
-    assert.equal(seamWarnings(withSeams(declaration)).length, 1);
-  }
-  assert.equal(seamWarnings(PLAN.replace('### Automated Tests\n', '### Automated Tests\n- Seams: none\n')).length, 1);
-  assert.equal(seamWarnings(PLAN.replace('## Key Decisions & Context\n', '## Key Decisions & Context\n- Seams: none\n')).length, 1);
-});
-
-test('seam advisory counts a Verify on a later criterion', () => {
-  const source = PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`\n', '')
+  const laterVerify = PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`\n', '')
     .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
-  assert.equal(seamWarnings(source).length, 1);
+  assert.equal(seamWarnings(laterVerify).length, 1);
 });
 
 test('detects test paths across runners', () => {
