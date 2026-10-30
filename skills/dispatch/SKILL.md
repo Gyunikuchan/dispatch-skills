@@ -28,7 +28,7 @@ Read host rules and the [quality bar](references/templates/quality-bar.md), then
 - `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve errors and findings. End with the reviewed artifact and concerns; use the [Decision Frame](references/decision-frame.md) for applicable approval.
 - `implement`: resolve the spec and required design or plan; lint, review and obtain the approval tuple. Implement with native writers; verify the integrated tree and repair within scope. Resolve code findings, commit fixes and verify. Review exact HEAD under [review provenance](references/review-rules.md#review-provenance-and-applicability). For transient plans, run `worktree prune`, then final `verify run` under the [lifecycle](references/verbs/implement.md). Deliver after successful final checks. Run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md) after success. Report behavior, evidence, concerns and artifacts.
 
-For `native-pending`, read each `promptPath`, launch the configured native slot, write its output to `replyPath`, and rerun the same tool call. Preserve running handles; wait on completion or material blockers. [Providers](references/providers.md) owns slot and fallback rules.
+Before every subagent launch, follow [Providers' Subagent context](references/providers.md). For `native-pending`, read each `promptPath`, launch its configured slot, write its output to `replyPath`, then rerun the same tool call. Preserve handles; wait for completion or blockers.
 
 ## Invariants and recovery
 

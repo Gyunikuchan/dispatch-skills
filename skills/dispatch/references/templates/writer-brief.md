@@ -3,6 +3,7 @@
 Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may create or update only their own cache or index. Follow applicable host rules; a stricter one wins. Run no Git write commands.
 
 Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
+For any delegation already permitted by the assignment, use available host controls to request fresh context without parent conversation history. If unsupported or unverifiable, continue and report the limitation through existing reporting channels. Give each new child a self-contained brief with this launch instruction; preserve required reply schemas.
 {{design}}
 Governing plan: `{{planPath}}` (governed hash {{planHash}}).
 
