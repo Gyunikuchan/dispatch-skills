@@ -18,6 +18,11 @@
   "diagnostics": false,
   // Optional; maximum concurrent implementation task writers (default 1).
   "write-concurrency": 2,
+  // Optional; host read-command prefixes that read delegates may run, such as a code-index query.
+  // Name the read subcommand: a bare tool name also permits its write subcommands. List only
+  // commands that write at most their own cache; Claude's sandbox permits working-directory writes.
+  // Create or refresh any index these commands query before delegates launch.
+  "read-commands": ["codegraph explore"],
   // Required for asks and reviews. Keep only providers you use.
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {

@@ -103,7 +103,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
 const DASH = '—';
 const VERBS = ['ask', 'design', 'plan', 'review', 'implement'];
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'explore-subagents', 'phases'];
+const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'read-commands'];
 const ID = /^[A-Za-z0-9_-]{1,48}$/;
 // Host text may name dispatch files and slash commands, never machine, network, or identity locators.
 const PROHIBITED: readonly RegExp[] = [
@@ -117,6 +117,8 @@ const PROHIBITED: readonly RegExp[] = [
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const list = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 const locatorFree = (v: string): boolean => !PROHIBITED.some((re) => re.test(v));
+// Read-command prefixes are space-separated words; slashes are excluded so no path survives.
+const commandText = (v: unknown): string => typeof v === 'string' && v.length <= 80 && /^[A-Za-z0-9._:=@+-]+(?: [A-Za-z0-9._:=@+-]+)*$/.test(v) && locatorFree(v) ? v : DASH;
 // Every rendered identifier and alias passes the locator gate too: a well-formed id can still be a UUID or a host name.
 const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === 'string' && re.test(v) && locatorFree(v) ? v : undefined;
 const token = match(/^[a-z][a-z0-9-]{0,39}$/);
@@ -241,7 +243,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
   const r: Record<string, unknown> = record(run) ? run : {};
   // A dispatch content hash, exempt from the long-hex locator rule; only its 12-character prefix renders.
   const build = typeof r['build'] === 'string' && /^[a-f0-9]{12,64}$/.test(r['build']) ? r['build'] : undefined;
-  const config = record(r['config']) ? Object.fromEntries(CONFIG_KEYS.filter((key) => (r['config'] as Record<string, unknown>)[key] !== undefined).map((key) => [key, configValue((r['config'] as Record<string, unknown>)[key], 0)])) : undefined;
+  const config = record(r['config']) ? Object.fromEntries(CONFIG_KEYS.filter((key) => (r['config'] as Record<string, unknown>)[key] !== undefined).map((key) => { const v = (r['config'] as Record<string, unknown>)[key]; return [key, key === 'read-commands' && Array.isArray(v) ? v.slice(0, 16).map(commandText) : configValue(v, 0)]; })) : undefined;
   const fault = record(r['fault']) ? r['fault'] : undefined;
   return {
     ...opt('capture',record(r['capture']) && (r['capture']['state']==='opened'||r['capture']['state']==='completed') ? {

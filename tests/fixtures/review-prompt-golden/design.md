@@ -17,7 +17,7 @@ code has been written yet.
 - Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 
 ### Inspection
-Inspect by reading and searching files, running read-only commands in the foreground. A native reviewer may run a host read tool that updates only its own cache or index; the tool never creates an index or changes repository source or config, and a stricter host rule wins.
+Inspect by reading and searching files, running read-only commands in the foreground. A native reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to the host rule files that the quality section's discovery rule finds.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.

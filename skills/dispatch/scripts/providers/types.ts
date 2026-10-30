@@ -36,6 +36,8 @@ export type DelegateRequest = {
   /** Opencode's built-in explore agent accepted without a verified read-only permission set. */
   readOnlyBestEffort?: boolean;
   configSelectors?: Readonly<Record<string, string>>;
+  /** Host read-command prefixes from config; providers with command allowlists permit them. */
+  readCommands?: readonly string[];
 };
 
 /** What `argv` receives: the request plus the runner-prepared prompt and resolved binary. */

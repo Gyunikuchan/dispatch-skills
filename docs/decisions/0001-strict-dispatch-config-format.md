@@ -16,7 +16,8 @@ Adopt one strict, intentionally breaking contract with three root tables: `read-
 `write-subagents`, and `phases`. Other shapes fail exhaustive schema validation with a pointer to
 `config.sample.jsonc`; there is no automatic migration or special migration diagnostic. The active
 config used only a small subset of the permissive shapes, so compatibility would preserve ambiguity
-without serving current use.
+without serving current use. Later optional root tables (`diagnostics`, `write-concurrency`,
+`explore-subagents`, `read-commands`) follow the same strict validation.
 
 ### Read delegates and models
 

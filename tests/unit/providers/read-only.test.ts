@@ -38,6 +38,13 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
   assert.deepEqual(SPECS.opencode.argv(request(true), 'cli').argv.slice(0, 7), ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--ro-bind', '/']);
 });
 
+test('claude allowlists configured read commands as prefix Bash rules', () => {
+  const argv = SPECS.claude.argv({ ...request(true), readCommands: ['codegraph explore'] }, 'cli').argv;
+  const index = argv.indexOf('Bash(codegraph explore*)');
+  assert.ok(index > 0 && argv[index - 1] === '--allowedTools');
+  assert.ok(!SPECS.claude.argv(request(true), 'cli').argv.some((arg) => arg.includes('codegraph')));
+});
+
 test('copilot sandbox argv uses GA hands-free flags in plan mode', () => {
   const sandboxed = SPECS.copilot.argv(request(true), 'cli').argv;
   for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user', '--mode', 'plan', '--reasoning-effort', 'high']) {

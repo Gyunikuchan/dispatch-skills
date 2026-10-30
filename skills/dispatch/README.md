@@ -135,6 +135,7 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 |---|---|
 | `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; adds one retro turn per run when on |
 | `write-concurrency` | Maximum number of implementation task writers running at once |
+| `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
 | `explore-subagents` | Optional native explorers for domain grounding before authoring |

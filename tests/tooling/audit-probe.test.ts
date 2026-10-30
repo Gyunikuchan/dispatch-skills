@@ -155,6 +155,22 @@ test('audit probe refuses a runner-internal retry beyond one launch', async () =
   assert.equal(record.lifecycle, 'failed');
 });
 
+test('audit probe passes config read commands to the provider request', async () => {
+  const spec = fakeSpec({ argv: (req: { prompt: string; cwd: string; readCommands?: readonly string[] }) => ({ argv: ['fake-cli', ...(req.readCommands ?? []), req.prompt], stdin: null, env: {}, cwd: req.cwd }) });
+  const { ctx, process, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }), spec);
+  await probe.runTarget(target(), { ...ctx, readCommands: ['codegraph explore'] });
+  assert.ok(process.launches[0]?.argv.includes('codegraph explore'));
+});
+
+test('audit probe config load validates read commands like production fan-out', () => {
+  const read = (text: string) => (file: string) => (file.endsWith('config.local.jsonc') ? text : null);
+  assert.deepEqual(probe.loadConfig('/repo', read('{"read-commands":["codegraph explore"]}')).readCommands, ['codegraph explore']);
+  const invalid = probe.loadConfig('/repo', read('{"read-commands":["git *"]}'));
+  assert.equal(invalid.config, null);
+  assert.deepEqual(invalid.readCommands, []);
+  assert.match(invalid.error, /read-commands/);
+});
+
 test('audit probe validates the denylisted attachment without any launch', async () => {
   const { ctx, process, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
   const record = await probe.runTarget(target(), ctx);

@@ -239,6 +239,10 @@ test('diagnostics config renders explore-subagents', () => {
   assert.match(text, /"explore-subagents": \{/);
   assert.match(text, /"deep": true/);
 });
+test('diagnostics config keeps read-command prefixes and redacts locators', () => {
+  const sanitized = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));
+  assert.deepEqual(sanitized.config?.['read-commands'], ['codegraph explore', '—', '—']);
+});
 test('diagnostics render one subject per phase cell and bound observed collection coverage', () => {
  const subject='1234567890abcdef';
  const generations=['1111222233334444','aaaabbbbccccdddd'];

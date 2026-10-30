@@ -10,7 +10,7 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'diagnostics', 'write-concurrency'];
+const TABLES = ['read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -93,6 +93,16 @@ export function loadConfig(skillRoot: string, read: ReadFile = readReal): { conf
   throw new Error(`Config file not found: tried ${candidates.join(', ')}. Copy ${SAMPLE_NAME} to config.local.jsonc or config.jsonc.`);
 }
 
+/** Host read-command prefixes for provider allowlists; no config file means none. */
+export function loadReadCommands(skillRoot: string, read: ReadFile = readReal): readonly string[] {
+  if (CONFIG_CANDIDATES.every((name) => read(path.join(skillRoot, name)) === null)) return [];
+  const value = loadConfig(skillRoot, read).config['read-commands'];
+  const problems: string[] = [];
+  checkReadCommands(value, problems);
+  if (problems.length) throw new Error(problems.join(' '));
+  return (value as string[] | undefined) ?? [];
+}
+
 export function loadDiagnosticToggle(skillRoot: string): boolean {
   const value = loadConfig(skillRoot).config['diagnostics'];
   if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
@@ -116,6 +126,16 @@ function sortedJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
   if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${sortedJson(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
+}
+
+// Plain words only: an allowlist prefix must not smuggle shell operators, globs or quoting.
+const READ_COMMAND = /^[A-Za-z0-9._/:=@+-]+(?: [A-Za-z0-9._/:=@+-]+)*$/;
+
+function checkReadCommands(value: unknown, problems: string[]): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && READ_COMMAND.test(entry))) {
+    problems.push(`read-commands must be an array of command prefixes made of plain words separated by single spaces (${HINT}).`);
+  }
 }
 
 function checkLevelConfig(where: string, value: unknown, problems: string[], allowDeep = false): void {
@@ -232,6 +252,7 @@ export function validateConfig(config: unknown): string[] {
   const problems: string[] = [];
   if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean') problems.push(`diagnostics must be a boolean (${HINT}).`);
   if (config['write-concurrency'] !== undefined && !positiveInt(config['write-concurrency'])) problems.push(`write-concurrency must be a positive integer (${HINT}).`);
+  checkReadCommands(config['read-commands'], problems);
   for (const key of Object.keys(config)) {
     if (!TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
   }

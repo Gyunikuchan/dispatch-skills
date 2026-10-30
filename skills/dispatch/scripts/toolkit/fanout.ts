@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig } from '../lib/config.ts';
+import { loadConfig, loadReadCommands } from '../lib/config.ts';
 import { readManifest } from '../lib/session.ts';
 import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
@@ -76,6 +76,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const cwd = input.cwd ?? manifest.repositoryRoot;
   const store = {sessionDir: session, repositoryRoot: manifest.repositoryRoot, bucketWidth: H};
   const deadline = deps.clock() + 30 * 60 * 1000;
+  const readCommands = loadReadCommands(deps.skillRoot);
   // Reused outcomes need no quota reads; each launched key keeps one frozen decision.
   const decisions = new Map<string, ReturnType<typeof quotaSnapshot>['decisions'][number]>();
   const quotaFor = (provider: ProviderId, model: string | null, mode: string) => {
@@ -126,7 +127,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
           promptPath,model,effort:slot.effort ?? null,sandbox:slot.sandbox ?? true,schemaPath:null,resume:null,cwd,
           timeoutMs:remaining,outputCapBytes:10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
           configSelectors:Object.fromEntries(['OPENCODE_CONFIG','OPENCODE_CONFIG_DIR'].flatMap(key =>
-            deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),
+            deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),readCommands,
         },mode);
         if(result.outcome.status === 'ok') {
           const checked = input.validate(result.outcome.text, logicalSlot);

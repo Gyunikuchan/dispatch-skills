@@ -48,7 +48,7 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 
 When `/dispatch-implement` (or `dispatch implement`) runs in this checkout, read and follow [the fixed-controller self-build procedure](skills/dispatch/references/self-build.md). Select and inventory a complete stable controller, then use normal Dispatch execution against the candidate checkout. Keep active-run commands and inputs bound to that controller through verification and owned-worktree cleanup.
 
-Before writer launch, if the `codegraph` CLI is available and the repository has no `.codegraph/`, ask the user once whether to index it. When an index exists, tell each writer in its brief to locate code symbols with `codegraph explore "<symbols>"` before reading, then read only the returned ranges; non-code and small files may be read whole. Writers never initialize or rebuild the index.
+Before launching writers or read delegates, if the `codegraph` CLI is available and the repository has no `.codegraph/`, ask the user once whether to index it. When an index exists, writers and read delegates locate code symbols with `codegraph explore "<symbols>"` before reading, then read only the returned ranges; non-code and small files may be read whole. Say so in each writer brief. Read delegates can run it only when config `read-commands` lists `codegraph explore`. Codegraph may update its own index during these reads.
 
 Use the procedure's bounded manual repair fallback only when a demonstrated controller defect prevents normal execution and recovery. Preserve the blocked run and evidence, and obtain a bounded approved repair plan before implementation. Existing scope, review, verification and cleanup rules still apply.
 

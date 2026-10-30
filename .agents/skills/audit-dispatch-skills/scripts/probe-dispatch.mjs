@@ -26,7 +26,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { currentPlatform } from '../../../../skills/dispatch/scripts/lib/platform.ts';
-import { loadConfig as loadNativeConfig } from '../../../../skills/dispatch/scripts/lib/config.ts';
+import { loadConfig as loadNativeConfig, loadReadCommands } from '../../../../skills/dispatch/scripts/lib/config.ts';
 import { LEVELS, resolveLevel } from '../../../../skills/dispatch/scripts/policy/roster.ts';
 import { createDiscovery } from '../../../../skills/dispatch/scripts/providers/discovery.ts';
 import { SPECS } from '../../../../skills/dispatch/scripts/providers/index.ts';
@@ -116,7 +116,7 @@ export async function main(options = {}) {
 
 async function probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits, ports, signal, home }) {
   const rows = await discover({}, opts.only ?? PROVIDERS, ports);
-  const { config, error: configError } = loadConfig(repoRoot);
+  const { config, readCommands, error: configError } = loadConfig(repoRoot);
   let live = [];
   let fixture = null;
   let interrupted = false;
@@ -126,7 +126,7 @@ async function probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits, p
     // Ownership and launch reservations commit before any child starts, so a competing invocation cannot also launch.
     const claim = claimProbe(workDir, rows, selection, { clock: ports.clock, alive: ports.alive ?? pidAlive });
     try {
-      ({ live, fixture, interrupted } = await launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home }));
+      ({ live, fixture, interrupted } = await launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home, readCommands }));
     } finally {
       if (claim.owner) updateRun(workDir, (m) => {
         if (m.probeOwner?.token !== claim.owner.token) return;
@@ -144,7 +144,7 @@ async function probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits, p
   return { rows, live, interrupted };
 }
 
-async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home }) {
+async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home, readCommands }) {
   const { targets, previous } = claim;
   let live = [];
   let interrupted = false;
@@ -157,7 +157,7 @@ async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, 
     if (manifest) updateRun(workDir, (m) => { m.probes[id] = toProbeRecord(record, rel, stageDir); });
   };
   const runs = Promise.allSettled(targets.map((target) => runTarget(target, {
-    fixture, stageDir, limits, signal, previous: previous[target.id] ?? null,
+    fixture, stageDir, limits, signal, readCommands, previous: previous[target.id] ?? null,
     // Once interrupted, the records below are final; late updates from still-settling targets are ignored.
     state: { update: (id, record) => { if (!interrupted) persist(id, record); } },
     ports: { ...ports, prepare: ports.prepare ?? ports.prepareFor?.(ports.clock.now() + limits.probeDeadlineSeconds * 1000) },
@@ -388,7 +388,7 @@ const runnerFs = {
  * `ctx.ports` must supply process, clock, specs, env and platform; nothing falls back to real ports.
  */
 export async function runTarget(target, ctx) {
-  const { fixture, stageDir, limits, ports, state, previous, signal } = ctx;
+  const { fixture, stageDir, limits, ports, state, previous, signal, readCommands = [] } = ctx;
   const base = {
     id: target.id, provider: target.provider, mode: target.mode, aliases: target.aliases, lifecycle: 'pending',
     handle: null, liveness: 'exited', exitConfirmed: true, launches: 0, attempts: 0, startedAt: null, deadlineAt: null,
@@ -430,7 +430,7 @@ export async function runTarget(target, ctx) {
     const promptPath = path.join(stageDir, `${stem}.${kind}.prompt.md`);
     fs.writeFileSync(promptPath, prompt);
     const logPath = path.join(stageDir, `${stem}.${kind}.log`);
-    return { promptPath, model: target.model, effort: target.effort, sandbox: target.sandbox, schemaPath: null, resume: null, cwd, timeoutMs: deadline - ports.clock.now(), outputCapBytes: limits.probeCaptureBytes, attachments: [file], logPath, briefPath: `${logPath}.brief.md`, ...prepared };
+    return { promptPath, model: target.model, effort: target.effort, sandbox: target.sandbox, schemaPath: null, resume: null, cwd, timeoutMs: deadline - ports.clock.now(), outputCapBytes: limits.probeCaptureBytes, attachments: [file], logPath, briefPath: `${logPath}.brief.md`, readCommands, ...prepared };
   };
   const runnerPorts = { clock: ports.clock, fs: runnerFs, env: ports.env ?? {}, platform: ports.platform, binary: target.binary, nonce: crypto.randomUUID, workspaceRoot: cwd };
 
@@ -765,12 +765,16 @@ export function parseArgs(argv) {
   return opts;
 }
 
-/** @returns {{config: object|null, error: string|null}} A load failure is returned, never swallowed, so the summary and skip causes name it. */
-export function loadConfig(repoRoot) {
+/**
+ * @returns {{config: object|null, readCommands: readonly string[], error: string|null}} A load failure is returned, never swallowed, so the summary and skip causes name it.
+ * Read commands pass the production validator, so probe argv matches real delegate launches and an invalid list skips every launch.
+ */
+export function loadConfig(repoRoot, read) {
+  const skillRoot = path.join(repoRoot, 'skills', 'dispatch');
   try {
-    return { config: loadNativeConfig(path.join(repoRoot, 'skills', 'dispatch')).config, error: null };
+    return { config: loadNativeConfig(skillRoot, read).config, readCommands: loadReadCommands(skillRoot, read), error: null };
   } catch (err) {
-    return { config: null, error: String(err?.message ?? err) };
+    return { config: null, readCommands: [], error: String(err?.message ?? err) };
   }
 }
 

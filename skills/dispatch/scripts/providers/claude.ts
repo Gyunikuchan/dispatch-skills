@@ -76,6 +76,7 @@ export const claude: ProviderSpec = {
     if (req.schemaText) argv.push('--json-schema', req.schemaText);
     if (req.sandbox) argv.push('--settings', SANDBOX_SETTINGS);
     for (const tool of READ_ONLY_ALLOWED_TOOLS) argv.push('--allowedTools', tool);
+    for (const command of req.readCommands ?? []) argv.push('--allowedTools', `Bash(${command}*)`);
     argv.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS);
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },

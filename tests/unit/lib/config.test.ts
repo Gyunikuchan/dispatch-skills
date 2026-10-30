@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { test } from 'node:test';
 
-import { loadConfig, parseJsonc, stripJsonc, validateConfig } from '../../../skills/dispatch/scripts/lib/config.ts';
+import { loadConfig, loadReadCommands, parseJsonc, stripJsonc, validateConfig } from '../../../skills/dispatch/scripts/lib/config.ts';
 
 
 // SECTION: Configuration loading and validation
@@ -73,4 +73,21 @@ test('write-concurrency validates positive integers and accepts omission', () =>
   for (const value of [0, -1, 1.5, '2', true]) {
     assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
   }
+});
+
+// SECTION: Read commands
+
+test('read-commands accepts plain command prefixes and rejects shell syntax', () => {
+  assert.deepEqual(validateConfig({ ...minimal, 'read-commands': ['codegraph explore', 'tool-x query'] }), []);
+  for (const value of ['codegraph', [''], ['a  b'], ['a; rm -rf /'], ['a && b'], ['a*'], ['"a"'], ['a $(b)'], [1]]) {
+    assert.match(validateConfig({ ...minimal, 'read-commands': value }).join(' '), /read-commands must be an array/);
+  }
+});
+
+test('loadReadCommands returns none without a config and rejects an invalid list', () => {
+  assert.deepEqual(loadReadCommands('/skill', () => null), []);
+  const config = (commands: unknown) => (file: string) => file.endsWith('config.jsonc') ? JSON.stringify({ ...minimal, 'read-commands': commands }) : null;
+  assert.deepEqual(loadReadCommands('/skill', config(['codegraph explore'])), ['codegraph explore']);
+  assert.deepEqual(loadReadCommands('/skill', (file) => file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null), []);
+  assert.throws(() => loadReadCommands('/skill', config(['a | b'])), /read-commands must be an array/);
 });

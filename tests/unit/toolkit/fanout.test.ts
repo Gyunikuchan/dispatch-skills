@@ -168,3 +168,13 @@ test('diagnostics observe validation routing and native replay without changing 
  assert.deepEqual(await fanOut({dir,slots,prompt:'question',validate,quota},f.deps),done);
  }finally{f.cleanup();}
 });
+
+test('fan-out passes configured read commands to each delegate request', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f=sessionFixture({memory:true});try {
+    f.artifact('config.local.jsonc',JSON.stringify({'read-delegates':{claude:{targets:[{low:{model:'good'}}]}},'read-commands':['codegraph explore']}));
+    f.deps.skillRoot=f.root;f.script('claude','good','answer');
+    await fanOut({dir:path.join(f.session,'commands'),slots:[slot('claude')],prompt:'question',validate,quota},f.deps);
+    assert.deepEqual(f.launches[0]?.request.readCommands,['codegraph explore']);
+  }finally{f.cleanup();}
+});

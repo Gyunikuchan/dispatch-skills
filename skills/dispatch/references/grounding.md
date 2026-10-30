@@ -12,7 +12,7 @@ Outside-in starts at entry points, docs, config, samples, tests and precedent, t
 
 ## Follow-up explorers
 
-At any step, including `ask`, the orchestrator can use one follow-up explorer when an open question needs many files read and no current map answers it. Consider one to search for reuse candidates or consumers while authoring a design or plan, check a review finding, or diagnose a failed repair; these examples are guidance, not a gate. Launch one single-strategy explorer. Deep never applies to follow-up maps. Put only that question and its limited Coverage checklist in a single-strategy brief. Use the follow-up output form in the [explorer brief](templates/explorer-brief.md#map-budget-and-output); keep `<slug>.context.md` for the initial map. Lint each map and verify load-bearing claims at source before relying on it.
+At any step, including `ask`, the orchestrator can launch a follow-up explorer whenever an open question needs many files read and no current map answers it. Consider one to search for reuse candidates or consumers while authoring a design or plan, check a review finding, or diagnose a failed repair; these examples are guidance, not a gate. Give each follow-up one single-strategy explorer for its one question; deep never applies to follow-up maps. Put only that question and its limited Coverage checklist in a single-strategy brief. Use the follow-up output form in the [explorer brief](templates/explorer-brief.md#map-budget-and-output); keep `<slug>.context.md` for the initial map. Lint each map and verify load-bearing claims at source before relying on it.
 
 ## Check and recover
 

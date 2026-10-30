@@ -16,6 +16,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-subagents` | Implementation | Native writer models available to each host platform |
 | `explore-subagents` | Optional | One native explorer entry per platform; `deep` applies only to initial grounding |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
+| `read-commands` | Optional | Host read commands, such as a code-index query, that read delegates may run |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
 
@@ -87,9 +88,10 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
-`explore-subagents` configures native, read-only explorers for domain grounding. Define one `{ model, effort?, deep? }` entry per platform; explorer choices do not depend on run level. `deep: true` launches two strategies for initial grounding. Dispatch can also launch one explorer for an unanswered question at any stage; `deep` does not affect these follow-ups.
+`explore-subagents` configures native, read-only explorers for domain grounding. Define one `{ model, effort?, deep? }` entry per platform; explorer choices do not depend on run level. `deep: true` launches two strategies for initial grounding. Dispatch can also launch an explorer for each unanswered question at any stage; `deep` does not affect these follow-ups.
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
+- Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Only Claude has a command allowlist; other providers already permit commands their sandbox allows.
 - Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
 ## Provider-specific settings

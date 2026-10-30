@@ -231,7 +231,7 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.ok(contextMap.includes('## Conventions'));
 
   assert.match(providers, /own cache or index/i);
-  assert.match(providers, /never create an index/i);
+  assert.match(providers, /create or update only/i);
   assert.match(reviewPrompt, /own cache or index/i);
   assert.match(writerBrief, /own cache or index/i);
   assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
