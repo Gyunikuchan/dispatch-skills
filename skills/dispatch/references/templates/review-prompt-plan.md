@@ -6,6 +6,7 @@ Kind block for `review-prompt.md`.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
 - `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> (full artifact) — review the whole artifact; changed sections for context: <changed sections>`, or `Re-review round <n> (delta) — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is read delegate context.
+- `<Context Map>` — `Context Map:` bullet naming the session context map, or empty when the session has none.
 
 ## opener
 
@@ -19,7 +20,7 @@ executing the plan as written delivers the requirement.
 
 - Plan: <Plan Path>
 - Spec Path: <Spec Path>
-- Spec Hash: <Spec Hash>
+- Spec Hash: <Spec Hash><Context Map>
 
 ## against
 
@@ -63,8 +64,6 @@ constraint. A gap that the plan's own Verify gates would surface deterministical
 implementation, such as a fixture update or a test assertion, is SHOULD.
 
 ## budget
-
-If unspecified, target `8 + proposed-change entries`, at most 24; on re-review count changed entries only.
 
 ## locus
 

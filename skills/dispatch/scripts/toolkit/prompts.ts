@@ -31,7 +31,7 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number;
+  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number;
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
@@ -39,10 +39,12 @@ export function reviewPrompt(kind: ReviewKind, context: {
   const tags = sections(kindBlock, false).get('tags');
   const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
   const template = assembleTemplate(read('review-prompt.md'), rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0)]);
+  // NOTE: the map is a pre-change index, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
+  const contextMap = context.contextMapPath ? `\n- Context Map: ${context.contextMapPath} — pre-change index; verify claims at source.` : '';
   const values: Record<string, string> = {
     'Spec Path': context.spec.path, 'Spec Hash': context.spec.hash,
-    'Review Scope': context.scope, 'User Focus Areas': 'General review', 'Tool Turn Budget': 'Unspecified',
-    ...(kind === 'plan' ? {'Plan Path': context.artifact} : kind === 'design' ? {'Design Path': context.artifact} : {
+    'Review Scope': context.scope, 'User Focus Areas': 'General review', 'Tool Turn Budget': String(context.turnTarget),
+    ...(kind === 'plan' ? {'Plan Path': context.artifact, 'Context Map': contextMap} : kind === 'design' ? {'Design Path': context.artifact, 'Context Map': contextMap} : {
       'Plan Path': context.planPath ?? 'None', 'Task Summary': context.taskSummary ?? 'Review the selected changes.',
     }),
   };

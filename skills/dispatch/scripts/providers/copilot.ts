@@ -37,6 +37,7 @@ export const copilot: ProviderSpec = {
     if (req.resume) argv.push('--resume', req.resume);
     if (req.model) argv.push('--model', req.model);
     if (req.effort) argv.push('--reasoning-effort', req.effort);
+    for (const command of req.readCommands ?? []) argv.push('--allow-tool', `shell(${command}:*)`);
     argv.push('--mode', 'plan');
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },

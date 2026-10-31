@@ -230,3 +230,21 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
   assert.ok(read(root + 'references/verbs/implement.md').includes('grounding.md#follow-up-explorers'));
 });
+
+test('authoring carry-over and review round roster rules are stated in prose', () => {
+  const plan = read(root + 'references/verbs/plan.md');
+  const design = read(root + 'references/verbs/design.md');
+  const rules = read(root + 'references/review-rules.md');
+
+  assert.match(plan, /existing test seams and helpers[^.]*`Seams:`/);
+  assert.match(plan, /unchanged consumers and callers[^.]*`Rollback & Blast Radius`/);
+  assert.match(plan, /parallel implementations[^.]*`Invariants:`/);
+  assert.match(design, /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/);
+
+  assert.match(rules, /launches the full configured roster when the previous completed round has an accepted MUST/);
+  assert.match(rules, /or an accepted SHOULD from a round below the cap/);
+  assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
+  assert.match(rules, /pending MUST rejection requests stay assigned/);
+  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
+  assert.match(rules, /code review prompts never receive it/);
+});

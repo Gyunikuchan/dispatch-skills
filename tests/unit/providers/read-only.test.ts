@@ -45,6 +45,13 @@ test('claude allowlists configured read commands as prefix Bash rules', () => {
   assert.ok(!SPECS.claude.argv(request(true), 'cli').argv.some((arg) => arg.includes('codegraph')));
 });
 
+test('copilot allowlists configured read commands as shell prefix rules', () => {
+  const argv = SPECS.copilot.argv({ ...request(true), readCommands: ['codegraph explore'] }, 'cli').argv;
+  const index = argv.indexOf('shell(codegraph explore:*)');
+  assert.ok(index > 0 && argv[index - 1] === '--allow-tool');
+  assert.ok(!SPECS.copilot.argv(request(true), 'cli').argv.some((arg) => arg.includes('codegraph')));
+});
+
 test('copilot sandbox argv uses GA hands-free flags in plan mode', () => {
   const sandboxed = SPECS.copilot.argv(request(true), 'cli').argv;
   for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user', '--mode', 'plan', '--reasoning-effort', 'high']) {

@@ -11,7 +11,7 @@ code has been written yet.
 The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: General review
 - Scope: Full review
-- Advisory Tool Turn Target: Unspecified
+- Advisory Tool Turn Target: 10
 
 ### Review against
 - Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.

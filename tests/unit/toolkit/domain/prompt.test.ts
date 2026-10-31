@@ -84,6 +84,7 @@ const reviewContext = (kind: typeof reviewKinds[number], rotation = 0) => ({
   artifact: REVIEW_PROMPT_INPUTS[kind][kind === 'design' ? 'Design Path' : 'Plan Path']!,
   ...(kind === 'code' ? {planPath: REVIEW_PROMPT_INPUTS.code['Plan Path']!, taskSummary: REVIEW_PROMPT_INPUTS.code['Task Summary']!} : {}),
   scope: REVIEW_PROMPT_INPUTS[kind]['Review Scope']!,
+  turnTarget: 10,
   rotation,
 });
 const sectionBullets = (prompt: string, heading: string): string[] => {
@@ -301,4 +302,17 @@ test('quality selection keeps artifact finding loci in review kind blocks', () =
     assert.match(kindBlock, new RegExp(`nearest ${consumer} heading as locus`));
     assert.doesNotMatch(kindBlock, new RegExp(`nearest ${consumer === 'plan' ? 'design' : 'plan'} heading`));
   }
+});
+
+// SECTION: Computed turn target and context map
+
+test('turn target: the advisory budget shows the computed number in every kind', () => {
+  for (const kind of reviewKinds) {
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), turnTarget: 42});
+    assert.ok(prompt.includes('- Advisory Tool Turn Target: 42'), kind);
+  }
+});
+
+test('context map: code prompts never render the map line', () => {
+  assert.doesNotMatch(reviewPrompt('code', {...reviewContext('code'), contextMapPath: '/session/work.context.md'}), /Context Map/);
 });

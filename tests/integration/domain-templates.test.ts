@@ -18,7 +18,7 @@ const KEPT = [
 
 test('code review evidence is actionable with and without a bound plan', () => {
   for (const planPath of [undefined, 'work.plan.md']) {
-    const prompt = reviewPrompt('code', {skillRoot: path.resolve('skills/dispatch'), spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'worktree', scope: 'Full review', ...(planPath ? {planPath} : {})});
+    const prompt = reviewPrompt('code', {skillRoot: path.resolve('skills/dispatch'), spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'worktree', scope: 'Full review', turnTarget: 10, ...(planPath ? {planPath} : {})});
     assert.ok(prompt.includes(`- Plan: ${planPath ?? 'None'}`));
     assert.doesNotMatch(prompt, /Walkthrough|absent or unfilled table|<Walkthrough Path>/);
     assert.match(prompt, /selected diff and tests/);

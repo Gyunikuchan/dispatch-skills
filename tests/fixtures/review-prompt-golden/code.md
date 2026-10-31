@@ -10,7 +10,7 @@ success criteria well, not merely whether it matches the plan.
 The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: General review
 - Scope: Full review
-- Advisory Tool Turn Target: Unspecified
+- Advisory Tool Turn Target: 10
 
 ### Review against
 - The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`:
@@ -25,7 +25,7 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
 Judge quality using the selected sections of the [quality bar](quality-bar.md).
-Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`.
+Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`. Reuse searches do not count toward the target.
 Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`.
 
 ### Inspection
@@ -90,8 +90,6 @@ Tag each finding with one family; the quality bar's bold family bullets define e
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
-If unspecified, target `8 + 2 × changed files`; on re-review count files changed since the prior
-round only. Reuse searches do not count toward the target.
 
 ### Severity
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding

@@ -8,7 +8,8 @@ import { withLockFile } from './lock.ts';
 import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { parseReport } from './domain/report.ts';
-import { parsePlan, selectTaskBrief } from './domain/plan.ts';
+import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
+import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
@@ -27,7 +28,7 @@ import { refreshFindingsSection } from './review-findings.ts';
 const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill};
+type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string};
 function read<T>(file: string): T | null {
   try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
@@ -48,6 +49,11 @@ function specHashFor(root: string, input: string): string {
   catch {throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);}
   return artifactHash('spec', text);
 }
+// SECTION: Turn targets
+// NOTE: a plan that fails lint has no parsed file entries, so its target counts zero paths; the review still reports its defects.
+const planPaths = (source: string) => {const parsed = parsePlan(source); return parsed.ok ? parsed.plan.changes.map(change => change.path) : [];};
+const designPaths = (source: string) => parseIncrementGraph(structuralLines(source)).increments.flatMap(increment => increment.paths);
+const turnTarget = (paths: string[]) => 6 + 2 * new Set(paths).size;
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const {session, manifest, deps} = ctx;
@@ -213,25 +219,37 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, severity:finding.severity,...(state?{rejectionConfirmed:state.state==='confirmed'}:{}),ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
     }));
 
+    // Maps are per-session, keyed by the plan or design slug; code reviews never receive one because the pre-change map is stale for code.
+    const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.(plan|design)\.md$/, '') + '.context.md');
     async function start(generation: number, captured: Capture): Promise<Round> {
-      let scope = 'Full review';
+      let scope = 'Full review', changedPaths = captured.changed;
       if (n > 1) {
         const previous = priorTargets[n - 1]!;
-        const changed = kind === 'code' ? 'changed paths: ' + splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])).join(', ') : changedHeadings(fs.readFileSync(path.join(directory, 'round-' + (n - 1), 'target.snapshot.md'), 'utf8'), captured.source!).join(', ');
+        changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])) : [];
+        const changed = kind === 'code' ? 'changed paths: ' + changedPaths.join(', ') : changedHeadings(fs.readFileSync(path.join(directory, 'round-' + (n - 1), 'target.snapshot.md'), 'utf8'), captured.source!).join(', ');
         scope = `Re-review round ${n} (full) — changed: ${changed}; comparison: ${label(previous)}..${label(captured.target)}`;
       } else if (kind === 'code') {
         const target = captured.target as {base: string; head: string};
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
+      // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
+      const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
+      const previousTarget = previous?.metadata.roster.find(slot => !slot.reserve);
+      const rulings = rulingRows();
+      const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
+        && (finding.severity === 'MUST' || (finding.severity === 'SHOULD' && n - 1 < cap)));
+      const targets = previousTarget && !decisive ? [previousTarget] : roster.targets;
+      const turnPaths = kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
       const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
-      const slots=[...roster.targets,...roster.reserves];
+      const slots=[...targets,...roster.reserves];
       for(const request of requests)for(const source of request.sourceSlots)if(!slots.some(slot=>slot.slot===source && !slot.reserve)) {
         const saved=confirmationRounds.flatMap(round=>round.metadata.roster).find(slot=>slot.slot===source);
         if(!saved)throw new ToolError(4,'review-confirmation-required','Missing original reviewer slot '+source);
         const existing=slots.findIndex(slot=>slot.slot===source);if(existing>=0)slots.splice(existing,1);
         slots.push({...saved,reserve:false});
       }
-      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
+      const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
+      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -266,7 +284,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const targets = round!.roster.filter(entry => !entry.reserve);
       const prompt = (slot:RosterSlot)=>{
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
-        return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary,
+        return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
+          ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),
           ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position});
       };
       const validate = (text: string,logicalSlot:string): Validation => {

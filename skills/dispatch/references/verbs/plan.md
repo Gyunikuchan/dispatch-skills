@@ -4,7 +4,7 @@ No current spec: run the [spec stage](../spec-stage.md) (ground, refine, author,
 
 Resolve and read the whole [governing spec](../spec-stage.md), plus the governing design when present. Use the [plan template](../templates/plan.md). A standalone Parent pins the spec; an increment Parent pins its design increment. For an increment plan, ground it first under [design increments](../grounding.md#design-increments). Criteria trace to REQs.
 
-Define task outcomes, a prerequisite graph, file ownership, criterion assignments and exact verification commands. Check producer/consumer interfaces before claiming independence. Put fast affected-file checks in Automated Tests and broad or slow gates in criterion Verify commands. Choose existing public test seams; use `Seams: none` when none applies.
+Define task outcomes, a prerequisite graph, file ownership, criterion assignments and exact verification commands. Check producer/consumer interfaces before claiming independence. Put fast affected-file checks in Automated Tests and broad or slow gates in criterion Verify commands. Choose existing public test seams; use `Seams: none` when none applies. When a context map exists, carry its verified items: existing test seams and helpers into `Seams:`; unchanged consumers and callers into `Rollback & Blast Radius`; parallel implementations of each changed predicate or contract into the owning task's `Invariants:`. Copy an item only after confirming it at source.
 
 Run lint and resolve parse-critical defects, then set the level under [run level](../spec-stage.md#run-level) before plan review. Review the plan against the governing spec, including semantic gaps when lint reports only warnings. Settle the approval tuple before medium-or-higher implementation.
 

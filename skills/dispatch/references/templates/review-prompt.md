@@ -8,7 +8,7 @@ reviews; variables are all inputs' declarations.
 
 Populate the template variables (kind blocks declare the rest):
 - `<User Focus Areas>` — structural `governing.finalFocusPaths`, or `General review` when absent or empty.
-- `<Tool Turn Budget>` — orchestrator-supplied advisory target, or `Unspecified`.
+- `<Tool Turn Budget>` — toolkit-computed advisory turn target.
 
 ````markdown
 <<slot:opener>>

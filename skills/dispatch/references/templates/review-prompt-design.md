@@ -6,6 +6,7 @@ Kind block for `review-prompt.md`.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
 - `<Review Scope>` — full review or changed design sections, optionally followed by `Design lint warnings:` context.
+- `<Context Map>` — `Context Map:` bullet naming the session context map, or empty when the session has none.
 
 ## opener
 
@@ -19,7 +20,7 @@ code has been written yet.
 
 - Design: <Design Path>
 - Spec Path: <Spec Path>
-- Spec Hash: <Spec Hash>
+- Spec Hash: <Spec Hash><Context Map>
 
 ## against
 

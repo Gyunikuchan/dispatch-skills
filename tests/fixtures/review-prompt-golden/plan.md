@@ -11,7 +11,7 @@ executing the plan as written delivers the requirement.
 The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
 - Focus: General review
 - Scope: Full review
-- Advisory Tool Turn Target: Unspecified
+- Advisory Tool Turn Target: 10
 
 ### Review against
 - Governing targets: every spec REQ and DEC for a standalone plan; inherited acceptance criteria and applicable REQs for an increment plan, using the approved design's increment mapping to check remaining coverage.
@@ -103,7 +103,6 @@ Tag each finding with one family; the quality bar's bold family bullets define e
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
-If unspecified, target `8 + proposed-change entries`, at most 24; on re-review count changed entries only.
 
 ### Severity
 Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
