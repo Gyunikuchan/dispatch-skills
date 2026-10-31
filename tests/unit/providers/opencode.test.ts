@@ -15,9 +15,33 @@ const launchReq = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({ ...ba
 
 test('opencode argv is v2-only: run --auto, -m model#effort, -- prompt; never --pure or --variant', () => {
   const argv = opencode.argv(launchReq({ agent: 'plan' }), 'cli').argv;
-  assert.deepEqual(argv, ['opencode', 'run', '--auto', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P']);
+  assert.deepEqual(argv, ['opencode', '--standalone', 'run', '--auto', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P']);
   assert.ok(!argv.includes('--pure') && !argv.includes('--variant'));
   assert.deepEqual(opencode.argv(launchReq({ effort: null }), 'cli').argv.slice(-3), ['lmstudio/qwen', '--', 'P']);
+});
+
+test('OpenCode delegates use private servers in every mode', async () => {
+  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
+    const argv = opencode.argv(launchReq({ agent: 'plan' }), mode).argv;
+    assert.deepEqual(argv.slice(0, 3), ['opencode', '--standalone', 'run'], mode);
+    assert.ok(argv.includes('--auto') && argv.includes('--agent') && argv.includes('plan'));
+  }
+
+  const bubblewrapped = opencode.argv(launchReq({
+    sandbox: true,
+    platform: { ...platform, os: 'linux', bubblewrap: true },
+  }), 'cli').argv;
+  const binaryIndex = bubblewrapped.indexOf('opencode');
+  assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), ['opencode', '--standalone', 'run']);
+
+  const retryPorts = ports([result('', 1, 'Variant unavailable'), result('R')]);
+  const retry = await runDelegate(opencode, base, 'cli', retryPorts);
+  assert.equal(retry.outcome.status, 'ok');
+  assert.deepEqual(retryPorts.launches.map((launch) => launch.argv.slice(0, 3)), [
+    ['opencode', '--standalone', 'run'],
+    ['opencode', '--standalone', 'run'],
+  ]);
+
 });
 
 function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): RunnerPorts & { launches: Launch[] } {
@@ -108,4 +132,20 @@ test('opencode accepts an unverified built-in explore agent as best-effort read-
   assert.equal(resolved.agent, 'explore'); assert.equal(resolved.readOnlyVerified, false); assert.equal(resolved.readOnlyBestEffort, true);
   assert.equal((await prepareOpencode(launchReq({ readOnlyVerified: false, readOnlyBestEffort: true }), { fetchModels: async () => [], acquireGpuLock: async () => () => {} })).kind, 'launch');
   await assert.rejects(resolveEffectiveOpencodeLaunch({ ...base, agent: 'build' }, inspect), /read-only-agent-unavailable/);
+});
+
+
+test('unsupported standalone parser variants fail config without effort retry or shared fallback', async () => {
+  // Installed v2.2.5 reports "Unrecognized flag: --dispatch-unsupported-inspection-probe in command opencode debug config".
+  // Substitution of --standalone is an inference; option/argument forms are synthetic compatibility cases.
+  for (const diagnostic of ['error: unrecognized option \'--standalone\'', 'Unrecognized flag: --standalone in command opencode debug config', "error: unknown option '--standalone'", 'Unknown argument: standalone', 'Unknown arguments: standalone']) {
+    const parsed = opencode.parse(result('', 2, diagnostic),launchReq());
+    assert.equal(parsed.status==='fail'&&parsed.cls,'config',diagnostic);
+    assert.equal(parsed.status==='fail'&&parsed.retryWithoutEffort,undefined);
+    const p=ports([result('',2,diagnostic)]);
+    const run=await runDelegate(opencode,base,'cli',p);
+    assert.equal(run.outcome.status==='fail'&&run.outcome.cls,'config');
+    assert.equal(p.launches.length,1);
+    assert.ok(p.launches.every(launch=>launch.argv.includes('--standalone')));
+  }
 });

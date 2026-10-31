@@ -16,7 +16,7 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 
 test('tests/e2e/ stays within the cap', () => {
   const files = e2eFiles();
-  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 14);
+  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 15);
   assert.deepEqual(checkE2eCap(files), []);
 });
 

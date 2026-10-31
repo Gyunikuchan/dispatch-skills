@@ -107,8 +107,9 @@ Refusals: blank reason or unexpected task argument. Closing records state; it do
 ### worktree cleanup
 
 Arguments: `worktree cleanup --session <session>`.
-Result path: removed paths and kept paths with reasons, including unowned, non-terminal and unpreserved.
-Refusals: unexpected arguments, lock or filesystem/Git fault. Kept paths require inspection; cleanup removes merged worktrees and preserves snapshots and ignored files elsewhere. See [cleanup](worktree-cleanup.md).
+Result path: the result file contains `value.removed` paths and `value.kept` rows with `path` and `reason`. Failure rows may also include `code`, a bounded `message` and a session-relative `recoveryPath` for a stranded recovery sibling; unpreserved rows may list changed `paths`. If a per-path removal or later registration/ref operation fails, the result is `ok: false`, exit 2, reason `cleanup-incomplete`; its value retains all known progress. A path may appear in both arrays when the directory was removed but Git registration, pruning or ref release failed. Read the result file even at exit 2.
+Kept unowned, non-terminal or unpreserved paths do not always make the operation incomplete, but require inspection and a recovery or retention decision before handoff.
+Refusals: unexpected task argument, ledger lock or pre-removal Git/filesystem fault. A refusal before per-path cleanup returns its own reason and message rather than a partial cleanup value. See [cleanup](worktree-cleanup.md) for retained refs, external locks and retry limits.
 
 ### worktree create
 

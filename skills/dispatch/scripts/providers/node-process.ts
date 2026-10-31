@@ -1,5 +1,6 @@
 // Real `ProcessPort` over node:child_process: detached (own group on POSIX), stdout streamed to the slot log up to
-// the cap, stderr tail kept in memory. Timeouts and tree kill stay in the runner.
+// the cap, stderr tail kept in memory. Deadline/idleness tree kills stay in the runner; OpenCode run and inspection
+// request bounded POSIX group settlement after normal completion and timeout/failure.
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -79,6 +80,27 @@ export const nodeProcess: ProcessPort = {
       child.once('close', (code, signal) => finish(code, signal));
     });
     return { pid: child.pid ?? -1, done };
+  },
+  async settleGroup(pid, budgetMs) {
+    if (process.platform === 'win32' || !Number.isSafeInteger(pid) || pid <= 1) return false;
+    const state = (): 'alive' | 'gone' | 'unknown' => {
+      try { process.kill(-pid, 0); return 'alive'; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'gone' : 'unknown'; }
+    };
+    const signal = (value: 'SIGTERM' | 'SIGKILL'): boolean => {
+      try { process.kill(-pid, value); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+    };
+    const initial = state();
+    if (initial === 'gone') return true;
+    if (initial !== 'alive' || budgetMs <= 0 || !signal('SIGTERM')) return false;
+    const deadline = Date.now() + budgetMs;
+    await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, Math.floor(budgetMs / 2))));
+    const afterTerm = state();
+    if (afterTerm === 'gone') return true;
+    if (afterTerm !== 'alive' || !signal('SIGKILL')) return false;
+    await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now())));
+    return state() === 'gone';
   },
   signal(pid, signal) {
     try { process.kill(pid, signal); } catch { /* already gone */ }

@@ -3,9 +3,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { sanitizeEnv } from './runner.ts';
+import { KILL_ESCALATION_MS, sanitizeEnv, waitWithin } from './runner.ts';
 import { nodeProcess } from './node-process.ts';
-import type { DelegateRequest, PreparePorts } from './types.ts';
+import { unsupportedStandaloneDiagnostic } from './opencode.ts';
+import type { DelegateRequest, PreparePorts, ProcessResult } from './types.ts';
 
 type Row = Record<string, unknown>;
 const record = (x: unknown): x is Row => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -59,18 +60,51 @@ export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest
   const deadline = Date.now() + budgetMs;
   return async (command) => {
     const remaining = Math.min(5000, deadline - Date.now());
-    if (remaining <= 0) throw new Error('effective-config-unverified: preparation deadline expired');
+    if (remaining <= 0) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: preparation deadline expired');
+    const commandDeadline = Date.now() + remaining;
+    const settlementDeadline = commandDeadline + KILL_ESCALATION_MS;
     const logPath = `${req.logPath}.introspect-${command}`;
-    const child = nodeProcess.start({ argv: [binary, 'debug', command], env: sanitizeEnv(env), stdin: null, cwd: req.cwd }, { logPath, capBytes: 1024 * 1024 });
+    const killLogPath = `${logPath}.kill`;
+    const child = nodeProcess.start({ argv: [binary, '--standalone', 'debug', command], env: sanitizeEnv(env), stdin: null, cwd: req.cwd }, { logPath, capBytes: 1024 * 1024 });
+    let killerDone: Promise<ProcessResult> | undefined;
+    let teardownStartFailed = false;
+    let timedOut = false;
     const timer = setTimeout(() => {
-      if (process.platform === 'win32') nodeProcess.start({ argv: ['taskkill', '/PID', String(child.pid), '/T', '/F'], env: sanitizeEnv(env), stdin: null, cwd: req.cwd }, { logPath: `${logPath}.kill`, capBytes: 4096 });
-      else nodeProcess.signal(-child.pid, 'SIGKILL');
+      if (child.pid <= 1) return;
+      timedOut = true;
+      if (process.platform === 'win32') {
+        try { killerDone = nodeProcess.start({ argv: ['taskkill', '/PID', String(child.pid), '/T', '/F'], env: sanitizeEnv(env), stdin: null, cwd: req.cwd }, { logPath: killLogPath, capBytes: 4096 }).done; }
+        catch { teardownStartFailed = true; }
+      } else nodeProcess.signal(-child.pid, 'SIGKILL');
     }, remaining);
     try {
-      const result = await child.done;
-      if (Date.now() > deadline || result.exit !== 0 || result.truncated) throw new Error('effective-config-unverified: native introspection failed');
-      return JSON.parse(result.stdout) as unknown;
-    } finally { clearTimeout(timer); try { fs.unlinkSync(logPath); } catch { /* no credential-bearing introspection capture retained */ } }
+      const result = await waitWithin(child.done, Math.max(0, settlementDeadline - Date.now()));
+      clearTimeout(timer);
+      const commandTimedOut = timedOut || child.pid > 1 && Date.now() > commandDeadline || result?.timedOut === true;
+      if (!result) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: native introspection process exit unconfirmed after bounded teardown');
+      const killerResult = killerDone ? await waitWithin(killerDone, Math.max(0, settlementDeadline - Date.now())) : null;
+      if (killerDone && !killerResult) {
+        throw new Error('effective-config-unverified: opencode-lifecycle-timeout: OpenCode teardown process exit unconfirmed after bounded teardown');
+      }
+      if (teardownStartFailed || (killerResult !== null && killerResult.exit !== 0)) {
+        throw new Error('effective-config-unverified: opencode-lifecycle-timeout: OpenCode process-tree teardown did not confirm exit within the bounded deadline');
+      }
+      if (child.pid > 1 && process.platform !== 'win32' && nodeProcess.settleGroup) {
+        const grace = Math.max(0, Math.min(KILL_ESCALATION_MS, settlementDeadline - Date.now()));
+        const confirmed = await nodeProcess.settleGroup(child.pid, grace);
+        if (!confirmed) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: process group exit unconfirmed; retain the worktree and verify process exit before cleanup');
+      }
+      if (commandTimedOut) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: native introspection exceeded its command deadline');
+      if (unsupportedStandaloneDiagnostic(`${result.stderrTail}\n${result.stdout}`)) {
+        throw new Error('effective-config-unverified: OpenCode binary does not support --standalone; upgrade to a supported v2 binary');
+      }
+      if (result.exit !== 0 || result.truncated) throw new Error('effective-config-unverified: native introspection failed');
+      try { return JSON.parse(result.stdout) as unknown; }
+      catch { throw new Error('effective-config-unverified: native introspection returned invalid JSON'); }
+    } finally {
+      clearTimeout(timer);
+      for (const file of [logPath, killLogPath]) try { fs.unlinkSync(file); } catch { /* no credential-bearing introspection capture retained */ }
+    }
   };
 }
 

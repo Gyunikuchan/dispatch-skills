@@ -19,8 +19,9 @@ export function completedLaunch(file: string, launch: StubLaunch): boolean {
   } catch { return false; }
 }
 export async function stub(file: string, args: readonly string[]): Promise<void> {
-  if (args[0] === 'debug') {
-    process.stdout.write(JSON.stringify(args[1] === 'config' ? [] : [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }]) + '\n'); return;
+  const inspectionArgs = args[0] === '--standalone' && args[1] === 'debug' ? args.slice(1) : args;
+  if (inspectionArgs[0] === 'debug') {
+    process.stdout.write(JSON.stringify(inspectionArgs[1] === 'config' ? [] : [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }]) + '\n'); return;
   }
   const scenario = JSON.parse(fs.readFileSync(file, 'utf8')) as Scenario;
   const dir = `${file}.launches`;

@@ -1,5 +1,6 @@
-import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {describe,it} from 'node:test';
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {spawn,spawnSync} from 'node:child_process';import {describe,it} from 'node:test';
 import {toolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';import {foldLedger,appendRecord} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import {abandonedRef,candidateRef} from '../../skills/dispatch/scripts/toolkit/writers.ts';
 type Repo=Awaited<ReturnType<typeof toolkitRepo>>;
 const rows=(r:Repo,phase:string)=>foldLedger(r.session).records.filter(x=>x.kind==='integrate'&&x.data['phase']===phase);
 const ref='refs/dispatch/test/delivered-source';
@@ -15,10 +16,17 @@ async function change(r:Repo){const w=r.integration;
  assert.equal((await r.run(['worktree','commit','--reason','final'])).exit,0);return r.git(['rev-parse','HEAD'],r.integration);}
 const caller=(r:Repo)=>({head:r.git(['rev-parse','HEAD']),branch:r.git(['symbolic-ref','--short','HEAD']),index:r.git(['ls-files','--stage','-z']),keep:fs.existsSync(path.join(r.root,'keep.txt'))?fs.readFileSync(path.join(r.root,'keep.txt')):null});
 const cat=(r:Repo,spec:string)=>{const t=spawnSync('git',['cat-file','-t',spec],{cwd:r.root,encoding:'utf8'});if(t.status)return null;const type=t.stdout.trim();return type==='blob'?spawnSync('git',['cat-file','blob',spec],{cwd:r.root}).stdout:type;};
+const registered=(r:Repo,cwd:string)=>{const key=(value:string)=>{const resolved=path.resolve(value).replace(/^\\\\\?\\/,'');return process.platform==='win32'?resolved.toLowerCase():resolved;};return r.git(['worktree','list','--porcelain']).split(/\r?\n/).filter(line=>line.startsWith('worktree ')).some(line=>key(line.slice(9))===key(cwd));};
 function assertMatchesSource(r:Repo,from:string,source:string){const names=r.git(['diff','--name-only','--no-renames','-z',from,source]).split('\0').filter(Boolean);assert.ok(names.length>=6,names.join());
  for(const name of names){const want=cat(r,source+':'+name),file=path.join(r.root,name);if(want===null)assert.equal(fs.existsSync(file),false,name);else if(want==='tree')assert.ok(fs.statSync(file).isDirectory(),name);else{assert.ok(fs.statSync(file).isFile(),name);assert.deepEqual(fs.readFileSync(file),want,name);}}}
 // Cases use independent repositories, so run them concurrently and name the failing case.
 const each=(modes:string[],fn:(mode:string)=>Promise<void>)=>Promise.all(modes.map(mode=>fn(mode).catch((error:unknown)=>{throw Object.assign(new Error(mode+': '+String(error)),{cause:error});})));
+async function holdCwd(cwd:string){
+ const child=spawn(process.execPath,['-e',"process.stdout.write('ready\\n');setInterval(()=>{},1000)"],{cwd,windowsHide:true,stdio:['ignore','pipe','pipe']});let ready=false;
+ const exited=new Promise(resolve=>child.once('exit',resolve));
+ await new Promise<void>((resolve,reject)=>{child.stdout!.once('data',()=>{ready=true;resolve();});child.once('error',reject);child.once('exit',code=>{if(!ready)reject(new Error('directory holder exited early: '+code));});});
+ return {release:async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exited;}};
+}
 describe('toolkit delivery and cleanup',()=>{
  it('pending MUST rejection blocks caller writes and delivered records until native agreement',async()=>{const {r}=await prepared();try {
   r.deps.skillRoot=setupTestSkill(r.deps,r.session,'confirmation-skill',{'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}});r.deps.orchestrator={platform:'codex',model:'native'};r.deps.liveness={};
@@ -139,6 +147,197 @@ describe('toolkit delivery and cleanup',()=>{
       fs.writeFileSync(path.join(r.integration,'src/file.ts'),'fix\n'); await r.run(['worktree','commit','--reason','fix']); await r.run(['worktree','cleanup']); assert.ok(fs.existsSync(r.integration));
       await r.run(['worktree','close','--reason','stop']); await r.run(['worktree','cleanup']); assert.ok(!fs.existsSync(r.integration)); assert.ok(r.git(['branch','--list','dispatch/test/integration']));
     }finally{r.cleanup();}
+  });
+  it('cleanup continues after an owned removal fault and retains recovery refs',{skip:process.platform!=='win32'},async()=>{
+    const {r,writer}=await prepared();let holder:Awaited<ReturnType<typeof holdCwd>>|undefined;
+    try {
+      const next=await r.run(['worktree','create','T1']);const other=path.join(r.session,next.value.path);
+      fs.writeFileSync(path.join(other,'src/file.ts'),'second delivered\n');assert.equal((await r.run(['worktree','submit','T1'])).exit,0);assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
+      const delivered=await r.run(['worktree','deliver']);assert.equal(delivered.exit,0,JSON.stringify(delivered));
+      const unrelated=path.join(r.root,'outside-worktree'),unrelatedRef='refs/dispatch/unrelated';
+      r.git(['worktree','add','--detach',unrelated,'HEAD']);r.git(['update-ref',unrelatedRef,'HEAD']);
+      // Model Git deregistering the integrated path before a held directory handle blocks cleanup.
+      r.git(['worktree','remove','--force',writer]);fs.mkdirSync(writer);fs.writeFileSync(path.join(writer,'interrupted.tmp'),'retained until retry');
+      holder=await holdCwd(writer);
+      const partial=await r.run(['worktree','cleanup']);
+      assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.ok,false);assert.equal(partial.output.reason,'cleanup-incomplete');
+      assert.ok(partial.value.removed.includes(next.value.path),JSON.stringify(partial.value));
+      const writerRelative=path.relative(r.session,writer).replace(/\\/g,'/');
+      const blocked=partial.value.kept.find((row:{path:string})=>row.path===writerRelative);
+      assert.ok(blocked,JSON.stringify(partial.value));
+      assert.equal(blocked.reason,'removal-failed');assert.ok(blocked.code);assert.ok(Buffer.byteLength(blocked.message,'utf8')<=1024);assert.match(blocked.message,/permission|busy|in use|remove/i);
+      assert.ok(fs.existsSync(writer));
+      const listed=registered(r,writer);
+      assert.equal(fs.existsSync(path.join(writer,'.git')),listed);
+      assert.equal(r.git(['rev-parse',candidateRef('test','T1',1)]).length,40);assert.notEqual(spawnSync('git',['show-ref','--verify','--quiet',candidateRef('test','T1',2)],{cwd:r.root}).status,0);
+      assert.ok(r.git(['branch','--list','dispatch/test/integration']));assert.equal(r.git(['rev-parse',ref]).length,40);
+      assert.ok(fs.existsSync(unrelated));assert.equal(r.git(['rev-parse',unrelatedRef]),r.git(['rev-parse','HEAD']));
+      await holder.release();
+      const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(!fs.existsSync(writer));assert.equal(r.git(['branch','--list','dispatch/test/integration']),'');
+      assert.notEqual(spawnSync('git',['show-ref','--verify','--quiet',candidateRef('test','T1',1)],{cwd:r.root}).status,0);assert.equal(r.git(['rev-parse',ref]).length,40);
+      assert.ok(fs.existsSync(unrelated));assert.equal(r.git(['rev-parse',unrelatedRef]),r.git(['rev-parse','HEAD']));
+    } finally {await holder?.release();r.cleanup();}
+  });
+  it('keeps registered control metadata when Git refuses an owned removal',async()=>{
+    const {r,writer}=await prepared();try {
+      const next=await r.run(['worktree','create','T1']),other=path.join(r.session,next.value.path);
+      fs.writeFileSync(path.join(other,'src/file.ts'),'second delivered\n');await r.run(['worktree','submit','T1']);await r.run(['worktree','integrate','T1']);await r.run(['worktree','deliver']);
+      const run=r.deps.run;let refusals=0;
+      r.deps.run=async(argv,opts)=>{if(argv[1]==='worktree'&&argv[2]==='remove'&&path.resolve(argv[4]!)===path.resolve(writer)){refusals++;return {exit:1,stdout:'',stderr:'fatal: simulated permission refusal'};}return run(argv,opts);};
+      const partial=await r.run(['worktree','cleanup']);r.deps.run=run;
+      assert.equal(refusals,1);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+      const relative=path.relative(r.session,writer).replace(/\\/g,'/'),blocked=partial.value.kept.find((row:{path:string})=>row.path===relative);
+      assert.equal(blocked.reason,'removal-failed');assert.ok(fs.existsSync(path.join(writer,'.git')));assert.ok(registered(r,writer));
+      assert.equal(r.git(['rev-parse',candidateRef('test','T1',1)]).length,40);assert.ok(r.git(['branch','--list','dispatch/test/integration']));
+      const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(!fs.existsSync(writer));assert.equal(r.git(['branch','--list','dispatch/test/integration']),'');
+    } finally {r.cleanup();}
+  });
+  it('restores a missing registered control link before cleanup checks',async()=>{
+    const {r,writer}=await prepared();try {
+      const relative=path.relative(r.session,writer).replace(/\\/g,'/');fs.rmSync(path.join(writer,'.git'));
+      const cleaned=await r.run(['worktree','cleanup']);assert.equal(cleaned.exit,0,JSON.stringify(cleaned));assert.ok(cleaned.value.removed.includes(relative));assert.ok(!fs.existsSync(writer));
+    } finally {r.cleanup();}
+  });
+  it('finishes deregistration after an interrupted directory removal',async()=>{
+    const r=await toolkitRepo();try {
+      await r.level();const made=await r.run(['worktree','create','T1']),writer=path.join(r.session,made.value.path),relative=made.value.path;
+      fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved\n');await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);await r.run(['worktree','close','--reason','stop']);
+      fs.rmSync(writer,{recursive:true,force:true});assert.ok(registered(r,writer));
+      const cleaned=await r.run(['worktree','cleanup']);assert.equal(cleaned.exit,0,JSON.stringify(cleaned));assert.ok(cleaned.value.removed.includes(relative));assert.ok(!registered(r,writer));
+    } finally {r.cleanup();}
+  });
+  it('retains work when registered control metadata cannot be verified',async()=>{
+    const {r,writer}=await prepared();try {
+      const control=fs.readFileSync(path.join(writer,'.git'),'utf8'),target=/^gitdir:\s*(.+?)\s*$/m.exec(control)![1]!,admin=path.resolve(writer,target);
+      fs.rmSync(path.join(writer,'.git'));fs.writeFileSync(path.join(admin,'commondir'),'../missing-common-dir\n');
+      const result=await r.run(['worktree','cleanup']),relative=path.relative(r.session,writer).replace(/\\/g,'/');
+      assert.equal(result.exit,2,JSON.stringify(result));assert.equal(result.output.reason,'cleanup-incomplete');assert.ok(fs.existsSync(writer));
+      assert.ok(result.value.kept.some((row:{path:string;reason:string})=>row.path===relative&&row.reason==='control-metadata-unverifiable'));
+      assert.equal(r.git(['rev-parse',candidateRef('test','T1',1)]).length,40);assert.ok(registered(r,writer));
+    } finally {r.cleanup();}
+  });
+  it('keeps a preserved non-integrated writer registered across a lock and retries after release',{skip:process.platform!=='win32'},async()=>{
+    const r=await toolkitRepo();let holder:Awaited<ReturnType<typeof holdCwd>>|undefined;
+    try {
+      await r.level();const made=await r.run(['worktree','create','T1']),writer=path.join(r.session,made.value.path),relative=made.value.path;
+      fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved\n');await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);await r.run(['worktree','close','--reason','stop']);
+      const ref=abandonedRef('test','T1',1),saved=r.git(['rev-parse',ref]);holder=await holdCwd(writer);
+      const partial=await r.run(['worktree','cleanup']);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+      assert.ok(partial.value.kept.some((row:{path:string;reason:string})=>row.path===relative&&row.reason==='removal-failed'));
+      assert.ok(fs.existsSync(writer));assert.ok(fs.existsSync(path.join(writer,'.git')));assert.ok(registered(r,writer));assert.equal(r.git(['rev-parse',ref]),saved);
+      await holder.release();const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(!fs.existsSync(writer));assert.ok(!registered(r,writer));assert.equal(r.git(['rev-parse',ref]),saved);
+    } finally {await holder?.release();r.cleanup();}
+  });
+  it('reports a path-specific Git read fault and removes independent writers',async()=>{
+    await each(['head','ls-files','tested-tree','snapshot-tree','tree-diff'],async failure=>{
+      const r=await toolkitRepo();try {
+        await r.level();
+        const abandoned=async()=>{
+          const made=await r.run(['worktree','create','T1']);assert.equal(made.exit,0,JSON.stringify(made));
+          const writer=path.join(r.session,made.value.path);fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved '+made.value.launch+'\n');
+          const result=await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);assert.equal(result.exit,0,JSON.stringify(result));
+          const ref=abandonedRef('test','T1',made.value.launch);
+          return {writer,relative:made.value.path,ref,saved:r.git(['rev-parse',ref])};
+        };
+        const blocked=await abandoned(),other=await abandoned();
+        const closed=await r.run(['worktree','close','--reason','stop']);assert.equal(closed.exit,0,JSON.stringify(closed));
+        if(failure==='tree-diff')fs.writeFileSync(path.join(blocked.writer,'ignored'),'ignored while checking preservation');
+        const snapshotTree=r.git(['rev-parse',blocked.saved+'^{tree}']),run=r.deps.run;let faults=0;
+        const matches=(argv:string[],opts:{cwd:string;env?:NodeJS.ProcessEnv})=>{
+          const inBlocked=path.resolve(opts.cwd)===path.resolve(blocked.writer),inRoot=path.resolve(opts.cwd)===path.resolve(r.root);
+          if(failure==='head')return inBlocked&&argv[1]==='rev-parse'&&argv[2]==='HEAD';
+          if(failure==='ls-files')return inBlocked&&argv[1]==='ls-files'&&argv[2]==='--others'&&argv[3]==='--ignored';
+          if(failure==='tested-tree')return inBlocked&&argv[1]==='read-tree'&&argv[2]==='HEAD'&&!!opts.env?.['GIT_INDEX_FILE'];
+          if(failure==='snapshot-tree')return inRoot&&argv[1]==='rev-parse'&&argv[2]===blocked.saved+'^{tree}';
+          return failure==='tree-diff'&&inBlocked&&argv[1]==='diff'&&argv[2]==='--name-only'&&argv.includes(snapshotTree);
+        };
+        r.deps.run=async(argv,opts)=>{if(!faults&&matches(argv,opts)){faults++;return {exit:1,stdout:'',stderr:'fatal: simulated '+failure+' read failure'};}return run(argv,opts);};
+        let partial;try {partial=await r.run(['worktree','cleanup']);}finally {r.deps.run=run;}
+        assert.equal(faults,1,failure);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+        const row=partial.value.kept.find((entry:{path:string})=>entry.path===blocked.relative);
+        assert.equal(row.reason,failure==='head'?'head-check-failed':'preservation-check-failed');assert.equal(row.code,'GIT_EXIT_2');assert.match(row.message,/simulated/);
+        assert.ok(fs.existsSync(blocked.writer));assert.ok(registered(r,blocked.writer));assert.equal(r.git(['rev-parse',blocked.ref]),blocked.saved);
+        assert.ok(partial.value.removed.includes(other.relative),JSON.stringify(partial.value));assert.ok(!fs.existsSync(other.writer));assert.ok(!registered(r,other.writer));
+        if(failure==='tree-diff')fs.rmSync(path.join(blocked.writer,'ignored'),{force:true});
+        const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(!fs.existsSync(blocked.writer));assert.ok(!registered(r,blocked.writer));assert.equal(r.git(['rev-parse',blocked.ref]),blocked.saved);
+      } finally {r.cleanup();}
+    });
+  });
+  it('continues cleanup when the missing integration branch probe throws',async()=>{
+    const {r,writer}=await prepared();try {
+      const delivered=await r.run(['worktree','deliver']);assert.equal(delivered.exit,0,JSON.stringify(delivered));
+      const branch=r.git(['symbolic-ref','--short','HEAD'],r.integration),integrationRelative=path.relative(r.session,r.integration).replace(/\\/g,'/'),saved=r.git(['rev-parse',ref]);
+      fs.rmSync(r.integration,{recursive:true,force:true});const run=r.deps.run;let probes=0;
+      r.deps.run=async(argv,opts)=>{
+        if(path.resolve(opts.cwd)===path.resolve(r.root)&&argv[1]==='rev-parse'&&argv[2]==='--verify'&&argv[3]==='--quiet'&&argv[4]==='refs/heads/'+branch){probes++;throw new Error('simulated integration branch verification failure');}
+        return run(argv,opts);
+      };
+      let partial;try {partial=await r.run(['worktree','cleanup']);}finally {r.deps.run=run;}
+      assert.equal(probes,1);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+      const row=partial.value.kept.find((entry:{path:string})=>entry.path===integrationRelative);
+      assert.equal(row.reason,'registration-check-failed');assert.equal(row.code,'CLEANUP_FAILED');assert.match(row.message,/simulated integration branch verification failure/);
+      assert.ok(partial.value.removed.includes(path.relative(r.session,writer).replace(/\\/g,'/')));assert.ok(!fs.existsSync(writer));
+      assert.ok(r.git(['branch','--list',branch]));assert.equal(r.git(['rev-parse',ref]),saved);
+    } finally {r.cleanup();}
+  });
+  it('reports and recovers a stranded cleanup preflight path',{skip:process.platform!=='win32'},async()=>{
+    const r=await toolkitRepo();let originalRename:typeof fs.renameSync|undefined,restoreFailures=0;
+    try {
+      await r.level();const made=await r.run(['worktree','create','T1']),writer=path.join(r.session,made.value.path),relative=made.value.path;
+      fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved\n');await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);await r.run(['worktree','close','--reason','stop']);
+      const recovery=path.join(path.dirname(writer),'.'+path.basename(writer)+'.cleanup-recovery'),ref=abandonedRef('test','T1',1),saved=r.git(['rev-parse',ref]);
+      originalRename=fs.renameSync;
+      fs.renameSync=((from,to)=>{
+        const source=path.resolve(String(from)),target=path.resolve(String(to));
+        if(target===path.resolve(writer)&&path.basename(source).startsWith('.'+path.basename(writer)+'.cleanup-')&&restoreFailures<2){restoreFailures++;throw Object.assign(new Error('simulated restore refusal'),{code:'EPERM'});}
+        return originalRename!(from,to);
+      }) as typeof fs.renameSync;
+      let partial;try {partial=await r.run(['worktree','cleanup']);}finally {fs.renameSync=originalRename;}
+      assert.equal(restoreFailures,2);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+      const blocked=partial.value.kept.find((row:{path:string})=>row.path===relative);
+      assert.equal(blocked.reason,'removal-failed');assert.equal(blocked.code,'WORKTREE_RESTORE_FAILED');assert.equal(blocked.recoveryPath,path.relative(r.session,recovery).replace(/\\/g,'/'));
+      assert.ok(fs.existsSync(recovery));assert.ok(!fs.existsSync(writer));assert.ok(registered(r,writer));assert.equal(r.git(['rev-parse',ref]),saved);
+      const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(!fs.existsSync(writer));assert.ok(!fs.existsSync(recovery));assert.ok(!registered(r,writer));assert.equal(r.git(['rev-parse',ref]),saved);
+    } finally {if(originalRename)fs.renameSync=originalRename;r.cleanup();}
+  });
+  it('refuses a colliding cleanup recovery symlink without following it',async()=>{
+    const r=await toolkitRepo();
+    try {
+      await r.level();const made=await r.run(['worktree','create','T1']),writer=path.join(r.session,made.value.path),relative=made.value.path;
+      fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved\n');await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);await r.run(['worktree','close','--reason','stop']);
+      const recovery=path.join(path.dirname(writer),'.'+path.basename(writer)+'.cleanup-recovery'),outside=path.join(r.root,'outside-recovery-target'),sentinel=path.join(outside,'keep.txt');
+      fs.mkdirSync(outside);fs.writeFileSync(sentinel,'keep\n');fs.symlinkSync(outside,recovery,process.platform==='win32'?'junction':'dir');
+      const ref=abandonedRef('test','T1',1),saved=r.git(['rev-parse',ref]),result=await r.run(['worktree','cleanup']);
+      assert.equal(result.exit,2,JSON.stringify(result));assert.equal(result.output.reason,'cleanup-incomplete');
+      const blocked=result.value.kept.find((row:{path:string})=>row.path===relative);
+      assert.equal(blocked.reason,'recovery-failed');assert.equal(blocked.code,'WORKTREE_RECOVERY_PATH_CONFLICT');assert.equal(blocked.recoveryPath,path.relative(r.session,recovery).replace(/\\/g,'/'));
+      assert.ok(fs.existsSync(writer));assert.equal(fs.lstatSync(recovery).isSymbolicLink(),true);assert.equal(fs.readFileSync(sentinel,'utf8'),'keep\n');assert.ok(registered(r,writer));assert.equal(r.git(['rev-parse',ref]),saved);
+    } finally {r.cleanup();}
+  });
+  it('keeps changed writer bytes after a locked cleanup retry',{skip:process.platform!=='win32'},async()=>{
+    const r=await toolkitRepo();let holder:Awaited<ReturnType<typeof holdCwd>>|undefined;
+    try {
+      await r.level();const made=await r.run(['worktree','create','T1']),writer=path.join(r.session,made.value.path),relative=made.value.path;
+      fs.writeFileSync(path.join(writer,'src/file.ts'),'preserved\n');await r.run(['worktree','abandon','T1','--reason','preserve snapshot']);await r.run(['worktree','close','--reason','stop']);
+      const ref=abandonedRef('test','T1',1),saved=r.git(['rev-parse',ref]);holder=await holdCwd(writer);assert.equal((await r.run(['worktree','cleanup'])).exit,2);
+      await holder.release();fs.writeFileSync(path.join(writer,'src/file.ts'),'changed after interruption\n');
+      const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.ok(fs.existsSync(writer));
+      assert.equal(fs.readFileSync(path.join(writer,'src/file.ts'),'utf8'),'changed after interruption\n');
+      assert.ok(retry.value.kept.some((row:{path:string;reason:string;paths?:string[]})=>row.path===relative&&row.reason==='unpreserved'&&row.paths?.includes('src/file.ts')));
+      assert.equal(r.git(['rev-parse',ref]),saved);assert.ok(registered(r,writer));
+    } finally {await holder?.release();r.cleanup();}
+  });
+  it('reports incomplete cleanup when Git prune fails after a worktree is removed',async()=>{
+    const {r,writer}=await prepared();try {
+      const run=r.deps.run;let prunes=0;
+      r.deps.run=async(argv,opts)=>{if(argv[1]==='worktree'&&argv[2]==='prune'&&++prunes===1)return {exit:1,stdout:'',stderr:'fatal: simulated prune failure'};return run(argv,opts);};
+      const partial=await r.run(['worktree','cleanup']);r.deps.run=run;
+      assert.equal(prunes,1);assert.equal(partial.exit,2,JSON.stringify(partial));assert.equal(partial.output.reason,'cleanup-incomplete');
+      const relative=path.relative(r.session,writer).replace(/\\/g,'/');assert.ok(partial.value.removed.includes(relative),JSON.stringify(partial));
+      assert.ok(partial.value.kept.some((row:{path:string;reason:string;code?:string})=>row.path===relative&&row.reason==='prune-failed'&&row.code==='GIT_EXIT_1'));
+      assert.equal(r.git(['rev-parse',candidateRef('test','T1',1)]).length,40);assert.ok(r.git(['branch','--list','dispatch/test/integration']));
+      const retry=await r.run(['worktree','cleanup']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.notEqual(spawnSync('git',['show-ref','--verify','--quiet',candidateRef('test','T1',1)],{cwd:r.root}).status,0);
+    } finally {r.cleanup();}
   });
   it('removes merged worktrees without preservation checks', async () => {
     await each(['writer', 'delivered'], async mode => {

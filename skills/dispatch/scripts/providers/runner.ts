@@ -163,6 +163,14 @@ export const spillPointer = (briefFile: string): string =>
 export const killArgv = (os: OsId, pid: number): readonly string[] =>
   os === 'win32' ? ['taskkill', '/pid', String(pid), '/T', '/F'] : ['kill', '-TERM', `-${pid}`];
 
+/** Waits for an owned process effect without allowing teardown to hold a caller indefinitely. */
+export function waitWithin<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), Math.max(0, ms));
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+}
+
 // SECTION: Shared classifiers
 
 /** Shared classifier over diagnostics text; null when nothing matches. */
@@ -230,20 +238,31 @@ export type RunnerPorts = {
 /** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
-/** Launches one process; on deadline or idleness kills the tree (POSIX: SIGTERM, then SIGKILL after 1 s). */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean): Promise<ProcessResult> {
+/** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
   const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); } });
   let timedOut = false;
   let idleMs: number | undefined;
   let escalate: (() => void) | null = null;
+  let taskkillDone: Promise<ProcessResult> | null = null;
+  let taskkillStartFailed = false;
+  let markKilled!: () => void;
+  const killed = new Promise<void>((resolve) => { markKilled = resolve; });
   const kill = (): void => {
     stopTimeout();
     stopIdle();
-    if (timedOut) return;
+    if (timedOut || pid <= 1) return;
     timedOut = true;
+    markKilled();
     if (ports.platform.os === 'win32') {
-      ports.process.start({ argv: killArgv('win32', pid), stdin: null, env: launch.env, cwd: launch.cwd }, { logPath: `${req.logPath}.kill`, capBytes: 4096 });
+      try {
+        const killer = ports.process.start({ argv: killArgv('win32', pid), stdin: null, env: launch.env, cwd: launch.cwd }, { logPath: `${req.logPath}.kill`, capBytes: 4096 });
+        if (confirmTreeExit) taskkillDone = killer.done;
+      } catch (error) {
+        if (!confirmTreeExit) throw error;
+        taskkillStartFailed = true;
+      }
       return;
     }
     // NOTE: a negative pid signals the whole group so launcher grandchildren die too.
@@ -261,9 +280,54 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     kill();
   });
   try {
-    const result = await done;
-    if (!timedOut) return result;
-    return idleMs === undefined ? { ...result, timedOut: true } : { ...result, timedOut: true, idleMs };
+    if (!confirmTreeExit) {
+      const result = await done;
+      if (!timedOut) return result;
+      return idleMs === undefined ? { ...result, timedOut: true } : { ...result, timedOut: true, idleMs };
+    }
+    const first = await Promise.race([
+      done.then((result) => ({ kind: 'finished' as const, result })),
+      killed.then(() => ({ kind: 'killed' as const })),
+    ]);
+    const completed = first.kind === 'finished' ? first.result : null;
+    if (completed && !timedOut) {
+      stopTimeout();
+      stopIdle();
+      if (pid > 1 && ports.platform.os !== 'win32' && ports.process.settleGroup) {
+        const confirmed = await ports.process.settleGroup(pid, KILL_ESCALATION_MS);
+        if (!confirmed) return { ...completed, lifecycleError: 'OpenCode process group exit unconfirmed; retain the worktree and verify process exit before cleanup' };
+      }
+      return completed;
+    }
+    const teardownBudgetMs = ports.platform.os === 'win32' ? KILL_ESCALATION_MS : KILL_ESCALATION_MS * 2;
+    const teardownDeadline = ports.clock.now() + teardownBudgetMs;
+    const settleDelegate = completed ? Promise.resolve(completed) : waitWithin(done, teardownBudgetMs);
+    const settleTaskkill: Promise<ProcessResult | null> = ports.platform.os === 'win32' && taskkillDone
+      ? waitWithin(taskkillDone, teardownBudgetMs)
+      : Promise.resolve(null);
+    const [result, killer] = await Promise.all([
+      settleDelegate,
+      settleTaskkill,
+    ] as const);
+    let lifecycleError: string | undefined;
+    if (!result) lifecycleError = `OpenCode owned process tree ${pid} exit was not confirmed within ${teardownBudgetMs} ms`;
+    else if (ports.platform.os === 'win32' && taskkillStartFailed) lifecycleError = `OpenCode owned process tree ${pid} teardown could not start`;
+    else if (ports.platform.os === 'win32' && !killer) lifecycleError = `OpenCode owned process tree ${pid} taskkill exit was not confirmed within ${teardownBudgetMs} ms`;
+    else if (ports.platform.os === 'win32' && killer?.exit !== 0) lifecycleError = `OpenCode owned process tree ${pid} taskkill exited with status ${String(killer?.exit)}`;
+    if (pid > 1 && ports.platform.os !== 'win32' && ports.process.settleGroup) {
+      const remaining = Math.max(0, teardownDeadline - ports.clock.now());
+      const confirmed = await ports.process.settleGroup(pid, remaining);
+      if (!confirmed) lifecycleError = 'OpenCode process group exit unconfirmed';
+    }
+    if (lifecycleError) lifecycleError += '; retain the worktree and verify process exit before cleanup';
+    const settled = result ?? {
+      exit: null, signal: null, stdout: '', stdoutPath: req.logPath, stderrTail: '', durationMs: req.timeoutMs + KILL_ESCALATION_MS,
+      timedOut: true, truncated: false,
+    };
+    return {
+      ...(idleMs === undefined ? { ...settled, timedOut: true } : { ...settled, timedOut: true, idleMs }),
+      ...(lifecycleError ? { lifecycleError } : {}),
+    };
   } finally {
     stopTimeout();
     stopIdle();
@@ -330,7 +394,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
-      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true);
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode');
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }
@@ -349,6 +413,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
 
 /** Parse, then the runner-owned classes: sandbox inactive, timeout, output cap. Partial output stays at `stdoutPath`. */
 function settle(spec: ProviderSpec, req: LaunchRequest, result: ProcessResult): RunOutcome {
+  if (result.lifecycleError) return failOutcome('timeout', `${result.lifecycleError}; partial output at ${result.stdoutPath}`);
   if (req.sandbox && spec.sandbox?.inactive.test(result.stderrTail)) {
     return failOutcome('sandbox-unsupported', `${spec.id} reported its sandbox inactive; set sandbox: false to run unsandboxed`);
   }

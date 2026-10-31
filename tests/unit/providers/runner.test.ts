@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
+import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import {
   IDLE_TIMEOUT_MS,
   batchInvocation, buildAttachmentBlock, findSensitiveMatch, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
@@ -145,6 +146,20 @@ test('timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output 
   assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at \/r\/log/);
 });
 
+test('OpenCode POSIX timeout settles after process-group termination', async () => {
+  const h = harness(posix);
+  const pending = runDelegate(opencode, { ...req, agent: 'explore', readOnlyVerified: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(5000);
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.clock.advance(1000);
+  assert.deepEqual(h.signals, ['-50:SIGTERM', '-50:SIGKILL']);
+  h.finish(ok({ exit: null, signal: 'SIGKILL', stdout: '' }));
+  const result = await pending;
+  assert.equal(result.result?.timedOut, true);
+  assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
+});
+
 test('timeout on Windows kills the process tree with taskkill /T /F', async () => {
   assert.deepEqual(killArgv('win32', 50), ['taskkill', '/pid', '50', '/T', '/F']);
   const h = harness(windows);
@@ -155,6 +170,32 @@ test('timeout on Windows kills the process tree with taskkill /T /F', async () =
   assert.deepEqual(h.signals, []);
   h.finish(ok({ exit: 1, stdout: '' }));
   assert.equal((await run).result?.timedOut, true);
+});
+
+test('OpenCode Windows timeout waits for its owned taskkill process', async () => {
+  const h = harness(windows);
+  const originalStart = h.ports.process.start.bind(h.ports.process);
+  let finishTaskkill!: (result: ProcessResult) => void;
+  h.ports.process.start = (launch, io) => {
+    if (launch.argv[0] === 'taskkill') {
+      h.launches.push(launch);
+      return { pid: 99, done: new Promise<ProcessResult>((resolve) => { finishTaskkill = resolve; }) };
+    }
+    return originalStart(launch, io);
+  };
+  let settled = false;
+  const pending = runDelegate(opencode, { ...req, agent: 'explore', readOnlyVerified: true }, 'cli', h.ports)
+    .then((result) => { settled = true; return result; });
+  await flush();
+  h.clock.advance(5000);
+  assert.deepEqual(h.launches[1]?.argv, ['taskkill', '/pid', '50', '/T', '/F']);
+  h.finish(ok({ exit: 1, stdout: '' }));
+  await flush();
+  assert.equal(settled, false);
+  finishTaskkill(ok());
+  const result = await pending;
+  assert.equal(result.outcome.status, 'fail');
+  assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
 });
 
 test('batch launchers go through cmd.exe with escaped verbatim args, never a raw shell', () => {
@@ -267,5 +308,74 @@ test('diagnostics usage parsing is opt-in and result-neutral', async () => {
     assert.equal(result.outcome.status,scenario==='truncated'?'fail':'ok',scenario);
     if(scenario==='enabled')assert.equal(result.invocations[0]?.usage?.input,3);
     if(scenario==='throw')assert.equal(result.invocations[0]?.usage,undefined);
+  }
+});
+
+
+test('OpenCode settles its POSIX group after success, failure and timeout without changing other providers', async () => {
+  for (const scenario of ['success','failure','timeout','other-provider'] as const) {
+    for(const confirmed of [true,false]) {
+      const h=harness(posix);let checks=0;
+      Object.assign(h.ports.process,{settleGroup:async(pid:number,budget:number)=>{assert.equal(pid,50);assert.ok(budget>0&&budget<=2000);checks++;return confirmed;}});
+      const spec=scenario==='other-provider'?claude:opencode;
+      const pending=runDelegate(spec,{...req,agent:'explore',readOnlyVerified:true},'cli',h.ports);
+      await flush();if(scenario==='timeout')h.clock.advance(req.timeoutMs);
+      h.finish(ok({exit:scenario==='failure'?7:0,stdout:scenario==='other-provider'?'{}':'controlled output'}));
+      const result=await pending;
+      assert.equal(checks,scenario==='other-provider'?0:1);
+      if(scenario==='timeout') {
+        assert.equal(result.outcome.status==='fail'&&result.outcome.cls,'timeout');
+        if(!confirmed)assert.match(result.outcome.status==='fail'?result.outcome.detail:'',/process group.*unconfirmed/);
+      }else if(scenario!=='other-provider'&&!confirmed) {
+        assert.equal(result.outcome.status==='fail'&&result.outcome.cls,'timeout');
+        assert.match(result.outcome.status==='fail'?result.outcome.detail:'',/process group.*unconfirmed/);
+      }else if(scenario==='success')assert.equal(result.outcome.status,'ok');
+      else if(scenario==='failure')assert.notEqual(result.outcome.status==='fail'&&result.outcome.cls,'timeout');
+    }
+  }
+});
+
+test('OpenCode spawn failures with no PID preserve not-found without signaling or settling a process group', async () => {
+  for (const timing of ['before-deadline','deadline-race'] as const) {
+    const h=harness(posix);let finish:(result:ProcessResult)=>void=()=>{};let settleCalls=0;
+    Object.assign(h.ports.process,{settleGroup:async()=>{settleCalls++;return false;}});
+    h.ports.process.start=()=>({pid:-1,done:new Promise<ProcessResult>(resolve=>{finish=resolve;})});
+    const request={...req,timeoutMs:timing==='deadline-race'?50:req.timeoutMs,agent:'explore',readOnlyVerified:true};
+    const pending=runDelegate(opencode,request,'cli',h.ports);
+    await flush();
+    if(timing==='deadline-race'){h.clock.advance(request.timeoutMs);await flush();}
+    finish(ok({exit:null,stderrTail:'spawn opencode ENOENT'}));
+    const result=await pending;
+    assert.equal(settleCalls,0,timing);
+    assert.equal(result.outcome.status==='fail'&&result.outcome.cls,'not-found',timing);
+    assert.equal(result.result?.lifecycleError,undefined,timing);
+    assert.deepEqual(h.signals,[],timing);
+  }
+});
+
+
+test('POSIX owned-group checks distinguish missing groups, permission failure and bounded escalation', async(t) => {
+  const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
+  Object.defineProperty(process,'platform',{...descriptor,value:'linux'});
+  t.after(()=>Object.defineProperty(process,'platform',descriptor));
+  const {nodeProcess}=await import('../../../skills/dispatch/scripts/providers/node-process.ts');
+  for(const scenario of ['gone','permission','term','kill','unconfirmed'] as const) {
+    await t.test(scenario,async(t)=>{
+      t.mock.timers.enable();
+      const signals:(string|number|undefined)[]=[];let terminated=false;let killed=false;
+      t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{
+        assert.equal(pid,-50);signals.push(signal);
+        if(scenario==='permission')throw Object.assign(new Error('denied'),{code:'EPERM'});
+        if(scenario==='gone'||(scenario==='term'&&terminated)||(scenario==='kill'&&killed))throw Object.assign(new Error('gone'),{code:'ESRCH'});
+        if(signal==='SIGTERM')terminated=true;if(signal==='SIGKILL')killed=true;
+        return true;
+      });
+      const pending=nodeProcess.settleGroup!(50,1000);
+      t.mock.timers.tick(500);for(let i=0;i<4;i++)await Promise.resolve();
+      t.mock.timers.tick(500);for(let i=0;i<4;i++)await Promise.resolve();
+      assert.equal(await pending,!['permission','unconfirmed'].includes(scenario));
+      assert.equal(signals.includes('SIGKILL'),['kill','unconfirmed'].includes(scenario));
+      if(scenario==='permission')assert.deepEqual(signals,[0]);
+    });
   }
 });

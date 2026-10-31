@@ -69,7 +69,7 @@ export function nodeDeps(): CliDeps {
     modes, orchestrator:detectOrchestrator(key=>process.env[key]),
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
     async delegate(provider,request,mode) {
-      const failedLaunch=(cls:'not-found'|'config',detail:string):RunResult=>({
+      const failedLaunch=(cls:'not-found'|'config'|'timeout',detail:string):RunResult=>({
         outcome:{status:'fail',cls,detail},invocations:[{provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls}],
       });
       const binary=discovery.resolve(provider,mode).path;
@@ -78,7 +78,7 @@ export function nodeDeps(): CliDeps {
       let resolved=request;
       if(provider==='opencode'){
         try{resolved=await resolveEffectiveOpencodeLaunch(request,nativeOpencodeIntrospection(binary,request,process.env,request.timeoutMs));}
-        catch(error){return failedLaunch('config',String(error));}
+        catch(error){const detail=String(error);return failedLaunch(/effective-config-unverified: opencode-lifecycle-timeout:/.test(detail)?'timeout':'config',detail);}
         if(resolved.readOnlyBestEffort)process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
       }
       resolved={...resolved,timeoutMs:Math.max(1,deadline-Date.now())};

@@ -64,6 +64,8 @@ export type ProcessResult = {
   truncated: boolean;
   /** Silence length when the runner stopped the process for idleness. */
   idleMs?: number;
+  /** OpenCode-owned teardown failure; callers must retain the path and report the unconfirmed exit. */
+  lifecycleError?: string;
 };
 
 export type RunOutcome =
@@ -119,4 +121,6 @@ export interface ProcessPort {
   /** Launches detached (own process group on POSIX), streaming stdout to `logPath` up to `capBytes`; `onActivity` fires per stdout or stderr chunk. */
   start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void }): { pid: number; done: Promise<ProcessResult> };
   signal(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void;
+  /** Settle only the invocation's POSIX group; false means exit is unconfirmed, not permission to remove its directory. */
+  settleGroup?(pid: number, budgetMs: number): Promise<boolean>;
 }

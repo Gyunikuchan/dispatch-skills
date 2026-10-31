@@ -9,6 +9,9 @@ import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec,
 export const PROXY_TRAP = 'http://127.0.0.1:0';
 const PROXY_KEYS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
 const VARIANT_UNAVAILABLE = /Variant unavailable/i;
+const STANDALONE_UNSUPPORTED = /(?:--standalone[\s\S]{0,100}(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)|(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)[\s\S]{0,100}--standalone)/i;
+
+export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDALONE_UNSUPPORTED.test(text) || /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
 
 const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
 
@@ -73,8 +76,8 @@ export const opencode: ProviderSpec = {
   resumeCommand: (id) => id,
   argv(req) {
     // Headless `--auto` requires the read-only agent from preparation: verified deny-by-default, or best-effort explore.
-    // `--pure` and `--variant` are v1-only and never emitted.
-    const inner = [req.binary, 'run', '--auto'];
+    // Standalone owns the server lifecycle; `--pure` and `--variant` are v1-only and never emitted.
+    const inner = [req.binary, '--standalone', 'run', '--auto'];
     if (req.agent) inner.push('--agent', req.agent);
     if (req.model) inner.push('-m', req.effort ? `${req.model}#${req.effort}` : req.model);
     inner.push('--', req.prompt);
@@ -88,6 +91,7 @@ export const opencode: ProviderSpec = {
       return { status: 'ok', text, sessionId: null, resume: handle };
     }
     const detail = `opencode exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
+    if (unsupportedStandaloneDiagnostic(both)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');
     // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
     if (VARIANT_UNAVAILABLE.test(both) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
     return failOutcome(classifyFailure(both) ?? 'empty-output', detail);
