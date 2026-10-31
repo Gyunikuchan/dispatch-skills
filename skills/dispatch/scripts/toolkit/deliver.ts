@@ -205,9 +205,12 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
     for(const relative of remnants){fs.rmSync(path.resolve(ctx.session,relative),{recursive:true,force:true});removed.push(relative);}
     for(const relative of ready){
       const cwd=path.resolve(ctx.session,relative);
+      // NOTE: A detached fsmonitor daemon keeps the worktree as its cwd, so Windows refuses removal; stop it first (no-op when absent).
+      await git(ctx.deps,cwd,['fsmonitor--daemon','stop']);
       await gitOk(ctx.deps,root,['worktree','remove','--force',cwd]);
       // NOTE: Git for Windows leaves a directory holding a junction (e.g. a linked node_modules); rmSync unlinks junctions without following them.
-      fs.rmSync(cwd,{recursive:true,force:true});
+      // Retries absorb transient EBUSY/EPERM while exiting processes release handles.
+      fs.rmSync(cwd,{recursive:true,force:true,maxRetries:8,retryDelay:50});
       removed.push(relative);
     }
     for(const writer of writers) {

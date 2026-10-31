@@ -109,8 +109,6 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
     const line = lines.find(entry => /^>\s*\*\*Commit:\*/.test(entry.original))?.line ?? null;
     add('defect', 'context-commit', line, 'Commit must be a bare hexadecimal revision from 7 to 64 characters.');
   }
-  const strategyLine = lines.find(entry => /^>\s*\*\*Strategy:\*\*/.test(entry.original));
-  if (strategyLine) add('defect', 'context-strategy', strategyLine.line, 'Strategy is not a supported context-map field; remove the > **Strategy:** header.');
   const fileCache = new Map<string, string | null>();
   const read = (ref: string): string | null => {
     if (fileCache.has(ref)) return fileCache.get(ref)!;

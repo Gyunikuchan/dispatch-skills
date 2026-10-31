@@ -90,10 +90,3 @@ test('context lint checks conventions refs and treats the section as optional', 
   assert.ok(invalid.defects.some(issue => issue.code === 'context-ref-range' && issue.message.includes('src/parser.ts')));
   assert.ok(invalid.warnings.some(issue => issue.code === 'context-missing-ref' && issue.message.includes('Conventions')));
 });
-
-test('context lint rejects the strategy header as an unsupported field', () => {
-  const withStrategy = MAP.replace('> **Tool:** code-index', '> **Strategy:** single\n>\n> **Tool:** code-index');
-  const result = lint(withStrategy);
-  assert.equal(result.ok, false);
-  assert.ok(result.defects.some(issue => issue.code === 'context-strategy'));
-});
