@@ -50,9 +50,6 @@ On a `Full review`, when the diff changes a shared invariant, contract, or signa
 caller of it and inspect each one in this round, so later rounds do not find them one at a time.
 Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise
 search the repository.
-Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or ledger records
-when missing evidence, disputed adjudication or recovery requires it; follow
-`references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 
 ## tags
 
