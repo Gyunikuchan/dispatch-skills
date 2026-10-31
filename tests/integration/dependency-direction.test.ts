@@ -94,7 +94,7 @@ test('dispatch entry imports only portable services and toolkit', () => {
   for (const layer of ['lib', 'providers', 'policy', 'toolkit']) {
     assert.deepEqual(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]), []);
   }
-  for (const layer of ['core', 'machines', 'effects', 'domain']) {
+  for (const layer of ['invalid', 'forbidden', 'other', 'unknown']) {
     assert.equal(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]).length, 1);
     assert.equal(checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' type { X } from "./' + layer + '/types.ts";')]).length, 1);
   }
@@ -117,8 +117,8 @@ describe('toolkit import boundary', () => {
       }
     }
   });
-  test('toolkit refuses removed engine layers including git effects', () => {
-    for (const [specifier, type] of [['../core/types.ts', 'type '], ['../core/interpreter.ts', ''], ['../machines/implement.ts', ''], ['../effects/git.ts', ''], ['../domain/plan.ts', '']]) {
+  test('toolkit refuses invalid layers', () => {
+    for (const [specifier, type] of [['../invalid/types.ts', 'type '], ['../forbidden/interpreter.ts', '']]) {
       const errors = checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' ' + type + '{ X } from ' + JSON.stringify(specifier) + ';')]);
       assert.equal(errors.length, 1, specifier);
       assert.match(errors[0]!, /toolkit/);
@@ -162,7 +162,7 @@ test('dependency and purity violations identify the broken layer rule and correc
   const errors = checkDependencies([
     file(`${SCRIPTS}policy/example.ts`, `${IMPORT} fs from 'node:fs';`, `${IMPORT} { run } from '../providers/runner.ts';`, 'const t = new Date();'),
     file(`${SCRIPTS}unknown/example.ts`, ''),
-    file(`${SCRIPTS}lib/config.ts`, `${IMPORT} type { X } from '../core/types.ts';`),
+    file(`${SCRIPTS}lib/config.ts`, `${IMPORT} type { X } from '../invalid/types.ts';`),
   ]);
   assert.equal(errors.length, 5);
   assert.match(errors[0] ?? '', /^purity rule: .*policy\/example\.ts .*node:fs.*move it to toolkit\/ or lib\//);

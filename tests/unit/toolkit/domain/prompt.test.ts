@@ -47,7 +47,6 @@ test('prompt assembly equals the golden per review kind', () => {
     const prompt = fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind]);
     assert.match(prompt, /Read the whole spec/);
     assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
-    assert.doesNotMatch(prompt, /`intent-gap`|`spec-gap`/, kind);
     assert.equal(prompt.split(standardsRule).length - 1, 1, `${kind}: standards rule`);
     if (kind === 'code') {
       const against = read(templates, 'review-prompt-code.md').split(/^## against$/m)[1]!.split(/^## inspection$/m)[0]!;
@@ -277,7 +276,6 @@ test('quality selection: reviews hold tests to the two-tier bar', () => {
     const text = ruleText(kind);
     assert.ok(text.includes('Apply one two-tier bar.'), kind);
     assert.ok(text.includes('Retained tests are the executable spec of a current consumer contract that is severe if broken or non-obvious'), kind);
-    for (const retired of ['Test rationale', 'Retain:', '[FINAL]']) assert.ok(!text.includes(retired), `${kind}: ${retired}`);
     if (kind === 'plan') {
       const prompt = flat(kind);
       for (const term of [

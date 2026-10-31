@@ -22,9 +22,9 @@ const familyTags = [
   'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
   'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
 ] as const;
-const retiredTags = ['intent-gap', 'spec-gap', 'scope-creep', 'domain-logic', 'reuse', 'graph-correctness'] as const;
+const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
-test('family tags are shared across review kinds and retired tags fall back to uncategorized', () => {
+test('family tags are shared across review kinds and unknown tags fall back to uncategorized', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
     const locus = kind === 'code' ? 'src/fetch.ts:L12' : '§ Spec: Requirements';
     for (const tag of familyTags) {
@@ -34,7 +34,7 @@ test('family tags are shared across review kinds and retired tags fall back to u
       assert.equal(result.findings[0]?.scope, tag === 'adjacent' ? 'adjacent' : 'in', `${kind}: ${tag}`);
       assert.equal(result.findings[0]?.originalTag, undefined, `${kind}: ${tag}`);
     }
-    for (const tag of retiredTags) {
+    for (const tag of unknownTags) {
       const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag, locus })]) });
       assert.ok(result.ok, `${kind} recovers ${tag}`);
       assert.equal(result.findings[0]?.category, 'uncategorized', `${kind}: ${tag}`);

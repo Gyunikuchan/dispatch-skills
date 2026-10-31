@@ -245,7 +245,6 @@ test('design summary: Parent rejects invalid pins', () => {
     assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label'), parent);
   }
 });
-test('design retired sections context and goals', () => { for (const heading of ['Context & Intent', 'Goals & Requirements']) assert.ok(codes(layeredDesign() + '\n## ' + heading + '\nOld.').includes('retired-section')); });
 test('design approach requires REQ reference', () => assert.ok(codes(layeredDesign().replace('REQ-1 importer', 'Importer')).includes('missing-requirement-ref')));
 test('design approach precedes alternatives', () => assert.ok(codes(layeredDesign().replace('## Approach\nREQ-1 importer\n\n', '').replace('## Alternatives & Decisions\nChosen.', '## Alternatives & Decisions\nChosen.\n\n## Approach\nREQ-1 importer')).includes('section-order')));
 

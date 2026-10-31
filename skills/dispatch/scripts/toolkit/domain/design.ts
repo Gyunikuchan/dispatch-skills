@@ -199,10 +199,6 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   }
   defects.push(...lintSectionOrder(lines, DESIGN_SECTION_ORDER));
   for (const { line, words } of lintLongParagraphs(lines)) defects.push(lint('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
-  for (const entry of lines) {
-    if (entry.text.trimEnd() === '## Context & Intent') defects.push(lint('retired-section', entry.line, 'move intent and problem to the governing spec; keep tactical context in ## Approach'));
-    if (entry.text.trimEnd() === '## Goals & Requirements') defects.push(lint('retired-section', entry.line, 'requirements live in the spec as REQ-<n>; map them in ## Approach'));
-  }
   const approach = (sectionBody(lines, '## Approach') ?? []).map((entry) => entry.text).join('\n');
   const approachRequirements = [...new Set(approach.match(/\bREQ-[1-9]\d*\b/g) ?? [])];
   if (!approachRequirements.length) defects.push(lint('missing-requirement-ref', null, '## Approach requires a REQ-<n> reference.'));

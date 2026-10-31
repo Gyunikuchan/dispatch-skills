@@ -43,7 +43,7 @@ export type LintDefectCode =
   | 'criterion-change-path' | 'criterion-verify' | 'criterion-evidence'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
   | 'criterion-review' | 'criterion-critical-review'
-  | 'retired-field' | 'retired-section' | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
+  | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name'
   // Plan tasks
   | 'task-heading' | 'task-summary' | 'task-behaviour' | 'increment-behaviour' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap' | 'glance-restates-task-map'
   // Design

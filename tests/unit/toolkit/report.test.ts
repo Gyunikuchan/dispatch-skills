@@ -335,7 +335,7 @@ test('report render fills review focus and visuals from ledger and design',async
   assert.equal(value.reviewedCodeBaseline,baseline);assert.equal(value.reviewFixes[0]!.status,'verified but not re-reviewed');
   assert.deepEqual(value.reviewFixes[0]!.verification?.criteria,['SC1']);assert.deepEqual(value.reviewFixes[0]!.verification?.contract,['contract']);assert.equal(value.reviewFixes[0]!.verification?.tree,tree);
   const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
-  assert.match(text,/- \*\*What:\*\* Plan output is delivered without a legacy summary\./);assert.doesNotMatch(text,/TL;DR/);
+  assert.match(text,/- \*\*What:\*\* Plan output is delivered without a legacy summary\./);
   const focus=text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes'));
   assert.match(focus,/Risk: med/);assert.match(focus,/Rejected SHOULD finding review-alpha:R1-F001/);assert.doesNotMatch(focus,/R1-F002|deferred|More evidence is needed/i);
   assert.match(focus,/Inspect the delivered retry boundary\. — Evidence: \[evidence\/retry-boundary\.md\]\(evidence\/retry-boundary\.md\)/);

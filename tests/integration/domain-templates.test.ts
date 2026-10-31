@@ -252,11 +252,6 @@ test('code review flags unrequested consumer-boundary behaviour as intent', () =
   assert.ok(rules.includes('For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).'));
 });
 
-test('templates: plan template carries no test classification fields', () => {
-  const plan = readFileSync(new URL('plan.md', root), 'utf8');
-  for (const retired of ['Retain:', 'Covered by:', 'Test rationale:', '[FINAL]']) assert.ok(!plan.includes(retired), retired);
-});
-
 test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
   const brief = readFileSync(new URL('test-cleanup-brief.md', root), 'utf8');
   assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
@@ -264,8 +259,6 @@ test('templates: test cleanup brief keeps the placeholders the orchestrator fill
   assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
   assert.ok(brief.includes('quality-bar.md#code'));
 });
-
-test('plan and design templates contain no retired section headers', () => { for (const name of ['plan.md', 'design.md']) { const text = readFileSync(new URL(name, root), 'utf8'); for (const retired of ['user request', '## User Review Required', '## Context & Intent', '## Goals & Requirements']) assert.ok(!text.includes(retired), name + ': ' + retired); } });
 
 test('quality selection keeps judging rules single-sourced', () => {
   const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
@@ -276,8 +269,6 @@ test('quality selection keeps judging rules single-sourced', () => {
   assert.equal(frame.split(adjacentRule).length - 1, 1);
   assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);
   assert.match(codePrompt, /cite code at its real `path:L<line>` locus/);
-  assert.doesNotMatch(codePrompt, /concrete defect you meet outside Scope while inspecting|spend no extra turns hunting|domain-valid formulas and algorithms|type-valid, domain-invalid states|pass-through modules; speculative seams/);
-  for (const criterion of ['type-valid but domain-invalid states', 'N+1 queries, and unpaginated reads', 'avoid pass-through modules, speculative seams']) assert.ok(!codePrompt.includes(criterion), criterion);
   for (const consumer of ['plan', 'design'] as const) {
     const kindPrompt = readFileSync(new URL(`review-prompt-${consumer}.md`, root), 'utf8');
     assert.match(kindPrompt, /Cite existing code as `path\/to\/file:L<line>` inside `defect`/);
@@ -291,7 +282,6 @@ test('quality selection keeps judging rules single-sourced', () => {
     assert.ok(tags.includes('- `decomposition`'));
     assert.doesNotMatch(tags, /\u2014|findings/);
     for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- `[^`]+`$/);
-    for (const rule of ['check claimed independence against', 'for each new exported or shared symbol, helper, module, or type, search the repository', 'weigh real alternatives', 'collision-free parallel increments']) assert.ok(!prompt.includes(rule), `${kind}: ${rule}`);
   }
   for (const rule of ['Trace the ask to applicable REQs and DECs', 'search the repository by name and behaviour for an existing equivalent', "A task that consumes another's output without a prerequisite", 'Weigh alternatives and trade-offs']) assert.equal(bar.split(rule).length, 2, rule);
 });

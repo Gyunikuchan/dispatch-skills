@@ -38,12 +38,12 @@ describe('toolkit delivery and cleanup',()=>{
  it('uncommitted delivery restores the verified tree as unstaged changes and retains the source ref',async()=>{const {r,writer}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);fs.writeFileSync(path.join(r.root,'keep.txt'),'dirty keep');fs.writeFileSync(path.join(r.root,'scratch'),'scratch');fs.writeFileSync(path.join(r.root,'ignored'),'ignored');
  const before=caller(r);const first=await r.run(['worktree','deliver']);assert.equal(first.exit,0,JSON.stringify(first));
- assert.equal(first.value.mode,'uncommitted');assert.equal(first.value.source,source);assert.equal(first.value.from,from);assert.equal(first.value.ref,ref);assert.equal(first.value.delivered,true);assert.equal('to' in first.value,false);
+ assert.equal(first.value.mode,'uncommitted');assert.equal(first.value.source,source);assert.equal(first.value.from,from);assert.equal(first.value.ref,ref);assert.equal(first.value.delivered,true);
  assert.deepEqual(caller(r),before);assert.equal(r.git(['rev-parse',ref]),source);assertMatchesSource(r,from,source);assert.equal(r.git(['diff','--cached','--name-only']),'');
  assert.ok(r.git(['status','--porcelain','-uall']).includes('src/file.ts'));assert.equal(r.git(['rev-parse','HEAD'],r.integration),source);
  if(process.platform!=='win32')assert.ok(fs.statSync(path.join(r.root,'exec.sh')).mode&0o111);
  assert.equal(fs.readFileSync(path.join(r.root,'scratch'),'utf8'),'scratch');assert.equal(fs.readFileSync(path.join(r.root,'ignored'),'utf8'),'ignored');
- const started=rows(r,'deliver-started')[0]!.data,done=rows(r,'delivered')[0]!.data;assert.deepEqual(Object.keys(started).sort(),['dest','from','mode','phase','source']);assert.equal(done['mode'],'uncommitted');assert.equal('to' in done,false);
+ const started=rows(r,'deliver-started')[0]!.data,done=rows(r,'delivered')[0]!.data;assert.deepEqual(Object.keys(started).sort(),['dest','from','mode','phase','source']);assert.equal(done['mode'],'uncommitted');
  fs.writeFileSync(path.join(r.root,'src/file.ts'),'later edit');fs.unlinkSync(path.join(r.root,'bin/blob.bin'));const again=await r.run(['worktree','deliver']);assert.equal(again.exit,0);assert.equal(again.value.delivered,false);assert.equal(fs.readFileSync(path.join(r.root,'src/file.ts'),'utf8'),'later edit');assert.equal(rows(r,'delivered').length,1);
  const unowned=path.join(r.root,'outside');r.git(['worktree','add','--detach',unowned,'HEAD']);
  const beforeCleanup=caller(r),run=r.deps.run;let interrupted=0;

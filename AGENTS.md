@@ -30,7 +30,7 @@ When unresolved requirements, constraints, or trade-offs could change scope, beh
 
 Continue independent work that does not depend on the answer; for routine progress within approved scope, state a reasonable assumption and proceed. Suggest simpler alternatives when they meet the goal.
 
-For backward-incompatible changes, choose the simpler current behavior and drop legacy support by default; preserve compatibility only when instructed.
+For backward-incompatible changes, choose the simpler current behavior and drop legacy support by default; preserve compatibility only when instructed. When behaviour is removed, do not retain or add references, lint checks, tests, or messages guarding against it.
 
 Escalate under the [user gate](skills/dispatch/references/decision-frame.md#user-gate-boundaries) before implementation when a change would alter intent, add an external dependency or runtime prerequisite, or discard work. Report adjacent findings while keeping execution within the requested scope.
 
@@ -99,7 +99,7 @@ Classify each document or piece of prose by its primary audience and task. When 
 
 - **Human documentation:** Help users decide whether and how to use the skills. Include details they need to choose a skill, set it up, use it correctly, understand its results or limits, or recover from a problem. Explain concepts plainly, organize around user tasks, and use realistic examples with relevant outcomes and constraints.
 - **Agent-facing prose:** Apply these rules to contracts, prompts, templates, instructions embedded in scripts, and operational references. When editing them, apply `writing-for-agents`. Direct decisions and actions with explicit triggers, order, boundaries, and checkable completion criteria. Include rationale when it changes execution. Add detail when it materially improves correct execution, naming the behavior, decision, or failure mode it addresses.
-- **Maintainer knowledge base (`docs/`):** Preserve long-term context for human and agent maintainers. These records are not operationally required; put operational requirements in `skills/dispatch/references/`.
+- **Maintainer knowledge base (`docs/`):** Preserve long-term context for human and agent maintainers. These records are not operationally required; put operational requirements in `skills/dispatch/references/`. Keep one-off run records, transient sweep lists, and intermediate analysis in session scratch (`.scratch/`) and link them in the handoff; do not commit them to `docs/`.
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`). Treat the root and dispatch READMEs as examples of human-facing documentation, not required outlines.
 

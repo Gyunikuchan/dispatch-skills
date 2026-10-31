@@ -119,7 +119,6 @@ test('spec stage critiques the request premise before confirmation', () => {
   assert.match(refine, /For `plan`, `design`, or an `implement` that authors its plan or design/i);
   assert.match(refine, /skip[^.]*`review` without a spec/i);
   assert.match(refine, /add no other clarification round/i);
-  assert.doesNotMatch(stage, /grilling.{0,80}first decision-tree node/i);
 
   assert.match(author, /DEC[\s\S]*Options[\s\S]*Rejected[\s\S]*user's actual quote/i);
   assert.match(author, /user's choice governs/i);
@@ -181,12 +180,9 @@ test('human manuals retain portable links and current operational guidance', () 
     'nativeSubagentsOnly', 'write-subagents', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
     'positive safe integer', 'omission defaults to one',
   ]) assert.ok(config.includes(term), term);
-  assert.doesNotMatch(config, /OS temp|asks whether to adopt or retain/i);
   const humanRoot = read('README.md');
-  assert.doesNotMatch(humanRoot, /--phases|clean tree falls back/i);
   for (const term of ['Ambient credential', 'invoke `implement:`']) assert.ok(humanRoot.includes(term), term);
   assert.match(read(root + 'references/templates/plan.md'), /retaining the session in the workspace/);
-  for (const name of ['plan', 'walkthrough']) assert.doesNotMatch(read(root + 'references/templates/' + name + '.md'), /Resolution log/);
   const concepts = read(root + 'references/readme/concepts.md');
   for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
   assert.match(read(root + 'README.md'), /task summaries/);
@@ -196,12 +192,7 @@ test('human manuals retain portable links and current operational guidance', () 
 test('uncommitted delivery contract', () => {
   const toolkit=section(read(root+'references/toolkit.md'),'worktree deliver');
   for(const term of ['uncommitted','unstaged','delivered-source','caller-dirty','recovery-blocked','unsupported-sparse','unsupported-entry','git restore --source','??','race limit','new run']) assert.ok(toolkit.includes(term),term);
-  const names=['references/toolkit.md','references/verbs/implement.md','references/worktree-cleanup.md','references/readme/concepts.md','references/readme/implement.md'];
   for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
-  for(const name of names){
-    const text=read(root+name);
-    for(const term of ['squash commit','fast-forward','Dispatch-Source:','delivery-prepared','sole parent','to=from']) assert.ok(!text.includes(term),name+': '+term);
-  }
   const concepts=read(root+'references/readme/concepts.md');
   assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
 });
@@ -220,7 +211,6 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(grounding, /deep never applies/i);
   assert.match(grounding, /cited range/i);
   assert.match(grounding, /deep applies only to initial grounding/i);
-  assert.doesNotMatch(grounding, /may write only its context map/);
   assert.ok(grounding.includes('providers.md#native-slots'));
 
   assert.ok(explorer.includes('## Host rules and tools'));
@@ -236,5 +226,4 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(writerBrief, /own cache or index/i);
   assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
   assert.ok(read(root + 'references/verbs/implement.md').includes('grounding.md#follow-up-explorers'));
-  assert.doesNotMatch(providers, /reviewers are read-only/);
 });

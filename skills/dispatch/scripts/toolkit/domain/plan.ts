@@ -60,7 +60,6 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'leftover-placeholder':
     case 'filler-note':
     case 'section-order':
-    case 'retired-section':
     case 'missing-satisfies':
     case 'missing-requirement-ref':
     case 'unknown-requirement':
@@ -89,7 +88,6 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'cycle':
     case 'execution-status':
     case 'generated-inputs':
-    case 'retired-field':
     case 'glance-restates-task-map':
       return 'warning';
     default: return unreachable(code);
@@ -449,7 +447,6 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   lintGlanceRestatesTaskMap(lines, taskRows, out);
   for (const { line, words } of lintLongParagraphs(lines)) out.push(lint('long-paragraph', line, `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`));
   out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
-  for (const entry of lines) if (entry.text.trimEnd() === '## User Review Required') out.push(lint('retired-section', entry.line, 'Move user questions to the governing spec Open Questions.'));
   for (const entry of lines) {
     if (PROSE_PLACEHOLDER.test(entry.text.replace(/`[^`]*`/g, ''))) out.push(lint('placeholder', entry.line, 'Plan contains a prose placeholder.'));
   }
@@ -915,8 +912,6 @@ function parseCriteria(lines: readonly StructuralLine[], changes: readonly PlanC
   return criteria;
 }
 
-const RETIRED_FINAL = 'The [FINAL] marker is retired; the post-integration test cleanup replaces it. Remove the marker.';
-
 function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
   const id = criterionHeading(text);
   const base: Criterion = {
@@ -976,10 +971,9 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   const verify = field('Verify');
   if (verify !== undefined) {
     current.mapped = true;
-    const command = /^`([^`]+?)(\s+\[FINAL\])?\s*`\s*(\[FINAL\])?\s*$/.exec(verify);
+    const command = /^`([^`]+)`\s*$/.exec(verify);
     if (!command?.[1]) out.push(lint('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
     else {
-      if (command[2] || command[3]) out.push(lint('retired-field', entry.line, RETIRED_FINAL));
       current.verify = [...current.verify, { command: command[1].trim() }];
       current.verifyLines = [...current.verifyLines, entry.line];
     }
@@ -1004,9 +998,6 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
   if (integration !== undefined) current.integration = integration;
   const enforcement = field('Enforcement infeasibility');
   if (enforcement !== undefined && enforcement.trim()) current.enforcementInfeasibility = enforcement.trim();
-  for (const name of ['Test rationale', 'Retain', 'Covered by']) {
-    if (field(name) !== undefined) out.push(lint('retired-field', entry.line, `${name} is retired; the post-integration test cleanup replaces it. Remove the line.`));
-  }
 }
 
 /** A test-like Changes path outside every `Tests:` cannot feed RED capture, so the author declares it or confirms it is not a test. */

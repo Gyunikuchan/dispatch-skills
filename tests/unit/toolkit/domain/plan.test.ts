@@ -67,7 +67,7 @@ const defects = (source: string) => {
 };
 
 test('presentation and traceability findings are warnings while structural findings block', () => {
-  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'retired-section', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'retired-field', 'criterion-critical-review'] as const) {
+  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'criterion-critical-review'] as const) {
     assert.equal(lint(code, null, 'finding').severity, 'warning', code);
   }
   const result = parsePlan(PLAN.replace('> **Risk:** low — isolated helper\n', '').replaceAll('  - Satisfies: REQ-1\n', ''));
@@ -880,37 +880,6 @@ test('plan summary: Parent accepts spec pin and design increment pin', () => {
   assert.ok(parsePlan(PLAN).ok);
   assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok);
 });
-
-test('retired test classification fields and the FINAL marker warn once each and are otherwise ignored', () => {
-  const retired = PLAN
-    .replace('  - Evidence: red\n', '  - Evidence: red\n  - Test rationale: pins the retry cap for the cleanup stage.\n  - Retain: durable\n  - Covered by: SC2\n')
-    .replace('  - Verify: `npm test`', '  - Verify: `npm test` [FINAL]');
-  const result = parsePlan(retired);
-  assert.ok(result.ok, JSON.stringify(result));
-  const warnings = result.warnings.filter((item) => item.code === 'retired-field');
-  assert.equal(warnings.length, 4);
-  assert.deepEqual(new Set(warnings.map((item) => item.severity)), new Set(['warning']));
-  for (const label of ['Test rationale', 'Retain', 'Covered by', '[FINAL]']) assert.ok(warnings.some((item) => item.message.includes(label)), label);
-  assert.ok(warnings.every((item) => /test cleanup/i.test(item.message)));
-  assert.deepEqual(result.warnings.filter((item) => item.code !== 'retired-field').map((item) => item.code), parsePlan(PLAN).warnings.map((item) => item.code));
-  const { plan } = result;
-  // Added retired lines shift later source line numbers only.
-  const withoutLines = (rows: readonly { line: number }[]) => rows.map(({ line: _line, ...row }) => row);
-  assert.deepEqual(withoutLines(plan.criteria), withoutLines(parsed(PLAN).criteria));
-  assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test' }]);
-  assert.deepEqual(parsePlan(PLAN).warnings.filter((item) => item.code === 'retired-field'), []);
-});
-
-test('FINAL marker inside the Verify code span warns and is stripped from the command', () => {
-  for (const span of ['`npm test [FINAL]`', '`npm test [FINAL] `']) {
-    const result = parsePlan(PLAN.replace('  - Verify: `npm test`', `  - Verify: ${span}`));
-    assert.ok(result.ok, JSON.stringify(result));
-    assert.equal(result.warnings.filter((item) => item.code === 'retired-field' && item.message.includes('[FINAL]')).length, 1, span);
-    assert.deepEqual(result.plan.criteria[1]?.verify, [{ command: 'npm test' }], span);
-  }
-});
-
-test('plan retired section user review required', () => assert.ok(defects(PLAN + '\n## User Review Required\nNone.').includes('retired-section')));
 
 test('plan criterion satisfies ids parsed', () => {
   const plan = parsed(PLAN.replace('Satisfies: REQ-1', 'Satisfies: REQ-1, REQ-2'));

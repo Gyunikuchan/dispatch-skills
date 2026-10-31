@@ -10,7 +10,6 @@ import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 test('uncommitted delivery through public entry preserves standalone review', async () => {
   const f = fixture({ responses: [CLEAN, CLEAN, CLEAN] });
   try {
-    for (const key of ['cli', 'begin', 'reply', 'rebind', 'initialize']) assert.equal(Object.keys(f).includes(key), false, key);
     const plan = planSource
       .replaceAll('src/file.ts', 'src/a.ts')
       .replace('node -e "process.exit(0)"', `node -e "require('assert').match(require('fs').readFileSync('src/a.ts','utf8'),/value = 2/)"`)
@@ -72,7 +71,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
     assert.deepEqual(toolEvidence.map(record => record.data['criterion']), ['SC1', 'contract']);
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);
 
-    const callerHead=f.git('rev-parse','HEAD').trim();const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.equal('to' in delivered,false);assert.equal(f.git('rev-parse','HEAD').trim(),callerHead);assert.equal(delivered.from,callerHead);assert.equal(fs.readFileSync(path.join(f.repo,'src/a.ts'),'utf8'),'export const value = 2;\n');
+    const callerHead=f.git('rev-parse','HEAD').trim();const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.equal(f.git('rev-parse','HEAD').trim(),callerHead);assert.equal(delivered.from,callerHead);assert.equal(fs.readFileSync(path.join(f.repo,'src/a.ts'),'utf8'),'export const value = 2;\n');
     const incomplete = await run(['report', 'complete', '--session', session], 4);
     assert.equal(incomplete.reason, 'criteria-unmet');
     const manualFile = path.join(f.dir, 'review-manual.json');

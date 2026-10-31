@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {test} from 'node:test';
 import {CATEGORIES, DIAGNOSTIC_LIMITS} from '../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import {OVERLAY_ROOT, scanOverlay} from './scan.ts';
+import {OVERLAY_ROOT} from './scan.ts';
 const read = (name: string) => fs.readFileSync(path.join(OVERLAY_ROOT, 'skills/dispatch/', name), 'utf8');
 
 test('phase prose records bounded retro observations as a JSON array', () => {
@@ -19,7 +19,6 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.match(instruction, /Fixes must hold on any repository and machine/);
   assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
   for (const term of ['valid empty', 'missing', 'unreadable', 'malformed', 'non-array', 'workflow gate']) assert.ok(instruction.includes(term), term);
-  assert.ok(!read('SKILL.md').includes('.state/retro.json'));
   assert.ok(read('SKILL.md').includes('returned `instructions`'));
 });
 
@@ -29,14 +28,9 @@ test('phase prose completes the report before cleaning owned worktrees', () => {
 });
 
 test('diagnostics retain privacy and measurement guidance', () => {
-  const legacy = [/replyTransport/, /\{\s*v\s*:\s*1\s*,\s*event/, /capture\.json/, /pending-(?:\d+|N)\.json/, /capture\.lock/, /diagnostics\.render\.lock/];
-  const dispatchRoot = path.join(OVERLAY_ROOT, 'skills/dispatch');
-  const files = scanOverlay(dispatchRoot).map(f => ({ ...f, path: 'skills/dispatch/' + f.path }));
-  assert.deepEqual(files.flatMap(f => legacy.filter(re => re.test(f.text)).map(re => f.path + ': ' + re.source)), []);
   const human = read('references/readme/troubleshooting.md');
   const concepts = read('references/readme/concepts.md');
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
   assert.ok(concepts.includes('Native timing and usage'));
-  assert.ok(!concepts.includes('do not retain provider usage counters'));
   for (const term of ['unavailable value, not zero', 'Measured totals exclude `~` figures', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
 });

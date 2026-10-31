@@ -56,8 +56,6 @@ test('walkthrough follows reviewer order and states counts once', () => {
   const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
   assert.match(verification, /- \*\*Status:\*\* complete/);
   assert.doesNotMatch(verification, /\d+\/\d+|\d+ files|\d+ findings/);
-  assert.doesNotMatch(rendered, /^> \*\*(Delivered|Integration|Spec|Plan|Status|Deviations):/m);
-  assert.doesNotMatch(rendered, /^## (Changes Made|User-Attributed Records)$/m);
 });
 
 test('walkthrough review focus points to attention details in their owning sections', () => {

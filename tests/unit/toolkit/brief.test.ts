@@ -268,7 +268,7 @@ describe('writer brief', () => {
       assert.match(brief, /read.*whole/i);
       assert.match(brief, /failing tests/i);
       assert.match(brief, /Git write commands/);
-      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check', 'envelope', 'RED-MATRIX', 'briefHash', 'receipt']) assert.ok(!brief.includes(forbidden), forbidden);
+      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check']) assert.ok(!brief.includes(forbidden), forbidden);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
     } finally { f.cleanup(); }
   });
