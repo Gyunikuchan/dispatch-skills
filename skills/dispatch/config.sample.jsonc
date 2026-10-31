@@ -17,7 +17,7 @@
   // retrospective; false adds nothing. Changes take effect at the next mutating send.
   "diagnostics": false,
   // Optional; maximum concurrent implementation task writers (default 1).
-  "write-concurrency": 2,
+  "write-concurrency": 3,
   // Optional; host read-command prefixes that read delegates may run, such as a code-index query.
   // Name the read subcommand: a bare tool name also permits its write subcommands. List only
   // commands that write at most their own cache; Claude's sandbox permits working-directory writes.
@@ -27,24 +27,23 @@
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
-      // Optional; defaults to true.
+      // Optional; defaults to true for sandboxed platforms.
       "sandbox": true,
       "targets": [
         // Set only the levels you need: low, medium, high, xhigh, max.
         // Missing level? Use the nearest lower, or the lowest higher.
-        // Here, medium through xhigh use low. Entries do not inherit fields.
+        // Here, medium uses low; xhigh and max use high. Entries do not inherit fields.
         // Effort is optional; CLI model/effort overrides win.
         {
-          "low": { "model": "claude-opus-5-5", "effort": "low" },
+          "low": { "model": "claude-sonnet-5-5", "effort": "high" },
           "high": { "model": "claude-opus-5-5", "effort": "medium" },
-          "max": { "model": "claude-opus-5-5", "effort": "high" },
         },
       ],
     },
     "agy": {
       "targets": [
         {
-          "low": { "model": "gemini-3.7-flash", "effort": "medium" },
+          "low": { "model": "gemini-3.8-flash", "effort": "medium" },
           // No effort uses the provider default. agy accepts low/medium/high.
           "high": { "model": "gemini-3.8-flash" },
         },
@@ -52,37 +51,35 @@
     },
     // Multiple targets under one provider are separate voices, not fallback models.
     "copilot": {
-      "sandbox": true,
       // Optional; defaults to false. true never runs this provider's CLI: when the orchestrator
       // is this platform, its native subagents serve these targets alongside the CLI wave;
       // otherwise the targets are skipped.
       "nativeSubagentsOnly": true,
       "targets": [
         {
-          "low": { "model": "grok-4.7", "effort": "medium" },
-          "high": { "model": "grok-4.7", "effort": "high" },
-          "max": { "model": "grok-4.7", "effort": "xhigh" },
+          "low": { "model": "gpt-6.1-terra", "effort": "medium" },
+          "high": { "model": "gpt-6.1-sol", "effort": "medium" },
+          "max": { "model": "gpt-6.1-sol", "effort": "high" },
         },
         // Model arrays try each name in order if the previous one fails.
         {
-          "low": { "model": ["gpt-6-sol", "bedrock.gpt-6-sol"], "effort": "medium" },
-          "max": { "model": ["gpt-6-sol", "bedrock.gpt-6-sol"], "effort": "high" },
+          "low": { "model": ["gpt-6.1-sol", "bedrock.gpt-6.1-sol"], "effort": "medium" },
+          "max": { "model": ["gpt-6.1-sol", "bedrock.gpt-6.1-sol"], "effort": "high" },
         },
       ],
     },
     "opencode": {
       // OpenCode uses effort as the model variant (model#effort).
       "targets": [
-        { "low": { "model": "opencode-go/glm-5.3-flash", "effort": "max" } },
+        { "low": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "xhigh" } },
         { "low": { "model": "lmstudio/qwen3.8-27b-ridge", "effort": "medium" } },
       ],
     },
     "codex": {
-      "sandbox": true,
       "targets": [
         {
-          "low": { "model": "gpt-6-sol", "effort": "medium" },
-          "max": { "model": "gpt-6-sol", "effort": "high" },
+          "low": { "model": "gpt-6.1-terra", "effort": "medium" },
+          "high": { "model": "gpt-6.1-sol", "effort": "medium" },
         },
       ],
     },
@@ -91,28 +88,35 @@
   // Add your host here to use the implement flow.
   "write-subagents": {
     "claude": {
-      "low": { "model": "claude-sonnet-5", "effort": "medium" },
-      "high": { "model": "claude-opus-5-5", "effort": "low" },
+      "low": { "model": "claude-haiku-5-5", "effort": "high" },
+      "medium": { "model": "claude-sonnet-5-5", "effort": "medium" },
+      "high": { "model": "claude-sonnet-5-5", "effort": "high" },
       "max": { "model": "claude-opus-5-5", "effort": "medium" },
     },
     "agy": {
-      "low": { "model": "gemini-3.7-flash", "effort": "medium" },
-      "high": { "model": "gemini-3.8-flash", "effort": "medium" },
+      "low": { "model": "gemini-3.8-flash", "effort": "medium" },
     },
     "copilot": {
       "low": { "model": ["gpt-6-luna", "bedrock.gpt-6-luna"], "effort": "max" },
     },
     "opencode": {
-      "low": { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
+      "low": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "xhigh" },
     },
     "codex": {
       "low": { "model": "gpt-6-luna", "effort": "max" },
+      "medium": { "model": "gpt-6.1-terra", "effort": "medium" },
+      "high": { "model": "gpt-6.1-terra", "effort": "high" },
+      "max": { "model": "gpt-6.1-sol", "effort": "medium" },
     },
   },
-  // Optional: define one entry per platform.
-  // "explore-subagents": {
-  //   "codex": { "model": "gpt-6-luna", "effort": "low" },
-  // },
+  // Optional: native read-only explorers for grounding and research; one entry per platform.
+  "explore-subagents": {
+    "claude": { "model": "claude-haiku-5-5", "effort": "medium" },
+    "agy": { "model": "gemini-3.8-flash", "effort": "medium" },
+    "copilot": { "model": "gpt-6-luna", "effort": "xhigh" },
+    "opencode": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "medium" },
+    "codex": { "model": "gpt-6-luna", "effort": "xhigh" },
+  },
   // Optional: set review size and rounds by level.
   // Without a phase policy, standalone reviews use one target and one round.
   "phases": {
