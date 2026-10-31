@@ -89,6 +89,8 @@ test('delegates-sensitive-file-guardrail: launched prompts prepend the guardrail
   await run;
   const prompt = h.launches[0]?.argv[2] ?? '';
   assert.ok(prompt.startsWith(GUARDRAIL_HEADER));
+  assert.match(prompt, /MUST NOT edit, overwrite, create, or delete any project repository files; read tools and permitted read commands may create or update only their own internal cache or index directory \(such as a code index\)/);
+  assert.match(prompt, /MUST NOT execute modifying shell commands or external network requests/);
   assert.ok(prompt.endsWith('Review it'));
 });
 

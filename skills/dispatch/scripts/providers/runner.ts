@@ -76,7 +76,7 @@ export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string;
   if (scope.attachedFiles?.length) lines.push(`[ATTACHED FILES]: ${scope.attachedFiles.join(', ')}`);
   return `${GUARDRAIL_HEADER}\n`
     + 'You are running in strict READ-ONLY analysis mode.\n'
-    + '- You MUST NOT edit, overwrite, create, or delete any files.\n'
+    + '- You MUST NOT edit, overwrite, create, or delete any project repository files; read tools and permitted read commands may create or update only their own internal cache or index directory (such as a code index).\n'
     + '- You MUST NOT execute modifying shell commands or external network requests.\n'
     + '- Confine your entire output to inspection, code review, suggestions, or analysis.\n'
     + '- You may read files from the workspace, attached paths, and tool/runtime directories.\n'

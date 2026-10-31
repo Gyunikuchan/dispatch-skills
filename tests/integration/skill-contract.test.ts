@@ -226,6 +226,8 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(providers, /own cache or index/i);
   assert.match(providers, /create or update only/i);
   assert.match(reviewPrompt, /own cache or index/i);
+  assert.match(reviewPrompt, /A reviewer may run a host read tool that creates or updates only its own cache or index/);
+  assert.doesNotMatch(reviewPrompt, /A native reviewer/);
   assert.match(writerBrief, /own cache or index/i);
   assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
   assert.ok(read(root + 'references/verbs/implement.md').includes('grounding.md#follow-up-explorers'));

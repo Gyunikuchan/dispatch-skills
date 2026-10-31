@@ -35,7 +35,7 @@ test('prompt: declared variables and body are extracted from the Markdown templa
   assert.equal(fillTemplate(template, variables, { Name: 'Ada' }), 'Hi Ada');
 });
 
-test('prompt assembly equals the golden per review kind', () => {
+test('assembles prompt matching golden per review kind', () => {
   const frame = read(templates, 'review-prompt.md');
   const standardsRule = 'Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.';
   const specRouting = 'Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.';
@@ -48,6 +48,8 @@ test('prompt assembly equals the golden per review kind', () => {
     assert.match(prompt, /Read the whole spec/);
     assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
     assert.equal(prompt.split(standardsRule).length - 1, 1, `${kind}: standards rule`);
+    assert.match(prompt, /A reviewer may run a host read tool that creates or updates only its own cache or index/);
+    assert.doesNotMatch(prompt, /A native reviewer/);
     if (kind === 'code') {
       const against = read(templates, 'review-prompt-code.md').split(/^## against$/m)[1]!.split(/^## inspection$/m)[0]!;
       assert.ok(against.includes(reuseCitation));
