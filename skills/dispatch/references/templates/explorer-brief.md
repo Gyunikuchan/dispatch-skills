@@ -12,6 +12,8 @@ Map the landscape around the planned decision (constraints, consumers, reuse can
 
 Answer these questions about the planned decision; do not return a general repository survey. Report material facts the questions missed under `Surprises`.
 
+For a scope round, use the confirmed spec's REQs and DECs as the baseline, then answer any related or unrelated planning questions the caller adds.
+
 ## Host rules and tools
 
 Apply the [host rule discovery rule](quality-bar.md#shared). Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow [native slots](../providers.md#native-slots). List any named tool or skill that cannot run under `Not covered`. Name the tool used in the map's `Tool` field.
@@ -47,8 +49,12 @@ For reuse candidates (helpers, utilities and types) and host conventions the cha
 
 ## Map, budget and output
 
-Use the [context map template](context-map.md), including its source commit and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref and mark absence claims unverified.
+For map tasks, use the [context map template](context-map.md), including its source commit and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref and mark absence claims unverified.
 
 Keep this map within 16,384 UTF-8 bytes (16 KB). If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 
-Use `<session>/<slug>.context.md` for the initial map; for a follow-up use `<session>/<slug>.followup-<n>.context.md`. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback. After writing the map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step.
+For a scope round, the caller provides the confirmed spec path and the spec-phase map path when it exists. Read the spec and map; if the map is absent, use the spec alone and return the full summary. Write the full scope map to the phase path defined in [grounding](../grounding.md#publish). Relative to the spec-phase map, reply only with entries added, corrected and removed and new `Surprises`; “no material delta” is valid. If the map must be returned inline, return the full map for the caller to save under its phase path.
+
+Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round, and `<session>/<slug>.followup-<n>.context.md` for follow-up maps. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback. After writing a map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step.
+
+For general codebase or web research that does not produce a map, return a distilled answer with cited sources. Use no prescribed format or context-map lint.

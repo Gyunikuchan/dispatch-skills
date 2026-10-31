@@ -316,5 +316,5 @@ test('turn target: the advisory budget shows the computed number in every kind',
 });
 
 test('context map: code prompts never render the map line', () => {
-  assert.doesNotMatch(reviewPrompt('code', {...reviewContext('code'), contextMapPath: '/session/work.context.md'}), /Context Map/);
+  assert.doesNotMatch(reviewPrompt('code', {...reviewContext('code'), contextMapPath: '/session/work.plan.context.md'}), /Context Map/);
 });

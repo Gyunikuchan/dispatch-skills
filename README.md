@@ -26,7 +26,8 @@ flowchart TD
     User(["👤 Requirement"]) --> Ground["🔍 Explore the codebase<br/>(explorer agents if configured)"]
     Ground --> Spec["📄 Spec: goals, constraints, decisions"]
     Spec --> SpecGate{"You approve the spec"}
-    SpecGate --> Design["🗺️ Design + review"]
+    SpecGate --> ScopeGround["🔍 Ground confirmed scope"]
+    ScopeGround --> Design["🗺️ Design + review"]
     Design --> DesignGate{"You approve the design"}
     DesignGate --> Plan["📝 Plan for next increment + review"]
     Plan --> Tasks["🧩 Tasks in isolated worktrees"]

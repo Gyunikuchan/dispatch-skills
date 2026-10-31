@@ -22,7 +22,7 @@ Your current agent is the **host agent**. It routes work to configured read dele
 A typical run:
 
 1. **Understand the request.** Dispatch explores the relevant code first, using native explorer agents when `explore-subagents` is configured. After grounding, if the [`grilling`](https://github.com/mattpocock/skills) skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
-2. **Write and review.** Dispatch writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
+2. **Ground the scope, then write and review.** After you confirm the spec, Dispatch grounds the confirmed scope before authoring a standalone plan or design. It then writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
 3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
 4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
 
@@ -32,7 +32,8 @@ The level can go up during a run if the work proves harder, but never down. Ques
 flowchart TD
     User(["👤 Your request"]) --> Ground["🔍 Explore the codebase<br/>(explorer agents if configured)"]
     Ground --> Spec["📄 Clarify and write the spec"]
-    Spec --> Artifact["📝 Write plan or design"]
+    Spec --> ScopeGround["🔍 Ground confirmed scope"]
+    ScopeGround --> Artifact["📝 Write plan or design"]
     Artifact --> Review["🎲 Independent reviewers<br/>cite evidence"]
     Review --> Adjudicate["⚖️ Host agent checks findings<br/>and applies fixes"]
     Adjudicate --> Approve{"You approve"}
@@ -138,7 +139,7 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 | `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
-| `explore-subagents` | Optional native explorers for domain grounding before authoring |
+| `explore-subagents` | Optional native explorers for grounding and research |
 | `phases` | Optional review breadth and round limits |
 
 The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.

@@ -213,6 +213,14 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(grounding, /each design increment plan/i);
   assert.match(grounding, /cited range/i);
   assert.ok(grounding.includes('providers.md#native-slots'));
+  assert.ok(grounding.includes('## Scope round'));
+  assert.ok(read(root + 'references/verbs/plan.md').includes('../grounding.md#scope-round'));
+  assert.ok(read(root + 'references/verbs/design.md').includes('../grounding.md#scope-round'));
+  assert.ok(explorer.includes('<slug>.spec.context.md'));
+  assert.ok(explorer.includes('<slug>.plan.context.md'));
+  for (const [name, text] of [['grounding.md', grounding], ['explorer-brief.md', explorer]] as const) {
+    assert.ok(!text.includes('<slug>.context.md'), name + ' uses an unphased map path');
+  }
 
   assert.ok(explorer.includes('## Host rules and tools'));
   assert.ok(explorer.includes('quality-bar.md#shared'));

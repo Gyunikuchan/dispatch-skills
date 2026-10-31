@@ -140,16 +140,18 @@ test('turn target: design review counts distinct increment graph paths', async (
 
 const contextLine = (f: Awaited<ReturnType<typeof fixture>>, file: string) => '- Context Map: ' + path.join(f.session, file) + ' — pre-change index; verify claims at source.';
 
-test('context map: plan review names the session map beside the spec hash', async () => {
+test('context map: plan review names its phase map and ignores the legacy slug map', async () => {
   const f = await fixture();
   try {
+    fs.writeFileSync(path.join(f.session, 'work.plan.context.md'), CONTEXT_MAP);
     fs.writeFileSync(path.join(f.session, 'work.context.md'), CONTEXT_MAP);
     assert.equal((await f.call()).exit, 0);
     const prompts = promptsOf(f);
     assert.ok(prompts.length > 0);
     for (const prompt of prompts) {
       const lines = prompt.split('\n');
-      assert.equal(lines[lines.findIndex(line => line.startsWith('- Spec Hash: ')) + 1], contextLine(f, 'work.context.md'));
+      assert.equal(lines[lines.findIndex(line => line.startsWith('- Spec Hash: ')) + 1], contextLine(f, 'work.plan.context.md'));
+      assert.doesNotMatch(prompt, /work\.context\.md/);
     }
   } finally {f.cleanup();}
 });
@@ -167,20 +169,20 @@ test('context map: plan review without a session map renders no map line', async
 test('context map: design review names the session map of the same slug', async () => {
   const f = await fixture();
   try {
-    fs.writeFileSync(path.join(f.session, 'strategy.context.md'), CONTEXT_MAP);
+    fs.writeFileSync(path.join(f.session, 'strategy.design.context.md'), CONTEXT_MAP);
     f.deps.delegate = cleanDelegate(f);
     const design = f.artifact('strategy.design.md', '# Strategy\n## Boundaries\nA boundary.\n');
     assert.equal((await f.call('design', design)).exit, 0);
     const prompts = promptsOf(f);
     assert.ok(prompts.length > 0);
-    for (const prompt of prompts) assert.equal(prompt.split('\n').filter(line => line === contextLine(f, 'strategy.context.md')).length, 1);
+    for (const prompt of prompts) assert.equal(prompt.split('\n').filter(line => line === contextLine(f, 'strategy.design.context.md')).length, 1);
   } finally {f.cleanup();}
 });
 
 test('context map: code review never receives a session map', async () => {
   const f = await fixture();
   try {
-    fs.writeFileSync(path.join(f.session, 'work.context.md'), CONTEXT_MAP);
+    fs.writeFileSync(path.join(f.session, 'work.plan.context.md'), CONTEXT_MAP);
     rangeGit(f, {feature: 'feature-1'}, {'main-id..feature-1': ['a.ts']});
     f.deps.delegate = cleanDelegate(f);
     assert.equal((await f.call('code', 'main..feature', 'low')).exit, 0);

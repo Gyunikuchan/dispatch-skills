@@ -118,7 +118,7 @@ test('plan and design review rounds update the bound findings section', async ()
   nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
   try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Boundaries\nA boundary.\n## Review Findings & Resolutions\nDriver notes.\n');
-    f.artifact('strategy.context.md', CONTEXT_MAP);
+    f.artifact('strategy.design.context.md', CONTEXT_MAP);
     await f.add('bind', { spec: 'mission.spec.md', plan: 'work.plan.md', design: 'strategy.design.md' });
     for (const [kind, target, review] of [
       ['plan', f.plan, 'plan-work.plan'],
@@ -168,7 +168,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
       return done;
     };
     const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
-    f.artifact('strategy.context.md',CONTEXT_MAP);
+    f.artifact('strategy.design.context.md',CONTEXT_MAP);
     const pending=await call('design',design);
     await finish(pending,'design',design,f.spec);
     const designRound=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-1/round.json'),'utf8'));
@@ -262,7 +262,7 @@ test('review rounds capture dedupe clusters scope caps and design prompts',async
     assert.doesNotMatch(prompt.split('- Scope: ')[1]!.split('\n')[0]!,/Review Findings & Resolutions/);
     assert.equal((await f.call()).output.reason,'round-cap');
     const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
-    f.artifact('strategy.context.md',CONTEXT_MAP);
+    f.artifact('strategy.design.context.md',CONTEXT_MAP);
     assert.equal((await f.call('design',design)).exit,0);
     assert.match(fs.readFileSync(f.launches.at(-1)!.request.promptPath,'utf8'),/Design Path:|Design:/);
   } finally {f.cleanup();}
@@ -422,7 +422,7 @@ test('design-stage review binds its spec and preserves an in-place revision with
   const f = await fixture(false);
   try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
-    f.artifact('strategy.context.md', CONTEXT_MAP);
+    f.artifact('strategy.design.context.md', CONTEXT_MAP);
     await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
     f.deps.delegate = async () => ({outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []});
     assert.equal((await f.call('design', design)).exit, 0);

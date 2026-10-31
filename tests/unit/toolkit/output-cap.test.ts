@@ -58,7 +58,7 @@ test('summary byte cap preserves large ask answers review findings and native sl
       f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nPreserve results.\n');
       await appendRecord(f.session, {kind: 'bind', by: 'orchestrator', key: 'bind',
         data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
-      f.artifact('work.context.md', '# Context map: work\n');
+      f.artifact('work.plan.context.md', '# Context map: work\n');
       await appendRecord(f.session, {kind: 'confirm', by: 'user', quote: 'Approved', key: 'confirm',
         data: {spec: currentHashes(f.root, latest(foldLedger(f.session), 'bind')).spec}}, f.deps);
       const args = scenario === 'ask' ? ['ask', 'run', target] : ['review', 'run', target, '--kind', 'plan'];

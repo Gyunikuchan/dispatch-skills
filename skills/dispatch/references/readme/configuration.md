@@ -88,7 +88,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
-`explore-subagents` configures native, read-only explorers for domain grounding. Define one `{ model, effort? }` entry per platform; explorer choices do not depend on run level. Dispatch sends later grounding questions to a live explorer when the host can continue agents, and otherwise launches a fresh one ([follow-up explorers](../grounding.md#follow-up-explorers)).
+`explore-subagents` configures native, read-only explorers for grounding and general codebase or web research. The configured explorer is expected to use a cheaper model than the host agent, so token-heavy reading can stay out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; explorer choices do not depend on run level. Dispatch sends later grounding questions to a live explorer when the host can continue agents, and otherwise launches a fresh one ([follow-up explorers](../grounding.md#follow-up-explorers)).
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Only Claude has a command allowlist; other providers already permit commands their sandbox allows.

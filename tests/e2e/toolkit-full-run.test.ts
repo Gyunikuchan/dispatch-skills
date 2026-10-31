@@ -17,8 +17,8 @@ test('uncommitted delivery through public entry preserves standalone review', as
       .replace('## Success Criteria', '### T2 — Review\n#### [NEW] docs/review.md\n- Purpose: records the review outcome.\n\n## Success Criteria')
       .replace('  - Evidence: verify\n\n## Verification Plan', '  - Evidence: verify\n- [SC2] Source review is complete\n  - Changes: docs/review.md\n  - Evidence: review\n  - Review: artifact: docs/review.md; scenario: inspect the delivered behavior; pass: the user records review evidence\n\n## Verification Plan');
     fs.writeFileSync(path.join(f.repo, 'work.plan.md'), plan);
-    fs.writeFileSync(path.join(f.repo, 'work.context.md'), contextMapSource);
-    f.git('add', 'work.plan.md', 'work.context.md'); f.git('commit', '-qm', 'plan');
+    fs.writeFileSync(path.join(f.repo, 'work.plan.context.md'), contextMapSource);
+    f.git('add', 'work.plan.md', 'work.plan.context.md'); f.git('commit', '-qm', 'plan');
     const run = async (args: string[], expected = 0) => {
       const result = await f.launch(args).done;
       assert.equal(result.exit, expected, result.stderr + result.stdout);

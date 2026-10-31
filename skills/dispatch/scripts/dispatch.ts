@@ -11,7 +11,7 @@ import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
-const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run` and ground under references/grounding.md: launch explorers only when doctor reports one for this platform; otherwise self-ground.';
+const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers only when doctor reports one for this platform; otherwise self-ground.';
 
 export type EntryDeps = CliDeps & { cwd?: () => string };
 

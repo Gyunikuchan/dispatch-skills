@@ -15,6 +15,8 @@ When a verb needs a new spec, including `review` when no spec exists, use this s
 
    Record the user's reply as a `confirm` ledger record with the spec hash ([toolkit](toolkit.md#confirm)) once, using the resulting hash if this fallback update ran, or the current spec hash otherwise. In this fallback, the reply is both the decision and confirmation, so add no extra exchange.
 
+After confirming the spec, run the [scope round](grounding.md#scope-round) before authoring a standalone plan or any design.
+
 Direct other planning skills' output into this canonical owner. Merge stray material before removing it; deleting tracked work follows the user gate.
 
 ## Approval

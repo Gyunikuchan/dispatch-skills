@@ -95,7 +95,7 @@ test('session instructions always point at grounding and add diagnostics only wh
       const assertInstructions = (value: { instructions?: unknown }) => {
         const instructions = value.instructions;
         if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
-        assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md: launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
+        assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
         if (enabled) assert.match(instructions,/references\/diagnostics\.md.*diagnostics render/);
         else assert.doesNotMatch(instructions,/references\/diagnostics\.md/);
         assert.ok(!instructions.includes(f.root));

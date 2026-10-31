@@ -219,8 +219,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, severity:finding.severity,...(state?{rejectionConfirmed:state.state==='confirmed'}:{}),ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
     }));
 
-    // Maps are per-session, keyed by the plan or design slug; code reviews never receive one because the pre-change map is stale for code.
-    const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.(plan|design)\.md$/, '') + '.context.md');
+    // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
+    const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.md$/, '.context.md'));
     async function start(generation: number, captured: Capture): Promise<Round> {
       let scope = 'Full review', changedPaths = captured.changed;
       if (n > 1) {

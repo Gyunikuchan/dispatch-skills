@@ -6,7 +6,7 @@ Dispatch keeps independent review and implementation inside your current agent w
 
 Dispatch organizes work across four canonical document layers. The **spec (mission brief)** records why the work matters and what it must achieve: the problem, requirements with acceptance conditions, constraints, alternatives and user decisions. A **design (strategy)** chooses the strategy: architecture, boundaries, risks and ordered increments. A **plan (tactics)** gives the tactics: tasks, file ownership, prerequisites, requirement-linked criteria and verification commands. Later layers cite upstream requirements and decisions instead of repeating them. A **walkthrough (debrief)** records delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions.
 
-For plan and design work, the [spec stage](../spec-stage.md) checks your request on problem, approach, scope and cost/risk after grounding, and proposes an alternative only when it is materially better; otherwise, it states in one line why the premise holds.
+For plan and design work, the [spec stage](../spec-stage.md) checks your request on problem, approach, scope and cost/risk after grounding, and proposes an alternative only when it is materially better; otherwise, it states in one line why the premise holds. After you confirm the spec, Dispatch grounds the confirmed scope again before authoring a standalone plan or design.
 
 For example, a webhook spec can require safe retries without duplicate charges. The design chooses the idempotency boundary and rollout order. A plan names the storage and handler changes and checks that prove retries are safe. A standalone plan pins the spec's exact contents; an increment plan names its design increment, and that design pins the spec.
 
@@ -28,7 +28,7 @@ This keeps independent review useful while leaving decisions and production chan
 
 ## What happens during implementation
 
-1. Dispatch settles the spec, then the plan lists outcomes, files, prerequisites, requirement-linked criteria and verification steps.
+1. Dispatch settles the spec, grounds the confirmed scope, then the plan lists outcomes, files, prerequisites, requirement-linked criteria and verification steps.
 2. After approval, Dispatch works through tasks whose prerequisites are ready. Independent tasks can run at the same time when `write-concurrency` is configured above one.
 3. Your host agent checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
 4. Dispatch reports the outcome and links the artifacts and logs you may need for follow-up.

@@ -88,7 +88,7 @@ describe('lint severity', () => {
   });
   test('design graph defects preserve partial structure as warnings', async () => {
     const graph = '# Design\n## Increment Dependency Graph\n';
-    scoped.artifact('a.context.md', CONTEXT_MAP);
+    scoped.artifact('a.design.context.md', CONTEXT_MAP);
     const envelope = await lint('a.design.md', graph);
     assert.equal(envelope.exit, 0);
     assert.ok(envelope.result.warnings.some((x: {code: string}) => x.code === 'missing-increments'));

@@ -22,7 +22,7 @@ function getBaseTemplate(): string {
     fs.writeFileSync(path.join(baseTemplate, 'src/file.ts'), 'initial\n');
     fs.writeFileSync(path.join(baseTemplate, '.gitignore'), '20261023T0000Z-test/\nignored\n');
     fs.writeFileSync(path.join(baseTemplate, 'work.plan.md'), planSource);
-    fs.writeFileSync(path.join(baseTemplate, 'work.context.md'), contextMapSource);
+    fs.writeFileSync(path.join(baseTemplate, 'work.plan.context.md'), contextMapSource);
     fs.writeFileSync(path.join(baseTemplate, 'work.spec.md'), '# Spec\n## Requirements\n### REQ-1 — Work\n- Acceptance: works\n');
     git(['add', '.']);
     git(['commit', '-m', 'base']);

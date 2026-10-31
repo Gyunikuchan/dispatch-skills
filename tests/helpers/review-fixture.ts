@@ -40,7 +40,7 @@ export async function fixture(bound=true, confirmed=true) {
   }));config();
   const spec=f.artifact('mission.spec.md','# Mission\n## Intent & Problem\nKeep captured work recoverable.\n## Requirements\n### REQ-1 — Works\n');
   const plan=f.artifact('work.plan.md','# Work\n## Work\nOriginal body.\n## Review Findings & Resolutions\nDriver log.\n');
-  f.artifact('work.context.md',CONTEXT_MAP);
+  f.artifact('work.plan.context.md',CONTEXT_MAP);
   let key=0;
   const add=(kind:string,data:object)=>appendRecord(f.session,{kind,by:'orchestrator',key:'input-'+key++,data},f.deps);
   if(bound) await add('bind',{spec:'mission.spec.md',plan:'work.plan.md'});

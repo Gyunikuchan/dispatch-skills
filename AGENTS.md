@@ -9,7 +9,7 @@ Dispatch enables high-confidence development across native agent harnesses: catc
 - **Proportional assurance:** Balance correctness, token efficiency, and speed against task risk. Preserve acceptance and safety boundaries with the simplest, least costly workflow.
 - **Native collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs.
 - **Evidence and intent:** Treat delegate findings as claims. Check them against governing intent, rules, and artifacts; resolve findings with evidence, never vote counts.
-- **Lean context:** Keep always-loaded contracts and initial briefs focused. Disclose detail progressively, retain evidence in linked artifacts, and prefer deterministic enforcement over recurring prose.
+- **Lean context:** Keep always-loaded contracts and initial briefs focused. Disclose detail progressively, retain evidence in linked artifacts, and prefer deterministic enforcement over recurring prose. Delegate token-heavy reading and research to cheaper read-only delegates that return distilled, cited results to protect orchestrator context.
 - **Diagnostics:** Capture metrics identifying defects and bottlenecks. Minimize token overhead when disabled; load instructions and collect observations only when enabled.
 - **Informed handoffs:** State objective, decisions, constraints, current state, next action, and verified evidence at each handoff. Link artifacts for detail.
 - **Structural least privilege:** Keep provider delegates read-only; scope native writes explicitly ([providers.md](skills/dispatch/references/providers.md)). Independently check submitted changes.
