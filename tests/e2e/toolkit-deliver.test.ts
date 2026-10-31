@@ -167,6 +167,24 @@ describe('toolkit delivery and cleanup',()=>{
       assert.ok(!fs.existsSync(writer)); assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep'); assert.ok(JSON.stringify(cleaned.value.removed).includes(path.basename(writer)));
     } finally { r.cleanup(); }
   });
+  it('cleans up worktree when git worktree remove fails directory deletion on Windows', async () => {
+    const { r, writer } = await prepared(); try {
+      const run = r.deps.run;
+      r.deps.run = async (argv, opts) => {
+        if (argv[1] === 'worktree' && argv[2] === 'remove') {
+          r.git(['worktree', 'remove', '--force', argv[4]!]);
+          fs.mkdirSync(argv[4]!, { recursive: true });
+          fs.writeFileSync(path.join(argv[4]!, 'unlinked.tmp'), 'held');
+          return { exit: 255, stdout: '', stderr: `error: failed to delete '${argv[4]}': Permission denied\n` };
+        }
+        return run(argv, opts);
+      };
+      const cleaned = await r.run(['worktree', 'cleanup']); r.deps.run = run;
+      assert.equal(cleaned.exit, 0);
+      assert.ok(!fs.existsSync(writer));
+      assert.ok(JSON.stringify(cleaned.value.removed).includes(path.basename(writer)));
+    } finally { r.cleanup(); }
+  });
   it('keeps deregistered remnants of unmerged work', async () => {
     await each(['active-writer', 'moved-integration'], async mode => {
       const r = await toolkitRepo(planSource, base); try {

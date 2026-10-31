@@ -99,7 +99,7 @@ Classify each document or piece of prose by its primary audience and task. When 
 
 - **Human documentation:** Help users decide whether and how to use the skills. Include details they need to choose a skill, set it up, use it correctly, understand its results or limits, or recover from a problem. Explain concepts plainly, organize around user tasks, and use realistic examples with relevant outcomes and constraints.
 - **Agent-facing prose:** Apply these rules to contracts, prompts, templates, instructions embedded in scripts, and operational references. When editing them, apply `writing-for-agents`. Direct decisions and actions with explicit triggers, order, boundaries, and checkable completion criteria. Include rationale when it changes execution. Add detail when it materially improves correct execution, naming the behavior, decision, or failure mode it addresses.
-- **Maintainer knowledge base (`docs/`):** Preserve long-term context for human and agent maintainers. These records are not operationally required; put operational requirements in `skills/dispatch/references/`. Keep one-off run records, transient sweep lists, and intermediate analysis in session scratch (`.scratch/`) and link them in the handoff; do not commit them to `docs/`.
+- **Maintainer knowledge base (`docs/`):** Preserve long-term context for human and agent maintainers. These records are not operationally required; put operational requirements in `skills/dispatch/references/`. Architectural Decision Records (`docs/decisions/`) record the current state; propose updates to existing ADRs when applicable to keep them up to date. Keep ADRs short: focus on the current decision and why; omit historical bloat. Keep one-off run records, transient sweep lists, and intermediate analysis in session scratch (`.scratch/`) and link them in the handoff; do not commit them to `docs/`.
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`). Treat the root and dispatch READMEs as examples of human-facing documentation, not required outlines.
 
@@ -151,6 +151,6 @@ For completed repository edit tasks, report:
 
 1. **Delivered behaviour** — structural, logic, or documentation change, concisely.
 2. **Verification status** — commands executed and results; include evidence for each completion criterion and identify failed or unrun required checks.
-3. **Remaining concerns and artifacts** — unresolved decisions or blockers, with paths or links to useful artifacts.
+3. **Remaining concerns and artifacts** — unresolved decisions, proposed updates to existing ADRs, or blockers, with paths or links to useful artifacts.
 
 For read-only tasks, report findings and evidence without change-only fields.

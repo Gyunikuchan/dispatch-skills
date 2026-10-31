@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HandlerContext, HandlerResult } from './cli.ts';
+import type { HandlerContext, HandlerResult, CliDeps } from './cli.ts';
 import { withLedger } from './ledger.ts';
 import { git, gitOk, changedPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
@@ -151,6 +151,21 @@ export async function close(ctx: HandlerContext): Promise<HandlerResult> {
     await tx.append({kind:'integrate',by:'tool',data:{phase:'closed',reason:why}}); return result({closed:true,reason:why});
   });
 }
+async function rmWorktreeDir(dir: string, deps: CliDeps, attempts = 20, delayMs = 100): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code === 'EPERM' || code === 'EBUSY') && i < attempts - 1) {
+        await (deps.sleep ? deps.sleep(delayMs) : new Promise(r => setTimeout(r, delayMs)));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
 export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','cleanup takes no task');
   return withLedger(ctx.session,'worktree cleanup',ctx.deps,async tx=>{
@@ -202,15 +217,19 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       } else ready.push(relative);
     }
     // Preserve all snapshots until every worktree has passed its preservation check.
-    for(const relative of remnants){fs.rmSync(path.resolve(ctx.session,relative),{recursive:true,force:true});removed.push(relative);}
+    for(const relative of remnants){
+      const cwd=path.resolve(ctx.session,relative);
+      await rmWorktreeDir(cwd,ctx.deps);
+      if(!fs.existsSync(cwd))removed.push(relative);
+    }
     for(const relative of ready){
       const cwd=path.resolve(ctx.session,relative);
-      // NOTE: A detached fsmonitor daemon keeps the worktree as its cwd, so Windows refuses removal; stop it first (no-op when absent).
-      await git(ctx.deps,cwd,['fsmonitor--daemon','stop']);
-      await gitOk(ctx.deps,root,['worktree','remove','--force',cwd]);
-      // NOTE: Git for Windows leaves a directory holding a junction (e.g. a linked node_modules); rmSync unlinks junctions without following them.
-      // Retries absorb transient EBUSY/EPERM while exiting processes release handles.
-      fs.rmSync(cwd,{recursive:true,force:true,maxRetries:8,retryDelay:50});
+      const remove=await git(ctx.deps,root,['worktree','remove','--force',cwd]);
+      // NOTE: Git for Windows leaves a directory holding a junction (e.g. a linked node_modules), or fails rmdir if handles are closing;
+      // rmWorktreeDir unlinks junctions without following them, and retries absorb transient Windows EBUSY/EPERM.
+      await rmWorktreeDir(cwd,ctx.deps);
+      if(fs.existsSync(cwd))throw new ToolError(2,'fault',remove.stderr||remove.stdout||'Failed to remove worktree at '+cwd);
+      await git(ctx.deps,root,['worktree','prune']);
       removed.push(relative);
     }
     for(const writer of writers) {

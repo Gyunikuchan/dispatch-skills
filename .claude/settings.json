@@ -1,4 +1,7 @@
 {
   "outputStyle": "Concise",
-  "autoCompactWindow": 250000
+  "autoCompactWindow": 250000,
+  "env": {
+    "ENABLE_PROMPT_CACHING_1H": "1"
+  }
 }
