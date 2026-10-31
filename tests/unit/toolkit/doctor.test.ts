@@ -65,7 +65,7 @@ test('doctor reports explorers independent of level', async () => {
     fs.writeFileSync(config, JSON.stringify({
       'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
       'explore-subagents': {
-        codex: { model: 'fast-explorer', effort: 'low', deep: true },
+        codex: { model: 'fast-explorer', effort: 'low' },
       },
     }));
     const run = async (args: string[] = []) => {
@@ -75,7 +75,7 @@ test('doctor reports explorers independent of level', async () => {
     };
 
     const high = await run(['--level', 'high']);
-    assert.deepEqual(high.explorers, { codex: { models: ['fast-explorer'], effort: 'low', deep: true } });
+    assert.deepEqual(high.explorers, { codex: { models: ['fast-explorer'], effort: 'low' } });
     const low = await run(['--level', 'low']);
     assert.deepEqual(low.explorers, high.explorers);
 

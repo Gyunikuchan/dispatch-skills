@@ -12,7 +12,7 @@ import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 
 const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
 const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results', severity = 'SHOULD') => JSON.stringify({status:'FINDINGS',findings:[{severity,tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
-const CONTEXT_MAP='# Context map: work\n\n> **Commit:** abc123\n>\n> **Strategy:** single\n>\n> **Tool:** text\n\n## Map\n- Work — `work.plan.md:1`\n';
+const CONTEXT_MAP='# Context map: work\n\n> **Commit:** abc123\n>\n> **Tool:** text\n\n## Map\n- Work — `work.plan.md:1`\n';
 const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
 async function fixture(bound=true, confirmed=true) {
   // A shallow virtual root avoids physical ancestor probes in quota-path validation.

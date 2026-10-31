@@ -11,4 +11,3 @@ Item: `{id,component,category,evidence,impact,proposedFix}`.
 Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine. Use Dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.
 
 Missing data cannot prove no defects. Collection is never a workflow gate.
-For deep grounding, record the disputed count and the strategy each source-verified dispute favoured.

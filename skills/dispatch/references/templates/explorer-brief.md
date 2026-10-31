@@ -12,12 +12,6 @@ Map the landscape around the planned decision (constraints, consumers, reuse can
 
 Answer these questions about the planned decision; do not return a general repository survey. Report material facts the questions missed under `Surprises`.
 
-## Strategy
-
-{{strategy}} — `single`, `outside-in` or `inside-out`.
-
-For `deep`, both explorers answer the same questions and complete the full Coverage checklist.
-
 ## Host rules and tools
 
 Apply the [host rule discovery rule](quality-bar.md#shared). Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow [native slots](../providers.md#native-slots). List any named tool or skill that cannot run under `Not covered`. Name the tool used in the map's `Tool` field.
@@ -36,7 +30,7 @@ Name the tool in the map. Mark consumers found only by text search as `(text-onl
 
 ## Coverage checklist
 
-For each item, give refs or `Not covered — <reason>`:
+Complete every item; the checklist is the completeness contract, not a search order. For each item, give refs or `Not covered — <reason>`:
 
 - entry points
 - callers of each symbol to change
@@ -49,12 +43,12 @@ For each item, give refs or `Not covered — <reason>`:
 
 For a template or prompt edit, trace its renderer and generated consumers; cite them in the `callers` and `generated` coverage entries.
 
-For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
+For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. For each changed predicate or contract with parallel implementations, add a `parallel:` entry naming each one. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
 
 ## Map, budget and output
 
-Use the [context map template](context-map.md), including its source commit, strategy and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref and mark absence claims unverified.
+Use the [context map template](context-map.md), including its source commit and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref and mark absence claims unverified.
 
 Keep this map within 16,384 UTF-8 bytes (16 KB). If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 
-Use `<session>/<slug>.context.md` for one initial map; for `deep` initial grounding use `<session>/<slug>.outside-in.context.md` or `<session>/<slug>.inside-out.context.md`; for a follow-up use `<session>/<slug>.followup-<n>.context.md` with strategy `single`. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback. After writing the map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step.
+Use `<session>/<slug>.context.md` for the initial map; for a follow-up use `<session>/<slug>.followup-<n>.context.md`. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback. After writing the map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step.

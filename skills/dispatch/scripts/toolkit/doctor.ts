@@ -8,9 +8,8 @@ import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-type Writer = { models: string[]; effort: string | null };
-type Explorer = Writer & { deep: boolean };
-type ExplorerConfig = { model: string | string[]; effort?: string; deep?: boolean };
+type Resolved = { models: string[]; effort: string | null };
+type ExplorerConfig = { model: string | string[]; effort?: string };
 
 export function doctorReport(session: string, skillRoot: string, requested?: unknown) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
@@ -20,8 +19,8 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const integrity = checkIntegrity(skillRoot);
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [];
-  const writers: Record<string, Writer> = {};
-  const explorers: Record<string, Explorer> = {};
+  const writers: Record<string, Resolved> = {};
+  const explorers: Record<string, Resolved> = {};
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
@@ -40,7 +39,6 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
         explorers[platform] = {
           models: typeof entry.model === 'string' ? [entry.model] : entry.model,
           effort: entry.effort ?? null,
-          deep: entry.deep ?? false,
         };
       }
     }

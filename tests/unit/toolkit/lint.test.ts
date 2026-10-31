@@ -23,7 +23,7 @@ const PLAN = [
 ].join('\n');
 const SPEC = '# Spec\n## Requirements\n### REQ-1 — Works\n- Acceptance: works\n## Decisions\n### DEC-1 — Use it\n';
 const CONTEXT_MAP = [
-  '# Context map: file', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+  '# Context map: file', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
   '## Map', '- File — `src/file.ts:1`', '', '## Flows', '- file: `src/file.ts:1`', '',
   '## Invariants', '- File exists — `src/file.ts:1` — "File"', '',
   '## Coverage', '- entry-points: `src/file.ts:1`', '', '## Precedent', '- File: `src/file.ts`', '',
@@ -109,7 +109,7 @@ describe('lint severity', () => {
       fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
       fs.writeFileSync(path.join(f.root, 'src', 'entry.ts'), 'export function main() {}\n');
       const map = [
-        '# Context map: root', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '# Context map: root', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
         '## Map', '- Entry — `src/entry.ts:1`', '', '## Flows', '- entry: `src/entry.ts:1`', '',
         '## Invariants', '- Entry exists — `src/entry.ts:1` — "export function main() {}"', '',
         '## Coverage', '- entry-points: `src/entry.ts:1`', '', '## Precedent', '- Entry: `src/entry.ts`', '',
@@ -161,7 +161,7 @@ describe('lint severity', () => {
       fs.writeFileSync(path.join(outside, 'secret.ts'), 'export const secret = true;\n');
       fs.symlinkSync(outside, path.join(f.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
       const map = [
-        '# Context map: linked path', '', '> **Commit:** abcdef0', '>', '> **Strategy:** single', '>', '> **Tool:** text', '',
+        '# Context map: linked path', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
         '## Map', '- Secret — `linked/secret.ts:1`', '', '## Flows', '- secret: `linked/secret.ts:1`', '',
         '## Invariants', '- Secret exists — `linked/secret.ts:1` — "export const secret = true;"', '',
         '## Coverage', '- entry-points: `linked/secret.ts:1`', '', '## Precedent', '- Secret: `linked/secret.ts`', '',

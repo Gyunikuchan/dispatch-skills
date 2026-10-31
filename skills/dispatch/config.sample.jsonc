@@ -109,9 +109,9 @@
       "low": { "model": "gpt-6-luna", "effort": "max" },
     },
   },
-  // Optional: define one entry per platform. `deep: true` applies to initial grounding only.
+  // Optional: define one entry per platform.
   // "explore-subagents": {
-  //   "codex": { "model": "gpt-6-luna", "effort": "low", "deep": true },
+  //   "codex": { "model": "gpt-6-luna", "effort": "low" },
   // },
   // Optional: set review size and rounds by level.
   // Without a phase policy, standalone reviews use one target and one round.

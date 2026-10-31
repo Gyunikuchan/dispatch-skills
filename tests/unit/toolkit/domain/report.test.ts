@@ -232,12 +232,12 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
 test('diagnostics config renders explore-subagents', () => {
-  const config = { 'explore-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', deep: true } } };
+  const config = { 'explore-subagents': { codex: { model: 'gpt-6-luna', effort: 'low' } } };
   const sanitized = sanitizeFacts(facts({ config }));
   assert.deepEqual(sanitized.config?.['explore-subagents'], config['explore-subagents']);
   const text = render([facts({ config })]);
   assert.match(text, /"explore-subagents": \{/);
-  assert.match(text, /"deep": true/);
+  assert.match(text, /"effort": "low"/);
 });
 test('diagnostics config keeps read-command prefixes and redacts locators', () => {
   const sanitized = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));

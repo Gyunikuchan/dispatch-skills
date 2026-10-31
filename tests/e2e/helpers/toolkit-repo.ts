@@ -8,7 +8,7 @@ import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills
 export const planSource = ['# Work', '', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '', '## Proposed Changes', '### T1 — File', '#### [MODIFY] src/file.ts', '- Purpose: implements behavior.', '', '## Success Criteria', '- [SC1] File works', '  - Changes: src/file.ts', '  - Verify: `node -e "process.exit(0)"`', '  - Evidence: verify', '', '## Verification Plan', '### Automated Tests', '- `node -e "process.stdout.write(\'contract\')"`', ''].join('\n');
 
 // Plan and design lint require a sibling context map; Coverage stays empty so plan lint adds no coverage warnings.
-export const contextMapSource = ['# Context map: work', '', '> **Commit:** 0000000', '>', '> **Strategy:** single', '>', '> **Tool:** text', '', '## Map', '', '## Coverage', ''].join('\n');
+export const contextMapSource = ['# Context map: work', '', '> **Commit:** 0000000', '>', '> **Tool:** text', '', '## Map', '', '## Coverage', ''].join('\n');
 
 let baseTemplate: string | null = null;
 function getBaseTemplate(): string {

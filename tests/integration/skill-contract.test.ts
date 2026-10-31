@@ -208,17 +208,20 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(grounding, /landscape/i);
   assert.match(grounding, /load-bearing/i);
   assert.match(grounding, /any step.*ask/i);
-  assert.match(grounding, /deep never applies/i);
+  assert.match(grounding, /live explorer/i);
+  assert.match(grounding, /Reviewers are not continued/);
+  assert.match(grounding, /each design increment plan/i);
   assert.match(grounding, /cited range/i);
-  assert.match(grounding, /deep applies only to initial grounding/i);
   assert.ok(grounding.includes('providers.md#native-slots'));
 
   assert.ok(explorer.includes('## Host rules and tools'));
   assert.ok(explorer.includes('quality-bar.md#shared'));
   assert.ok(explorer.includes('../providers.md#native-slots'));
   assert.match(explorer, /Conventions/);
+  assert.match(explorer, /parallel:/);
   assert.match(explorer, /Surprises/);
   assert.ok(contextMap.includes('## Conventions'));
+  assert.ok(contextMap.includes('parallel:'));
 
   assert.match(providers, /own cache or index/i);
   assert.match(providers, /create or update only/i);

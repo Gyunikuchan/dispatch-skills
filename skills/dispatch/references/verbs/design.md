@@ -8,4 +8,4 @@ Lint the design, then set the level under [run level](../spec-stage.md#run-level
 
 Design is a living document. Bind the spec and design before recording revisions; when a plan exists, bind the complete spec/plan/design set. Edit the design in place and append a ledger `edit` record with `before` and `after` hashes, `class`, `diffRef` and `rationale`. The [ledger contract](../toolkit.md#edit) owns fields and hashing. Re-approval is required only for intent, dependency or discard changes under the [user gate](../decision-frame.md#user-gate-boundaries). Include changes as walkthrough deviations. Continue unaffected work; notify affected writers under [implementation](implement.md).
 
-A later implement invocation delivers increments in prerequisite order. Author one coherent increment plan at a time.
+A later implement invocation delivers increments in prerequisite order. Author one coherent increment plan at a time, grounding each increment first under [design increments](../grounding.md#design-increments).

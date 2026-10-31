@@ -2,7 +2,7 @@
 
 No current spec: run the [spec stage](../spec-stage.md) (ground, refine, author, confirm) first.
 
-Resolve and read the whole [governing spec](../spec-stage.md), plus the governing design when present. Use the [plan template](../templates/plan.md). A standalone Parent pins the spec; an increment Parent pins its design increment. Criteria trace to REQs.
+Resolve and read the whole [governing spec](../spec-stage.md), plus the governing design when present. Use the [plan template](../templates/plan.md). A standalone Parent pins the spec; an increment Parent pins its design increment. For an increment plan, ground it first under [design increments](../grounding.md#design-increments). Criteria trace to REQs.
 
 Define task outcomes, a prerequisite graph, file ownership, criterion assignments and exact verification commands. Check producer/consumer interfaces before claiming independence. Put fast affected-file checks in Automated Tests and broad or slow gates in criterion Verify commands. Choose existing public test seams; use `Seams: none` when none applies.
 

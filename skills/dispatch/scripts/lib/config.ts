@@ -138,14 +138,9 @@ function checkReadCommands(value: unknown, problems: string[]): void {
   }
 }
 
-function checkLevelConfig(where: string, value: unknown, problems: string[], allowDeep = false): void {
-  if (!isRecord(value)) { problems.push(where + ' must be an object with model and optional effort' + (allowDeep ? ' and optional deep' : '') + ' (' + HINT + ').'); return; }
+function checkLevelConfig(where: string, value: unknown, problems: string[]): void {
+  if (!isRecord(value)) { problems.push(where + ' must be an object with model and optional effort (' + HINT + ').'); return; }
   for (const key of Object.keys(value)) {
-    if (allowDeep && key !== 'model' && key !== 'effort' && key !== 'deep') {
-      problems.push(where + ' has unrecognized key "' + key + '". Valid keys: model, effort, deep (' + HINT + ').');
-      continue;
-    }
-    if (allowDeep && key === 'deep') continue;
     if (key !== 'model' && key !== 'effort') problems.push(`${where} has unrecognized key "${key}". Valid keys: model, effort (${HINT}).`);
   }
   const model = value['model'];
@@ -157,7 +152,6 @@ function checkLevelConfig(where: string, value: unknown, problems: string[], all
     if (dup !== undefined) problems.push(`${where}.model has duplicate alias "${String(dup)}" (${HINT}).`);
   }
   if ('effort' in value && !goodName(value['effort'])) problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${HINT}).`);
-  if (allowDeep && 'deep' in value && typeof value['deep'] !== 'boolean') problems.push(where + '.deep must be a boolean (' + HINT + ').');
 }
 
 function checkLevelMap(where: string, value: unknown, problems: string[]): void {
@@ -266,7 +260,7 @@ export function validateConfig(config: unknown): string[] {
   const write = config['write-subagents'];
   if (write !== undefined) checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
   const explore = config['explore-subagents'];
-  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelConfig(where, entry, problems, true));
+  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelConfig(where, entry, problems));
   if (config['phases'] !== undefined) checkPhases(config['phases'], readKeys, problems);
   return problems;
 }
