@@ -5,7 +5,7 @@
 import path from 'node:path';
 
 export const FILE_BUDGET_MS = 1000;
-const SLOW_FILE_LIMIT = 3;
+const SLOW_FILE_LIMIT = 5;
 
 type Data = Record<string, unknown>;
 export interface ReporterEvent { type: string; data?: Data }
