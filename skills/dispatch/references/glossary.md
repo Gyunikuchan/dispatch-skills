@@ -4,6 +4,7 @@
 |---|---|---|
 | orchestrator | Host agent that coordinates tools and writers, verifies claims and acts as the user's deputy. | master agent |
 | subagent | Native worker launched by the host agent with bounded permissions. | slave agent, sub-agent |
+| explorer subagent | Native worker launched by the host agent for formal context-map grounding (writing its assigned map path) and ad-hoc exploration/distillation (writing no file). | read-only delegate |
 | delegate | Provider voice with read-only access. | |
 | writer | Native worker with explicit task paths in a private worktree. | |
 | **tool** | Deterministic CLI operation invoked by the orchestrator. | |

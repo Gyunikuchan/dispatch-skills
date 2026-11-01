@@ -20,7 +20,9 @@ Before authoring each design increment plan, ground that increment with the same
 
 ## Follow-up explorers
 
-Explorers may research the codebase, web or prior session runs (logs, ledgers, diagnostics and artifacts) at any step, including `ask`. Launch one explorer per independent topic in parallel under [Launch](#launch). Each follow-up, whether a map question or research, answers inline with distilled findings and cited sources; it writes no file.
+Explorers are native subagents that edit no repository source or config, dispatched autonomously by orchestrators at any time to keep context lean. Unlike structured grounding phases that produce `.context.md` maps to their assigned `outputPath`, follow-up explorers conduct inline ad-hoc research and write no files. Explorers may research the codebase, web or prior session runs (logs, ledgers, diagnostics and artifacts) at any step, including `ask`. Agents run `ask` to fulfill explicit user requests, but must never invoke `ask run` autonomously for their own internal research; when no explorer is configured for the host platform, investigate directly under [Launch](#launch).
+
+Launch one explorer per independent topic in parallel under [Launch](#launch). Each follow-up, whether a map question or research, answers inline with distilled findings and cited sources.
 
 For a map question that needs many files and no current map answers, continue a live explorer with relevant context when the host permits; otherwise launch a fresh explorer under [Launch](#launch). A continued explorer is the same launch under [providers](providers.md#subagent-context), so the fresh-context rule does not apply; reuse its retained handle. Reviewers are not continued across rounds.
 

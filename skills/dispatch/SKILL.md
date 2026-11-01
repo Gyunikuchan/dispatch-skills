@@ -32,7 +32,7 @@ Before every subagent launch, follow [Providers' Subagent context](references/pr
 
 ## Invariants and recovery
 
-Delegate reading many files, logs, prior runs or the web to [explorers](references/grounding.md#follow-up-explorers). Launch independent explorers in parallel; read distilled results and verify only load-bearing claims at cited ranges.
+Dispatch native [explorers](references/grounding.md#follow-up-explorers) anytime in parallel to read many files, logs, runs or web and keep context lean: map grounding writes maps; follow-ups return inline findings. Verify claims at cited ranges. Run ask only on user request.
 
 Quote actual user words for approval, waiver, manual completion and xhigh/max selection. Never invent decisions. At medium and above, briefs and integration require the current approval tuple or recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
 

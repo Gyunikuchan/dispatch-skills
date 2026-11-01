@@ -1,5 +1,9 @@
 # Ask
 
+`ask` is strictly user-initiated. Agents run `ask run` only to fulfill explicit user requests. Agents must never invoke `ask run` autonomously for their own internal research. For internal research, code exploration, or grounding, agents dispatch native [explorer subagents](../grounding.md) instead. When no explorer is configured for the host platform, the host agent self-grounds under [self-grounding](../grounding.md#publish); an unlaunchable configured explorer is a blocker.
+
+Prominent non-exhaustive use cases include cross-referencing and verification against repository evidence, as well as gathering differentiated opinions and suggestions across models.
+
 Write the question to a UTF-8 file and use `ask run`. The [toolkit contract](../toolkit.md#ask-run) owns arguments and outputs. Ask needs no spec or bound plan.
 
 When an ask needs many files read to understand its domain, ground first using [grounding guidance](../grounding.md).

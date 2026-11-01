@@ -20,7 +20,8 @@ If intent changes, the host records your decision in the spec and checks its new
 
 ## Who does what
 
-- **Read delegates** inspect the repository and return analysis or review findings. They use provider-specific read-only controls.
+- **Read delegates** inspect the repository and return analysis or review findings strictly for user-requested asks and multi-provider reviews. They use provider-specific read-only controls.
+- **Explorer subagents** are native workers launched autonomously by the host agent at any time for both formal grounding maps and ad-hoc codebase/log/web exploration and distillation without cluttering the orchestrator's context window. They edit no repository source or config, writing only assigned map files or replying inline with distilled findings.
 - **Your host agent** compares those claims with the code, repository instructions, and your goal. It accepts, rejects, or narrows findings with reasons.
 - **A native writer** makes production changes from a settled plan or approved design. The writer is configured for the platform running your host agent.
 
