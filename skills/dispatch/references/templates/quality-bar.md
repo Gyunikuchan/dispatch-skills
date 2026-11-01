@@ -19,19 +19,21 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 ### Visual-aid bar
 
-A visual aid is a diagram, table, code, pseudo-code or data block. Include one when it explains content prose explains poorly, gives a skimmable map of three or more related items in long prose, or lets a reader grasp collapsed `<details>` detail, such as file changes, criteria or flow, without expanding it. Match the content to its form:
+A visual aid is a diagram, table, code, pseudo-code or data block. Include one when it explains content prose explains poorly, gives a skimmable map of three or more related items in long prose, or lets a reader grasp collapsed `<details>` detail, such as file changes, criteria or flow, without expanding it. Choose the smallest useful view that answers the reader’s question. Include relevant unchanged ownership, boundaries or flow; distinguish current context from proposed change with labels or diff notation, not color alone. Keep explanatory text adjacent. Match the content to its form:
 
 | Content | Form |
 | --- | --- |
 | Components and boundaries | Architecture diagram |
+| Ownership and call context | Shallow tree or call tree |
 | Runtime order | Flow or sequence diagram |
 | Lifecycle | State diagram |
 | Items with attributes | Table |
 | Interfaces and data shapes | Code or data block |
 | Algorithm | Pseudo-code |
 | Behaviour change | Before/after table or snippet |
+| Changed structure in context | Diff sketch |
 
-Reject decorative or stale visuals and visuals that duplicate visible prose, tables or other visuals. Restating content found only in collapsed `<details>` is not duplication, because human readers skip those blocks; a visual that disagrees with that content is stale. A repeated visual or required table needs to reveal new structure, such as parallel lanes or a critical path. Add no fixed count. Give each diagram a one-line text summary; tables and code/data blocks need none. Put orientation visuals in At a Glance and section visuals beside their prose.
+Reject decorative or stale visuals and visuals that duplicate visible prose, tables or other visuals. Restating content found only in collapsed `<details>` is not duplication, because human readers skip those blocks; a visual that disagrees with that content is stale. A repeated visual or required table needs to reveal new structure, such as parallel lanes or a critical path. Add no fixed count. Give each diagram a one-line text summary; tables and code/data blocks need none. Put orientation visuals in At a Glance and section visuals beside their prose. For worked examples, see [artifact readability](../artifact-readability.md).
 
 ## code
 
