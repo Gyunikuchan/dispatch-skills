@@ -35,7 +35,8 @@
         // Here, medium uses low; xhigh and max use high. Entries do not inherit fields.
         // Effort is optional; CLI model/effort overrides win.
         {
-          "low": { "model": "claude-sonnet-5-5", "effort": "high" },
+          "low": { "model": "claude-sonnet-5-5", "effort": "medium" },
+          "medium": { "model": "claude-sonnet-5-5", "effort": "high" },
           "high": { "model": "claude-opus-5-5", "effort": "medium" },
         },
       ],
@@ -43,9 +44,8 @@
     "agy": {
       "targets": [
         {
-          "low": { "model": "gemini-3.8-flash", "effort": "medium" },
           // No effort uses the provider default. agy accepts low/medium/high.
-          "high": { "model": "gemini-3.8-flash" },
+          "low": { "model": "gemini-3.8-flash" },
         },
       ],
     },
@@ -78,8 +78,9 @@
     "codex": {
       "targets": [
         {
-          "low": { "model": "gpt-6.1-terra", "effort": "medium" },
-          "high": { "model": "gpt-6.1-sol", "effort": "medium" },
+          "low": { "model": "gpt-6.1-terra", "effort": "high" },
+          "medium": { "model": "gpt-6.1-terra", "effort": "xhigh" },
+          "high": { "model": "gpt-6.1-terra", "effort": "max" },
         },
       ],
     },
