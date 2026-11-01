@@ -178,3 +178,26 @@ test('fan-out passes configured read commands to each delegate request', async (
     assert.deepEqual(f.launches[0]?.request.readCommands,['codegraph explore']);
   }finally{f.cleanup();}
 });
+test('native prompt names its reply file', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    f.deps.orchestrator = {platform:'claude',model:null};
+    f.script('claude','good',{status:'fail',cls:'auth',detail:'failed'});
+    f.script('opencode','good','answer');
+    const dir = path.join(f.session,'native-prompts');
+    const slots = [slot('claude'),slot('codex','good',false,true),slot('opencode')];
+    const outcomes = await fanOut({dir,slots,prompt:'question',validate,quota},f.deps);
+    for (const outcome of outcomes.slice(0,2)) {
+      assert.equal(outcome.state,'native');
+      if (outcome.state !== 'native') throw new Error('expected native slot');
+      const expected = `question\n\n## Native reply\n\nWrite the reply that the instructions above require, in their exact format, to \`${outcome.replyPath}\`; do not return it inline. Then reply only \`wrote ${outcome.replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
+      assert.equal(fs.readFileSync(outcome.promptPath,'utf8'),expected);
+    }
+    assert.equal(fs.readFileSync(path.join(dir,'prompts','opencode[0].md'),'utf8'),'question');
+    await fanOut({dir,slots,prompt:'question',validate,quota},f.deps);
+    for (const outcome of outcomes.slice(0,2)) {
+      if (outcome.state !== 'native') throw new Error('expected native slot');
+      assert.equal(fs.readFileSync(outcome.promptPath,'utf8').split('## Native reply').length,2);
+    }
+  } finally {f.cleanup();}
+});

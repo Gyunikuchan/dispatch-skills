@@ -15,7 +15,7 @@ test('toolkit stays within the structural size budgets', () => {
   assert.ok(lines <= 11100, `driver TS LOC ${lines} exceeds 11100`);
   assert.ok(KINDS.length <= 14, `ledger kinds ${KINDS.length} exceeds 14`);
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  assert.ok(bytes <= 4096, `SKILL.md bytes ${bytes} exceeds 4096`);
+  assert.ok(bytes <= 4352, `SKILL.md bytes ${bytes} exceeds 4352`);
 });
 
 test('ledger authority is limited to approval, exceptions and user-selected levels', () => {

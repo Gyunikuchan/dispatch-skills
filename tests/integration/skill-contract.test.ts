@@ -226,8 +226,10 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(reviewPrompt, /A reviewer may run a host read tool that creates or updates only its own cache or index/);
   assert.doesNotMatch(reviewPrompt, /A native reviewer/);
   assert.match(writerBrief, /own cache or index/i);
-  assert.ok(read(root + 'references/verbs/review.md').includes('grounding.md#follow-up-explorers'));
-  assert.ok(read(root + 'references/verbs/implement.md').includes('grounding.md#follow-up-explorers'));
+  const skill = read(root + 'SKILL.md');
+  assert.ok(skill.includes('references/grounding.md#follow-up-explorers'));
+  assert.ok(skill.includes('references/providers.md#native-slots'));
+  assert.doesNotMatch(skill, /write its output to .replyPath/);
 });
 
 test('authoring carry-over and review round roster rules are stated in prose', () => {

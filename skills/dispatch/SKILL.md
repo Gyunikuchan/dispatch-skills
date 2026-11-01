@@ -28,9 +28,11 @@ For each call read its action section in the [toolkit contract](references/toolk
 - `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve errors and findings; report the reviewed artifact and concerns; use the [Decision Frame](references/decision-frame.md) for applicable approval.
 - `implement`: resolve spec and plan; lint, review and obtain the approval tuple. Implement with native writers; verify integration, repair within scope and run [test cleanup](references/verbs/implement.md). Review exact HEAD under [review provenance](references/review-rules.md#review-provenance-and-applicability). Deliver after review and checks pass. After success, run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifacts.
 
-Before every subagent launch, follow [Providers' Subagent context](references/providers.md). For `native-pending`, launch each configured slot to read and execute its `promptPath`; write its output to `replyPath` and rerun the call. Preserve handles; wait for completion or blockers.
+Before every subagent launch, follow [Providers' Subagent context](references/providers.md). For `native-pending`, launch each configured slot per [native slots](references/providers.md#native-slots) and rerun the call. Preserve handles; wait for completion or blockers.
 
 ## Invariants and recovery
+
+Delegate reading many files, logs, prior runs or the web to [explorers](references/grounding.md#follow-up-explorers). Launch independent explorers in parallel; read distilled results and verify only load-bearing claims at cited ranges.
 
 Quote actual user words for approval, waiver, manual completion and xhigh/max selection. Never invent decisions. At medium and above, briefs and integration require the current approval tuple or recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
 

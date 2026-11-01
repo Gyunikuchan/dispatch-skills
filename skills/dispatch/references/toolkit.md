@@ -234,7 +234,7 @@ data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; starte
 
 ## Native-slot replies
 
-When reason is native-pending, read the result's native slot descriptors, including promptPath and replyPath. Launch each slot under [native slots](providers.md#native-slots), retain the handle, and write its complete output to replyPath. Then rerun the same call with unchanged arguments. The tool consumes the reply and reuses completed slots. Report capability blockers or failed coverage; do not fabricate a capture. [Providers](providers.md) owns launch fidelity and read-only controls.
+When reason is native-pending, read the result's native slot descriptors, including promptPath and replyPath. Launch each slot under [native slots](providers.md#native-slots) and retain the handle. Then rerun the same call with unchanged arguments. The tool consumes the reply and reuses completed slots. Report capability blockers or failed coverage; do not fabricate a capture. [Providers](providers.md) owns launch fidelity and read-only controls.
 
 ## Session commands
 

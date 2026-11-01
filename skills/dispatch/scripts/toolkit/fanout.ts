@@ -14,6 +14,8 @@ import type { RosterSlot } from './domain/types.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import type { Level } from './types.ts';
 
+const nativeReply = (replyPath: string) => `\n\n## Native reply\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
+
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
 export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string};
 export type SlotOutcome = {slot: string} & (
@@ -188,6 +190,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         }
       } else if(cascade.kind === 'native-fallback')outcome=native(slot);
     }
+    if(outcome.state === 'native') fs.appendFileSync(outcome.promptPath,nativeReply(outcome.replyPath));
     return save(slot,outcome);
   }));
   const rejected=results.find(result=>result.status === 'rejected');
