@@ -51,6 +51,22 @@ test('roster: a CONSIDER-only round narrows the next round to its first target',
   } finally {f.cleanup();}
 });
 
+test('roster: narrowed and full re-review rounds label their scope', async () => {
+  for (const severity of ['CONSIDER', 'MUST'] as const) {
+    const f = await fixture();
+    try {
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('\u00a7 Work', 'Concurrent writes overwrite captured results', severity), resume: null, sessionId: null}, invocations: []});
+      assert.equal((await f.call()).exit, 0);
+      if (severity === 'MUST') {
+        await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+        fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      }
+      assert.equal((await f.call()).exit, 0);
+      assert.match(f.read(2, 'round.json').scope, severity === 'MUST' ? /^Re-review round 2 \(full\)/ : /^Re-review round 2 \(narrowed\)/);
+    } finally {f.cleanup();}
+  }
+});
+
 test('roster: an accepted MUST past the round cap keeps every target', async () => {
   const f = await fixture();
   try {

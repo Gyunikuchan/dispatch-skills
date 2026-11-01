@@ -26,7 +26,7 @@ export function taskMarkdown(source: string, brief: NonNullable<ReturnType<typeo
 
 type SelectedTaskBrief = NonNullable<ReturnType<typeof selectTaskBrief>>;
 
-// Base64url keeps plan commands and session paths opaque to cmd, PowerShell, and POSIX parsing.
+// Base64url keeps the payload opaque to shell parsing.
 const CAPTURE_BOOTSTRAP = [
   "const fs=require('node:fs');",
   "const path=require('node:path');",
@@ -62,6 +62,8 @@ function quoteCapturePath(value: string): string {
 
 function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: string, redLogDir: string): string {
   const lines: string[] = [];
+  const capturePath = path.join(redLogDir, 'capture.cjs');
+  let written = false;
   for (const criterion of selected.criteria) {
     // Keep this eligibility rule aligned with redGaps; verify-only and excepted criteria need no capture.
     if (!selected.task.criteria.includes(criterion.id) || criterion.evidence !== 'red' || !criterion.red || criterion.redException) continue;
@@ -76,9 +78,17 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
       continue;
     }
     const command = criterion.red.replaceAll('{files}', testFiles.map(quoteCapturePath).join(' '));
+    if (!written) {
+      fs.mkdirSync(redLogDir, {recursive: true});
+      fs.writeFileSync(capturePath, CAPTURE_BOOTSTRAP);
+      written = true;
+    }
     const bootstrap = Buffer.from(CAPTURE_BOOTSTRAP, 'utf8').toString('base64url');
     const data = Buffer.from(JSON.stringify({command, cwd: worktree, logDir: redLogDir, criterion: criterion.id}), 'utf8').toString('base64url');
-    const wrapper = 'node -e "eval(Buffer.from(process.argv[1],\'base64url\').toString())" ' + bootstrap + ' ' + data;
+    const shellPath = process.platform === 'win32' && /^[A-Za-z]:/.test(capturePath) ? capturePath.slice(2) : capturePath;
+    const safe = path.isAbsolute(capturePath) && !/[\x00-\x1f\x7f"':]/.test(shellPath) &&
+      ![...shellPath].some(character => !(process.platform === 'win32' && character === '\\') && CAPTURE_SHELL_META.has(character));
+    const wrapper = safe ? 'node ' + quoteCapturePath(capturePath) + ' ' + data : 'node -e "eval(Buffer.from(process.argv[1],\'base64url\').toString())" ' + bootstrap + ' ' + data;
     const tick = String.fromCharCode(96);
     lines.push('- ' + criterion.id + ': ' + tick + wrapper + tick);
   }

@@ -75,3 +75,19 @@ test('cap-ending SHOULD fixes require a verified bounded commit chain',async()=>
   await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
  }finally{f.cleanup();}
 });
+
+test('review identity accepts a narrowed re-review round',async()=>{
+ const f=sessionFixture({memory:true});try{
+  f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
+  const head='a'.repeat(40),base='b'.repeat(40);
+  const bind={kind:'bind',seq:1,key:'bind',at:'',by:'tool',data:{spec:'work.spec.md',plan:'work.plan.md'}};
+  const artifacts=currentHashes(f.root,bind);
+  const dir=path.join(f.session,'.state/reviews/code-integration/round-2');fs.mkdirSync(path.join(dir,'gen-1/slots'),{recursive:true});
+  fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify({round:2,cap:3,generation:1,startSeq:1,target:{base,head},scope:'Re-review round 2 (narrowed) — changed: file',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]}));
+  fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'code-integration',round:2,findings:[],failed:[]}));
+  fs.writeFileSync(path.join(dir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
+  const ctx={session:f.session,manifest:readManifest(f.session),deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+  const result=await reviewIdentity(ctx,{records:[bind] as any,lastSeq:1,torn:null},f.root,head,base);
+  assert.equal(result.round,2);
+ }finally{f.cleanup();}
+});

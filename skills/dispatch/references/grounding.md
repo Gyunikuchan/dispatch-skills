@@ -1,6 +1,6 @@
 # Grounding
 
-Initial grounding is required for every new spec, regardless of question size. After `confirm`, run a [scope round](#scope-round) before authoring a standalone plan or any design. Ground each design increment before authoring its plan ([design increments](#design-increments)). Also ground before `ask` when understanding needs many files read.
+Initial grounding is required for every new spec, regardless of question size. Follow the [scope round](#scope-round) rule. Ground each design increment before authoring its plan ([design increments](#design-increments)). Also ground before `ask` when understanding needs many files read.
 
 Grounding maps the landscape around the planned decision (constraints, consumers, reuse candidates, parallel implementations, conventions and precedent) so that grilling, design and planning do not miss load-bearing details.
 

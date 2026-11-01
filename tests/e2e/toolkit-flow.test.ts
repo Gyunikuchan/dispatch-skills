@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { main } from '../../skills/dispatch/scripts/toolkit/cli.ts';
 import { parsePlan } from '../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { redGaps } from '../../skills/dispatch/scripts/toolkit/red.ts';
 import fs from 'node:fs';
@@ -160,17 +161,16 @@ function commandFrom(brief: string): string {
   const start = brief.indexOf(marker);
   assert.notEqual(start, -1, 'brief includes a RED capture section');
   const section = brief.slice(start + marker.length).split(/\n## /, 1)[0]!;
-  const match = /`(node -e [^`]+)`/.exec(section);
-  assert.ok(match, 'brief includes a runnable outer node -e command');
+  const match = /`(node [^`]+)`/.exec(section);
+  assert.ok(match, 'brief includes a runnable node command');
   return match[1]!;
 }
 
-function commandData(command: string): { bootstrap: string; data: { command: string; cwd: string; logDir: string; criterion: string } } {
-  const match = /([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
-  assert.ok(match, 'outer command ends with two base64url arguments');
+function commandData(command: string): { data: { command: string; cwd: string; logDir: string; criterion: string } } {
+  const match = /([A-Za-z0-9_-]+)$/.exec(command);
+  assert.ok(match, 'capture command ends with one base64url payload');
   return {
-    bootstrap: Buffer.from(match[1]!, 'base64url').toString('utf8'),
-    data: JSON.parse(Buffer.from(match[2]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
+    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
   };
 }
 
@@ -196,7 +196,7 @@ test('captured RED command preserves raw output and status and its report clears
     assert.equal(data.cwd, worktree);
     assert.equal(data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
     assert.equal(data.criterion, 'SC1');
-    assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
+    assert.ok(command.includes('capture.cjs'));
     assert.doesNotMatch(command, /[$%]/);
 
     const captured = spawnSync(command, {cwd: f.root, shell: true, encoding: 'buffer', windowsHide: true});
@@ -210,7 +210,7 @@ test('captured RED command preserves raw output and status and its report clears
     assert.deepEqual(fs.readFileSync(path.join(logDir, 'SC1.stderr')), Buffer.from('raw stderr'));
     assert.equal(JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')).status, 7);
 
-    const outer = /^(node -e ".*") ([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
+    const outer = /^(node .*) [A-Za-z0-9_-]+$/.exec(command);
     assert.ok(outer, 'generated wrapper has a reusable bootstrap and encoded input');
     const at = 1024 * 1024;
     const above = 1024 * 1024 + 1;
@@ -222,7 +222,7 @@ test('captured RED command preserves raw output and status and its report clears
     for (const boundary of boundaries) {
       const childCommand = `node -e "const fs=require('node:fs');fs.writeSync(1,Buffer.alloc(${boundary.stdout},165));fs.writeSync(2,Buffer.alloc(${boundary.stderr},90));process.exit(7)"`;
       const input = Buffer.from(JSON.stringify({...data, command: childCommand}), 'utf8').toString('base64url');
-      const invoked = spawnSync(`${outer[1]} ${outer[2]} ${input}`, {
+      const invoked = spawnSync(`${outer[1]} ${input}`, {
         cwd: f.root, shell: true, encoding: 'buffer', windowsHide: true, maxBuffer: 4 * 1024 * 1024,
       });
       const expectedStdout = Buffer.alloc(boundary.stdout, 165);
@@ -256,3 +256,36 @@ test('captured RED command preserves raw output and status and its report clears
   } finally { f.cleanup(); }
 });
 
+test('RED capture from a shell-unsafe session path writes logs without substitution', async () => {
+  const f = await toolkitRepo(capturePlanSource);
+  try {
+    await f.level('low');
+    await appendRecord(f.session, {
+      kind: 'writer', by: 'orchestrator', key: 'writer:T1:1',
+      data: {phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}},
+    }, f.deps);
+    const unsafeParent = path.join(f.root, process.platform === 'win32' ? "unsafe'-$`%!" : "unsafe'-$`%-$(touch substitution-side-effect)");
+    const session = path.join(unsafeParent, path.basename(f.session));
+    fs.mkdirSync(unsafeParent, {recursive: true});
+    fs.cpSync(f.session, session, {recursive: true});
+    const manifestPath = path.join(session, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.folderName = path.basename(session);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    fs.mkdirSync(path.join(session, '.state/worktrees/T1-1'), {recursive: true});
+    const lines: string[] = [];
+    const exit = await main(['brief', 'render', 'T1', '--session', session], {...f.deps, stdout: line => lines.push(line)});
+    assert.equal(exit, 0, lines.join('\n'));
+    const output = JSON.parse(lines[0]!);
+    const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
+    const command = commandFrom(fs.readFileSync(result.path, 'utf8'));
+    assert.match(command, /^node -e /);
+    const data = commandData(command).data;
+    const captured = spawnSync(command, {cwd: f.root, shell: true, encoding: 'utf8', windowsHide: true});
+    assert.equal(captured.status, 7, captured.stderr);
+    assert.equal(fs.readFileSync(path.join(data.logDir, 'SC1.stdout'), 'utf8'), 'raw stdout');
+    assert.equal(fs.readFileSync(path.join(data.logDir, 'SC1.stderr'), 'utf8'), 'raw stderr');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data.logDir, 'SC1.exit'), 'utf8')).status, 7);
+    assert.equal(fs.existsSync(path.join(f.root, 'substitution-side-effect')), false);
+  } finally { f.cleanup(); }
+});

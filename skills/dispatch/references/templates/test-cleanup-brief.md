@@ -16,7 +16,7 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 
 ## Rules
 
-- Judge each in-scope test against the retained-test tier of the [quality bar](quality-bar.md#code). Keep a test that is the executable spec of a current consumer contract that is severe if broken or non-obvious. Delete or merge implementation-tier tests, duplicates and tests of removed contracts. Rewrite a weak test that guards a retained contract.
+- Apply the [shared](quality-bar.md#shared) criteria and judge each in-scope test against the retained-test tier of the [code](quality-bar.md#code) criteria. Keep a test that is the executable spec of a current consumer contract that is severe if broken or non-obvious. Delete or merge implementation-tier tests, duplicates and tests of removed contracts. Rewrite a weak test that guards a retained contract.
 - When uncertain whether a test protects a required contract, keep it.
 - After edits, run only the test files you edited. Fix a test you broke; revert a deletion that you cannot justify.
 - Report a needed production change as a concern; do not make it.

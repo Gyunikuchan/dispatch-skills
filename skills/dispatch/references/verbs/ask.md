@@ -6,4 +6,4 @@ For a token-heavy codebase or web question, use a [follow-up explorer](../ground
 
 Include settled chat decisions and constraints that the delegates cannot find in supplied files. Provider delegates return claims; inspect the full answers in the result file before synthesis. Verify disagreement against source and report an evidence-backed verdict, with any coverage gap. When source checks leave a material unknown or disagreement that needs user context, state the missing information and use the [Decision Frame](../decision-frame.md). Resolve routine facts autonomously and retain settled decisions.
 
-For native slots, read each prompt, write its answer to the supplied `replyPath`, then rerun the same call. [Providers](../providers.md) owns configured launch fidelity and fallback.
+Launch native slots by path under [native slots](../providers.md#native-slots), write each answer to `replyPath`, then rerun the same call. When answering a native voice yourself, read its prompt. [Providers](../providers.md) owns configured launch fidelity and fallback.

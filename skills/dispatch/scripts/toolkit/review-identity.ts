@@ -70,7 +70,7 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       round.target?.base!==base ||
       (!equal(round.artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind'))) ||
       round.spec?.hash!==round.artifacts?.spec) ||
-      ! /^(?:Full review|Re-review round \d+ \(full\))/i.test(round.scope??'') ||
+      ! /^(?:Full review|Re-review round \d+ \((?:full|narrowed)\))/i.test(round.scope??'') ||
       !Number.isSafeInteger(round.round) || round.round!==Number(last.dir.slice(last.dir.lastIndexOf('round-')+6)) ||
       !Number.isSafeInteger(round.generation) || round.generation<1 ||
       !Number.isSafeInteger(round.startSeq) || round.startSeq<0 ||

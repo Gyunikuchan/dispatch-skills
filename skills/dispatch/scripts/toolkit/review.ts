@@ -239,6 +239,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
         && (finding.severity === 'MUST' || (finding.severity === 'SHOULD' && n - 1 < cap)));
       const targets = previousTarget && !decisive ? [previousTarget] : roster.targets;
+      if (n > 1 && previousTarget && !decisive) scope = scope.replace('(full)', '(narrowed)');
       const turnPaths = kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
       const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
       const slots=[...targets,...roster.reserves];

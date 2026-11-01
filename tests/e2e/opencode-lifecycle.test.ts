@@ -99,7 +99,7 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   };
   const cleanup = async () => {
     await stopDescendant();
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
   return { root, worktree, argsPath, childPidPath, binary, request, stopDescendant, cleanup };
 }

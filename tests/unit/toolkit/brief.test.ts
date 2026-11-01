@@ -128,17 +128,16 @@ function captureSection(brief: string): string {
 }
 
 function captureCommand(section: string): string {
-  const match = /`(node -e [^`]+)`/.exec(section);
-  assert.ok(match, 'applicable RED criterion has a runnable node -e command');
+  const match = /`(node [^`]+)`/.exec(section);
+  assert.ok(match, 'applicable RED criterion has a runnable capture command');
   return match[1]!;
 }
 
-function captureData(command: string): { bootstrap: string; data: { command: string; cwd: string; logDir: string; criterion: string } } {
-  const match = /([A-Za-z0-9_-]+) ([A-Za-z0-9_-]+)$/.exec(command);
-  assert.ok(match, 'outer command ends with two base64url arguments');
+function captureData(command: string): { data: { command: string; cwd: string; logDir: string; criterion: string } } {
+  const match = /([A-Za-z0-9_-]+)$/.exec(command);
+  assert.ok(match, 'outer command ends with a base64url payload');
   return {
-    bootstrap: Buffer.from(match[1]!, 'base64url').toString('utf8'),
-    data: JSON.parse(Buffer.from(match[2]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
+    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
   };
 }
 
@@ -256,7 +255,7 @@ describe('writer brief', () => {
       assert.equal(payload.data.logDir, path.join(f.session, '.state', 'briefs', 'T1-1.red'));
       assert.ok(payload.data.command.includes(quotedPath));
       assert.ok(!payload.data.command.includes('src/first.ts'), 'Changes paths do not become {files}');
-      assert.match(command, /^node -e ".*" [A-Za-z0-9_-]+ [A-Za-z0-9_-]+$/);
+      assert.ok(command.includes('capture.cjs'));
       assert.doesNotMatch(command, /[$%]/);
       const quality = getQuality(f.deps.skillRoot);
       assert.equal(brief.split('## Quality\n\n' + qualityCriteria(quality, 'writer')).length - 1, 1);
@@ -270,6 +269,28 @@ describe('writer brief', () => {
       assert.match(brief, /Git write commands/);
       for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check']) assert.ok(!brief.includes(forbidden), forbidden);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
+    } finally { f.cleanup(); }
+  });
+
+  test('RED capture commands share one bootstrap file', async () => {
+    const source = CAPTURE_PLAN.replace('none | SC1 |', 'none | SC1, SC3 |').replace('## Verification Plan', `- [SC3] Another check
+  - Changes: src/first.ts
+  - Tests: src/first.ts
+  - Verify: \`node second-check\`
+  - RED: \`node second-red\`
+  - Evidence: red
+## Verification Plan`);
+    const f = await fixture(false, source);
+    try {
+      await f.approve(); await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0, JSON.stringify(result.output));
+      const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
+      const commands = [...section.matchAll(/`(node [^`]+)`/g)].map(match => match[1]!);
+      assert.equal(commands.length, 2);
+      const capture = path.join(f.session, '.state', 'briefs', 'T1-1.red', 'capture.cjs');
+      for (const command of commands) assert.ok(command.includes(capture), command);
+      assert.doesNotMatch(section, /node -e/);
     } finally { f.cleanup(); }
   });
 

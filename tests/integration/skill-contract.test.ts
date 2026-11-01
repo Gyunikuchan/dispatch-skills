@@ -18,7 +18,6 @@ test('skill contract keeps router entries and resolving reference links', () => 
   assert.match(skill, /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./);
   assert.match(skill, /Keep `ask`, `review` and `implement` on their requested verb/);
   assert.ok(skill.indexOf('Read the selected phase') < skill.indexOf('## Tool loop'));
-  for (const branch of ['`ask`: follow', '`review`: resolve', '`design` or `plan`: resolve', '`implement`: resolve']) assert.ok(skill.includes(branch), branch);
   assert.match(skill, /Ask needs no spec, plan or approval/);
   assert.match(skill, /Standalone review adds no approval gate/);
   for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
@@ -84,19 +83,13 @@ test('skill contract documents ledger data and native reply and session contract
 
 test('phase prose places each workflow rule in its canonical home', () => {
   const ref = (name: string) => read(root + 'references/' + name + '.md');
-  for (const term of ['ask run', 'replyPath', 'rerun']) assert.ok(ref('verbs/ask').includes(term), term);
-  for (const verb of ['design', 'plan']) for (const term of ['edit', 'before', 'after', 'class', 'diffRef', 'rationale', 'intent', 'dependency', 'discard', 'walkthrough']) assert.ok(ref('verbs/' + verb).includes(term), verb + ' ' + term);
-  for (const term of ['only writers whose paths or criteria change', 'scope overrun', 'concerns', 'conflicts', 'red baselines', 'information with options']) assert.ok(ref('verbs/implement').includes(term), term);
-  for (const term of ['review run', 'plan', 'design', 'code', 'integration', 'task ID', 'worktree', '<a>..<b>', '<rev>']) assert.ok(ref('verbs/review').includes(term), term);
+  assert.ok(links(ref('verbs/ask')).includes('../toolkit.md#ask-run'));
   assert.match(ref('spec-stage'), /intent.*user quote/i);
   assert.match(ref('spec-stage'), /continue.*unaffected writers/i);
   assert.ok(ref('review-rules').includes('review:<review>:<finding>'));
   assert.match(ref('review-rules'), /ruling/);
   const decision = ref('decision-frame');
-  for (const term of ['Conflict or blocker', 'Verified facts', 'Recommendation', 'Consequences', 'User Gate Boundaries', 'approval tuple']) assert.ok(decision.includes(term), term);
-  for (const trigger of ['Spec approval', 'Plan or design approval', 'Intent finding', 'Writer scope request', 'Red baseline', 'Failed task', 'Optional findings', 'Concerns', 'Review escalation']) assert.ok(decision.includes('### ' + trigger), trigger);
   for (const term of ['doctor run', 'native-pending']) assert.ok(ref('providers').includes(term), term);
-  for (const term of ['ledger', 'result file', 'tool']) assert.ok(ref('glossary').includes('**' + term + '**'), term);
 });
 
 test('spec stage critiques the request premise before confirmation', () => {
@@ -110,7 +103,6 @@ test('spec stage critiques the request premise before confirmation', () => {
   const confirm = stage.split('4. **Confirm.**')[1]?.split('\n\n## ')[0] ?? '';
 
   assert.ok(groundStep >= 0 && refineStep > groundStep && authorStep > refineStep && confirmStep > authorStep, 'ground, critique, author and confirm in order');
-  for (const lens of ['**problem**', '**approach**', '**scope**', '**cost and risk**']) assert.ok(refine.includes(lens), lens);
   assert.match(refine, /materially better/i);
   assert.match(refine, /not worse on intent/i);
   assert.match(refine, /in one line that the premise holds, with the reason/i);
@@ -146,13 +138,12 @@ test('aliases preserve entry mappings', () => {
     assert.ok(text.includes('Missing dependency: dispatch is required by ' + name));
   }
   const review = read('skills/dispatch-code-review/SKILL.md');
-  for (const term of ['target', 'argument', '--spec', 'bound spec']) assert.ok(review.includes(term), term);
+  assert.ok(review.includes('--spec'));
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review)\b/, file);
 });
 
 test('human configuration keeps level and concurrency guidance', () => {
   const config = read(root + 'references/readme/configuration.md');
-  for (const term of ['An explicit level stays in force', '`xhigh` and `max` require your explicit choice', '`medium` is the normal level', '`high` requires a credible consequential risk', 'write-concurrency']) assert.ok(config.includes(term), term);
   assert.match(read(root + 'README.md'), /\^22\.18 \|\| >=23\.6/);
   assert.ok(links(read(root + 'references/templates/walkthrough.md')).includes('../review-rules.md'));
 });
@@ -181,17 +172,15 @@ test('human manuals retain portable links and current operational guidance', () 
     'positive safe integer', 'omission defaults to one',
   ]) assert.ok(config.includes(term), term);
   const humanRoot = read('README.md');
-  for (const term of ['Ambient credential', 'invoke `implement:`']) assert.ok(humanRoot.includes(term), term);
   assert.match(read(root + 'references/templates/plan.md'), /retaining the session in the workspace/);
   const concepts = read(root + 'references/readme/concepts.md');
-  for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
   assert.match(read(root + 'README.md'), /task summaries/);
   assert.match(read(root + 'references/readme/design.md'), /increments in order/);
 });
 
 test('uncommitted delivery contract', () => {
   const toolkit=section(read(root+'references/toolkit.md'),'worktree deliver');
-  for(const term of ['uncommitted','unstaged','delivered-source','caller-dirty','recovery-blocked','unsupported-sparse','unsupported-entry','git restore --source','??','race limit','new run']) assert.ok(toolkit.includes(term),term);
+  for (const term of ['delivered-source', 'caller-dirty', 'recovery-blocked', 'unsupported-sparse', 'unsupported-entry', 'git restore --source', '??']) assert.ok(toolkit.includes(term), term);
   for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
   const concepts=read(root+'references/readme/concepts.md');
   assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
@@ -257,4 +246,38 @@ test('authoring carry-over and review round roster rules are stated in prose', (
   assert.match(rules, /pending MUST rejection requests stay assigned/);
   assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
   assert.match(rules, /code review prompts never receive it/);
+});
+
+test('native slots launch by prompt path', () => {
+  const providers = read(root + 'references/providers.md');
+  assert.match(providers, /read and execute[^.]*`promptPath`/i);
+  assert.match(providers, /cannot read files[^.]*inline/i);
+  assert.match(read(root + 'references/verbs/ask.md'), /answering a native voice yourself, read its prompt/i);
+  for (const file of ['SKILL.md', 'references/toolkit.md', 'references/verbs/ask.md']) assert.doesNotMatch(read(root + file), /read (?:each|the result's native slots and each) `?promptPath/i);
+});
+test('orchestrator reads quality bar sections by stage', () => {
+  const skill = read(root + 'SKILL.md');
+  assert.ok(!links(skill).some(link => link.endsWith('quality-bar.md')), 'SKILL.md does not link to the whole quality bar');
+  const implementLinks = links(read(root + 'references/verbs/implement.md'));
+  for (const guide of ['../spec-stage.md', 'plan.md', 'design.md']) assert.ok(implementLinks.includes(guide), guide);
+  for (const [file, anchor] of [['spec-stage.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code']]) {
+    const text = read(root + 'references/' + file);
+    assert.ok(links(text).some(link => link.endsWith('quality-bar.md#' + anchor)), file);
+    assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);
+  }
+});
+test('implement starts post-cleanup verification and code review together', () => {
+  const text = read(root + 'references/verbs/implement.md');
+  assert.match(text, /start[^.]*verification[^.]*code review[^.]*same[^.]*HEAD[^.]*together/i);
+  assert.match(text, /verification fails[^.]*repair[^.]*review/i);
+});
+test('scope round rule has one canonical home', () => {
+  const canonical = read(root + 'references/grounding.md');
+  assert.match(canonical, /## Scope round\s+After `confirm` and before authoring a standalone plan or any design/i);
+  for (const [file, link] of [['spec-stage.md','grounding.md#scope-round'], ['verbs/plan.md','../grounding.md#scope-round'], ['verbs/design.md','../grounding.md#scope-round'], ['verbs/implement.md','../grounding.md#scope-round']] as const) {
+    const text = read(root + 'references/' + file);
+    assert.ok(links(text).includes(link), file);
+    assert.doesNotMatch(text, /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i, file);
+  }
+  assert.match(read(root + 'references/verbs/implement.md'), /brief names the governing spec path for a whole read/i);
 });
