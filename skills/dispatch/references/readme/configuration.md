@@ -14,7 +14,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
-| `explore-subagents` | Optional | One native explorer entry per platform |
+| `explore-subagents` | Optional | One native explorer entry per platform; also supplies test cleanup model and effort |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 | `read-commands` | Optional | Host read commands, such as a code-index query, that read delegates may run |
 
@@ -88,7 +88,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
-`explore-subagents` configures native, read-only explorers for grounding and general codebase or web research. The configured explorer is expected to use a cheaper model than the host agent, so token-heavy reading can stay out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; explorer choices do not depend on run level. Every explorer launch uses the platform entry. Independent topics can run in parallel; follow-ups answer inline ([follow-up explorers](../grounding.md#follow-up-explorers)).
+`explore-subagents` configures native, read-only explorers for grounding and general codebase or web research. The configured explorer is expected to use a cheaper model than the host agent, so token-heavy reading can stay out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; explorer choices do not depend on run level. Every explorer launch uses the platform entry. Test cleanup can reuse its model and effort for a native cleanup writer; see the [implementation rule](../verbs/implement.md). Independent topics can run in parallel; follow-ups answer inline ([follow-up explorers](../grounding.md#follow-up-explorers)).
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Only Claude has a command allowlist; other providers already permit commands their sandbox allows.
