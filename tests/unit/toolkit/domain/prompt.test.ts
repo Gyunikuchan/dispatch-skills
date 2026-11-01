@@ -65,11 +65,11 @@ test('assembles prompt matching golden per review kind', () => {
 
 const reviewKinds = ['code', 'plan', 'design'] as const;
 const familyOrder = {
-  shared: ['intent', 'maintainability'],
-  spec: ['spec', 'usability'],
-  code: ['spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'testing', 'usability'],
-  plan: ['intent', 'architecture', 'decomposition', 'testing'],
-  design: ['intent', 'architecture', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'testing', 'usability', 'decomposition'],
+  shared: ['intent', 'maintainability', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'usability'],
+  spec: ['spec'],
+  code: ['spec', 'testing'],
+  plan: ['architecture', 'decomposition', 'testing'],
+  design: ['architecture', 'testing', 'decomposition'],
 } as const;
 const tagOrder = {
   code: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
@@ -112,12 +112,12 @@ test('review voices receive identical guidance in rotated axis order', () => {
     const fixedLines = [
       ...sharedFixedLines,
       ...(kind === 'code' || kind === 'plan' ? ['- Tooling: skip issues that configured linters, formatters, or type checkers enforce.'] : []),
-      ...(kind === 'plan' ? ['- Code criteria: apply the code section to proposed changes and touched interfaces at planning altitude; do not require written implementation.'] : []),
+      ...(kind === 'plan' ? ['- Shared criteria: apply the shared section to proposed changes and touched interfaces at planning altitude; do not require written implementation.'] : []),
       ...(kind === 'plan' || kind === 'design' ? ['### Visual-aid bar', '| Components and boundaries | Architecture diagram |'] : []),
     ];
     const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
     const familyCounts = familySections.map((section) => familyOrder[section].length);
-    const cycle = [tagOrder[kind].length, ...familyCounts].reduce((left, right) => left / gcd(left, right) * right, 1);
+    const cycle = [tagOrder[kind].length, ...familyCounts].reduce<number>((left, right) => left / gcd(left, right) * right, 1);
     for (const rotation of [0, 1, 2, cycle]) {
       const prompt = reviewPrompt(kind, reviewContext(kind, rotation));
       assert.deepEqual(sectionBullets(prompt, '### Tags'), rotateExpected(tagOrder[kind], rotation), `${kind}: tags at rotation ${rotation}`);
@@ -227,7 +227,7 @@ test('quality selection: every review contains each selected rule once and exclu
   const sectionMarkers = [
     ['shared', 'gold-plating'],
     ['spec', 'IEEE 29148 quality'],
-    ['code', 'OWASP/CWE'],
+    ['code', 'Implementation tests drive TDD'],
     ['plan', 'INVEST task sizing'],
     ['design', 'Weigh alternatives'],
   ] as const;
@@ -242,7 +242,7 @@ test('quality selection: every review contains each selected rule once and exclu
 });
 
 test('quality selection rejects missing, empty, duplicate sections and invalid consumers', () => {
-  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'spec', 'plan', 'code'], design: ['shared', 'spec', 'design'] };
+  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'spec', 'plan'], design: ['shared', 'spec', 'design'] };
   assert.deepEqual(qualitySections, expected);
   const sections = ['shared', 'spec', 'code', 'plan', 'design'];
   const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
@@ -317,4 +317,14 @@ test('turn target: the advisory budget shows the computed number in every kind',
 
 test('context map: code prompts never render the map line', () => {
   assert.doesNotMatch(reviewPrompt('code', {...reviewContext('code'), contextMapPath: '/session/work.plan.context.md'}), /Context Map/);
+});
+
+
+test('reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned', () => {
+  for (const kind of reviewKinds) {
+    for (const context of [reviewContext(kind), {...reviewContext(kind), requests: []}]) assert.doesNotMatch(reviewPrompt(kind, context), /Pending MUST rejection confirmation|confirmations/);
+    const request = {requestId: 'R1-F001', finding: 'F001', claim: {locus: 'src/api.ts:L1', defect: 'Unbounded writes', requiredChange: 'Bound writes'}, rationale: 'The caller supplies the bound'};
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), requests: [request as unknown as NonNullable<Parameters<typeof reviewPrompt>[1]['requests']>[number]]});
+    for (const rule of ['Pending MUST rejection confirmation', 'confirmations', 'requestId', 'decision', 'agree|disagree', 'rationale', 'nonblank evidence-backed', 'Answer every assigned request exactly once', 'Keep ordinary `status` and `findings`', 'A pending MUST rejection is open until explicit agreement', 'omission is not confirmation', request.requestId, request.claim.defect, request.claim.requiredChange, request.rationale]) assert.ok(prompt.includes(rule), `${kind}: ${rule}`);
+  }
 });

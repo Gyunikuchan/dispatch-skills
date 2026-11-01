@@ -5,12 +5,12 @@ Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `
 Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
 For any delegation already permitted by the assignment, use available host controls to request fresh context without parent conversation history. If unsupported or unverifiable, continue and report the limitation through existing reporting channels. Give each new child a self-contained brief with this launch instruction; preserve required reply schemas.
 {{design}}
-Governing plan: `{{planPath}}` (governed hash {{planHash}}).
+Governing plan: `{{planPath}}` (governed hash {{planHash}}). Use the Shared plan context, Task scope, Criteria, Contract commands, and RED capture commands embedded below. Read the whole plan only when `Constraints:`, `Overlap:`, or `Invariants:` references another task or a shared producer/consumer interface outside these sections.
 
-For assignments producing skills, prompts, templates, or other agent-consumed documents, read the applicable authoring references named in Shared plan context or Task scope, resolving paths from the stated repository/worktree or governing-plan-relative base. If required guidance is missing or unreadable, report NEEDS_CONTEXT.
+For agent-consumed documents, read authoring references named in Shared plan context or Task scope. Resolve paths from the stated repository/worktree or governing-plan-relative base; report NEEDS_CONTEXT if required guidance is missing or unreadable.
 
-1. For each criterion with `RED:`, write failing tests first and run its RED command to observe the failures. Use its generated command under RED capture commands when present.
-2. Write implementation tests under the canonical quality bar below; local coverage is optional implementation feedback. Run full modified logical test files and known impacted consumers before aggregate checks. Implement the task until each Verify command and each contract command passes. If a needed path is outside scope, or a plan detail is wrong or infeasible, report the evidence to the orchestrator. Keep plan edits with the orchestrator.
+1. For each `RED:` criterion, write failing tests first. Run its RED command; use the generated RED capture command when present. Observe the failures.
+2. Apply the quality bar below; local coverage is optional feedback. Run full modified logical test files and known impacted consumers before aggregate checks; pass every Verify and contract command. Report evidence of out-of-scope paths or wrong/infeasible plan details to the orchestrator. Keep plan edits with the orchestrator.
 3. Reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `{{reportPath}}`; a one-line summary; and `concerns: <n>`.
 
 ## Shared plan context
@@ -35,7 +35,7 @@ For assignments producing skills, prompts, templates, or other agent-consumed do
 
 ## Writer report
 
-Write changed files, commands run with results, observed RED failures and concerns to `{{reportPath}}` only. Include the exact heading ## Observed RED failures. Put criterion or test-path attribution and log paths on plain-text lines directly below the heading. Do not add # or ## headings inside that section.
+Report changed files, commands/results, observed RED failures and concerns only to `{{reportPath}}`. Include the exact heading ## Observed RED failures. Put criterion or test-path attribution and log paths on plain-text lines directly below the heading. Do not add # or ## headings inside that section.
 
 ## Quality
 

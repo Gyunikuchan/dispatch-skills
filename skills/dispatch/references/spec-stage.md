@@ -21,7 +21,7 @@ Direct other planning skills' output into this canonical owner. Merge stray mate
 
 ## Approval
 
-Confirm new-spec intent at the end of [Resolve and author](#resolve-and-author), before planning. At medium and above, implementation uses one approval tuple for the current spec, plan and optional design hashes, with actual user words. Design approval precedes increment planning and is recorded with the first plan's tuple. At low, show governing artifacts in the report. Standalone review settlement does not add an approval gate. See [approval records](toolkit.md#approval).
+Confirm new-spec intent under [Resolve and author](#resolve-and-author) before planning. At medium and above, implementation uses one approval tuple for the current spec, plan and optional design hashes, with actual user words. Design approval precedes increment planning and is recorded with the first plan's tuple. At low, show governing artifacts in the report. Standalone review settlement does not add an approval gate. See [approval records](toolkit.md#approval).
 
 ## Run level
 
@@ -37,6 +37,6 @@ Authors, reviewers and writers read the whole governing spec. Writers also read 
 
 ## Revision protocol
 
-An intent edit requires a recorded user quote; record the decision in the spec, record a new `confirm` for the revised spec hash, and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Use the [toolkit edit contract](toolkit.md#edit) for edit provenance; it defines canonical hashes, diff references, rationale and the bind-then-append order for confirmed pre-bind revisions.
+An intent edit requires a recorded user quote; record the decision in the spec, record a new `confirm` for the revised spec hash, and obtain a new approval tuple where applicable. Clarifications are orchestrator edits. Follow the [toolkit edit contract](toolkit.md#edit) for canonical hashes, diff references, rationale and confirmed pre-bind revision order.
 
-Edit canonical artifacts in place; continue with unaffected writers. Notify only affected writers through the implementation rules. Preserve candidates, live handles, evidence and review history. Update dependent intent references and verification obligations before their next use; report changes in walkthrough deviations.
+Bind spec/design before recording design revisions; when a plan exists, bind the complete spec/plan/design set. Edit canonical artifacts in place and append an `edit` ledger record for each revision that admits a validated bound edit chain; for a confirmed standalone spec revision that cannot, use the [note fallback](toolkit.md#note), which grants no edit or approval authority; continue with unaffected writers. Notify only affected writers through the implementation rules. Preserve candidates, live handles, evidence and review history. Update dependent intent references and verification obligations before their next use; report changes in walkthrough deviations.

@@ -1,4 +1,5 @@
-import { qualityBar } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { measureBrief } from '../../scripts/brief-size.ts';
+import { qualityBar, qualityCriteria } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -193,7 +194,7 @@ test('quality selection: plan review checks task dependencies, ownership, and in
   assert.match(prompt, /The plan summary, success criteria and task graph/);
 });
 
-test('review prompts offer shared family tags each defined by a quality-bar bullet', async () => {
+test('review prompts offer shared family tags each defined by a quality-bar bullet', async (t) => {
   const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
   const families = [
     'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility',
@@ -207,13 +208,40 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   const sorted = (tags: readonly string[]) => [...tags].sort();
   assert.deepEqual(sorted([...REVIEW_TAGS]), sorted(families), 'validator vocabulary');
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  const section = (name: string) => quality.split(`## ${name}\n`)[1]!.split(/^## /m)[0]!;
+  for (const rule of ['WCAG accessibility', 'POLA', 'Keep the existing format of rendered output unless a recorded user decision changes it.', 'state non-goals', 'State system-wide invariants that hold within and across increments', 'spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege', 'Map trust boundaries and least privilege', 'missing indexes', 'closed handles and resource closure', 'breaking changes', "Hyrum's law", 'semver', 'expand/contract migrations', 'rollback', 'version skew with graceful degradation', 'affected callers', 'persisted schemas and serialized formats', 'portability across OS, shell, path, and encoding', 'deployment and runtime operation', 'observability through logs, metrics, and traces', 'actionable diagnostics', 'configuration, and a kill switch']) assert.ok(section('shared').includes(rule), rule);
+  assert.ok(section('code').includes('- **spec**'));
+  for (const rule of ['- Artifact layout:', 'At a Glance', 'State each visible fact once; a summary must add a distinct view, not restate a later visible section.', 'A visible summary may restate collapsed `<details>` detail.', 'Keep task and increment behaviour visible before `<details>`', 'Keep machine fields outside callouts, prefer point form, and retain every required field.', '[!NOTE]', '[!IMPORTANT]']) assert.ok(section('spec').includes(rule), rule);
+  assert.ok(section('plan').includes('assess test coupling, duplicate seam coverage'));
+  for (const rule of ['fail RED for the right reason', 'Prefer FIRST (deterministic, isolated) tests and preserve meaningful failures.', 'static checks do not guarantee runtime authorization or state transitions', 'name its consumer, failure and protection', 'Plan observable values, used errors, readable state, external payloads, prohibited/duplicate effects or invariants', 'mutation-style break-it checks', 'Retain multiple layers only for distinct failures', 'Coverage never justifies retention; resolve required-contract uncertainty before deletion', 'Self-derived expectations, source restatements and assertions on test-created data do not establish runtime behavior unless that artifact is the contract.', 'If brittle mocks, broad unrelated fixtures or costly infrastructure outweigh regression value, use the closest executable or review evidence and record the limit.']) assert.ok(qualityBar(quality, 'plan').includes(rule), rule);
+  const explorer = readFileSync(new URL('explorer-brief.md', root), 'utf8');
+  for (const rule of ['Surprises', 'Not covered', '## Questions', '## Coverage checklist', '## Map, budget and output']) assert.ok(explorer.includes(rule), rule);
+  const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
+  assert.ok(frame.includes('Verification evidence comes from the orchestrator; run no test or build commands.'));
+  assert.ok(frame.includes('Inspect required callers, interfaces, host rules and governing material even outside Scope.'));
+  assert.ok(frame.includes('Spend no extra turns hunting for adjacent findings.'));
+  const revision = readFileSync(new URL('../spec-stage.md', root), 'utf8').split('## Revision protocol')[1]!;
+  assert.ok(revision.includes('append an `edit` ledger record for each revision that admits a validated bound edit chain'));
+  assert.ok(revision.includes('[toolkit edit contract](toolkit.md#edit)'));
+  assert.ok(revision.includes('for a confirmed standalone spec revision that cannot, use the [note fallback](toolkit.md#note), which grants no edit or approval authority'));
+  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8').replace(/\s+/g, ' ');
+  for (const rule of ['With a plan, its `## Key Decisions & Context` entries are settled', 'An attached "Approved technical-design context"', 'Obey an explicit Git range in Scope', 'when the diff changes a shared invariant, contract, or signature']) assert.ok(codePrompt.includes(rule), rule);
+  const explorerInputs: Record<string, string> = { objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md', cliPath: 'skills/dispatch/scripts/toolkit/cli.ts', session: '.scratch/session' };
+  const renderedExplorer = explorer.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    assert.ok(Object.hasOwn(explorerInputs, name), name);
+    return explorerInputs[name]!;
+  });
+  t.diagnostic(`rendered explorer brief (fixed objective/questions/outputPath/cliPath/session): ${measureBrief(renderedExplorer).totalBytes} UTF-8 bytes; advisory only`);
+  for (const name of ['quality-bar.md', 'explorer-brief.md']) t.diagnostic(`${name}: ${Buffer.byteLength(readFileSync(new URL(name, root), 'utf8'), 'utf8')} UTF-8 bytes`);
+  t.diagnostic(`writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer'), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
+  for (const [kind, baseline] of [['code', 13849], ['plan', 17847], ['design', 13132]] as const) t.diagnostic(`${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`);
   for (const kind of ['code', 'plan', 'design'] as const) {
     const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
     const offered = [...block.matchAll(/^- `([^`]+)`$/gm)].map((tag) => tag[1]!);
     assert.deepEqual(sorted(offered), sorted(expectedByKind[kind]), `${kind} prompt families`);
     const selectedQuality = qualityBar(quality, kind);
     for (const family of offered.filter((tag) => tag !== 'standards' && tag !== 'adjacent')) {
-      assert.ok(selectedQuality.split('\n').some((line) => line.startsWith(`- **${family}** —`)), `${kind}: missing ${family} quality bullet`);
+      assert.equal(selectedQuality.split('\n').filter((line) => line.startsWith(`- **${family}** —`)).length, 1, `${kind}: ${family} quality bullet exactly once`);
     }
   }
 });
@@ -265,7 +293,7 @@ test('quality selection keeps judging rules single-sourced', () => {
   const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
   const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
   assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'plan', 'design']);
-  const adjacentRule = 'Report a concrete existing-code defect encountered while inspecting the selected target and interfaces or call sites needed to verify it';
+  const adjacentRule = 'Report concrete existing-code defects encountered in the selected target or during that required inspection';
   assert.equal(frame.split(adjacentRule).length - 1, 1);
   assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);
   assert.match(codePrompt, /cite code at its real `path:L<line>` locus/);

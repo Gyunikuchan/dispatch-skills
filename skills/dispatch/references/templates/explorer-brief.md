@@ -10,7 +10,7 @@ Map the landscape around the planned decision (constraints, consumers, reuse can
 
 {{questions}}
 
-Answer these questions about the planned decision; do not return a general repository survey. Report material facts the questions missed under `Surprises`.
+Answer the planned-decision questions, not a general repository survey.
 
 For a scope round, use the confirmed spec's REQs and DECs as the baseline, then answer any related or unrelated planning questions the caller adds.
 
@@ -28,7 +28,7 @@ For callers and references, use the first available tool in this order, moving o
 2. Language-server references
 3. Text search
 
-Name the tool in the map. Mark consumers found only by text search as `(text-only)` and list unresolved dynamic dispatch under `Not covered`.
+Mark consumers found only by text search as `(text-only)` and list unresolved dynamic dispatch under `Not covered`.
 
 ## Coverage checklist
 
@@ -45,7 +45,7 @@ Complete every item; the checklist is the completeness contract, not a search or
 
 For a template or prompt edit, trace its renderer and generated consumers; cite them in the `callers` and `generated` coverage entries.
 
-For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. For each changed predicate or contract with parallel implementations, add a `parallel:` entry naming each one. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. List findings that contradict the objective or questions under `Surprises`.
+For reuse candidates (helpers, utilities and types) and host conventions the change must follow, add `reuse:` or `style:` entries to `Conventions`. For each changed predicate or contract with parallel implementations, add a `parallel:` entry naming each one. Follow the [plain-text description rule](context-map.md#field-notes) for Precedent and Conventions entries. Each `Precedent` entry states what to copy in one clause and lists every file it touches: code, tests, docs, samples, generated artifacts and string-keyed sites. Under `Surprises`, report material facts the objective or questions missed or contradict.
 
 ## Map, budget and output
 

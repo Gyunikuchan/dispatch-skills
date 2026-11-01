@@ -10,9 +10,7 @@ Kind block for `review-prompt.md`.
 
 ## opener
 
-Review the implementation adversarially: challenge the requirement, the author's mental model, and
-the diff. The implementation is complete: judge whether it delivers the original ask and meets its
-success criteria well, not merely whether it matches the plan.
+Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance.
 
 ## context
 

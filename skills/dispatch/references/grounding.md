@@ -12,11 +12,11 @@ Run `doctor run` without `--level`. When it reports a configured explorer for th
 
 After `confirm` and before authoring a standalone plan or any design, ground the confirmed scope with the same launch, explorer brief and Coverage checklist. Start with questions from the confirmed spec's REQs and DECs, then add any related or unrelated question the orchestrator needs to plan or design. Give the explorer the governing spec path and its `<session>/<slug>.spec.context.md` map path. Continue the live explorer when the host can; otherwise launch a fresh one with both paths. If the spec-phase map does not exist, ground from the spec alone.
 
-Write the full scope map to the plan or design path defined under [Publish](#publish), which also owns the inline fallback. Use the [explorer brief's reply rules](templates/explorer-brief.md#map-budget-and-output). The orchestrator reads any delta and cited source ranges. With or without a spec-phase baseline, read only needed sections of the current scope map once; do not read the whole scope map. Verify load-bearing claims at their cited source ranges.
+Write the full scope map to the plan or design path defined under [Publish](#publish), which also owns the inline fallback. Use the [explorer brief's reply rules](templates/explorer-brief.md#map-budget-and-output). Read any delta and apply [map checks](#check-and-recover).
 
 ## Design increments
 
-Before authoring each design increment plan, ground that increment with the same launch, using the increment's objective and questions. Earlier increments can change repository facts, and a broad design omits local seams that the plan needs. Save the increment map as `<session>/<increment-slug>.plan.context.md`. Before authoring, read its relevant sections once for local seams, consumers and invariants, then verify load-bearing claims at their cited source ranges.
+Before authoring each design increment plan, ground that increment with the same launch, using the increment's objective and questions. Earlier increments can change repository facts, and a broad design omits local seams that the plan needs. Save the increment map as `<session>/<increment-slug>.plan.context.md`. Before authoring, check local seams, consumers and invariants under [map checks](#check-and-recover).
 
 ## Follow-up explorers
 
@@ -30,9 +30,9 @@ Consider follow-ups for reuse candidates, consumers, review findings or failed r
 
 ## Check and recover
 
-Run `lint run` on each explorer map before using it. Relaunch a failed, timed-out or lint-failing explorer once with the available error evidence, including the lint result when available. For a size error, ask it to compress wording while retaining every entry and `Not covered` item. If no map survives the retry, use the self-grounding checklist under Publish.
+Before using a map, run orchestrator `lint run` only when the explorer did not report a passing `lint run` (including inline fallback) or after the orchestrator edits the map. Relaunch a failed, timed-out or lint-failing explorer once with the available error evidence, including the lint result when available. For a size error, ask it to compress wording while retaining every entry and `Not covered` item. If no map survives the retry, use the self-grounding checklist under Publish.
 
-Treat maps as claims, not authority. Keep `Not covered` items open until checked. When checking a claim, read its cited range; read a whole file only when a decision depends on wording the map did not capture. Verify each load-bearing claim at source before relying on it. Verify each `Surprise` at its ref before reporting it to the user. When the orchestrator verifies at source that a map claim is wrong, including errors reported by reviewers, writers or follow-up explorers, correct every map still read downstream and re-lint each corrected map before the next downstream launch. Then resolve a verified `Surprise` before planning, cite it in a spec, or add it to the governing spec's `## Open Questions`.
+Treat maps as claims, not authority. Read only needed map sections once, never the whole scope map. Keep `Not covered` items open until checked. When checking a claim, read its cited range; read a whole file only when a decision depends on wording the map did not capture. Verify each load-bearing claim at source before relying on it. Verify each `Surprise` at its ref before reporting it to the user. When the orchestrator verifies at source that a map claim is wrong, including errors reported by reviewers, writers or follow-up explorers, correct every map still read downstream and re-lint each corrected map before the next downstream launch. Then resolve a verified `Surprise` before planning, cite it in a spec, or add it to the governing spec's `## Open Questions`.
 
 ## Publish
 

@@ -1,3 +1,4 @@
+import { measureBrief } from '../../../scripts/brief-size.ts';
 import assert from 'node:assert/strict';
 import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
@@ -390,5 +391,21 @@ test('brief labels governed hashes and names lint for comparison', async () => {
     assert.ok(markdown.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
     assert.ok(markdown.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
     assert.match(markdown, /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i);
+  } finally { f.cleanup(); }
+});
+
+
+test('writer brief scopes plan reads to embedded sections unless cross-task reference', async (t) => {
+  const f = await fixture();
+  try {
+    await f.add('level', {level: 'low'});
+    await f.launch();
+    const result = await f.call();
+    assert.equal(result.exit, 0);
+    const brief = fs.readFileSync(result.value.path, 'utf8');
+    for (const rule of ['Shared plan context', 'Task scope', 'Criteria', 'Contract commands', 'RED capture commands', 'embedded below', 'Read the whole plan only when', 'Constraints:', 'Overlap:', 'Invariants:', 'another task or a shared producer/consumer interface outside these sections']) assert.ok(brief.includes(rule), rule);
+    const controlled = brief.replaceAll(f.session, "/session").replaceAll(f.root, "/repo");
+    t.diagnostic(`rendered writer brief (fixture inputs; session=/session, repository=/repo): ${measureBrief(controlled).totalBytes} UTF-8 bytes; advisory only`);
+    t.diagnostic(`skill-owned writer brief + quality: ${Buffer.byteLength(getWriterTemplate(f.deps.skillRoot!), 'utf8') + Buffer.byteLength(qualityCriteria(getQuality(f.deps.skillRoot!), 'writer'), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
   } finally { f.cleanup(); }
 });

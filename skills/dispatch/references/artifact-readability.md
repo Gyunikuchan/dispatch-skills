@@ -4,7 +4,7 @@ Use these examples with the [visual-aid bar](templates/quality-bar.md#visual-aid
 
 ## Context and change
 
-A plan proposes a cache between an API and its existing store. A view of `cache` alone hides the boundary it changes. This compact diff shows the relevant unchanged flow and the proposed addition:
+A plan adds a cache between an API and its store. Show the changed boundary and unchanged flow:
 
 ```diff
  Client (unchanged)
@@ -17,8 +17,8 @@ The tree answers where the change sits without assigning the client or store to 
 
 ## Evidence by stage
 
-In a plan, say: “Proposed: repeated reads use the cache. Planned verification: run the read-path test.” In the walkthrough, report observed results with their evidence: “Read-path test passed (`test.log`); load test unrun.” Cite a measured before/after only when both observations exist. This distinction prevents a proposed result or missing baseline from appearing verified.
+In a plan, say: “Proposed: repeated reads use the cache. Planned verification: run the read-path test.” In the walkthrough, report observed results with their evidence: “Read-path test passed (`test.log`); load test unrun.” Cite a measured before/after only when both observations exist. Keep proposals and missing baselines distinct from verified results.
 
 ## Reversibility and consumers
 
-In the existing risk or rollback section, explain the affected boundary: “API readers use the new cache. Reverting the API restores direct reads; cached entries persist until expiry and must be cleared if stale.” This makes the rollback and its remaining effect actionable without a separate risk block. State only effects supported by the actual design and evidence.
+In the existing risk or rollback section, explain the affected boundary: “API readers use the new cache. Reverting the API restores direct reads; cached entries persist until expiry and must be cleared if stale.” Keep rollback and residual effects actionable in that section. Support each effect with design and evidence.

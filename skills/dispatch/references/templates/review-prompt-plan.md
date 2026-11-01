@@ -11,10 +11,7 @@ Kind block for `review-prompt.md`.
 ## opener
 
 Review the implementation plan adversarially: challenge the requirement, its premise, and the plan.
-An implementation plan is the lower-level plan for building the requested features or a
-technical-design increment: concrete files and symbols, step order, error behavior, prerequisite
-evidence, exact verification, and bounded blast radius. No code has been written yet; judge whether
-executing the plan as written delivers the requirement.
+Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius.
 
 ## context
 

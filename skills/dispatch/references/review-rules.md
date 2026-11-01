@@ -6,14 +6,14 @@ Review prompts carry the settled governing spec path and hash. Plan and design r
 
 ## Intent and findings
 
-Read the full result file before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for defects in governing text and testing for missing verification coverage. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts.
+Read the full result before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for governing-text defects and testing for missing verification. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts.
 
 A settled DEC may resolve an intent claim autonomously: cite it in the rationale. For changed intent, a new external dependency/runtime prerequisite or discarded work, use the [user gate](decision-frame.md#user-gate-boundaries). Record changed intent through [spec operation](spec-stage.md#revision-protocol).
 For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).
 
 ## Review provenance and applicability
 
-Keep the actual reviewed revision and scope. After edits, choose continued review coverage from changed paths, accepted fixes and disputed claims; do not imply that a previous review covered newer bytes. Preserve earlier findings and rulings. A failed provider or missing coverage remains visible.
+Retain reviewed revision, scope, findings, rulings and failed or missing coverage. After edits, choose continued coverage from changed paths, accepted fixes and disputed claims; never attribute newer bytes to an earlier review.
 
 Level policy selects roster and round caps. The cap bounds quality rounds. An accepted MUST fix or a pending MUST rejection earns continuation past the cap. Recurrence and rejection escalations stop non-converging loops.
 
@@ -23,7 +23,7 @@ For the final completed review round at or above the configured cap, apply accep
 
 ## Rulings and fix scope
 
-Append a ledger `ruling` record with subject `review:<review>:<finding>` and `ruling` set to `accepted`, `rejected`, `duplicate` or `deferred`, and evidence-backed rationale. Use the review identifier and finding ID from the result. Reject a repeated settled claim without new evidence by citing the prior ruling.
+Append a ledger `ruling` record with subject `review:<review>:<finding>` and `ruling` set to `accepted`, `rejected`, `duplicate` or `deferred`, and evidence-backed rationale. Use result review/finding IDs. Reject repeated settled claims without new evidence by citing the prior ruling.
 
 A rejected MUST remains pending until each original logical source slot, or its configured reserve/native substitute, explicitly agrees with an evidence-backed rationale. For a tool-only finding, use the first non-reserve reviewer in its original saved roster; if none exists, stop with `review-confirmation-required`. The next review sends each slot its own captured requests. Missing, malformed, failed or unattributed replies leave rejection pending; omission from ordinary findings is not agreement. SHOULD and CONSIDER rejections need no confirmation.
 

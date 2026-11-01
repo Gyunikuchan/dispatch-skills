@@ -40,6 +40,5 @@ This is a claims artifact, not governing authority. Verify each claim you rely o
 - Commit is optional; when present, use a bare 7–64-character hexadecimal SHA.
 - Use plain text before the — separator in Precedent and Conventions entries, including symbol names and dotted helpers; reserve backticks for repository refs.
 - Conventions is optional and does not produce plan-coverage warnings.
-- Tool may name a host read tool.
 - Mark consumers found only by text search with `(text-only)`.
 - A map warns above 16,384 UTF-8 bytes and errors above 32,768 bytes.

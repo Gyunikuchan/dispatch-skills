@@ -48,7 +48,7 @@ The spec is the governing requirements and intent document. Put selected archite
 
 ## Field notes
 
-- Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Place `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections; select their type under those rules.
+- Layout: follow [authoring rules](quality-bar.md#spec); put `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections.
 
 - Orientation: include current-system context needed to understand intent, using the [visual-aid bar](quality-bar.md#visual-aid-bar). Keep selected architecture in design and delivery evidence in the walkthrough.
 - Location and identity: the spec lives at `<session>/<slug>.spec.md`, one per session. Its hash is the canonical hash that `lint run` reports; it ignores formatting-only differences, and Parent pins use that hash.

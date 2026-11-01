@@ -11,10 +11,7 @@ Kind block for `review-prompt.md`.
 ## opener
 
 Review the technical design adversarially: challenge the requirement, its premise, and the design.
-A technical design is the higher-level architectural plan that breaks a large problem into smaller
-increments, each later delivered through its own implementation plan. Review at that altitude:
-raise architectural issues, and leave file-by-file and symbol-level detail to the plan reviews. No
-code has been written yet.
+Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews.
 
 ## context
 

@@ -32,6 +32,7 @@ Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 
 Arguments: `report complete --session <session>`.
 Result path: completed walkthrough path with Review Focus and visuals, criterion statuses, deviations and optional diagnostics path. For a qualifying cap-ending SHOULD code correction, Review Focus lists each correction with its status; the result value carries `reviewedCodeBaseline`. For plan/design corrections, record the baseline, correction and verification in a `focus` bullet with evidence; the renderer includes it under Review Focus.
+Completion checks accepted SHOULD correction scope against the saved final full review, permits a contiguous recorded correction chain only with no later review and current verification, and refuses unrelated or unverified changes under [review provenance](review-rules.md#review-provenance-and-applicability). A removed criterion counts as verified from evidence on the current tree or the `from` tree, with reason `verified at <from>; tests removed in cleanup`. Every other criterion needs evidence on the current tree. `status` lists removed criteria as verified at `from`; `report` and the walkthrough render them with the deleted and merged counts. Without a `test-cleanup` record, every criterion needs current-tree evidence.
 Refusals: review-confirmation-required, no-integration, criteria-unmet, focus-required or undelivered. `focus-required` (exit 4) means a plan with Risk `med` or `high` lacks a latest `focus` record with at least three bullets. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
@@ -43,7 +44,7 @@ Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unkno
 ### worktree integrate
 
 Arguments: `worktree integrate <task> --session <session> [--ack-stale <rationale>]`.
-Result path: integration commit and task, or retained conflict paths.
+Result path: integration commit and task, or retained conflict paths. Integration `fix` and `test-cleanup` records retain correction provenance; see [commit](#worktree-commit).
 Refusals: approval-chain or missing-confirmation gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
 
 ### worktree continue
@@ -55,10 +56,8 @@ Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-in
 ### worktree commit
 
 Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive.
-Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](#test-cleanup).
+Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
-
-#### Test cleanup
 
 The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Verify commands no longer run any test, and non-negative counts of deleted and merged tests. The commit message is `fix(dispatch): <reason>` with trailers `Dispatch-Fix: <session>` and `Dispatch-Test-Cleanup-Data: <stable JSON of {removed, deleted, merged}>`.
 
@@ -66,13 +65,7 @@ The tool appends one `integrate` record with phase `test-cleanup` and data `{fro
 
 Refusals: test-cleanup-evidence-required (a `removed` ID is not a plan criterion or lacks successful strict evidence on the `from` tree: current command digest, clean, unchanged), test-cleanup-paths-unchanged (a `removed` criterion declares no `Tests:` path that the commit deletes or modifies), test-cleanup-recorded (a `test-cleanup` record exists) and test-cleanup-empty (`removed` is empty and both counts are 0).
 
-A removed criterion counts as verified from evidence on the current tree or the `from` tree, with reason `verified at <from>; tests removed in cleanup`. Every other criterion needs evidence on the current tree. `status` lists removed criteria as verified at `from`; `report` and the walkthrough render them with the deleted and merged counts. `verify run --criteria` naming a removed criterion refuses test-cleanup-removed; `verify run` without `--criteria` skips removed criteria. Without a `test-cleanup` record, every criterion needs current-tree evidence.
-
-#### Cap-ending SHOULD corrections
-
-For a final completed review round at or above the configured cap, a contiguous chain of recorded SHOULD correction commits may settle without another review solely for those fixes. This includes a final round reached after a MUST-driven continuation. Each integration fix record may include reviewFix metadata with review (the review ID), round (the round number), generation (the generation number), findings (a nonempty list of finding IDs) and from (the full reviewed code commit). worktree commit validates the metadata structure; report completion checks the accepted SHOULD findings and correction scope against the saved final full review, requires no later review and current verification, and refuses unrelated or unverified changes. Unrelated changes and unverified corrections do not qualify.
-
-Keep the reviewed commit as the baseline and report each correction as verified but not re-reviewed. Accepted MUST fixes still require review, pending MUST rejections still require confirmation, and CONSIDER handling is unchanged.
+`--review-fix` accepts `reviewFix` metadata `{review, round, generation, findings, from}`: review ID, round number, generation number, nonempty finding IDs and full reviewed code commit. The tool validates structure and records it in the integration `fix` record. Policy: [review provenance](review-rules.md#review-provenance-and-applicability). Keep the reviewed baseline; report qualifying corrections as verified but not re-reviewed.
 
 ### worktree abort
 
@@ -88,15 +81,15 @@ Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integ
 
 Pending or escalated applicable MUST rejections refuse delivery before caller writes or a delivered record. The same closure query gates report completion; see [review rules](review-rules.md#rulings-and-fix-scope).
 
-Delivery makes no caller commit and stages nothing. It restores the verified source tree into the caller working tree as unstaged changes; caller HEAD stays at from. New files appear as untracked (`??`) in `git status`. Internal writer and integration commits stay in the session. Same-tree delivery writes nothing and records noop.
+Delivery restores verified source as unstaged caller changes without a caller commit; HEAD stays at from. New files are untracked (`??`). Writer/integration commits stay in the session. Same-tree delivery writes nothing and records noop.
 
 Require the original caller branch and HEAD and an empty index, including intent-to-add entries, for every delivery including no-op. Caller changes outside the delivered paths remain, including tracked edits, untracked and ignored files. Delivery refuses caller-dirty when a tracked-modified, untracked or ignored caller path equals, contains or is contained by a delivered path. It refuses unsupported-sparse when the caller uses sparse checkout, and unsupported-entry when a delivered path is a gitlink; both refuse before any caller write. Git writes the files through a session-owned temporary index; the caller index is never used. It rechecks source, branch, HEAD, index and delivered paths after the pre-apply step and before it records delivered; a mismatch refuses caller-dirty without recording delivered. The check and the write are separate operations, so concurrent external edits in that interval remain a race limit.
 
 Before it records deliver-started, delivery retains source at the ref. A missing ref is created; a ref equal to source is reused; any other value refuses recovery-blocked. Cleanup keeps this ref, so the source stays resolvable after the integration branch is deleted. A matching deliver-started without delivered permits recovery: retry accepts delivered paths that equal from or source and completes the write. An interruption inside Git's own per-file write can leave a path that matches neither tree. Retry refuses caller-dirty and names that path; restore it with `git restore --source=<ref> -- <path>` or discard it. These boundaries support process-crash recovery; they do not promise power-loss durability.
 
-To inspect or undo the delivery, use `git diff` and `git status`. To restore a file from the retained source, use `git restore --source=<ref> -- <path>`.
+Inspect with `git diff` and `git status`; restore retained source with `git restore --source=<ref> -- <path>`.
 
-A completed retry with the same source returns the recorded outcome without checking or changing later caller work. A changed source requires a new run. A conflicting ref, changed pending source, or unsupported pending delivery mode refuses recovery-blocked. Preserve refs, records and worktrees for manual inspection; do not reset caller work.
+A completed same-source retry returns the recorded outcome without checking or changing later caller work; a changed source needs a new run. Conflicting ref, changed pending source or unsupported pending mode refuses recovery-blocked. Preserve refs, records and worktrees for inspection; never reset caller work.
 
 ### worktree close
 
@@ -131,7 +124,7 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 
 ### verify run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed. Without `--criteria`, verification skips criteria marked `Evidence: review`.
+Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed. Without `--criteria`, verification skips criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its pre-cleanup evidence remains eligible under [report completion](#report-complete).
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
 Refusals: unknown criterion, which names each unknown ID and the valid IDs; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
@@ -218,11 +211,11 @@ data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` i
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Orchestrator non-intent edits extend an approved hash chain; intent, dependency and discard require a new approval tuple. Hash artifacts using the canonical hash reported by lint, not a hash of incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Non-intent orchestrator edits extend approved hash chains; intent, dependency and discard need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol). Use lint canonical hashes, excluding incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 
-data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path, optional artifacts tuple. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. Review-only criteria never accept tool evidence, including older empty-command records; they remain missing until a user `manual-complete` or applicable waiver record exists. Criterion status is `verified` for eligible tool evidence, `manual` for `manual-complete`, `waived` for waiver, and `missing` otherwise; only `missing` blocks the criteria completion gate. The automated `verifiedStage` check excludes review-only criteria and requires successful, clean, unchanged-tree evidence on current commands for every other check; `manual` and `waived` statuses do not satisfy it.
+data: `criterion`, `commandDigest`, `tree`, `clean`, `before`, `after`, `exit`, path, optional artifacts tuple. Allowed by: user, orchestrator, tool; verify writes these records from actual commands. Review-only criteria reject tool evidence, including older empty-command records; only user `manual-complete` or an applicable waiver resolves them. Criterion status is `verified` for eligible tool evidence, `manual` for `manual-complete`, `waived` for waiver, and `missing` otherwise; only `missing` blocks the criteria completion gate. Automated `verifiedStage` excludes review-only criteria; every other check needs successful, clean, unchanged-tree evidence on current commands. `manual` and `waived` do not satisfy it.
 
 ### writer
 

@@ -19,7 +19,7 @@ Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --o
 
 ## Tool loop
 
-Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> ... --session <session>`. Read the result `path`; stdout gives `ok` and a bounded summary. Exits: 0 returned (check `ok`), 1 invalid input, 2 fault, 3 lock held, 4 gate or native work pending.
+Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> ... --session <session>`. Inspect `ok` and read the result `path`; the [toolkit contract](references/toolkit.md) owns exit and result semantics.
 
 For each call read its action section in the [toolkit contract](references/toolkit.md); for ledger calls also read the matching record-kind section. Follow [native-slot replies](references/toolkit.md#native-slot-replies). Read host rules, then follow the selected branch. At each step read only its linked quality-bar and toolkit sections:
 
@@ -28,13 +28,13 @@ For each call read its action section in the [toolkit contract](references/toolk
 - `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve errors and findings; report the reviewed artifact and concerns; use the [Decision Frame](references/decision-frame.md) for applicable approval.
 - `implement`: resolve spec and plan; lint, review and obtain the approval tuple. Implement with native writers; verify integration, repair within scope and run [test cleanup](references/verbs/implement.md). Review exact HEAD under [review provenance](references/review-rules.md#review-provenance-and-applicability). Deliver after review and checks pass. After success, run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifacts.
 
-Before every subagent launch, follow [Providers' Subagent context](references/providers.md). For `native-pending`, launch each configured slot per [native slots](references/providers.md#native-slots) and rerun the call. Preserve handles; wait for completion or blockers.
+Before every subagent launch, follow [Subagent context](references/providers.md). Handle `native-pending` under [native slots](references/providers.md#native-slots); retain handles until completion or blockers.
 
 ## Invariants and recovery
 
-Dispatch native [explorers](references/grounding.md#follow-up-explorers) anytime in parallel to read many files, logs, runs or web and keep context lean: map grounding writes maps; follow-ups return inline findings. Verify claims at cited ranges. Run ask only on user request.
+Use native [follow-up explorers](references/grounding.md#follow-up-explorers) for parallel research; follow their output and source-verification rules. Run ask only on user request.
 
-Quote actual user words for approval, waiver, manual completion and xhigh/max selection. Never invent decisions. At medium and above, briefs and integration require the current approval tuple or recorded non-intent edit chain. Intent, external dependency/runtime prerequisite and discarded-work changes need new approval.
+Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium-or-higher briefs and integration.
 
 Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 

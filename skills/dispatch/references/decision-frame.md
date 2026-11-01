@@ -19,15 +19,15 @@ Use the four-part format above with the following concrete content.
 
 ### Spec approval
 
-Present the canonical path/hash, stated and assumed intent separately, core REQs, settled DECs, unresolved material questions and the `plan` or `design` recommendation from the scope check. Confirm them in one exchange under [spec operation](spec-stage.md#resolve-and-author). Record actual user words; include the settled spec hash in the later implementation tuple.
+Present the canonical path/hash, stated and assumed intent separately, core REQs, settled DECs, unresolved material questions and the `plan` or `design` recommendation from the scope check. Follow [spec confirmation](spec-stage.md#resolve-and-author) and [approval provenance](spec-stage.md#approval).
 
 ### Plan or design approval
 
-Present current artifact paths/hashes, strategy, task or increment sequence, scope, verification and the proposed level with its reason under [Run level](spec-stage.md#run-level). Recommend the bounded unit and confirm the level. Explain delivery risk and alternatives. Record the tuple under [approval](toolkit.md#approval); design-only approval is recorded with the first implemented plan.
+Present current artifact paths/hashes, strategy, task or increment sequence, scope, verification and the proposed level with its reason under [Run level](spec-stage.md#run-level). Recommend the bounded unit and confirm the level. Explain delivery risk and alternatives. Record approval under [spec approval rules](spec-stage.md#approval) and the [tuple contract](toolkit.md#approval).
 
 ### Intent finding
 
-Present the claim, governing REQs/DECs and inspected source. Recommend a settled-evidence rejection or a specific intent change. Explain scope and verification effects; record a user quote for a changed decision.
+Present the claim, governing REQs/DECs and inspected source. Recommend a settled-evidence rejection or a specific intent change. Explain scope and verification effects; follow [intent rulings](review-rules.md#intent-and-findings).
 
 ### Writer scope request
 
@@ -39,7 +39,7 @@ Present exact failed commands, logs and root cause. Recommend repair, retained k
 
 ### Failed task
 
-Present the failed behavior, retained candidate, logs and verified cause. Recommend bounded repair, clarified scope, retry or stop. Preserve completed independent work. Manual completion needs criterion evidence and user authorization.
+Present the failed behavior, retained candidate, logs and verified cause. Recommend bounded repair, clarified scope, retry or stop. Preserve completed independent work; use [manual completion](toolkit.md#manual-complete) only with criterion evidence.
 
 ### Optional findings
 

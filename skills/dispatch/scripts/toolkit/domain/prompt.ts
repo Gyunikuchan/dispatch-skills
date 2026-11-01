@@ -96,7 +96,7 @@ export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer';
 export const qualitySections = {
   code: ['shared', 'code'],
   writer: ['shared', 'code'],
-  plan: ['shared', 'spec', 'plan', 'code'],
+  plan: ['shared', 'spec', 'plan'],
   design: ['shared', 'spec', 'design'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
 

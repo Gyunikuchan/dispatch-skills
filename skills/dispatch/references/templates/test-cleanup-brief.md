@@ -11,7 +11,7 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 ## Scope
 
 1. Run `git diff <base>..HEAD` and `git diff --name-only <base>..HEAD` in `{{integrationPath}}` with base `{{base}}`. Read-only Git only.
-2. Scope the cleanup to tests this run added or changed, plus pre-existing tests in the same files that overlap them. Leave other tests untouched.
+2. Clean up tests this run added or changed and overlapping pre-existing tests in those files; leave other tests untouched.
 3. Read the bound plan `{{planPath}}` whole. Map each test you delete or merge to criterion IDs through the `Tests:` and `Verify:` fields of the plan criteria.
 
 ## Rules
@@ -23,7 +23,7 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 
 ## Report
 
-Write a short report: status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; one-line summary; changed files; commands run with results; concerns.
+Report status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; one-line summary; changed files; commands run with results; concerns.
 
 End the report with one fenced `json` block and nothing after it:
 

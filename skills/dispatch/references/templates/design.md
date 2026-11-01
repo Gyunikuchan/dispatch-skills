@@ -77,9 +77,9 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 
 ## Field notes
 
-- Human layout: apply the [quality bar's authoring rules](quality-bar.md#spec). Place `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections; select their type under those rules.
+- Layout: follow [authoring rules](quality-bar.md#spec); put `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections.
 
-- At a Glance: **What** is the design's only outcome summary; **How it works** gives the method in one line without repeating the outcome. Put orientation visuals here when the [visual-aid bar](quality-bar.md#visual-aid-bar) admits them; show relevant existing structure and proposed boundaries.
+- Orientation: apply the [visual-aid bar](quality-bar.md#visual-aid-bar); show relevant existing structure and proposed boundaries.
 
 - Risks and rollback: when material, explain reversibility, affected consumers and effects that persist after rollback.
 - Box: exact labels in order; `Increments` equals the graph row count; never live status.

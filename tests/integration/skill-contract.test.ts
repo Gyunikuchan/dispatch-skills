@@ -250,8 +250,20 @@ test('authoring carry-over and review round roster rules are stated in prose', (
   assert.match(rules, /code review prompts never receive it/);
 });
 
-test('native slots launch by prompt path', () => {
+test('native slots launch by prompt path', t => {
   const providers = read(root + 'references/providers.md');
+  const openCode = providers.indexOf('## OpenCode private launches');
+  for (const heading of ['Subagent context', 'Native slots', 'Shared provider controls', 'Quota']) {
+    const position = providers.indexOf('## ' + heading);
+    assert.ok(position >= 0 && openCode >= 0 && position < openCode, heading);
+  }
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.doesNotMatch(toolkit, /#### (?:Test cleanup|Cap-ending SHOULD corrections)|\]\(#test-cleanup\)/);
+  for (const term of ['test-cleanup-evidence-required', 'test-cleanup-paths-unchanged', 'test-cleanup-recorded', 'test-cleanup-empty', 'test-cleanup-removed', '--review-fix', 'reviewFix', 'bind the revised spec, then append its `edit` record']) assert.ok(toolkit.includes(term), term);
+  t.diagnostic('toolkit.md: ' + Buffer.byteLength(toolkit) + ' UTF-8 bytes; baseline 27475');
+  const grounding = read(root + 'references/grounding.md');
+  assert.match(grounding, /only when the explorer did not report a passing `lint run`[^.]*inline[^.]*or after the orchestrator edits the map/);
+  for (const phrase of ['Relaunch a failed, timed-out or lint-failing explorer once', 'For a size error, ask it to compress wording while retaining every entry', 'self-ground']) assert.ok(grounding.includes(phrase), phrase);
   assert.match(providers, /read and execute[^.]*`promptPath`/i);
   assert.match(providers, /cannot read files[^.]*inline/i);
   assert.match(read(root + 'references/verbs/ask.md'), /answering a native voice yourself, read its prompt/i);
@@ -260,7 +272,15 @@ test('native slots launch by prompt path', () => {
 test('orchestrator reads quality bar sections by stage', () => {
   const skill = read(root + 'SKILL.md');
   assert.ok(!links(skill).some(link => link.endsWith('quality-bar.md')), 'SKILL.md does not link to the whole quality bar');
+  const plan = read(root + 'references/verbs/plan.md');
+  assert.ok(links(plan).includes('../grounding.md#design-increments'));
+  assert.doesNotMatch(plan, /quality-bar\.md#code/);
+  const review = read(root + 'references/verbs/review.md');
+  for (const anchor of ['spec', 'plan', 'design']) assert.ok(links(review).includes('../templates/quality-bar.md#' + anchor));
+  for (const phrase of ['Standalone review needs no bound plan', 'Code targets are `integration`, a bound-plan task ID, `worktree`, `<a>..<b>` or `<rev>`', 'Session state is excluded']) assert.ok(review.includes(phrase), phrase);
+  assert.doesNotMatch(review.split('for plan,')[1]?.split(';')[0] ?? '', /quality-bar\.md#code/);
   const implementLinks = links(read(root + 'references/verbs/implement.md'));
+  for (const anchor of ['rulings-and-fix-scope', 'review-provenance-and-applicability']) assert.ok(implementLinks.includes('../review-rules.md#' + anchor));
   for (const guide of ['../spec-stage.md', 'plan.md', 'design.md']) assert.ok(implementLinks.includes(guide), guide);
   for (const [file, anchor] of [['spec-stage.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code']]) {
     const text = read(root + 'references/' + file);
