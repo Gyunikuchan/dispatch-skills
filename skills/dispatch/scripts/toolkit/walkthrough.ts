@@ -61,11 +61,6 @@ const code = (value: string): string => {
   const delimiter = '`'.repeat(Math.max(0, ...((text.match(/`+/g) ?? []).map((run) => run.length))) + 1);
   return `${delimiter}${text}${delimiter}`;
 };
-const codeSpan = (value: unknown): string => {
-  const text = JSON.stringify(value) ?? String(value);
-  const delimiter = '`'.repeat(Math.max(0, ...((text.match(/`+/g) ?? []).map((run) => run.length))) + 1);
-  return `${delimiter}${text}${delimiter}`;
-};
 const visualLine = (value: string): string => {
   // Escaped comment openers are inert, so keep Mermaid arrows and similar `-->` text intact.
   return neutralizeComments(value).replace(/--&gt;/g, '-->');

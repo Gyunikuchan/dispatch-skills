@@ -28,6 +28,14 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const args = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(args));
+const reply = (text) => {
+  if (!args.includes('--format')) return text;
+  const event = (type, part) => JSON.stringify({ type, timestamp: 0, sessionID: 'lifecycle', part });
+  return [
+    event('text', { id: 'text-0', sessionID: 'lifecycle', messageID: 'msg', type: 'text', text }),
+    event('step_finish', { id: 'step-0', sessionID: 'lifecycle', messageID: 'msg', type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }),
+  ].join('\\n');
+};
 if (${JSON.stringify(scenario)} === 'unsupported') {
   process.stderr.write("error: unrecognized option '--standalone'\\n");
   process.exit(2);
@@ -47,7 +55,7 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
 } else if (${JSON.stringify(scenario)} === 'closed-stdio-success' || ${JSON.stringify(scenario)} === 'closed-stdio-failure') {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: process.platform === 'win32', windowsHide: true });
   fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));
-  process.stdout.write(args.includes('debug') ? '[]' : 'private run complete');
+  process.stdout.write(args.includes('debug') ? '[]' : reply('private run complete'));
   process.exit(${JSON.stringify(scenario)} === 'closed-stdio-failure' ? 7 : 0);
 } else if (${JSON.stringify(scenario)} === 'failure') {
   process.stderr.write('controlled provider failure\\n');
@@ -61,12 +69,12 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
 } else if (${JSON.stringify(scenario)} === 'exit-with-descendant') {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit', detached: process.platform === 'win32' });
   fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));
-  process.stdout.write('private CLI exits while its server child stays open\\n');
+  process.stdout.write(reply('private CLI exits while its server child stays open\\n'));
   process.exit(0);
 } else if (args.includes('debug')) {
   process.stdout.write(JSON.stringify(args));
 } else {
-  process.stdout.write('private run complete');
+  process.stdout.write(reply('private run complete'));
 }
 `;
   const scriptPath = path.join(root, 'fixture.cjs');
@@ -99,7 +107,8 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   };
   const cleanup = async () => {
     await stopDescendant();
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+    catch (error) { if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error; /* accepted detached-child limit retains the path */ }
   };
   return { root, worktree, argsPath, childPidPath, binary, request, stopDescendant, cleanup };
 }
@@ -109,6 +118,7 @@ function runnerPorts(binary: string, promptPath: string, body = 'OpenCode lifecy
     readText: (file) => file === promptPath ? body : '',
     writeText: (file, text) => fs.writeFileSync(file, text),
     realpath: (file) => { try { return fs.realpathSync(file); } catch { return null; } },
+    readdir: (dir) => fs.readdirSync(dir),
     size: (file) => { try { return fs.statSync(file).size; } catch { return null; } },
     readPrefix: (file, max) => { try { return fs.readFileSync(file).subarray(0, max).toString('utf8'); } catch { return ''; } },
   };
@@ -213,6 +223,7 @@ test('OpenCode private runs settle success, failure, timeout, and output cap', a
         const result = await runDelegate(opencode, fixture.request, 'cli', ports);
         const args = JSON.parse(fs.readFileSync(fixture.argsPath, 'utf8')) as string[];
         assert.ok(args.includes('--standalone'), `${scenario} run did not request a private server`);
+        assert.ok(args.includes('--format') && args[args.indexOf('--format') + 1] === 'json', `${scenario} run did not request JSON output`);
         if (scenario === 'success') assert.equal(result.outcome.status, 'ok');
         if (scenario === 'failure') assert.equal(result.outcome.status, 'fail');
         if (scenario === 'timeout') {

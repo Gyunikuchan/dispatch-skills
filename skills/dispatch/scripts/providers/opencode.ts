@@ -1,15 +1,37 @@
-// OpenCode (spec §6.1): v2-only argv `run --auto [--agent] [-m model[#effort]] -- <prompt>`;
+// OpenCode (spec §6.1): v2-only argv `run --auto --format json [--agent] [-m model[#effort]] -- <prompt>`;
 // `Variant unavailable` asks the runner to rerun once without effort. A loopback
 // endpoint gets a `/models` preflight, the GPU lock, and a WAN proxy trap; a remote endpoint skips all three.
 // Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
 
-import { classifyFailure, extractCleanResponse, failOutcome } from './runner.ts';
+import { classifyFailure, failOutcome } from './runner.ts';
+import { opencodeUsage } from '../lib/diagnostic-usage.ts';
 import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, RunOutcome } from './types.ts';
 
 export const PROXY_TRAP = 'http://127.0.0.1:0';
 const PROXY_KEYS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
 const VARIANT_UNAVAILABLE = /Variant unavailable/i;
 const STANDALONE_UNSUPPORTED = /(?:--standalone[\s\S]{0,100}(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)|(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)[\s\S]{0,100}--standalone)/i;
+
+type EventRow = Record<string, unknown>;
+const row = (v: unknown): EventRow | null => v && typeof v === 'object' && !Array.isArray(v) ? v as EventRow : null;
+
+/** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
+function parseEvents(raw: string): { text: string; errors: string[] } {
+  const texts: string[] = [], errors: string[] = [];
+  for (const line of raw.split(/\r?\n/).filter((value) => value.trim())) {
+    let event: EventRow | null;
+    try { event = row(JSON.parse(line)); } catch { continue; }
+    if (event?.['type'] === 'text') {
+      const text = row(event['part'])?.['text'];
+      if (typeof text === 'string') texts.push(text);
+    }
+    if (event?.['type'] === 'error') {
+      const message = row(event['error'])?.['message'] ?? event['message'];
+      errors.push(typeof message === 'string' ? message : 'OpenCode reported an error');
+    }
+  }
+  return { text: texts.join('').trim(), errors };
+}
 
 export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDALONE_UNSUPPORTED.test(text) || /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
 
@@ -73,28 +95,30 @@ export const opencode: ProviderSpec = {
   sandbox: { flags: ['bwrap'], inactive: /bwrap: [^\n]*(?:No permissions|Operation not permitted|setting up uid map)/i, supported: (env) => env.os === 'linux' && env.bubblewrap },
   native: 'opencode',
   modeCascadeOn: [],
+  usage: opencodeUsage,
+  outputCapBytes: 64 * 1024 * 1024,
   resumeCommand: (id) => id,
   argv(req) {
     // Headless `--auto` requires the read-only agent from preparation: verified deny-by-default, or best-effort explore.
     // Standalone owns the server lifecycle; `--pure` and `--variant` are v1-only and never emitted.
-    const inner = [req.binary, '--standalone', 'run', '--auto'];
+    const inner = [req.binary, '--standalone', 'run', '--auto', '--format', 'json'];
     if (req.agent) inner.push('--agent', req.agent);
     if (req.model) inner.push('-m', req.effort ? `${req.model}#${req.effort}` : req.model);
     inner.push('--', req.prompt);
     return { argv: req.sandbox ? bwrapArgv(req, inner) : inner, stdin: null, env: {}, cwd: req.cwd };
   },
   parse(out, req): RunOutcome {
-    const both = `${out.stderrTail}\n${out.stdout}`;
-    const text = extractCleanResponse(out.stdout);
-    if (out.exit === 0 && text) {
+    const events = parseEvents(out.stdout);
+    const diagnostics = [out.stderrTail, ...events.errors].join('\n').trim();
+    if (out.exit === 0 && !events.errors.length && events.text) {
       const handle = req.endpoint ?? (req.model ? `opencode:${req.model}` : null);
-      return { status: 'ok', text, sessionId: null, resume: handle };
+      return { status: 'ok', text: events.text, sessionId: null, resume: handle };
     }
-    const detail = `opencode exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
-    if (unsupportedStandaloneDiagnostic(both)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');
+    const detail = `opencode exit ${String(out.exit)}: ${diagnostics.slice(0, 300)}`;
+    if (unsupportedStandaloneDiagnostic(diagnostics)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');
     // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
-    if (VARIANT_UNAVAILABLE.test(both) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
-    return failOutcome(classifyFailure(both) ?? 'empty-output', detail);
+    if (VARIANT_UNAVAILABLE.test(diagnostics) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
+    return failOutcome(classifyFailure(diagnostics) ?? 'empty-output', detail);
   },
   prepare: prepareOpencode,
 };

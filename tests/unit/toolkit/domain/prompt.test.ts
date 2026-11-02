@@ -6,13 +6,64 @@ import { test } from 'node:test';
 import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
-import {settledSection} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import {settledSection, type Settled} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 
 test('rejected MUST prompt context settles only confirmed rejections',()=>{
  const pending={id:'R1-F001',locus:'§ Work',defect:'Unbounded writes',ruling:'rejected',reason:'Writes have a bound',severity:'MUST'};
  assert.equal(settledSection([pending]),'');
  assert.match(settledSection([{...pending,rejectionConfirmed:true}]),/Settled in earlier rounds/);
  assert.match(settledSection([{...pending,severity:'SHOULD'}]),/R1-F001/);
+});
+
+const settledRows = (section: string) => section.split('\n').filter((line) => line.startsWith('- '));
+
+test('settled accepted rows drop rationale', () => {
+  const accepted = {id: 'R3-F001', locus: '§ Tasks', defect: 'First line of the defect.\nSecond line elaborates.', ruling: 'accepted', reason: 'Applied the fix in the reworked section.'};
+  assert.deepEqual(settledRows(settledSection([accepted])), ['- R3-F001 § Tasks: First line of the defect. — accepted']);
+  const clipped = {...accepted, id: 'R3-F002', defect: `${'x'.repeat(130)}\nmore`};
+  assert.deepEqual(settledRows(settledSection([clipped])), [`- R3-F002 § Tasks: ${'x'.repeat(119)}… — accepted`]);
+  assert.match(settledSection([{...accepted, revision: 'abc1234'}], true), /— accepted \(reviewed revision abc1234\)$/m);
+});
+
+test('settled duplicate rows keep original id', () => {
+  const duplicate = {id: 'R4-F002', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'Duplicate of R1-F004.'};
+  assert.deepEqual(settledRows(settledSection([duplicate])), ['- R4-F002 § Tasks: A repeated defect. — duplicate: Duplicate of R1-F004.']);
+  const clipped = {...duplicate, id: 'R4-F003', defect: `${'y'.repeat(130)}\nmore`, reason: 'z'.repeat(140)};
+  assert.deepEqual(settledRows(settledSection([clipped])), [`- R4-F003 § Tasks: ${'y'.repeat(119)}… — duplicate: ${'z'.repeat(119)}…`]);
+});
+
+test('settled duplicate keeps original id beyond the reason cutoff', () => {
+  const ownFirst = settledRows(settledSection([{id: 'R4-F004', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `R4-F004 repeats the point. ${'z'.repeat(130)} R1-F004`}]))[0]!;
+  assert.match(ownFirst, /R1-F004/);
+  const labeled = settledRows(settledSection([{id: 'R4-F005', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `${'z'.repeat(130)} Duplicate of R1-F006`}]))[0]!;
+  assert.match(labeled, /R1-F006/);
+  const visible = settledRows(settledSection([{id: 'R4-F007', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F004. ${'z'.repeat(130)} R2-F005`}]))[0]!;
+  assert.match(visible, /R1-F004/);
+  assert.doesNotMatch(visible, /R2-F005/);
+  const labeledOwn = settledRows(settledSection([{id: 'R4-F008', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R4-F008. ${'z'.repeat(130)} R1-F006`}]))[0]!;
+  assert.match(labeledOwn, /R1-F006/);
+  const nearCutoff = settledRows(settledSection([{id: 'R4-F009', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F001 ${'z'.repeat(110)} R2-F009`}]))[0]!;
+  assert.match(nearCutoff, /R1-F001/);
+  assert.doesNotMatch(nearCutoff, /R2-F009/);
+  assert.match(settledRows(settledSection([{id: 'R4-F006', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'No original id.'}]))[0]!, /duplicate: No original id\./);
+});
+
+test('settled rejected rows keep full rationale', () => {
+  const rejected = {id: 'R1-F003', locus: '§ T2', defect: 'Full defect text\nwith a second line.', ruling: 'rejected', reason: 'Full rationale that explains the rejection.'};
+  const deferred = {...rejected, id: 'R1-F004', defect: 'Deferred defect.', ruling: 'deferred', reason: 'Deferred as a follow-up.'};
+  const section = settledSection([rejected, deferred]);
+  for (const entry of [rejected, deferred]) assert.ok(section.includes(`- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason}`), entry.id);
+  assert.ok(!section.includes('…'), 'ruled rows keep the full text');
+});
+
+// Rendered size of this fixture under the pre-compaction row format, recorded before the format changed.
+const SETTLED_ROUND_7_BASELINE_BYTES = 25570;
+
+test('settled section halves round-7 fixture', () => {
+  const settled = JSON.parse(readFileSync(new URL('./fixtures/settled-round-7.json', import.meta.url), 'utf8')) as Settled[];
+  assert.equal(settled.length, 49, 'fixture keeps the recorded settled set');
+  const bytes = Buffer.byteLength(settledSection(settled), 'utf8');
+  assert.ok(bytes <= SETTLED_ROUND_7_BASELINE_BYTES / 2, `${bytes} B exceeds half of the recorded ${SETTLED_ROUND_7_BASELINE_BYTES} B baseline`);
 });
 
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);

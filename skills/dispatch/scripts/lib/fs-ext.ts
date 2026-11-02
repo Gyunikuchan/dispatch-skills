@@ -18,6 +18,9 @@ export interface LinkFs {
 export const isEexist = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EEXIST';
 
+/** Removes one leading UTF-8 BOM so agent-authored JSON parses; a second BOM still fails the parser. */
+export const stripBom = (text: string): string => text.startsWith('\uFEFF') ? text.slice(1) : text;
+
 /**
  * Publishes `text` at `final` only when no file holds that name: temp write, fsync, then hard link, so a
  * reader never sees partial content. Returns false on `EEXIST`; the temp file is always removed.

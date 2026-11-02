@@ -36,72 +36,80 @@ export function normalizeLocus(kind: ReviewKind, locus: string): string {
 
 // SECTION: JSON extraction
 
-const isContainer = (text: string) => (text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'));
+const parses = (text: string): boolean => {try {JSON.parse(text); return true;} catch {return false;}};
+const MAX_CANDIDATES = 1024;
+const FENCE = '```';
 
-// String-aware so brackets inside JSON strings never close the container early.
-function containerEnd(text: string, start: number): number {
-  let depth = 0;
-  let inString = false;
-  for (let index = start; index < text.length; index++) {
-    const char = text[index];
-    if (inString) {
-      if (char === '\\') index++;
-      else if (char === '"') inString = false;
-    } else if (char === '"') inString = true;
-    else if (char === '{' || char === '[') depth++;
-    else if ((char === '}' || char === ']') && --depth === 0) return index + 1;
-  }
-  return -1;
+/** Index just past the last character before i that is not whitespace. */
+function endOfPrior(text: string, i: number): number {
+  while (i > 0 && /\s/.test(text[i - 1]!)) i--;
+  return i;
 }
 
-/** The last fenced or bare JSON container in the text: banners and earlier cited snippets never win. */
+/** A line-start or json-tagged opener; a raw newline cannot occur in a JSON string, so embedded fences never qualify. */
+function fencedBody(text: string): string | null {
+  const close = text.length - FENCE.length;
+  for (let open = text.lastIndexOf(FENCE, close - 1); open >= 0; open = open === 0 ? -1 : text.lastIndexOf(FENCE, open - 1)) {
+    const body = text.slice(open + FENCE.length, close);
+    let lineStart = open;
+    while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) lineStart--;
+    const tagged = /^json[ \t]*\r?\n/i.test(body);
+    if (tagged || lineStart === 0 || text[lineStart - 1] === '\n') return (tagged ? body.slice(4) : body).trim();
+  }
+  return null;
+}
+
+/** A prior line that opens an object key, is a bare key with a JSON value, is a value and comma, or is only container punctuation means this object is nested in a cut-off report. */
+function continuesContainer(text: string, lineStart: number): boolean {
+  const end = endOfPrior(text, lineStart);
+  const line = text.slice(text.lastIndexOf('\n', end - 1) + 1, end).trim();
+  if (parses(line)) return false;
+  if (line.endsWith(',') && parses(line.slice(0, -1))) return true;
+  return /^[{[,][{[,\s]*"[^"]*"\s*:/.test(line)
+    || /^"[^"]*"\s*:\s*(?:$|[{["]|(?:-?\d[\d.eE+-]*|true|false|null)\s*,?$)/.test(line)
+    || /^(?:[{[]|[}\]]\s*,)$/.test(line);
+}
+
+/**
+ * The report must end the reply: the whole text, a closing fenced block, or a line-start object running to the end.
+ * Position decides, not content, so quoted examples and earlier JSON never compete; anything else fails closed.
+ */
 export function extractJsonText(raw: string): string {
   const text = raw.trim();
-  if (isContainer(text)) return text;
-  const candidates: { at: number; text: string }[] = [];
-  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
-  for (const match of fences) {
-    const candidate = (match[1] ?? '').trim();
-    if (isContainer(candidate)) candidates.push({ at: match.index, text: candidate });
+  if (parses(text)) return text;
+  if (text.endsWith(FENCE)) return fencedBody(text) ?? text;
+  if (!text.endsWith('}')) return text;
+  let tried = 0;
+  for (let brace = text.lastIndexOf('{'); brace >= 0 && tried < MAX_CANDIDATES; brace = brace === 0 ? -1 : text.lastIndexOf('{', brace - 1)) {
+    let lineStart = brace;
+    while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) lineStart--;
+    if (lineStart > 0 && text[lineStart - 1] !== '\n') continue;
+    if (continuesContainer(text, lineStart)) continue;
+    tried++;
+    const candidate = text.slice(brace);
+    if (parses(candidate)) return candidate;
   }
-  const insideFence = (offset: number) => fences.some((match) => offset > match.index && offset < match.index + match[0].length);
-  let resumeAt = 0;
-  for (const match of text.matchAll(/^[ \t]*[{[]/gm)) {
-    const start = match.index + match[0].length - 1;
-    if (start < resumeAt || insideFence(start)) continue;
-    const end = containerEnd(text, start);
-    if (end === -1) continue;
-    resumeAt = end;
-    candidates.push({ at: start, text: text.slice(start, end) });
-  }
-  candidates.sort((left, right) => left.at - right.at);
-  return candidates.at(-1)?.text ?? text;
+  return text;
 }
 
 // SECTION: Parse
 
-export type ReportFailureKind = 'empty-output' | 'refusal' | 'truncated' | 'uncovered-scope' | 'loose-locus';
+export type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope' | 'loose-locus';
 export type ReportFailure = { kind: ReportFailureKind; detail: string };
 export type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
 export type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
 export type ReportResult =
   | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: DraftFinding[]; confirmations?: Confirmation[] }
   | { ok: false; failure: ReportFailure };
-
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const fail = (kind: ReportFailureKind, detail: string): ReportResult => ({ ok: false, failure: { kind, detail } });
-
 function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
-  for (const candidate of [text, extractJsonText(text)]) {
-    try { return { ok: true, value: JSON.parse(candidate) as unknown }; } catch { /* try the extracted candidate */ }
-  }
-  return { ok: false };
+  try { return { ok: true, value: JSON.parse(extractJsonText(text)) as unknown }; } catch { return { ok: false }; }
 }
-
 /**
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
- * uncovered scope (no structured `{status, findings}` review of the requested scope); loose locus (a finding
- * whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted. A nonempty
+ * blocked (a `BLOCKED` report with a reason); uncovered scope (no structured `{status, findings}` review of the
+ * requested scope); loose locus (a finding whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted. A nonempty
  * tag outside the shared vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
  * sanitized `originalTag`.
  */
@@ -120,6 +128,11 @@ export function parseReport(input: ReportInput): ReportResult {
   const record = value as Record<string, unknown>;
   const status = record['status'];
   const items = record['findings'];
+  // A capability blocker is a report, not a malformed review: keep the reviewer's own reason.
+  if (status === 'BLOCKED') {
+    const reason = record['reason'];
+    if (nonEmpty(reason)) return fail('blocked', reason.trim());
+  }
   const fields = Object.keys(record).sort().join('\0');
   if (fields !== 'findings\0status' && fields !== 'confirmations\0findings\0status') return fail('uncovered-scope', 'report fields must be status, findings and optional confirmations');
   const confirmations: Confirmation[] = [];
@@ -189,7 +202,6 @@ const STOPWORDS: ReadonlySet<string> = new Set([
 ]);
 
 const tokens = (text: string) => new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !STOPWORDS.has(token)));
-
 /** Token Jaccard; two empty sets score 0 so location and category alone never match. */
 export function similarity(a: string, b: string): number {
   const left = tokens(a);

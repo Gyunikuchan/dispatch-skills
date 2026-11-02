@@ -18,6 +18,7 @@ import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, type Manifest } from '../lib/session.ts';
+import { stripBom } from '../lib/fs-ext.ts';
 import { lintArtifact } from './lint.ts';
 import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
@@ -62,6 +63,7 @@ export function nodeDeps(): CliDeps {
   const runnerFs: RunnerFs = {
     readText:file=>fs.readFileSync(file,'utf8'),writeText:(file,text)=>fs.writeFileSync(file,text,{mode:0o600}),
     realpath:file=>{try{return fs.realpathSync(file);}catch{return null;}},
+    readdir:dir=>{try{return fs.readdirSync(dir);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return [];throw error;}},
     size:file=>{try{const info=fs.statSync(file);return info.isFile()?info.size:null;}catch{return null;}},
     readPrefix(file,max){const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(max);return bytes.subarray(0,fs.readSync(fd,bytes)).toString('utf8');}finally{fs.closeSync(fd);}},
   };
@@ -129,7 +131,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file: ledger append <record.json> --session <session>');
     const file = path.resolve(args[0]!);
     let text: string;
-    try {text = fs.readFileSync(file, 'utf8');}
+    try {text = stripBom(fs.readFileSync(file, 'utf8'));}
     catch {throw new ToolError(1, 'invalid-input', 'Cannot read record file ' + file);}
     let input: unknown;
     try {input = JSON.parse(text);}

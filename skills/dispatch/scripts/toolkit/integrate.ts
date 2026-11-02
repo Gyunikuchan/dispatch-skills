@@ -11,6 +11,7 @@ import { checks, loadPlan, taskSection } from './plan-view.ts';
 import { eligibility } from './evidence.ts';
 import { ToolError } from './output.ts';
 import { stableValue } from './domain/stable-value.ts';
+import { stripBom } from '../lib/fs-ext.ts';
 
 export const result=(value: unknown): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value)});
 export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
@@ -45,7 +46,7 @@ function readReviewFix(ctx: HandlerContext): ReviewFix | undefined {
   const file = ctx.values['review-fix'];
   if (file === undefined) return undefined;
   if (typeof file !== 'string' || !file.trim()) throw new ToolError(1, 'invalid-input', 'A JSON file is required for --review-fix');
-  try { return validateReviewFix(JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'))); }
+  try { return validateReviewFix(JSON.parse(stripBom(fs.readFileSync(path.resolve(file), 'utf8')))); }
   catch (error) {
     if (error instanceof ToolError) throw error;
     throw new ToolError(1, 'invalid-input', 'input requires a readable review-fix JSON object');
@@ -59,7 +60,7 @@ function readTestCleanup(ctx: HandlerContext): TestCleanup | undefined {
   const invalid = () => new ToolError(1, 'invalid-input', 'input requires a readable test-cleanup JSON object: {"removed": ["SC<n>"], "deleted": <count>, "merged": <count>}');
   if (typeof file !== 'string' || !file.trim()) throw invalid();
   let value: any;
-  try { value = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8')); } catch { throw invalid(); }
+  try { value = JSON.parse(stripBom(fs.readFileSync(path.resolve(file), 'utf8'))); } catch { throw invalid(); }
   const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join() !== 'deleted,merged,removed' ||
       !Array.isArray(value.removed) || value.removed.some((id: unknown) => typeof id !== 'string' || !id.trim()) || new Set(value.removed).size !== value.removed.length ||

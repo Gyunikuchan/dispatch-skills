@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { resolveEffectiveOpencodeLaunch } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import { opencode, prepareOpencode, PROXY_TRAP } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { parseReport } from '../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import type { DelegateRequest, LaunchRequest, Launch, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const platform = { os: 'darwin', arch: 'arm64', wsl: false, bubblewrap: false, argvLimit: 100000, home: '/h', path: [], pathExt: [] } as const;
@@ -13,12 +14,23 @@ const base: DelegateRequest = {
 };
 const launchReq = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({ ...base, binary: 'opencode', prompt: 'P', briefFile: null, schemaText: null, platform, ...over });
 
-test('opencode argv is v2-only: run --auto, -m model#effort, -- prompt; never --pure or --variant', () => {
+test('opencode argv is v2-only: run --auto --format json, -m model#effort, -- prompt; never --pure or --variant', () => {
   const argv = opencode.argv(launchReq({ agent: 'plan' }), 'cli').argv;
-  assert.deepEqual(argv, ['opencode', '--standalone', 'run', '--auto', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P']);
+  assert.deepEqual(argv, ['opencode', '--standalone', 'run', '--auto', '--format', 'json', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P']);
   assert.ok(!argv.includes('--pure') && !argv.includes('--variant'));
   assert.deepEqual(opencode.argv(launchReq({ effort: null }), 'cli').argv.slice(-3), ['lmstudio/qwen', '--', 'P']);
 });
+
+test('opencode argv requests json format', () => {
+  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
+    const argv = opencode.argv(launchReq(), mode).argv;
+    const index = argv.indexOf('--format');
+    assert.ok(index > 0 && argv[index + 1] === 'json', `${mode} lacks --format json`);
+  }
+  // Tool events repeat tool output, so JSON runs need a larger cap than the runner default.
+  assert.equal(opencode.outputCapBytes, 64 * 1024 * 1024);
+});
+
 
 test('OpenCode delegates use private servers in every mode', async () => {
   for (const mode of ['cli', 'desktop', 'vscode'] as const) {
@@ -34,7 +46,7 @@ test('OpenCode delegates use private servers in every mode', async () => {
   const binaryIndex = bubblewrapped.indexOf('opencode');
   assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), ['opencode', '--standalone', 'run']);
 
-  const retryPorts = ports([result('', 1, 'Variant unavailable'), result('R')]);
+  const retryPorts = ports([result('', 1, 'Variant unavailable'), result(jsonText('R'))]);
   const retry = await runDelegate(opencode, base, 'cli', retryPorts);
   assert.equal(retry.outcome.status, 'ok');
   assert.deepEqual(retryPorts.launches.map((launch) => launch.argv.slice(0, 3)), [
@@ -50,20 +62,25 @@ function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): Runn
     launches,
     process: { start: (launch) => { launches.push(launch); return { pid: 1, done: Promise.resolve(results.shift() ?? results[0]!) }; }, signal: () => {} },
     clock: { now: () => 0, every: () => () => {} },
-    fs: { readText: () => 'body', writeText: () => {}, realpath: (f) => f, size: () => null, readPrefix: () => '' },
+    fs: { readText: () => 'body', writeText: () => {}, realpath: (f) => f, readdir: () => [], size: () => null, readPrefix: () => '' },
     env: { HTTP_PROXY: 'http://corp:8080', OPENAI_API_KEY: 'sk-x' }, platform, binary: 'opencode', nonce: () => 'n',
   };
   if (prepare) p.prepare = prepare;
   return p;
 }
 const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({ exit, signal: null, stdout, stdoutPath: '/log', stderrTail, durationMs: 1, timedOut: false, truncated: false });
+const event = (type: string, part: Record<string, unknown>) => JSON.stringify({ type, timestamp: 0, sessionID: 'ses', part });
+const jsonText = (text: string) => event('text', { id: 'text-0', sessionID: 'ses', messageID: 'msg', type: 'text', text });
+const jsonStep = (tokens: Record<string, unknown> = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }) =>
+  event('step_finish', { id: 'step-finish-0', sessionID: 'ses', messageID: 'msg', type: 'step-finish', reason: 'stop', cost: 0, tokens });
+const jsonError = (message: string) => JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error: { name: 'ProviderError', message } });
 
 test('`Variant unavailable` retries once without effort', async () => {
   const outcome = opencode.parse(result('', 1, 'Error: Variant unavailable for model'), launchReq());
   assert.equal(outcome.status === 'fail' && outcome.cls, 'config');
   assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
 
-  const p = ports([result('', 1, 'Error: Variant unavailable for model'), result('R')]);
+  const p = ports([result('', 1, 'Error: Variant unavailable for model'), result(jsonText('R'))]);
   const run = await runDelegate(opencode, base, 'cli', p);
   assert.equal(run.outcome.status, 'ok');
   assert.equal(run.attempts, 2);
@@ -91,7 +108,7 @@ test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy
     fetchModels: async (endpoint: string) => { events.push(`models ${endpoint}`); return ['qwen']; },
     acquireGpuLock: async () => { events.push('lock'); return () => { events.push('release'); }; },
   };
-  const p = ports([result('R')], prepare);
+  const p = ports([result(jsonText('R'))], prepare);
   const run = await runDelegate(opencode, { ...base, endpoint: 'http://127.0.0.1:1234/v1' }, 'cli', p);
   assert.equal(run.outcome.status, 'ok');
   assert.deepEqual(events, ['models http://127.0.0.1:1234/v1', 'lock', 'release']);
@@ -148,4 +165,72 @@ test('unsupported standalone parser variants fail config without effort retry or
     assert.equal(p.launches.length,1);
     assert.ok(p.launches.every(launch=>launch.argv.includes('--standalone')));
   }
+});
+
+test('opencode json text extraction', () => {
+  const stream = [jsonText('Hello '), jsonText('world'), jsonStep({ input: 12, output: 3, reasoning: 1, cache: { read: 4, write: 0 } })].join('\n');
+  assert.deepEqual(opencode.parse(result(stream), launchReq()), {
+    status: 'ok', text: 'Hello world', sessionId: null, resume: 'opencode:lmstudio/qwen',
+  });
+});
+
+test('opencode narration parses when the report starts its own line', () => {
+  const stream = [jsonText("I'll read the plan.\n"), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
+  const outcome = opencode.parse(result(stream), launchReq());
+  assert.equal(outcome.status, 'ok');
+  assert.equal(parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''}).ok, true);
+});
+
+test('opencode narration glued to a report fails closed', () => {
+  const stream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
+  const outcome = opencode.parse(result(stream), launchReq());
+  assert.equal(parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''}).ok, false);
+});
+
+test('opencode split JSON string remains valid', () => {
+  const stream = [jsonText('{"status":"CLE'), jsonText('AN","findings":[]}')].join('\n');
+  const outcome = opencode.parse(result(stream), launchReq());
+  assert.equal(outcome.status, 'ok');
+  const parsed = parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''});
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.ok && parsed.status, 'CLEAN');
+});
+
+test('opencode nonzero exit keeps stderr class', () => {
+  const outcome = opencode.parse(result(jsonText('partial answer'), 1, 'rate limit exceeded'), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'quota');
+});
+
+test('opencode error event quota with empty stderr is quota', () => {
+  const outcome = opencode.parse(result(jsonError('rate limit exceeded: usage limit reached'), 0), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'quota');
+  assert.match(outcome.status === 'fail' ? outcome.detail : '', /usage limit reached/);
+});
+
+test('opencode tool output quota with other exit is not quota', () => {
+  const tool = event('tool_use', {
+    id: 'tool-0', sessionID: 'ses', messageID: 'msg', type: 'tool',
+    state: { status: 'error', input: {}, error: 'rate limit exceeded', metadata: {}, content: [{ type: 'text', text: 'rate limit exceeded' }] },
+  });
+  const outcome = opencode.parse(result(tool, 2), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'empty-output');
+});
+
+test('opencode error after text fails', () => {
+  const outcome = opencode.parse(result([jsonText('answer'), jsonError('provider response ended unexpectedly')].join('\n')), launchReq());
+  assert.equal(outcome.status, 'fail');
+  assert.match(outcome.status === 'fail' ? outcome.detail : '', /provider response ended unexpectedly/);
+});
+
+test('opencode large tool events keep usage', () => {
+  const tool = event('tool_use', {
+    id: 'tool-0', sessionID: 'ses', messageID: 'msg', type: 'tool', tool: 'read',
+    state: { status: 'completed', input: { path: 'big.txt' }, output: 'x'.repeat(400_000), metadata: {}, content: [] },
+  });
+  const stream = [tool, jsonText('done'), jsonStep({ input: 10, output: 2, reasoning: 0, cache: { read: 5, write: 1 } })].join('\n');
+  assert.equal(opencode.parse(result(stream), launchReq()).status, 'ok');
+  assert.deepEqual(opencode.usage?.(stream), {
+    input: 10, output: 2, reasoning: 0, cacheRead: 5, cacheWrite: 1,
+    scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached',
+  });
 });

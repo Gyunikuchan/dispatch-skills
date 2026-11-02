@@ -4,10 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { isEexist, publishExclusive } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
+import { isEexist, publishExclusive, stripBom } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 
 const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'linkfs-'));
+
+test('stripBom removes one leading bom', () => {
+  assert.equal(stripBom('\uFEFF{"a":1}'), '{"a":1}');
+  assert.equal(stripBom('{"a":1}'), '{"a":1}');
+  assert.equal(stripBom('\uFEFF\uFEFF{}'), '\uFEFF{}');
+});
 
 test('real LinkFs: link to an existing name throws EEXIST; publishExclusive leaves no temp', () => {
   const root = dir();

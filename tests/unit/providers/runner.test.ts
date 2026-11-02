@@ -6,7 +6,7 @@ import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import {
   IDLE_TIMEOUT_MS,
-  batchInvocation, buildAttachmentBlock, findSensitiveMatch, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
+  batchInvocation, buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, Launch, PlatformEnv, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 
@@ -26,6 +26,7 @@ function memFs(files: Record<string, string>, links: Record<string, string> = {}
     readText: (f) => map.get(f) ?? '',
     writeText: (f, t) => { map.set(f, t); },
     realpath: (f) => links[f] ?? (map.has(f) ? f : null),
+  readdir: () => [],
     size: (f) => (map.has(f) ? Buffer.byteLength(map.get(f) ?? '') : null),
     readPrefix: (f, n) => Buffer.from(map.get(f) ?? '').subarray(0, n).toString('utf8'),
   };
@@ -102,6 +103,149 @@ test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked 
   const none = (f: string): string | null => f;
   for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token']) assert.ok(findSensitiveMatch('/repo/' + name, none), name);
   for (const name of ['tokenizer.ts', 'secretary.md']) assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
+});
+
+test('session artifact word patterns are exempt', async () => {
+  const session = '/sessions/20261101T0000Z-prose-token-diet';
+  const file = `${session}/round-notes-token.md`;
+  const inside = (path: string): string | null => path;
+  for (const name of ['api_token.txt', 'client-secret.json', 'token', 'my-secrets.yml'])
+    assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), null, name);
+
+  const fs = memFs({ [file]: 'artifact notes' });
+  assert.deepEqual(buildAttachmentBlock([file], fs, () => 'N0NCE', undefined, { sessionRoot: session }).attachedFiles, [file]);
+
+  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'artifact notes' });
+  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  assert.match(h.launches[0]?.argv[2] ?? '', /\[Attached Context File: .*round-notes-token\.md\]/);
+});
+
+test('session artifact real secrets stay denied', () => {
+  const session = '/sessions/20261101T0000Z-prose-token-diet';
+  const inside = (path: string): string | null => path;
+  for (const name of ['.env', '.env.local', 'deploy.pem', '.vault-token', 'credentials.json', 'service-account.json'])
+    assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), 'file', name);
+});
+
+test('session symlink to outside stays denied', () => {
+  const session = '/sessions/20261101T0000Z-prose-token-diet';
+  assert.equal(findSensitiveMatch(`${session}/notes-token.md`, () => '/repo/notes-token.md', { sessionRoot: session }), 'file');
+  assert.equal(findSensitiveMatch(`${session}/notes-token.md`, () => null, { sessionRoot: session }), 'file', 'unresolvable path');
+});
+
+test('outside session word patterns stay denied', () => {
+  const session = '/sessions/s1';
+  const none = (path: string): string | null => path;
+  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml'])
+    assert.equal(findSensitiveMatch('/repo/' + name, none, { sessionRoot: session }), 'file', name);
+  assert.equal(findSensitiveMatch('/sessions/s1-other/api_token.txt', none, { sessionRoot: session }), 'file', 'sibling prefix is not inside');
+  assert.equal(findSensitiveMatch('/repo/tokenizer.ts', none, { sessionRoot: session }), null);
+});
+
+test('session worktree word patterns stay denied', () => {
+  const session = '/sessions/s1';
+  const inside = (path: string): string | null => path;
+  for (const name of ['api_token.txt', 'secret.yaml', 'config/my-secret.json'])
+    assert.equal(findSensitiveMatch(`${session}/.state/worktrees/T1/${name}`, inside, { sessionRoot: session }), 'file', name);
+});
+
+test('aliased session root exempts resolved artifacts', () => {
+  const alias = '/alias/s1', real = '/physical/s1';
+  const resolve = (path: string): string => path.replace(alias, real);
+  assert.equal(findSensitiveMatch(`${alias}/notes-token.md`, resolve, { sessionRoot: alias, sessionRealRoot: real }), null);
+  assert.equal(findSensitiveMatch(`${alias}/.state/worktrees/T1/notes-token.md`, resolve, { sessionRoot: alias, sessionRealRoot: real }), 'file');
+  const prompt = formatSafetyPrompt('Review it', { sessionRoot: alias, sessionRealRoot: real });
+  assert.ok(prompt.includes(`(resolved ${real})`), prompt);
+  assert.ok(prompt.includes(`(resolved ${real}/.state/worktrees)`), prompt);
+});
+
+test('fresh session without worktrees keeps artifact exemption', async () => {
+  const session = '/sessions/s1', file = `${session}/prose-token.plan.md`;
+  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'artifact notes' });
+  h.fs.readdir = () => { const error = new Error('ENOENT') as NodeJS.ErrnoException; error.code = 'ENOENT'; throw error; };
+  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  const prompt = h.launches[0]?.argv[2] ?? '';
+  assert.ok(prompt.includes('[SESSION ARTIFACTS]'), prompt);
+  assert.match(prompt, /\[Attached Context File: .*prose-token\.plan\.md\]/);
+});
+
+test('relocated checkout attachment is rejected through the runner path', async () => {
+  const session = '/sessions/s1', checkout = '/sessions/s1/checkouts/integration', file = `${checkout}/api_token.txt`;
+  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
+  h.fs.readdir = (dir) => /[\\/]\.state[\\/]worktrees$/.test(dir) ? ['integration'] : [];
+  const real = h.fs.realpath;
+  h.fs.realpath = (path) => /[\\/]\.state[\\/]worktrees[\\/]integration$/.test(path) ? checkout : real(path);
+  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  const prompt = h.launches[0]?.argv[2] ?? '';
+  assert.ok(prompt.includes(checkout), prompt);
+  assert.ok(!prompt.includes('unique-token-payload'), prompt);
+});
+
+test('an unresolved checkout denies session word patterns', async () => {
+  const session = '/sessions/s1', file = `${session}/api_token.txt`;
+  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
+  h.fs.readdir = (dir) => /[\\/]\.state[\\/]worktrees$/.test(dir) ? ['integration'] : [];
+  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  const prompt = h.launches[0]?.argv[2] ?? '';
+  assert.ok(!prompt.includes('unique-token-payload'), prompt);
+  assert.ok(!prompt.includes('[SESSION ARTIFACTS]'), prompt);
+});
+
+test('worktree discovery failure denies session word patterns', async () => {
+  const session = '/sessions/s1', file = `${session}/api_token.txt`;
+  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
+  h.fs.readdir = () => { throw new Error('denied'); };
+  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  const prompt = h.launches[0]?.argv[2] ?? '';
+  assert.ok(!prompt.includes('unique-token-payload'), prompt);
+  assert.ok(!prompt.includes('[SESSION ARTIFACTS]'), prompt);
+});
+
+test('relocated worktree word patterns stay denied', () => {
+  const session = '/sessions/s1', checkout = '/sessions/s1/checkouts';
+  const resolve = (path: string): string => /[\\/]\.state[\\/]worktrees$/.test(path) ? checkout : path;
+  assert.equal(findSensitiveMatch(`${checkout}/T1/api_token.txt`, resolve, { sessionRoot: session }), 'file');
+  const prompt = formatSafetyPrompt('Review it', { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: checkout });
+  assert.ok(prompt.includes(`(resolved ${checkout})`), prompt);
+});
+
+test('checkout junction to another session path stays denied', () => {
+  const session = '/sessions/s1', checkout = '/sessions/s1/checkouts/integration';
+  assert.equal(findSensitiveMatch(`${checkout}/api_token.txt`, (path) => path, { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [checkout] }), 'file');
+  const prompt = formatSafetyPrompt('Review it', { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [checkout] });
+  assert.ok(prompt.includes(checkout), prompt);
+});
+
+test('safety prompt states session exemption', async () => {
+  const session = '/sessions/20261101T0000Z-prose-token-diet';
+  const line = `[SESSION ARTIFACTS]: a file under ${session} whose resolved path is also under ${session} is exempt from *token* and *secret*, except a file under ${session}/.state/worktrees; every other denied pattern applies; if the path cannot be resolved, no exemption applies.`;
+  const prompt = formatSafetyPrompt('Review it', { sessionRoot: session });
+  assert.ok(prompt.includes(line), prompt);
+  assert.ok(prompt.indexOf('[DENIED DIRECTORIES]') < prompt.indexOf('[SESSION ARTIFACTS]'));
+  assert.ok(prompt.indexOf('[SESSION ARTIFACTS]') < prompt.indexOf('--------------------------------------------------'));
+  assert.doesNotMatch(formatSafetyPrompt('Review it'), /\[SESSION ARTIFACTS\]/);
+
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, sessionRoot: session }, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  await run;
+  assert.ok((h.launches[0]?.argv[2] ?? '').includes(line));
 });
 
 test('attachments respect per-file and total caps inside nonce DATA tags; sensitive files are rejected', () => {
@@ -320,7 +464,8 @@ test('OpenCode settles its POSIX group after success, failure and timeout withou
       const spec=scenario==='other-provider'?claude:opencode;
       const pending=runDelegate(spec,{...req,agent:'explore',readOnlyVerified:true},'cli',h.ports);
       await flush();if(scenario==='timeout')h.clock.advance(req.timeoutMs);
-      h.finish(ok({exit:scenario==='failure'?7:0,stdout:scenario==='other-provider'?'{}':'controlled output'}));
+      const stdout=scenario==='other-provider'?'{}':JSON.stringify({type:'text',timestamp:0,sessionID:'ses',part:{id:'text-0',sessionID:'ses',messageID:'msg',type:'text',text:'controlled output'}});
+      h.finish(ok({exit:scenario==='failure'?7:0,stdout}));
       const result=await pending;
       assert.equal(checks,scenario==='other-provider'?0:1);
       if(scenario==='timeout') {

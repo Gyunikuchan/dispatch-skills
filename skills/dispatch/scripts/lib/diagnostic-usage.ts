@@ -12,20 +12,53 @@ function counters(value: unknown, names: Record<string, string>, provenance: str
   }
   return out;
 }
+function addUsage(total: DiagnosticUsage, usage: DiagnosticUsage): void {
+  for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const) {
+    if (usage[key] !== undefined) total[key] = (total[key] ?? 0) + usage[key];
+  }
+}
 export function codexUsage(raw: string): DiagnosticUsage | undefined {
-  let latest: DiagnosticUsage | undefined;
-  let completed = 0;
+  let total: DiagnosticUsage | undefined;
+  let completed = false;
+  let started = false;
   for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
     let event: Row | null;
     try { event = row(JSON.parse(line)); } catch { return undefined; }
+    if (event?.['type'] === 'turn.started') { started = true; continue; }
     if (event?.['type'] !== 'turn.completed') continue;
     const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'includes-cache');
     if (!usage) return undefined;
-    if (latest && JSON.stringify(latest) !== JSON.stringify(usage)) completed++;
-    latest = usage;
+    // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.
+    if (!completed || started) {
+      if (!total) total = { ...usage };
+      else addUsage(total, usage);
+      completed = true;
+    }
+    started = false;
   }
-  // v1 supports one completed turn; distinct multi-turn scopes need explicit delta evidence.
-  return completed === 0 ? latest : undefined;
+  return total;
+}
+/** OpenCode `run --format json`: one `step_finish` per turn carries usage; `tokens.input` already excludes cache reads. */
+export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
+  let total: DiagnosticUsage | undefined;
+  for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
+    let event: Row | null;
+    try { event = row(JSON.parse(line)); } catch { return undefined; }
+    if (event?.['type'] !== 'step_finish') continue;
+    const tokens = row(row(event['part'])?.['tokens']);
+    const rawInput = tokens?.['input'], rawOutput = tokens?.['output'];
+    if (!tokens || !count(rawInput) || !count(rawOutput)) return undefined;
+    const cache = row(tokens['cache']);
+    const usage: DiagnosticUsage = { input: rawInput, output: rawOutput, scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached' };
+    for (const [key, value] of [['reasoning', tokens['reasoning']], ['cacheRead', cache?.['read']], ['cacheWrite', cache?.['write']]] as const) {
+      if (value === undefined) continue;
+      if (!count(value)) return undefined;
+      usage[key] = value;
+    }
+    if (!total) total = usage;
+    else addUsage(total, usage);
+  }
+  return total;
 }
 export function claudeUsage(raw: string): DiagnosticUsage | undefined {
   let parsed: unknown;
@@ -41,7 +74,7 @@ export function claudeUsage(raw: string): DiagnosticUsage | undefined {
     // Per-model counters let the report split a cascade's cost by the model that actually ran.
     out.models = Object.fromEntries(Object.keys(models).map((name, index) => {
       const part = parts[index]!;
-      return [name, { input: part.input, output: part.output, ...(part.cacheRead === undefined ? {} : { cacheRead: part.cacheRead }), ...(part.cacheWrite === undefined ? {} : { cacheWrite: part.cacheWrite }) }];
+      return [name, { input: part.input, output: part.output, ...(part.cacheRead === undefined ? {} : { cacheRead: part.cacheRead }), ...(part.cacheWrite === undefined ? {} : { cacheWrite: part.cacheWrite }), ...(part.reasoning === undefined ? {} : { reasoning: part.reasoning }) }];
     }));
     return Object.values(out).some((v) => typeof v === 'number' && !count(v)) ? undefined : out;
   }

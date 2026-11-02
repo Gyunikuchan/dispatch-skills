@@ -17,8 +17,9 @@ import type { Level } from './types.ts';
 const nativeReply = (replyPath: string) => `\n\n## Native reply\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
 
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
-export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string};
-export type SlotOutcome = {slot: string} & (
+export type BlockedAttempt = {provider: string; model: string | null; reason: string; reasonHash: string};
+export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string; blocked?: {reason: string; reasonHash: string}};
+export type SlotOutcome = {slot: string; blocked?: BlockedAttempt[]} & (
   {state: 'done'; text: string; responder?: {slot: string; provider: string; model: string | null; native: boolean}} |
   {state: 'native'; promptPath: string; replyPath: string; error?: string} |
   {state: 'failed'; cls: FailureClass; reason: string}
@@ -27,6 +28,8 @@ type FanOutInput = {
   dir: string; slots: readonly RosterSlot[] | Roster;
   prompt: string | ((slot: RosterSlot) => string);
   validate: (text: string, logicalSlot: string) => Validation; cwd?: string;
+  /** Active session directory; forwarded so the delegate guard can exempt its artifacts. */
+  sessionRoot?: string;
   quota?: ReturnType<typeof quotaSnapshot>;
 };
 
@@ -60,6 +63,16 @@ function atomic(file: string, value: unknown): void {
     fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600});
     fs.renameSync(temp, file);
   } finally { fs.rmSync(temp, {force: true}); }
+}
+
+/** One entry per logical blocked attempt: repeated modes keep the same alias once, distinct reasons stay apart. */
+function mergeBlocked(...lists: readonly (readonly BlockedAttempt[] | undefined)[]): BlockedAttempt[] {
+  const out: BlockedAttempt[] = [];
+  for (const list of lists) for (const entry of list ?? []) {
+    if (out.some(item => item.provider === entry.provider && item.model === entry.model && item.reasonHash === entry.reasonHash)) continue;
+    out.push(entry);
+  }
+  return out;
 }
 
 export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOutcome[]> {
@@ -113,11 +126,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     const provider = slot.provider, modes = deps.modes(provider);
     const models = slot.model === undefined ? [null] : typeof slot.model === 'string' ? [slot.model] : slot.model;
     if (!modes.length) return {slot:slot.slot,state:'failed',cls:'not-found',reason:'No launchable ' + provider + ' binary'};
+    let blocked: BlockedAttempt[] = [];
     const config = {slot: slot.slot, platform: provider, models, modes, modeCascadeOn:SPECS[provider].modeCascadeOn};
     let position = {model:0,mode:0};
     for (;;) {
       const remaining = deadline - deps.clock();
-      if (remaining <= 0) return {slot:slot.slot,state:'failed',cls:'timeout',reason:'Fan-out deadline passed'};
+      if (remaining <= 0) return {slot:slot.slot,state:'failed',cls:'timeout',reason:'Fan-out deadline passed', ...(blocked.length ? {blocked} : {})};
       const model = models[position.model] ?? null, mode = modes[position.mode]!;
       const decision = quotaFor(provider,model,mode);
       let failure: Extract<Validation,{ok:false}>;
@@ -127,15 +141,18 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         ordinals.set(slot.slot,(ordinals.get(slot.slot)??0)+1);
         const result = await deps.delegate(provider, {
           promptPath,model,effort:slot.effort ?? null,sandbox:slot.sandbox ?? true,schemaPath:null,resume:null,cwd,
-          timeoutMs:remaining,outputCapBytes:10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
+          timeoutMs:remaining,outputCapBytes:SPECS[provider].outputCapBytes ?? 10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
           configSelectors:Object.fromEntries(['OPENCODE_CONFIG','OPENCODE_CONFIG_DIR'].flatMap(key =>
             deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),readCommands,
+          ...(input.sessionRoot === undefined ? {} : {sessionRoot: input.sessionRoot}),
+          ...(logicalSlot === slot.slot ? {} : {targetSlot: logicalSlot}),
         },mode);
         if(result.outcome.status === 'ok') {
           const checked = input.validate(result.outcome.text, logicalSlot);
           emit(slot,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
-          if(checked.ok) return {slot:logicalSlot,state:'done',text:checked.text ?? result.outcome.text,responder:{slot:slot.slot,provider,model,native:false}};
+          if(checked.ok) return {slot:logicalSlot,state:'done',text:checked.text ?? result.outcome.text,responder:{slot:slot.slot,provider,model,native:false}, ...(blocked.length ? {blocked} : {})};
           failure = checked;
+          if(checked.blocked) blocked=mergeBlocked(blocked,[{provider, model, ...checked.blocked}]);
         } else {
           failure = {ok:false,cls:result.outcome.cls,reason:result.outcome.detail};
           if(failure.cls === 'quota' && decision?.generation)
@@ -145,25 +162,29 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       const cascade = next(failure.cls,position,config);
       emit(slot,{kind:'routing',state:cascade.kind==='terminal'?'stop':cascade.kind,cls:failure.cls});
       if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;continue;}
-      return {slot:slot.slot,state:'failed',cls:failure.cls,reason:failure.reason};
+      return {slot:slot.slot,state:'failed',cls:failure.cls,reason:failure.reason, ...(blocked.length ? {blocked} : {})};
     }
   };
 
   const savedOutcomes = new Map<string, SlotOutcome>();
+  const savedBlocked = new Map<string, BlockedAttempt[]>();
   for (const slot of targets) {
     const file = fileOf(slot);
     let saved: SlotOutcome | undefined;
     try { saved=JSON.parse(fs.readFileSync(file,'utf8')) as SlotOutcome; }
     catch(error) {if((error as NodeJS.ErrnoException).code !== 'ENOENT')throw error;}
+    if(saved?.blocked?.length) savedBlocked.set(slot.slot,saved.blocked);
     if(saved?.state === 'native' && fs.existsSync(saved.replyPath)) {
       const text=fs.readFileSync(saved.replyPath,'utf8'), checked=input.validate(text,slot.slot);
       emit(slot,{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
       emit(slot,{kind:'native',state:checked.ok?'completed':'invalid',replay:true});
-      if(checked.ok) saved={slot:slot.slot,state:'done',text:checked.text ?? text,responder:{slot:slot.slot,provider:deps.orchestrator?.platform ?? slot.provider,model:deps.orchestrator?.model ?? null,native:true}};
+      if(checked.ok) saved={slot:slot.slot,state:'done',text:checked.text ?? text,responder:{slot:slot.slot,provider:deps.orchestrator?.platform ?? slot.provider,model:deps.orchestrator?.model ?? null,native:true}, ...(saved.blocked?.length?{blocked:saved.blocked}:{})};
       else {
         let suffix=1;while(fs.existsSync(saved.replyPath+'.invalid-'+suffix))suffix++;
         fs.renameSync(saved.replyPath,saved.replyPath+'.invalid-'+suffix);
-        saved={...saved,error:checked.reason};
+        // A native JSON BLOCKED report is a blocker too, attributed to the orchestrator that wrote it.
+        const blocked=checked.blocked ? mergeBlocked(saved.blocked,[{provider:deps.orchestrator?.platform ?? slot.provider,model:deps.orchestrator?.model ?? null,...checked.blocked}]) : saved.blocked;
+        saved={...saved,error:checked.reason,...(blocked?.length?{blocked}:{})};
       }
       atomic(file,saved);
     }
@@ -186,11 +207,14 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         if(reserve) {
           const substitute=await voice(reserve,promptPath,slot.slot);
           emit(reserve,{kind:'slot',state:substitute.state,targetSlot:slot.slot,...(substitute.state==='failed'?{cls:substitute.cls}:{})});
-          outcome=substitute.state === 'native' ? native(slot) : {...substitute,slot:slot.slot};
+          const blocked=mergeBlocked(outcome.blocked,substitute.blocked);
+          outcome=substitute.state === 'native' ? {...native(slot), ...(blocked.length?{blocked}:{})} : {...substitute,slot:slot.slot, ...(blocked.length?{blocked}:{})};
         }
-      } else if(cascade.kind === 'native-fallback')outcome=native(slot);
+      } else if(cascade.kind === 'native-fallback')outcome={...native(slot), ...(outcome.blocked?.length?{blocked:outcome.blocked}:{})};
     }
     if(outcome.state === 'native') fs.appendFileSync(outcome.promptPath,nativeReply(outcome.replyPath));
+    const blocked=mergeBlocked(savedBlocked.get(slot.slot),outcome.blocked);
+    if(blocked.length) outcome={...outcome,blocked};
     return save(slot,outcome);
   }));
   const rejected=results.find(result=>result.status === 'rejected');

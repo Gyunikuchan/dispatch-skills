@@ -1,13 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts } from './domain/diagnostics.ts';
+import { addYield, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 import { generateSkillHashes, readVersion } from '../lib/integrity.ts';
 import { loadConfig } from '../lib/config.ts';
+import { stripBom } from '../lib/fs-ext.ts';
 import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
@@ -17,6 +18,7 @@ type SlotOutcome =
   | {slot: string; state: 'failed'; cls: string};
 type ReviewedFinding = {
   id: string;
+  severity?: string;
   sources?: string[];
   recurrence?: {of: string};
   unresolved?: {of: string};
@@ -120,6 +122,77 @@ function reviewFacts(round: ReviewRound, fold: Fold): ReviewFacts | null {
   return {phase: round.review, round: round.round, cap: round.cap, accepted, rejected, ...(reraised.size ? {reraised: [...reraised]} : {})};
 }
 
+/** A round plus every generation directory, so superseded invocations still map to their review. */
+type YieldRound = ReviewRound & {generations: {generation: number; subject: string}[]};
+
+const emptyRaised = () => ({MUST: 0, SHOULD: 0, CONSIDER: 0});
+
+/** Per-responder yield from current-generation findings, rulings and slot token cost. */
+function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly InvocationFacts[], fold: Fold): SlotYieldFacts[] {
+  const rows = new Map<string, SlotYieldFacts>();
+  const add = (value: SlotYieldFacts) => {
+    const key = [value.kind, value.provider, value.model ?? ''].join('\0');
+    const current = rows.get(key);
+    if (!current) { rows.set(key, value); return; }
+    addYield(current, value);
+  };
+  const tally = (target: {accepted: number; rejected: number; deferred: number; duplicate: number; unruled: number}, subject: string) => {
+    const value = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === subject)?.data['ruling'];
+    if (value === 'accepted') target.accepted++;
+    else if (value === 'rejected') target.rejected++;
+    else if (value === 'deferred') target.deferred++;
+    else if (value === 'duplicate') target.duplicate++;
+    else target.unruled++;
+  };
+  const tool = {raised: emptyRaised(), accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0};
+  for (const round of rounds) {
+    const current = round.generations.find((entry) => entry.generation === round.generation)?.subject;
+    const slots = new Map(round.slots.map((slot) => [slot['slot'], slot]));
+    // NOTE: a reserve logs its own slot but serves its target slot; map per invocation.
+    const logical = new Map<string, InvocationFacts[]>();
+    for (const row of invocations) {
+      if (!round.generations.some((entry) => entry.subject === row.subject)) continue;
+      const target = row.targetSlot ?? row.slot;
+      if (target) logical.set(target, [...(logical.get(target) ?? []), row]);
+    }
+    for (const source of new Set([...slots.keys(), ...logical.keys()])) {
+      const outcome = slots.get(source), roster = round.roster.find((slot) => slot['slot'] === source);
+      const attempts = logical.get(source) ?? [], recent = attempts.filter((row) => row.subject === current);
+      const last = (recent.length ? recent : attempts).at(-1);
+      const responder = outcome?.state === 'done' ? outcome.responder : undefined;
+      const native = responder?.native === true || (!responder && (outcome?.state === 'native' || roster?.native === true));
+      const provider = responder?.provider ?? last?.provider ?? roster?.provider;
+      if (!provider) continue;
+      const rosterModel = typeof roster?.model === 'string' ? roster.model : Array.isArray(roster?.model) ? roster.model[0] ?? null : null;
+      const value: SlotYieldFacts = {
+        kind: native ? 'native' : 'provider', provider, model: native ? null : responder?.model ?? last?.model ?? rosterModel,
+        raised: emptyRaised(), accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0,
+        measured: recent.filter((row) => row.surface === 'cli' && row.launched && !row.estimated && row.usage).length,
+        launched: attempts.filter((row) => row.surface === 'cli' && row.launched).length,
+      };
+      let tokens: number | undefined;
+      for (const row of recent) {
+        if (row.surface !== 'cli' || !row.launched || row.estimated || !row.usage) continue;
+        tokens = (tokens ?? 0) + row.usage.input + (row.usage.cacheRead ?? 0) + (row.usage.cacheWrite ?? 0) + row.usage.output;
+      }
+      if (tokens !== undefined) value.tokens = tokens;
+      for (const item of round.findings?.findings ?? []) {
+        if (!item.sources?.includes(source)) continue;
+        if (item.severity === 'MUST' || item.severity === 'SHOULD' || item.severity === 'CONSIDER') value.raised[item.severity]++;
+        tally(value, `review:${round.review}:${item.id}`);
+      }
+      add(value);
+    }
+    for (const item of round.findings?.findings ?? []) {
+      if (!item.sources?.includes('tool')) continue;
+      if (item.severity === 'MUST' || item.severity === 'SHOULD' || item.severity === 'CONSIDER') tool.raised[item.severity]++;
+      tally(tool, `review:${round.review}:${item.id}`);
+    }
+  }
+  if (tool.accepted + tool.rejected + tool.deferred + tool.duplicate + tool.unruled > 0) add({kind: 'tool', provider: 'tool', model: null, ...tool, measured: 0, launched: 0});
+  return [...rows.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
+}
+
 /** Builds optional facts independently of the strict walkthrough reader. */
 export function sessionFacts(session: string, fold: Fold, outcome: string): RunFacts {
   const collection = {completed:0, partial:0, corrupt:0, unreadable:0, incomplete:0, storageFailed:0};
@@ -133,7 +206,8 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
     try { return readJson<unknown>(file); }
     catch(error) { issue(error instanceof ToolError && error.reason==='review-corrupt' ? 'corrupt' : 'unreadable'); return undefined; }
   };
-  const rounds: ReviewRound[] = [];
+  const rounds: YieldRound[] = [];
+  const hash=(value:string)=>crypto.createHash('sha256').update(value).digest('hex').slice(0,16);
   const root = path.join(session,'.state','reviews');
   for (const review of entries(root).filter(e=>e.isDirectory())) {
     const reviewRoot=path.join(root,review.name);
@@ -151,7 +225,10 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
       const findings=read(path.join(roundRoot,'findings.json'));
       const valid=findings===null || (object(findings)&&Array.isArray(findings['findings'])&&findings['findings'].every((f:unknown)=>object(f)&&typeof f['id']==='string'));
       if(findings!==undefined&&!valid)issue('corrupt');
-      rounds.push({review:review.name,round:round.round,cap:round.cap,generation:round.generation,roster:round.roster,slots,findings:valid?findings as FindingsFile|null:null});
+      const generations=[...new Set(entries(roundRoot).filter(e=>e.isDirectory()&&/^gen-\d+$/.test(e.name)).map(e=>Number(e.name.slice(4))))];
+      if(!generations.includes(round.generation))generations.push(round.generation);
+      rounds.push({review:review.name,round:round.round,cap:round.cap,generation:round.generation,roster:round.roster,slots,findings:valid?findings as FindingsFile|null:null,
+        generations:generations.sort((a,b)=>a-b).map(generation=>({generation,subject:hash(path.join(roundRoot,`gen-${generation}`))}))});
     }
   }
   rounds.sort((a,b)=>a.review.localeCompare(b.review)||a.round-b.round);
@@ -173,19 +250,18 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
     else issue('completed');
     storageFailures.set(entry.name,Math.max(storageFailures.get(entry.name)??0,capture.capture?.storageFailed??0));
   }
-  // Capture filenames are random; aggregate by content and retain all measured call outcomes.
-  measured.sort((a,b)=>stableValue(a).localeCompare(stableValue(b)));
+  // Capture filenames are random; order by capture clock so a retry's later attempt wins, then by content for determinism.
+  measured.sort((a,b)=>(a.capture?.start??0)-(b.capture?.start??0)||stableValue(a).localeCompare(stableValue(b)));
   const phases=new Map<string,RunFacts['phases'][number]>();
   const aggregateOutcome=(values:(string|undefined)[])=>{
     const known=[...new Set(values.filter((v):v is string=>v!==undefined))].sort();
     return known.length===1?known[0]:known.length?'mixed':undefined;
   };
-  const hash=(value:string)=>crypto.createHash('sha256').update(value).digest('hex').slice(0,16);
   const phaseBySubject=new Map<string,string>();
   const reviewKeys=new Map<string,string>();
   for(const round of rounds) {
     const key=reviewKeys.get(round.review)??'review-'+hash(path.join(root,round.review));reviewKeys.set(round.review,key);
-    phaseBySubject.set(hash(path.join(root,round.review,`round-${round.round}`,`gen-${round.generation}`)),key);
+    for(const generation of round.generations)phaseBySubject.set(generation.subject,key);
     const name=round.review.startsWith('plan-')?'plan review':round.review.startsWith('design-')?'design review':'code review';
     if(!phases.has(key))phases.set(key,{key,name});
   }
@@ -219,7 +295,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
   invocations.push(...native.values());
   let observations:unknown,retroState:RunFacts['retroState'];
   try {
-    observations=JSON.parse(fs.readFileSync(path.join(session,'.state','retro.json'),'utf8'));
+    observations=JSON.parse(stripBom(fs.readFileSync(path.join(session,'.state','retro.json'),'utf8')));
     retroState=Array.isArray(observations)?observations.length?'collected':'empty':'invalid';
   }catch(error){retroState=(error as NodeJS.ErrnoException).code==='ENOENT'?'missing':error instanceof SyntaxError?'malformed':'unreadable';}
   const provenance=new Map<string,NonNullable<RunFacts['provenance']>[number]>();
@@ -232,11 +308,13 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
   collection.storageFailed=Math.min(1_000_000,[...storageFailures.values()].reduce((sum,n)=>sum+n,0));
   collection.partial=Math.min(1_000_000,collection.corrupt+collection.unreadable+collection.incomplete+collection.storageFailed);
   const level=latest(fold,'level')?.data['level'],host=measured.find(row=>row.host)?.host;
+  const slotYield=slotYieldFacts(rounds,invocations,fold);
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
     ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
+    ...(slotYield.length?{slotYield}:{}),
     retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };
@@ -331,7 +409,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
         const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
         const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(slot?{slot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{})});
+          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{})});
       }
       persist();
     } catch { /* Malformed optional runner metadata cannot change its outcome. */ }

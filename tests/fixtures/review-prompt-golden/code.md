@@ -98,7 +98,7 @@ author's choice stands. Simplicity findings name the cost removed: concepts, fil
 Report one finding per defective predicate; list every failing state of it in `defect`.
 
 ### Reply
-Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain
+Reply with one JSON object of all findings as the last thing in the reply, on its own line or in a final fenced block. If JSON cannot carry a finding, write it as plain
 text. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}

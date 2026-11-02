@@ -14,6 +14,11 @@ const req: LaunchRequest = {
 const out = (stdout: string, exit: number | null = 0, stderrTail = ''): ProcessResult =>
   ({ exit, signal: null, stdout, stdoutPath: '/log', stderrTail, durationMs: 1, timedOut: false, truncated: false });
 
+const opencodeText = (text: string): string => JSON.stringify({
+  type: 'text', timestamp: 0, sessionID: 'ses',
+  part: { id: 'text-0', sessionID: 'ses', messageID: 'msg', type: 'text', text },
+});
+
 const parse = (id: ProviderId, result: ProcessResult, over: Partial<LaunchRequest> = {}): RunOutcome => SPECS[id].parse(result, { ...req, ...over });
 const cls = (outcome: RunOutcome): string => (outcome.status === 'fail' ? outcome.cls : 'ok');
 
@@ -27,7 +32,7 @@ function runnerPorts(...results: ProcessResult[]): RunnerPorts & { launches: Lau
   const ports: RunnerPorts = {
     process: { start(launch) { launches.push(launch); return { pid: 7, done: Promise.resolve(pending.shift() ?? out('', 1)) }; }, signal: () => {} },
     clock: { now: () => 0, every: () => () => {} },
-    fs: { readText: () => 'P', writeText: () => {}, realpath: () => null, size: () => null, readPrefix: () => '' },
+    fs: { readText: () => 'P', writeText: () => {}, realpath: () => null, readdir: () => [], size: () => null, readPrefix: () => '' },
     env: {}, platform: req.platform, binary: 'copilot', nonce: () => 'n',
   };
   return Object.assign(ports, { launches });
@@ -42,8 +47,8 @@ test('delegates-resume-handles: recorded successes yield text, session id, and e
   const codexStream = ['{"type":"thread.started","thread_id":"t-9"}', '{"type":"item.completed","item":{"type":"reasoning","text":"x"}}',
     '{"type":"item.completed","item":{"type":"agent_message","text":"R"}}'].join('\n');
   assert.deepEqual(parse('codex', out(codexStream)), { status: 'ok', text: 'R', sessionId: 't-9', resume: 'codex exec resume t-9' });
-  assert.deepEqual(parse('opencode', out('> build\nR')), { status: 'ok', text: 'R', sessionId: null, resume: 'opencode:openai/gpt-5' });
-  const local = parse('opencode', out('R'), { endpoint: 'http://127.0.0.1:1234/v1' });
+  assert.deepEqual(parse('opencode', out(opencodeText('R'))), { status: 'ok', text: 'R', sessionId: null, resume: 'opencode:openai/gpt-5' });
+  const local = parse('opencode', out(opencodeText('R')), { endpoint: 'http://127.0.0.1:1234/v1' });
   assert.equal(local.status === 'ok' ? local.resume : null, 'http://127.0.0.1:1234/v1');
 });
 
@@ -68,6 +73,14 @@ test('mode-cascade classes are declared per provider: agy token/subscription/exe
   assert.deepEqual(SPECS.copilot.modeCascadeOn, ['quota']);
   assert.ok(!SPECS.copilot.modeCascadeOn.includes('auth'));
   assert.deepEqual([SPECS.claude.modeCascadeOn, SPECS.codex.modeCascadeOn, SPECS.opencode.modeCascadeOn], [[], [], []]);
+});
+
+test('copilot usage unavailable coverage', async () => {
+  const run = await runDelegate(SPECS.copilot, { ...req, collectUsage: true }, 'cli', runnerPorts(out('A response')));
+  assert.equal(run.outcome.status, 'ok');
+  assert.equal(run.invocations.length, 1);
+  assert.equal(run.invocations[0]?.usage, undefined);
+  assert.equal(run.invocations[0]?.coverage, 'no usage output');
 });
 
 test('copilot unsupported sandbox host startup warning fails closed in the runner', async () => {

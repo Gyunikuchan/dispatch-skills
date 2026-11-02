@@ -29,6 +29,10 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
           assert.equal(hit && !allowed, false, `${id}/${mode}/${String(sandbox)} has ${pattern.source}`);
         }
         if (spec.sandbox && sandbox && id !== 'opencode') for (const flag of spec.sandbox.flags) assert.ok(argv.includes(flag), `${id} sandbox flag ${flag}`);
+        if (id === 'opencode') {
+          const format = argv.indexOf('--format');
+          assert.ok(format > 0 && argv[format + 1] === 'json', `${mode}/${String(sandbox)} lacks --format json`);
+        }
       }
     }
   }
@@ -72,7 +76,7 @@ function ports(platform: PlatformEnv, result: ProcessResult = okResult): RunnerP
   return Object.assign(state, {
     process: { start: () => { state.launches++; return { pid: 7, done: Promise.resolve(result) }; }, signal: () => {} },
     clock: { now: () => 0, every: () => () => {} },
-    fs: { readText: (f: string) => files.get(f) ?? '', writeText: (f: string, t: string) => { files.set(f, t); }, realpath: (f: string) => f, size: () => null, readPrefix: () => '' },
+    fs: { readText: (f: string) => files.get(f) ?? '', writeText: (f: string, t: string) => { files.set(f, t); }, realpath: (f: string) => f, readdir: () => [], size: () => null, readPrefix: () => '' },
     env: {}, platform, binary: 'bin', nonce: () => 'n',
   });
 }

@@ -27,7 +27,7 @@ const unreachable = (value: never): never => { throw new Error(`unhandled failur
 export function failureDisposition(cls: FailureClass): 'cascade' | 'skip-voice' | 'terminal-run' {
   switch (cls) {
     case 'quota': case 'context-overflow': case 'auth': case 'model-not-found': case 'cli-outdated': case 'model-not-loaded':
-    case 'not-found': case 'timeout': case 'buffer': case 'empty-output': case 'refusal': case 'truncated':
+    case 'not-found': case 'timeout': case 'buffer': case 'empty-output': case 'refusal': case 'blocked': case 'truncated':
       return 'cascade';
     case 'sandbox-unsupported':
       return 'skip-voice';

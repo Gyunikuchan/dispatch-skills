@@ -34,7 +34,7 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
     const dir = path.join(directory, 'attempt-' + attempt);
     const slots = resolveSlots('ask', selected as Level, deps);
     if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate' + underfillNote(slots));
-    const outcomes = await fanOut({dir, slots, prompt: askPrompt(question, ''), cwd: manifest.repositoryRoot,
+    const outcomes = await fanOut({dir, slots, prompt: askPrompt(question, ''), cwd: manifest.repositoryRoot, sessionRoot: session,
       validate(raw) {
         const text = sanitizeText(raw);
         return text ? {ok: true, text} : {ok: false, cls: 'empty-output', reason: 'empty sanitized answer'};

@@ -1,0 +1,345 @@
+[
+  {
+    "id": "R1-F001",
+    "locus": "§ Key Interfaces & Data",
+    "defect": "Plan hoists usability into ## shared as one of 7 families (lines 41, 92) while skills/dispatch/references/templates/quality-bar.md:18 defines artifact-layout usability (At a Glance, <details>, callouts) and skills/dispatch/references/templates/quality-bar.md:48 / :70 define WCAG/POLA/CLI usability. Plan consumers currently receive both: qualitySections.plan=['shared','spec','plan','code'] in skills/dispatch/scripts/toolkit/domain/prompt.ts:99 pulls spec-usability via ## spec and WCAG-usability via ## code. After decoupling to ['shared','spec','plan'] only one - **usability** — survives, so a plan with a missing outcome summary or with a WCAG violation escapes its tag; T1 invariants (plan line 93) preserve OWASP/CWE but omit WCAG, POLA, STRIDE and artifact-layout wording, inviting silent rule loss against REQ-1/REQ-7.",
+    "ruling": "accepted",
+    "reason": "Preserved both WCAG/POLA usability in ## shared (- **usability** ?) and artifact-layout usability (- Artifact layout: At a Glance, <details>, [!NOTE]/[!IMPORTANT]) in ## spec, and added both to T1 Invariants and SC1."
+  },
+  {
+    "id": "R1-F002",
+    "locus": "§ Success Criteria",
+    "defect": "SC5 Verify and RED are the identical command --test-name-pattern=\"orchestrator reads quality bar sections by stage\" tests/integration/skill-contract.test.ts (plan lines 308-309). Pre-change that test passes; post-change (after T2 updates expectations) it still passes, so RED never fails and Verify runs one pattern instead of the full skill-contract.test.ts. New SC5 assertions (providers ## Subagent context/## Native slots before ## OpenCode private launches, grounding conditional lint run, verbs/plan.md not linking quality-bar.md#code per plan lines 159-161,200-201,220) are never exercised, so SC5 acceptance (pass all skill contract checks) is unproven.",
+    "ruling": "accepted",
+    "reason": "Updated SC4 to run --test-name-pattern=\"native slots launch by prompt path\" and SC5 Verify to run the full tests/integration/skill-contract.test.ts suite with new RED assertions added in T2."
+  },
+  {
+    "id": "R1-F003",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "Contests DEC-4 (spec lines 112-120): T2 makes grounding.md run orchestrator lint run only on unlinted/inline maps or after orchestrator edits (plan lines 168, 220). Explorer lint status in skills/dispatch/references/templates/explorer-brief.md:58 is a delegate claim; skills/dispatch/references/grounding.md:33 and skills/dispatch/references/templates/context-map.md:7 treat maps as claims, not authority. Failure scenario: explorer skips lint, hallucinates lint status: clean, or returns inline map; orchestrator reuses map with bad refs/line-ranges, downstream plan cites path:L<line> that does not exist, review misses load-bearing error. lint run is a cheap deterministic check, not a redundant round-trip; DEC-4 did not weigh trust vs independent verification or fail-closed behavior.",
+    "ruling": "rejected",
+    "reason": "Consulted user via Decision Frame under REQ-7 with the trust vs CLI round-trip trade-off; user explicitly chose Option C (quote: 'C') to retain DEC-4 / REQ-3 conditional orchestrator lint run (explorers already run lint run per explorer-brief.md:58 and orchestrator verifies load-bearing claims and Surprises at cited source ranges per grounding.md:35)."
+  },
+  {
+    "id": "R1-F004",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 moves Tooling and the 3.4KB two-tier retained-test bar out of plan reach (skills/dispatch/references/templates/quality-bar.md:47-48 to ## shared/## code) but T1 test updates (plan line 140) list only familyOrder, fixedLines, sectionMarkers, expected plus a confirmation assertion. Unupdated assertions in tests/unit/toolkit/domain/prompt.test.ts:206 (code tooling applies to code and plan: includes('skip issues...')===kind!=='design') break if Tooling moves to ## shared (design gains it), and tests/unit/toolkit/domain/prompt.test.ts:277 (reviews hold tests to the two-tier bar requires plan to contain Apply one two-tier bar. + Retained tests are the executable spec...) breaks once qualitySections.plan drops code. The Open Questions assumption (plan line 61) leaves shared vs both code and plan undecided, so the writer must guess.",
+    "ruling": "accepted",
+    "reason": "Kept - Tooling: in ## code and ## plan (excluded from design per prompt.test.ts:209), included the two-tier retained-test bar in ## plan - **testing** ? (per prompt.test.ts:278-281), and updated T1 prompt.test.ts changes explicitly."
+  },
+  {
+    "id": "R1-F005",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 strips #### Test cleanup (skills/dispatch/references/toolkit.md:61-70) and #### Cap-ending SHOULD corrections (toolkit.md:71-76) plus delivery/edit/evidence essays, folding only unspecified essential CLI/flag/refusal facts into ### worktree commit and linking the rest to verbs/implement.md and review-rules.md#review-provenance-and-applicability. Those targets do not own CLI shapes: test-cleanup-evidence-required, test-cleanup-paths-unchanged, reviewFix {review,round,generation,findings,from} validation and report complete SHOULD-exception checks live only in toolkit.md. tests/integration/skill-contract.test.ts:44-56 checks only Arguments:/Result path:/Refusals: labels, not those refusal strings, so loss is undetected and violates DEC-6 (toolkit as pure CLI contract).",
+    "ruling": "accepted",
+    "reason": "Explicitly enumerated all test-cleanup and reviewFix JSON shapes and refusal codes in T2 toolkit.md Changes/Invariants and added a skill-contract.test.ts assertion checking their presence."
+  },
+  {
+    "id": "R1-F006",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 writer-brief change (plan lines 111-113) tells writers not to read {{planPath}} whole, relying on embedded Shared plan context, Task scope, Criteria, Contract/RED commands from skills/dispatch/scripts/toolkit/brief.ts:127-135 (sharedContext is At-a-Glance through Task Map per skills/dispatch/scripts/toolkit/domain/plan.ts:490-492). Cross-task Proposed Changes (parallel implementations, Invariants:, Overlap:) and Key Interfaces & Data deltas outside the task section are not embedded; a writer judging cross-task context needed incorrectly misses a producer/consumer interface and emits a mismatched contract. No brief.test assertion covers cross-task detection.",
+    "ruling": "accepted",
+    "reason": "Defined concrete cross-task read triggers in T1 writer-brief.md Changes, T1 brief.test.ts Changes, and SC3 (read {{planPath}} whole when Constraints:, Overlap:, or Invariants: references another task or shared producer/consumer interface)."
+  },
+  {
+    "id": "R1-F007",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 acceptance requires net UTF-8 byte reduction across 30 agent files and golden prompts via scripts/brief-size.ts (plan lines 314,341), but SC6 Verify (plan line 319) runs only generate-hashes.ts --check && check-terms.ts && validate-configs.ts plus integrity tests. Golden invariants assert only per-fixture strictly smaller than 13798/17806/13091 bytes (plan lines 129-137); no Verify step measures the 155,687-byte agent corpus, so a refactor that shrinks prompts but bloats references still passes Verify.",
+    "ruling": "accepted",
+    "reason": "Added node scripts/brief-size.ts execution and byte-reduction verification across agent-consumed files and golden review prompts to SC6 Verify."
+  },
+  {
+    "id": "R1-F008",
+    "locus": "§ Open Questions & Assumptions",
+    "defect": "Assumption (plan line 61) states keeping Tooling in ## shared (or in both ## code and ## plan) and keeping the two-tier bar accessible to both code and plan satisfies prompt.test.ts, offering a disjunction without a decision. Per IEEE 29148 singularity (quality-bar spec section), this is two requirements in one; the writer cannot derive familyOrder, sectionMarkers, or qualitySections consequences deterministically, and T1 invariants do not resolve it.",
+    "ruling": "accepted",
+    "reason": "Removed the disjunction from Open Questions & Assumptions and recorded the single deterministic placement of Tooling and two-tier testing in Key Interfaces & Data, Key Decisions & Context, and T1."
+  },
+  {
+    "id": "R1-F009",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 reorders skills/dispatch/references/providers.md:7-39 to put ## Subagent context/## Native slots before ## OpenCode private launches for hot-path progressive disclosure, but no selective-read rule truncates providers.md (39 lines); orchestrators read the whole file, so order changes orientation, not measured bytes or tool calls.",
+    "ruling": "accepted",
+    "reason": "Clarified in Open Questions & Assumptions and T2 that reordering providers.md is for hot-path orientation while byte savings come from prose compaction and single-sourcing."
+  },
+  {
+    "id": "R2-F001",
+    "locus": "§ Key Interfaces & Data",
+    "defect": "## shared lists intent, maintainability, correctness, reliability, security, performance, compatibility, operability and usability; ## spec owns spec; ## plan and ## design own architecture, decomposition and testing; qualitySections.code and writer stay ['shared','code'] (plan lines 41-45, 34). Code and writer consumers therefore receive no bold - **spec** — bullet once T1 demotes skills/dispatch/references/templates/quality-bar.md:40 to non-bold - Spec check: (plan line 93). skills/dispatch/references/templates/review-prompt-code.md:57 still offers the spec tag, and tests/integration/domain-templates.test.ts:203,216 requires every offered family bullet in qualityBar('code'); the strengthened === 1 assertion (plan line 145) and SC1 (line 255) then fail, and the only silent fix is to drop the code-altitude spec judging rule without the REQ-7 Decision Frame.",
+    "ruling": "accepted",
+    "reason": "Kept - **spec** ? as a bold family bullet in both ## spec (for plan and design) and ## code (for code and writer, which do not select ## spec) with familyOrder.code = ['spec', 'testing'], so every consumer receives - **spec** ? exactly once and domain-templates.test.ts:214 passes."
+  },
+  {
+    "id": "R2-F002",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 Verify (plan line 320) passes only SKILL.md, quality-bar.md and the three goldens to scripts/brief-size.ts, which prints per-file byte counts and always exits 0 (scripts/brief-size.ts:73-90). It never measures the 30-file corpus (< 155,687 B), never measures rendered writer/explorer briefs required by REQ-2, and does not compare quality-bar.md bytes required by REQ-1. The T1 golden baselines (plan lines 130, 134, 138) are also stale: current fixtures are 13,849 / 17,847 / 13,132 bytes, not 13,798 / 17,806 / 13,091. The R1-F007 resolution claimed this verification was added; the command still omits the corpus and thresholds.",
+    "ruling": "accepted",
+    "reason": "Listed both LF-normalized (13,798 / 17,806 / 13,091 B) and raw CRLF (13,849 / 17,847 / 13,132 B) golden fixture baselines in T1, SC2, and SC6, added deterministic UTF-8 byte-budget assertions across all 30 agent-consumed Markdown files (< 155,687 B), quality-bar.md (< 13,710 B), and the 3 golden fixtures in domain-templates.test.ts, and passed all 30 files to scripts/brief-size.ts in SC6 Verify."
+  },
+  {
+    "id": "R2-F003",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 removes the #### Test cleanup heading (skills/dispatch/references/toolkit.md:61-70) and folds its content into action sections, but ### worktree commit still links [test cleanup](#test-cleanup) at toolkit.md:58. With the H4 heading gone that in-repo anchor resolves to nothing, and tests/integration/skill-contract.test.ts:24-28 checks only file existence, not anchors, so the break is undetected. Readers lose the only pointer from the commit action to the test-cleanup contract.",
+    "ruling": "accepted",
+    "reason": "Updated T2 toolkit.md Changes/Invariants, T2 skill-contract.test.ts, and SC4 to replace [test cleanup](#test-cleanup) at toolkit.md:58 with [test cleanup](verbs/implement.md) so no broken #test-cleanup anchor remains."
+  },
+  {
+    "id": "R2-F004",
+    "locus": "§ Success Criteria",
+    "defect": "SC2's RED (plan line 274) is quality selection rejects missing, empty, duplicate sections and invalid consumers in tests/unit/toolkit/domain/prompt.test.ts, which asserts qualitySections.plan and belongs to SC1/REQ-1. It never exercises the conditional Pending MUST rejection confirmation omission/inclusion (REQ-2) or the compacted templates. The new confirmation assertion (plan line 141) is not assigned a named test, so either SC2 has no RED that fails for its own behavior or the assertion is buried in an unrelated quality-selection test.",
+    "ruling": "accepted",
+    "reason": "Named the conditional confirmation test in prompt.test.ts \"reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned\" and set SC2 RED to filter by that exact test name."
+  },
+  {
+    "id": "R2-F005",
+    "locus": "§ Success Criteria",
+    "defect": "SC5 Verify runs only tests/integration/skill-contract.test.ts (plan line 309) and Automated Tests lists only npm run typecheck plus the brief-size unit test (plan line 340). No criterion runs npm test, although REQ-5 acceptance requires it (spec line 59) and AGENTS.md § Repository Change Workflow requires npm test before completing and npm run test:e2e when touching toolkit behavior. T1 edits skills/dispatch/scripts/toolkit/domain/prompt.ts and skills/dispatch/scripts/toolkit/prompts.ts, so suites and e2e flows outside the enumerated files are not gated.",
+    "ruling": "accepted",
+    "reason": "Added npm test && npm run test:e2e to SC6 Verify so REQ-5 full test suite coverage and AGENTS.md E2E verification for toolkit changes are enforced directly by SC6."
+  },
+  {
+    "id": "R2-F006",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 keeps - Code criteria: apply the code section to proposed changes... in ## plan (plan line 44; quality-bar.md:53) while plan no longer selects ## code, and T2 removes verbs/plan.md's [code](...#code) authoring link and adds an assertion forbidding it (plan lines 201, 221). Plan reviewers receive an instruction to apply a section absent from the prompt, and plan authors lose the navigable pointer to the code criteria that the same bullet names.",
+    "ruling": "accepted",
+    "reason": "Replaced - Code criteria: apply the code section... in quality-bar.md#plan and fixedLines in prompt.test.ts:115 with - Shared criteria: apply the shared section to proposed changes and touched interfaces at planning altitude; do not require written implementation."
+  },
+  {
+    "id": "R3-F001",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "Key Interfaces (plan lines 40-45) and T1 (line 94) keep only architecture, decomposition and testing in ## plan/## design. The strengthened exactly-once assertion (domain-templates.test.ts:196-219; plan lines 146, 256) therefore forces deletion of - **intent** — from both sections, which drops plan's Keep the existing format of rendered output unless a recorded user decision changes it (quality-bar.md:54) and design's Trace every goal to a requirement and state non-goals plus requested-users/no-extra-work rules (quality-bar.md:61). Moving only the ## code copies of the seven families into ## shared likewise drops design's State system-wide invariants that hold within and across increments (quality-bar.md:63) and the enumerated STRIDE threats (quality-bar.md:65). DEC-5 authorizes removing duplicate bullets, not losing their unique stage wording; REQ-1 acceptance requires preserving all behavioral judging rules. T1 then says to keep - Intent trace: and - Security altitude: (plan lines 44-45, 94), but neither string exists in quality-bar.md — grep finds them only in the plan — so the writer cannot know whether to preserve or invent those rules. The same edit leaves Assess test coupling and duplicate seam coverage under the code section's test policy (quality-bar.md:57) in ## plan although plan prompts no longer select ## code. Executing T1 as written silently drops judging rules and references an absent section without the REQ-7 Decision Frame.",
+    "ruling": "accepted",
+    "reason": "Defined the exact merged wording in quality-bar.md#shared for intent, correctness, reliability, security, performance, compatibility, operability, and usability preserving every stage-specific clause from ## code, ## plan, and ## design, removed nonexistent - Intent trace:/- Security altitude: references, and replaced under the code section's test policy in ## plan with self-contained two-tier test coupling wording."
+  },
+  {
+    "id": "R3-F002",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 Verify (plan line 321) passes shell globs (skills/dispatch/references/*.md, skills/dispatch/references/verbs/*.md, skills/dispatch/references/templates/*.md) to scripts/brief-size.ts. The script iterates argv literally and returns 1 on an unreadable path (scripts/brief-size.ts:80-87). PowerShell and cmd pass wildcards unexpanded (verified: a Node argv probe receives the literal skills/dispatch/references/*.md), so the required gate fails at the first glob on Windows and the chained npm test/test:e2e gates never run. AGENTS.md:88 requires universal shell syntax or a Node script.",
+    "ruling": "accepted",
+    "reason": "Replaced shell globs in SC6 Verify with the explicit space-separated list of all 30 agent-consumed Markdown files plus the 3 golden fixtures so scripts/brief-size.ts runs identically across PowerShell, cmd, bash, and zsh."
+  },
+  {
+    "id": "R3-F003",
+    "locus": "§ Success Criteria",
+    "defect": "REQ-2 acceptance requires verified byte reduction for rendered writer and explorer briefs, but SC2 (plan line 268) covers only the three golden review prompts and SC6 (lines 316, 321) measures the writer-brief.md/explorer-brief.md templates, not rendered briefs. brief.test.ts:271 records result.value.bytes without a baseline or threshold, and T1 adds a sentence to writer-brief.md (plan line 114), so the rendered writer brief can grow; no criterion would detect it. The golden LF baselines are also not reproducible: the three fixtures contain 0 CR bytes and measure 13,849 / 17,847 / 13,132 UTF-8 bytes, not 13,798 / 17,806 / 13,091 (plan lines 131, 135, 139, 268, 316). The thresholds therefore demand an unexplained extra 51 / 41 / 41 bytes, and the accepted R2-F002 correction was not applied.",
+    "ruling": "accepted",
+    "reason": "Used the exact measured UTF-8 byte baselines (13,849 / 17,847 / 13,132 B for golden review prompts, 4,701 B for explorer-brief.md, and 9,098 B for writer-brief.md + qualityCriteria(quality, 'writer')) across T1, SC2, SC3, and SC6."
+  },
+  {
+    "id": "R3-F004",
+    "locus": "§ Success Criteria",
+    "defect": "SC3's RED (plan line 287) filters tests/unit/toolkit/brief.test.ts by the existing test name brief labels governed hashes and names lint for comparison, which passes today. T1 only says to add an assertion to brief.test.ts (plan lines 149-151) and never assigns it to that test. If the writer adds a new test, the RED command selects no failing assertion and exits successfully, so SC3 has no valid RED and the plan's RED contract (plan.md#field-notes) is unmet.",
+    "ruling": "accepted",
+    "reason": "Named the new brief.test.ts test \"writer brief scopes plan reads to embedded sections unless cross-task reference\" in T1 and set SC3 RED to filter by that exact test name."
+  },
+  {
+    "id": "R3-F005",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 changes review-prompt-code.md (plan lines 101-103) and SC2 owns that path, but SC2's Tests/Verify cover only prompt.test.ts. The only assertion for the required sentence Behaviour the diff adds that no REQ asks for at a consumer boundary ... is an intent finding; internal helpers and refactors are not. is tests/integration/domain-templates.test.ts:249, which SC2 does not run and SC1's Changes do not own (review-prompt-code.md is absent from SC1). The sentence is also absent from T1's invariant list, so compaction of ## against can delete a test-enforced rule without any criterion pairing the changed file with its check.",
+    "ruling": "accepted",
+    "reason": "Added the unrequested-behaviour intent sentence (domain-templates.test.ts:249) to T1 review-prompt-code.md Invariants and included tests/integration/domain-templates.test.ts in SC2 Changes, Tests, and Verify."
+  },
+  {
+    "id": "R3-F006",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "Plan directs hoisting 7 families into quality-bar.md#shared as single copies without merging code-altitude vs design-altitude guidance, losing stage-specific rules and violating REQ-1 Acceptance preserving all behavioral judging rules. Current skills/dispatch/references/templates/quality-bar.md:41 defines correctness as checking domain-valid formulas, preconditions, off-by-one, units/scales/runtime, while skills/dispatch/references/templates/quality-bar.md:63 defines it as stating system-wide invariants and valid transitions; similarly security skills/dispatch/references/templates/quality-bar.md:43 (STRIDE at design altitude and OWASP/CWE at code altitude plus injection/traversal/IDOR) vs skills/dispatch/references/templates/quality-bar.md:65 (STRIDE spoofing/tampering/repudiation/information-disclosure/denial-of-service/elevation), reliability skills/dispatch/references/templates/quality-bar.md:42 vs skills/dispatch/references/templates/quality-bar.md:64, performance skills/dispatch/references/templates/quality-bar.md:44 vs skills/dispatch/references/templates/quality-bar.md:66, compatibility skills/dispatch/references/templates/quality-bar.md:45 vs skills/dispatch/references/templates/quality-bar.md:67, operability skills/dispatch/references/templates/quality-bar.md:46 vs skills/dispatch/references/templates/quality-bar.md:68. T1 Changes (plan lines 93-94) says Move those bullets into ## shared with only WCAG/POLA usability qualifier, and Invariants (plan line 95) preserves only generic markers (OWASP/CWE, STRIDE, WCAG, POLA, N+1, object ownership) but not design-specific sentences (State system-wide invariants, Cover edge/boundary, Map trust boundaries, Define separation of concerns, Weigh alternatives). Writer must drop one altitude to satisfy exactly-once assertion in tests/integration/domain-templates.test.ts:214-218.",
+    "ruling": "accepted",
+    "reason": "Specified merged quality-bar.md#shared wording that preserves both code-altitude and design-altitude guidance across intent, correctness, reliability, security (STRIDE spoofing/tampering/repudiation/information-disclosure/denial-of-service/elevation + OWASP/CWE), performance, compatibility, operability, and usability, and added all stage-specific phrases to T1 Invariants and domain-templates.test.ts."
+  },
+  {
+    "id": "R3-F007",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 toolkit.md Changes names folding target '### integrate' which does not exist in skills/dispatch/references/toolkit.md:1-253. Existing headings are ### worktree integrate (line 43), ### report complete (line 31), ### verify run (line 132), ### worktree commit (line 55) plus #### Test cleanup (line 61) and #### Cap-ending SHOULD corrections (line 71). A writer following the plan will fail to locate ### integrate and may create a new heading, breaking tests/integration/skill-contract.test.ts:44-48 which asserts Tool actions headings equal TOOL_ACTIONS.",
+    "ruling": "accepted",
+    "reason": "Corrected ### integrate to ### worktree integrate in T2 toolkit.md Changes and explicitly assigned folded CLI flags, JSON shapes, trailers, and refusal codes to ### worktree commit, ### report complete, ### verify run, and ### worktree integrate."
+  },
+  {
+    "id": "R3-F008",
+    "locus": "§ Success Criteria",
+    "defect": "SC3 pairs new writer-brief cross-task-read behavior (T1 adds assertion that brief embeds plan sections and {{planPath}} is read whole only when Constraints:/Overlap:/Invariants: references another task) with RED --test-name-pattern=\"brief labels governed hashes and names lint for comparison\" (plan line 287). That pattern exercises the pre-existing governed-hash test in tests/unit/toolkit/brief.test.ts:382-394, not the new trigger, so RED passes both before and after the change and does not demonstrate TDD RED for REQ-3. Contrast SC2 RED which correctly filters the new test name reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned.",
+    "ruling": "accepted",
+    "reason": "Named the new brief.test.ts test \"writer brief scopes plan reads to embedded sections unless cross-task reference\" in T1 and updated SC3 RED to filter that exact test name."
+  },
+  {
+    "id": "R4-F001",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 updates familyOrder.design to ['architecture', 'decomposition', 'testing'] (plan line 142) and tells the writer to keep - **architecture** —, - **decomposition** —, - **testing** — in ## design (plan line 94). The surviving file order after the merge is architecture (quality-bar.md:62), testing (quality-bar.md:69), decomposition (quality-bar.md:71). prompt.test.ts:126-129 compares each section's bullet order to familyOrder at rotation 0, so that test fails deterministically unless ## design bullets are reordered, which no plan step requests.",
+    "ruling": "accepted",
+    "reason": "Set familyOrder.design in prompt.test.ts and Key Interfaces / T1 to ['architecture', 'testing', 'decomposition'] to match the existing bullet order in quality-bar.md:62, 69, 71."
+  },
+  {
+    "id": "R4-F002",
+    "locus": "§ Success Criteria",
+    "defect": "SC3 (line 280), T1 (line 150) and SC6 (line 316) require writer-brief.md + qualityCriteria(quality, 'writer') to be strictly less than 9,098 UTF-8 B. Measured at HEAD with the shipped function: template 2,529 B + criteria 6,568 B = 9,097 B, so the assertion passes before any edit with 1 B of headroom and cannot evidence the reduction REQ-2 requires. T1's merge also moves plan/design clauses into ## shared (e.g. State system-wide invariants that hold within and across increments, the STRIDE enumeration, observability through logs, metrics, and traces), and qualitySections.writer = ['shared', 'code'], so the metric grows by roughly 0.35 KB; SC3's Verify then fails after the mandated merge unless unstated compaction of about 0.45 KB occurs in writer-visible text.",
+    "ruling": "accepted",
+    "reason": "Set the writer-brief.md + qualityCriteria(quality, 'writer') threshold to < 8,900 UTF-8 bytes against the exact 9,097 B baseline at HEAD, and explicitly specified condensing quality-bar.md#code (- **testing** ?) by ~0.5 KB so the assertion is RED at HEAD and GREEN after T1."
+  },
+  {
+    "id": "R4-F003",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 Verify (line 321) passes 29 files under skills/dispatch/ to scripts/brief-size.ts, omitting skills/dispatch/references/diagnostics.md (900 B). The listed files sum to 154,787 B, exactly 900 B below the 155,687 B aggregate threshold and below the 30-file claim in SC6 (line 316), T3 (line 229), and the plan Background (line 24, 11 operational references / 155,687 B). The recorded audit therefore reports success on an unchanged tree and cannot evidence reduction across the 30 agent-consumed files.",
+    "ruling": "accepted",
+    "reason": "Added skills/dispatch/references/diagnostics.md to the explicit 30-file list in SC6 Verify and specified an explicit 30-path array (excluding references/readme/*.md) in domain-templates.test.ts."
+  },
+  {
+    "id": "R4-F004",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 moves review-prompt.md:75 into the requests.length > 0 branch of prompts.ts and enumerates the replacement contract (line 90), but the enumeration omits the clause A pending MUST rejection is open until explicit agreement. That sentence exists only at review-prompt.md:75 (grep finds no other shipped copy), so following the enumeration silently removes the rule that defines when a rejection stops being pending. REQ-7 requires a Decision Frame for any such removal, and the new prompt.test.ts assertion only checks the heading and confirmations presence.",
+    "ruling": "accepted",
+    "reason": "Added \"A pending MUST rejection is open until explicit agreement\" to the prompts.ts conditional confirmation contract in T1, prompt.test.ts, and SC2."
+  },
+  {
+    "id": "R4-F005",
+    "locus": "§ Success Criteria",
+    "defect": "SC1 changes and lists tests/unit/toolkit/domain/prompt.test.ts in Changes and Tests, but its Verify (line 262) runs only tests/integration/domain-templates.test.ts. The qualitySections and familyOrder assertions at prompt.test.ts:105-141, 244-246 are SC1's own checks and remain unexecuted when SC1 evidence is recorded, although SC2 runs the same file later in T1.",
+    "ruling": "accepted",
+    "reason": "Added tests/unit/toolkit/domain/prompt.test.ts to SC1 Verify and RED alongside tests/integration/domain-templates.test.ts."
+  },
+  {
+    "id": "R4-F006",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 Changes (plan line 94) specifies - **compatibility** — with no merged sentence and - **operability** — with only (observability through logs, metrics, and traces), and merged - **performance** — keeps index new filter or sort columns but drops design's missing indexes. Current skills/dispatch/references/templates/quality-bar.md:45 defines code compatibility as breaking changes, Hyrum's law, semver, expand/contract migrations, rollback, version skew, affected callers, persisted schemas and serialized formats, portability, skills/dispatch/references/templates/quality-bar.md:67 defines design compatibility as Hyrum's law and semver, breaking changes, expand/contract migration, rollback, version skew, affected callers, persisted schemas, OS/shell/path/encoding portability, skills/dispatch/references/templates/quality-bar.md:46 defines code operability as deployment and runtime operation, logs, metrics and traces, actionable diagnostics, configuration, and a kill switch, skills/dispatch/references/templates/quality-bar.md:68 defines design operability as deployment and runtime operation, observability through logs, metrics, and traces, actionable diagnostics, configuration, and a kill switch, skills/dispatch/references/templates/quality-bar.md:66 defines design performance as missing indexes, resource closure. T1 Invariants (plan line 95) enforce N+1, unpaginated reads, index new filter or sort columns, object ownership, sensitive data in logs but omit breaking changes, Hyrum's law, semver, expand/contract, rollback, version skew, affected callers, persisted schemas, portability, deployment and runtime operation, actionable diagnostics, configuration, kill switch, missing indexes, resource closure. An implementer following the plan verbatim drops those clauses yet still satisfies Invariants and passes tests/integration/domain-templates.test.ts:196-218 and tests/unit/toolkit/domain/prompt.test.ts:206-221, violating REQ-1 Acceptance (preserve all behavioral judging rules) and REQ-7 (no silent rule loss without Decision Frame).",
+    "ruling": "accepted",
+    "reason": "Wrote full verbatim merged sentences for - **compatibility** ?, - **operability** ?, and - **performance** ? (including missing indexes and closed handles and resource closure) in Key Interfaces and T1 Changes, and added all compatibility, operability, and performance clauses to T1 Invariants and domain-templates.test.ts."
+  },
+  {
+    "id": "R4-F007",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 Verify (plan line 321) passes 29 files to scripts/brief-size.ts: SKILL.md + 10 references/*.md + 5 verbs/*.md + 13 templates/*.md, omitting skills/dispatch/references/diagnostics.md:1-10. Current 30-file set totals 155687 B including diagnostics.md 900 B (verified via stat: SKILL 4349 B + 11 refs including diagnostics + 5 verbs + 13 templates = 30 files = 155687 B). SC6 claims across the 30 agent-consumed Markdown files (< 155687 B) but Verify measures only 29 files (154787 B), so growth in diagnostics.md would not appear in .scratch/brief-size-check.json and the explicit cross-shell file list contradicts T1 domain-templates.test.ts aggregate assertion across all 30 files.",
+    "ruling": "accepted",
+    "reason": "Added skills/dispatch/references/diagnostics.md in sorted order to the explicit 30-file list in SC6 Verify and domain-templates.test.ts."
+  },
+  {
+    "id": "R4-F008",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 Invariants omit canonical links that REQ-5 single-home requires, so loss passes tests/integration/skill-contract.test.ts:260-284: (a) skills/dispatch/references/verbs/review.md:7 currently cites [shared]+[spec]+[plan]+[code] for plan, [shared]+[spec]+[design] for design, [shared]+[code] for code, but T2 review Invariants (plan line 215) preserve only ../spec-stage.md, ../toolkit.md#review-run, ../templates/quality-bar.md#shared, ../templates/quality-bar.md#code, ../review-rules.md, ../toolkit.md#ruling — missing #spec/#plan/#design; (b) skills/dispatch/references/verbs/plan.md:5 and :9 currently link ../grounding.md#design-increments for increment plans, but T2 plan Invariants (plan line 203) preserve only ../grounding.md#scope-round + shared/spec/plan + carry-over phrases; (c) skills/dispatch/references/verbs/implement.md:11 currently links ../review-rules.md#rulings-and-fix-scope for MUST confirmation and ../toolkit.md#worktree-commit/../toolkit.md#edit for cap-ending SHOULD exception, but T2 implement Invariants (plan line 211) preserve only ../spec-stage.md, plan.md, design.md, ../grounding.md#scope-round, shared/code, ../toolkit.md#worktree-deliver — missing review-rules link. An implementer dropping those links still passes Invariants and existing contract tests.",
+    "ruling": "accepted",
+    "reason": "Added canonical link invariants to T2 and skill-contract.test.ts: verbs/plan.md retains ../grounding.md#design-increments, verbs/review.md retains quality-bar.md#spec, #plan, and #design, and verbs/implement.md retains ../review-rules.md#rulings-and-fix-scope and ../review-rules.md#review-provenance-and-applicability."
+  },
+  {
+    "id": "R4-F009",
+    "locus": "§ Success Criteria",
+    "defect": "SC1 Changes (plan line 260) includes skills/dispatch/scripts/toolkit/domain/prompt.ts (qualitySections.plan from ['shared','spec','plan','code'] at skills/dispatch/scripts/toolkit/domain/prompt.ts:99 to ['shared','spec','plan']) and tests/unit/toolkit/domain/prompt.test.ts, Tests lists both tests/unit/toolkit/domain/prompt.test.ts and tests/integration/domain-templates.test.ts, but Verify (plan line 262) runs only tests/integration/domain-templates.test.ts and RED (plan line 263) filters only review prompts offer shared family tags each defined by a quality-bar bullet. Neither runs tests/unit/toolkit/domain/prompt.test.ts:244-246 (expected plan: ['shared','spec','plan','code']) which is the sole assertion on qualitySections.plan. SC1 could pass while the 11279 B ## code injection (skills/dispatch/references/templates/quality-bar.md:41-48) remains in every plan review prompt, violating REQ-1.",
+    "ruling": "accepted",
+    "reason": "Added tests/unit/toolkit/domain/prompt.test.ts to SC1 Verify and included --test-name-pattern=\"quality selection rejects missing, empty, duplicate sections and invalid consumers\" tests/unit/toolkit/domain/prompt.test.ts in SC1 RED."
+  },
+  {
+    "id": "R5-F001",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "The review-prompt-code.md invariant quotes a sentence that exists in no file: Behaviour the diff adds that no REQ asks for at a consumer boundary (CLI flag, config key, API field, exported symbol, file/artifact format, persisted state, wire/log output, exit code, or default) is an intent finding; internal helpers and refactors are not. The actual protected sentence uses (public API or CLI surface, outputs, persisted data, side effects, dependencies) at skills/dispatch/references/templates/review-prompt-code.md:29 and tests/integration/domain-templates.test.ts:249. A writer honouring the invariant cannot find the quoted text and may rewrite line 29 to the quoted variant, failing the domain-templates assertion that SC2 Verify runs.",
+    "ruling": "accepted",
+    "reason": "Quoted the exact verbatim governed sentence at review-prompt-code.md:29 and domain-templates.test.ts:249 (\"Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an `intent` finding; internal helpers and refactors are not.\") in T1 review-prompt-code.md Invariants and SC2."
+  },
+  {
+    "id": "R5-F002",
+    "locus": "§ Success Criteria",
+    "defect": "REQ-4 acceptance requires toolkit.md to retain its contracts 'with a reduced UTF-8 byte footprint', but no criterion measures that file. SC4 checks only section order and retained contract strings. SC6's aggregate budget (< 155,687 B) can stay green while toolkit.md (27,475 B at HEAD) grows as other files shrink; adding links, refusal prose or labels during the fold can therefore pass every gate while violating the requirement.",
+    "ruling": "accepted",
+    "reason": "Added a per-file toolkit.md UTF-8 byte budget (< 27,475 B vs the 27,475 B baseline at HEAD) to T1 domain-templates.test.ts, T2 toolkit.md/skill-contract.test.ts, SC4, and SC6."
+  },
+  {
+    "id": "R5-F003",
+    "locus": "§ Success Criteria",
+    "defect": "REQ-2 acceptance requires 'complete confirmation schema rules' when requests is non-empty, but the new prompt.test.ts test asserts only Pending MUST rejection confirmation, confirmations, and A pending MUST rejection is open until explicit agreement. The delta moved out of review-prompt.md:75 also contains 'Keep ordinary status and findings' and 'omission is not confirmation'; neither is asserted, so a partial move that drops them passes SC2 while prompts.ts:52 no longer tells reviewers that silence is not confirmation.",
+    "ruling": "accepted",
+    "reason": "Extended the named test in prompt.test.ts and SC2 to assert the full moved confirmation contract in the non-empty branch: requestId, decision, rationale, \"Answer every assigned request exactly once\", \"Keep ordinary `status` and `findings`\", \"A pending MUST rejection is open until explicit agreement\", and \"omission is not confirmation\"."
+  },
+  {
+    "id": "R5-F004",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 restates the ## spec layout rule as - Artifact layout: Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line..., and the T1 invariant plus the domain-templates assertion protect only At a Glance, <details>, [!NOTE], and [!IMPORTANT]. Four current ## spec rules (skills/dispatch/references/templates/quality-bar.md:18) have no protected wording: 'State each visible fact once; a summary must add a distinct view, not restate a later visible section', 'A visible summary may restate collapsed <details> detail', 'Keep task and increment behaviour visible before <details>', and 'Keep machine fields outside callouts, prefer point form, and retain every required field'. Implementing the ellipsis literally can drop them with every test green, contrary to REQ-1's 'preserving all behavioral judging rules'.",
+    "ruling": "accepted",
+    "reason": "Wrote the full - Artifact layout: text in Key Interfaces and T1 quality-bar.md Changes, and added the four layout clauses (\"State each visible fact once; a summary must add a distinct view, not restate a later visible section.\", \"A visible summary may restate collapsed `<details>` detail.\", \"Keep task and increment behaviour visible before `<details>`\", \"Keep machine fields outside callouts, prefer point form, and retain every required field.\") to T1 Invariants and domain-templates.test.ts."
+  },
+  {
+    "id": "R5-F005",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "Self-contradiction: T1 review-prompt-code.md Invariants require preserving Behaviour the diff adds that no REQ asks for at a consumer boundary (CLI flag, config key, API field, exported symbol, file/artifact format, persisted state, wire/log output, exit code, or default) is an intent finding; internal helpers and refactors are not. but skills/dispatch/references/templates/review-prompt-code.md:29 and tests/integration/domain-templates.test.ts:249 require Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an intent finding; internal helpers and refactors are not.; grep for exported symbol/CLI flag, config key finds no codebase occurrence. Writer cannot satisfy both: implementing new enumeration fails SC2 Verify (runs domain-templates.test.ts:249), keeping old wording violates T1 invariant. Blocks SC2/REQ-2/REQ-5.",
+    "ruling": "accepted",
+    "reason": "Aligned T1 review-prompt-code.md Invariants and SC2 to the exact verbatim string at review-prompt-code.md:29 and domain-templates.test.ts:249."
+  },
+  {
+    "id": "R5-F006",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "Unobservable compaction: T1 Changes say Remove line 75 and compact surrounding prose in ### Inspection, ### Severity, and ### Reply (skills/dispatch/references/templates/review-prompt.md:75), Compact prose in ## opener, ## against, and ## inspection (review-prompt-code.md/review-prompt-plan.md/review-prompt-design.md), tighten surrounding prose (writer-brief.md), Eliminate repeated Surprises/Not covered (explorer-brief.md), Compact prose in ## Scope, ## Rules, ## Report (test-cleanup-brief.md), Compact ### Field notes (context-map.md) with only subset Invariants. Existing tests only check skills/dispatch/references/templates/review-prompt.md:28 fresh-context, tests/unit/toolkit/domain/prompt.test.ts:50 standardsRule, tests/unit/toolkit/domain/prompt.test.ts:51 cache-index, tests/integration/domain-templates.test.ts:249 unrequested-behaviour. Dropping load-bearing rules such as skills/dispatch/references/templates/review-prompt.md:29 Verification evidence comes from the orchestrator; run no test or build commands., skills/dispatch/references/templates/review-prompt-code.md:32-34 With a plan, its ## Key Decisions & Context entries are settled, skills/dispatch/references/templates/review-prompt-code.md:35 An attached Approved technical-design context, skills/dispatch/references/templates/review-prompt-code.md:45-52 Git-range/shared-invariant/code-graph rules would still pass SC2 Verify, violating REQ-7/DEC-3.",
+    "ruling": "accepted",
+    "reason": "Added load-bearing substrings (\"Verification evidence comes from the orchestrator; run no test or build commands.\", \"With a plan, its `## Key Decisions & Context` entries are settled\", \"An attached `Approved technical-design context`\", \"Inspect the Git range\", \"shared invariants\") to T1 review-prompt.md/review-prompt-code.md Invariants and domain-templates.test.ts."
+  },
+  {
+    "id": "R5-F007",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "Unobservable compaction: T2 Changes say compact prose across all sections (providers.md), Consolidate repeated selective map-reading rule into one canonical statement and conditional lint-run (grounding.md), tighten prose (spec-stage.md:Resolve/Approval/Run level), Compact prose (review-rules.md/worktree-cleanup.md/decision-frame.md/self-build.md/artifact-readability.md/SKILL.md/verbs/*) with Invariants only covering tests/integration/skill-contract.test.ts:92,223-224,254-256,197-205,278 and selected links. Dropping rules such as skills/dispatch/references/grounding.md:33 Relaunch a failed, timed-out or lint-failing explorer once, skills/dispatch/references/grounding.md:33 For a size error, ask it to compress wording while retaining every entry, skills/dispatch/references/grounding.md:43 When no explorer is configured ... self-ground, skills/dispatch/references/spec-stage.md:40-42 toolkit edit-contract provenance/bind-then-append order would still pass SC4/SC5 Verify.",
+    "ruling": "accepted",
+    "reason": "Added load-bearing operational rules (\"Relaunch a failed, timed-out or lint-failing explorer once\", \"For a size error, ask it to compress wording while retaining every entry\", \"self-ground\", \"bind the revised spec, then append its `edit` record\") to T2 grounding.md/spec-stage.md Invariants and skill-contract.test.ts."
+  },
+  {
+    "id": "R6-F001",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1's domain-templates change (plan line 146) adds deterministic byte assertions that include toolkit.md < 27,475 B, which is exactly its HEAD size (skills/dispatch/references/toolkit.md:1, measured 27,475 B). toolkit.md is T2's path; T1 declares Prerequisites: none and the plan states T1 and T2 run in parallel on disjoint paths. SC1 and SC2 Verify both run the full tests/integration/domain-templates.test.ts, so T1 cannot produce green evidence: the toolkit assertion stays red until T2 shrinks the file, forcing the T1 writer either to edit T2's file (parallel write conflict) or to fail its own criteria.",
+    "ruling": "accepted",
+    "reason": "Scoped T1 domain-templates.test.ts byte-budget assertions strictly to T1-owned files (quality-bar.md, explorer-brief.md, writer-brief.md + qualityCriteria, and the 3 golden fixtures), kept toolkit.md (< 27,475 B) in T2 skill-contract.test.ts, and moved the 30-file aggregate (< 155,687 B) and 4 artifact template byte budgets to T3 tests/tooling/brief-size.test.ts."
+  },
+  {
+    "id": "R6-F002",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2's spec-stage invariant (plan line 175) and its new orchestrator reads quality bar sections by stage assertion (plan line 222) require references/spec-stage.md to preserve bind the revised spec, then append its \\edit\\ record. That sentence exists only in skills/dispatch/references/toolkit.md:221; skills/dispatch/references/spec-stage.md:38-42 only links the toolkit edit contract and contains no such text. The added assertion therefore fails after T2 unless the writer copies the toolkit sentence into spec-stage, leaving the same rule in two homes and breaking the single-home goal (DEC-6/REQ-5).",
+    "ruling": "accepted",
+    "reason": "Moved \"bind the revised spec, then append its `edit` record\" from T2 spec-stage.md Invariants to T2 toolkit.md Invariants and asserted it against references/toolkit.md in skill-contract.test.ts."
+  },
+  {
+    "id": "R6-F003",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 line 166 instructs folding --fix-review into ### worktree commit, but no such flag exists. The documented and parsed flag is --review-fix (skills/dispatch/references/toolkit.md:57, skills/dispatch/scripts/toolkit/cli.ts:199, skills/dispatch/scripts/toolkit/integrate.ts:45-51). A writer following the enumeration can document a nonexistent flag or omit the real option, and T2's new assertion (line 222) checks only the substring reviewFix, so the error passes every gate.",
+    "ruling": "accepted",
+    "reason": "Replaced --fix-review with --review-fix in T2 toolkit.md Changes/Invariants, T2 skill-contract.test.ts, and SC4."
+  },
+  {
+    "id": "R6-F004",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 line 103 requires preserving Inspect the Git range and shared invariants in review-prompt-code.md, but neither string exists: the file has Obey an explicit Git range in Scope (line 45) and when the diff changes a shared invariant, contract, or signature (line 49). The same invariant's An attached \\Approved technical-design context\\ also differs from An attached \"Approved technical-design context\" (line 35). The R5-F006 resolution claims these strings were added to domain-templates.test.ts, but T1's assertion list (line 146) omits them. A writer honoring this invariant can reword or drop the real Git-range/shared-invariant rules while compacting ## inspection, and no test catches it.",
+    "ruling": "accepted",
+    "reason": "Quoted the exact source strings from review-prompt-code.md:35, 45, 49 (\"An attached \\\"Approved technical-design context\\\"\", \"Obey an explicit Git range in Scope\", \"when the diff changes a shared invariant, contract, or signature\") in T1 review-prompt-code.md Invariants and domain-templates.test.ts."
+  },
+  {
+    "id": "R6-F005",
+    "locus": "§ T1 — Quality bar, prompt builders, and delegate templates",
+    "defect": "T1 line 94, SC3, and SC6 claim that condensing quality-bar.md#code - **testing** — by ~0.5 KB alone brings writer-brief.md + qualityCriteria(quality, 'writer') from 9,097 B below 8,900 B. The merged ## shared clauses grow that same selection: the seven current code family bullets total 1,559 B (skills/dispatch/references/templates/quality-bar.md:41-48) while T1's verbatim merged bullets total 1,826 B, and the required intent phrases add at least 178 B, so the selection grows ~445 B before any cut. A 500 B testing cut leaves ~9,042 B, still 142 B above target before the new writer-brief instruction (~150 B); about 290 B of net writer-brief compression is required, yet T1 only says tighten surrounding prose. Executing the stated 0.5 KB cut exactly fails SC3/SC6 and pressures the writer to drop rules under REQ-7.",
+    "ruling": "accepted",
+    "reason": "Accounted for the ~445 B stage-clause merge into ## shared by specifying >= 350 B condensation in quality-bar.md#code (- **testing** ?) and >= 200 B net compaction in writer-brief.md to bring writer-brief.md + qualityCriteria(quality, 'writer') from 9,097 B at HEAD to < 9,000 B in Key Interfaces, T1, SC3, and SC6."
+  },
+  {
+    "id": "R6-F006",
+    "locus": "§ Success Criteria",
+    "defect": "SC4 promises toolkit.md is left without duplicated workflow policy subheadings, but T2's new assertions in native slots launch by prompt path (plan line 222) check only retained refusal strings, reviewFix, absence of a #test-cleanup link, and < 27,475 B. None asserts removal of #### Test cleanup (skills/dispatch/references/toolkit.md:61) or #### Cap-ending SHOULD corrections (skills/dispatch/references/toolkit.md:71). Any one-byte reduction elsewhere passes SC4 while the duplicated policy essays remain, so REQ-4's stripping is unverified.",
+    "ruling": "accepted",
+    "reason": "Added explicit assertions in T2 skill-contract.test.ts and SC4 verifying that #### Test cleanup and #### Cap-ending SHOULD corrections are removed from references/toolkit.md."
+  },
+  {
+    "id": "R6-F007",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 promises the four artifact templates deduplicate field notes, but T3 adds no test change and SC6's checks are the aggregate 155,687 B budget (already brought under by T1/T2) plus per-file budgets for quality-bar.md, toolkit.md, explorer-brief.md, writer-brief.md, and the goldens; none measures spec.md, plan.md, design.md, or walkthrough.md. A T3 that only regenerates skills/dispatch/skill-hashes.json passes SC6 while the REQ-5/DEC-6 template single-sourcing is undone.",
+    "ruling": "accepted",
+    "reason": "Added per-file UTF-8 byte budgets for spec.md (< 3,365 B), plan.md (< 13,190 B), design.md (< 4,334 B), and walkthrough.md (< 4,669 B) plus the 30-file aggregate (< 155,687 B) in T3 tests/tooling/brief-size.test.ts and SC6."
+  },
+  {
+    "id": "R6-F008",
+    "locus": "§ Success Criteria",
+    "defect": "SC4 Verify (plan line 298) and RED (plan line 299) are the identical command node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-name-pattern=\"native slots launch by prompt path\" tests/integration/skill-contract.test.ts. At HEAD tests/integration/skill-contract.test.ts:253 passes, so the same command cannot fail for the right reason before T2 source edits and pass after; there is no distinct failing-proof vs passing-gate. T2 Changes (plan lines 221-222) add new assertions for providers order, toolkit byte budget and grounding conditional lint to that same test, so RED and Verify are indistinguishable in evidence. Identical Verify/RED was MUST in R1-F002 for SC5; same predicate fails here.",
+    "ruling": "accepted",
+    "reason": "Differentiated SC4 Verify from RED by setting SC4 Verify to run the full tests/integration/skill-contract.test.ts file without --test-name-pattern while keeping SC4 RED filtered to --test-name-pattern=\"native slots launch by prompt path\"."
+  },
+  {
+    "id": "R6-F009",
+    "locus": "§ Success Criteria",
+    "defect": "SC6 Satisfies lists REQ-5, REQ-6, REQ-7 (plan line 319) but SC6 Changes (plan line 320: spec.md, plan.md, design.md, walkthrough.md, skill-hashes.json) and Verify (plan line 321: generate-hashes, check-terms, validate-configs, brief-size, npm test, test:e2e) never touch or check human manuals skills/dispatch/README.md:1 and skills/dispatch/references/readme/configuration.md:1 required by spec REQ-6. Only SC7 Review (plan lines 326-332) checks git diff on human manuals and the walkthrough follow-up reminder. Claiming REQ-6 in SC6 mis-traces the requirement to a change that cannot deliver it and lets a writer consider REQ-6 done without SC7.",
+    "ruling": "accepted",
+    "reason": "Removed REQ-6 from SC6 Satisfies (leaving REQ-5, REQ-7) so REQ-6 is owned solely by SC7."
+  },
+  {
+    "id": "R6-F010",
+    "locus": "§ T2 — Providers, toolkit, orchestrator references, and verb guides",
+    "defect": "T2 verbs/review.md Changes (plan lines 213-214) direct compact target resolution prose by deferring to ../toolkit.md#review-run while Invariants (plan line 215) preserve only links (../spec-stage.md, ../toolkit.md#review-run, quality-bar.md#shared/#spec/#plan/#design/#code, review-rules.md, toolkit.md#ruling). Load-bearing rules in skills/dispatch/references/verbs/review.md:5 (Code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>, Integration reviews the accumulated integration candidate, a task reviews its finished launch, a single revision compares merge-base with HEAD, Session state is excluded, Standalone review needs no bound plan in skills/dispatch/references/verbs/review.md:3) have no phrase guard and no assertion in tests/integration/skill-contract.test.ts:253-270 (which checks links, not those phrases), unlike toolkit detail in skills/dispatch/references/toolkit.md:17-23. Over-compaction dropping them passes Verify. Same unobservable-compaction pattern as settled R5-F006/R5-F007, now in previously unguarded review.md.",
+    "ruling": "accepted",
+    "reason": "Added target-resolution invariants (\"Standalone review needs no bound plan\", \"Code targets are `integration`, a bound-plan task ID, `worktree`, `<a>..<b>` or `<rev>`\", \"Integration reviews the accumulated integration candidate\", \"a single revision compares merge-base with HEAD\", \"Session state is excluded\") to T2 verbs/review.md Invariants and skill-contract.test.ts."
+  }
+]

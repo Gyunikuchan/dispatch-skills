@@ -15,8 +15,8 @@ Refusals: unreadable question, invalid level, level-unapproved, no read delegate
 ### review run
 
 Arguments: `review run <target> --session <session> [--kind plan|design|code] [--spec <path>] [--level <level>]`. Pass `--spec` until a spec is bound.
-Result path: full findings, sources, failures, round, coverage, continuation and escalation details, or native slots. When the roster has fewer targets than configured or drops a native-only provider, the value adds `underfill` (`host`: detected orchestrator or null; `configured`; `resolved`; `excluded` providers), the summary header names it before any item list, and zero targets carry the same note in the refusal. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
-Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open or round-cap. An accepted MUST fix or pending MUST rejection permits continuation past the cap. An open rejection escalation blocks launches while the rejection remains pending; resolve it or accept the finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
+Result path: full findings, sources, failures, round, coverage, continuation and escalation details, blocked attempts or native slots. The value adds `blocked` (`{slot, provider, model, reason}` per blocked attempt of a logical slot; `reason` is sanitized display text) and `blockers` (`{slot, reason, rounds}` when the same slot and reason repeat in the nearest earlier round with findings). The summary lists `blocked <slot>: <reason>` and `orchestrator blocker <slot>: <reason> (rounds <a>-<b>)` entries before any item list; a `review-failed` message carries the same entries. When the roster has fewer targets than configured or drops a native-only provider, the value adds `underfill` (`host`: detected orchestrator or null; `configured`; `resolved`; `excluded` providers), the summary header names it before any item list, and zero targets carry the same note in the refusal. Summary items are `<id> <severity>: <defect>`, ordered MUST, SHOULD, CONSIDER. Prompts list settled findings as `- <id> <locus>: <first defect line, at most 120 characters> — accepted` without rationale; duplicate rows keep the original id and add a reason of at most 120 characters; rejected and deferred rows keep the full defect and reason. For plan/design rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
+Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-errors, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), native-pending, target-moved, escalation-open, round-cap or review-ceiling. A level with zero configured review rounds skips a review with no prior round; for an existing review it refuses `level-unapproved` when a new round cannot be staffed, unless a pending MUST rejection supplies its saved source slots. At a staffed level the same refusal means no live or usable reviewer is configured; restore a provider or configure one. An accepted MUST fix or pending MUST rejection permits continuation past the cap up to the ceiling: the round-1 cap plus 2, plus 2 more per user-resolved ceiling escalation. A `review-ceiling` refusal opens `ceiling:<review>:<ceiling>`; resolve it under the [review escalation Decision Frame](decision-frame.md#review-escalation) with a quoted user record whose summary starts `re-author:`, `model-effort:` or `relax-split:` for 2 rounds, or `defer:` for no rounds (plan and design only, with no pending MUST rejection). An open rejection escalation blocks launches while the rejection remains pending; an open ceiling escalation blocks new rounds. Resolve an open escalation with retained evidence, or accept the rejected finding for repair under [review rules](review-rules.md#rulings-and-fix-scope). A single revision without a merge-base is invalid-input.
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
 
@@ -55,7 +55,7 @@ Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-in
 
 ### worktree commit
 
-Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive.
+Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive. Both JSON files accept a leading UTF-8 BOM.
 Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
@@ -131,7 +131,7 @@ Refusals: unknown criterion, which names each unknown ID and the valid IDs; expl
 
 ### ledger append
 
-Arguments: `ledger append <record.json> --session <session>`.
+Arguments: `ledger append <record.json> --session <session>`. A leading UTF-8 BOM in the record file is ignored.
 Result path: appended seq and deduped boolean. For a ruling of a bound plan/design review, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
 Refusals: unreadable JSON, invalid-record, missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
@@ -162,7 +162,7 @@ Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ
 ### diagnostics render
 
 Arguments: `diagnostics render --session <session>`. Takes no positional arguments.
-Result path: `diagnostics.md` in the session folder, rendered from the whole session as `report complete` renders it; the summary gives its path. When diagnostics are off, the summary is `diagnostics off` and no file is written.
+Result path: `diagnostics.md` in the session folder, rendered from the whole session as `report complete` renders it; the summary gives its path. The Overview adds `Tokens by provider, model and effort`: one row per provider, model and effort with uncached input, cache read, cache write, output, reasoning and coverage `measured/launched`, plus a reason such as `no usage output` for an unmeasured launch. It also adds `Review yield by slot`: one row per kind, provider and model, aggregated across rounds and logical slots, with raised MUST/SHOULD/CONSIDER, accepted, rejected, deferred, duplicate, unruled, tokens and tokens per accepted finding. A native row renders model `native`; the tool row renders provider `tool` and model `—`; `partial` marks a row whose launched attempts are not all measured. When diagnostics are off, the summary is `diagnostics off` and no file is written.
 Refusals: positional arguments. `diagnostics-failed` (exit 4) leaves an existing `diagnostics.md` unchanged; treat it as a non-blocking note.
 
 ## Ledger records
@@ -195,7 +195,7 @@ data: `criterion`, `evidence`. Allowed by: user only with a nonblank quote.
 
 ### escalation
 
-data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. Resolve recorded escalations with retained evidence.
+data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. A resolved review ceiling id `ceiling:<review>:<ceiling>` requires by user with a nonblank quote and a summary starting `re-author:`, `model-effort:`, `relax-split:` or `defer:`; a `defer:` summary applies only to a `plan-` or `design-` review. `review run` opens the ceiling id with by tool. A refused resolution leaves the escalation open. Resolve recorded escalations with retained evidence.
 
 ### ruling
 

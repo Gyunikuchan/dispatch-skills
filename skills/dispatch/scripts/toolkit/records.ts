@@ -136,6 +136,16 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
   if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {
     throw new ToolError(1, 'user-only', 'record requires by user and non-blank quote');
   }
+  if (value.kind === 'escalation' && value.data['state'] === 'resolved' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('ceiling:')) {
+    const id = value.data['id'];
+    if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'ceiling resolution requires by user and non-blank quote');
+    const option = /^(re-author|model-effort|relax-split|defer):/.exec(value.data['summary']);
+    if (!option) invalid('data.summary', 'one of re-author:, model-effort:, relax-split:, defer:');
+    if (option[1] === 'defer') {
+      const review = id.slice('ceiling:'.length, id.lastIndexOf(':'));
+      if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a defer resolution');
+    }
+  }
   if (!stored && ['approval', 'confirm', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');
   }

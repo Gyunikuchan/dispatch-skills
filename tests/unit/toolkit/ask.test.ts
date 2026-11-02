@@ -131,6 +131,14 @@ test('ask run attributes reserve and cross-provider native answers to their actu
   }
 });
 
+test('ask forwards session root to delegate', async () => {
+  const f = fixture(); try {
+    f.script('codex', 'answer', 'Useful answer');
+    assert.equal((await f.call()).exit, 0);
+    assert.equal(f.launches[0]?.request.sessionRoot, f.session);
+  } finally {f.cleanup();}
+});
+
 function nativeExclusionFixture() {
   const f = fixture();
   fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {

@@ -14,14 +14,22 @@ const lastModel = { model: 1, mode: 0 };
 test('delegates-failure-classes: every class has a disposition; integrity and config end the run', () => {
   const classes: FailureClass[] = [
     'quota', 'context-overflow', 'auth', 'model-not-found', 'cli-outdated', 'model-not-loaded', 'sandbox-unsupported', 'not-found',
-    'timeout', 'buffer', 'empty-output', 'refusal', 'truncated', 'integrity', 'config',
+    'timeout', 'buffer', 'empty-output', 'refusal', 'blocked', 'truncated', 'integrity', 'config',
   ];
   const dispositions = Object.fromEntries(classes.map((cls) => [cls, failureDisposition(cls)]));
   assert.equal(dispositions['sandbox-unsupported'], 'skip-voice');
   assert.equal(dispositions['integrity'], 'terminal-run');
   assert.equal(dispositions['config'], 'terminal-run');
-  assert.equal(classes.filter((cls) => dispositions[cls] === 'cascade').length, 12);
+  assert.equal(classes.filter((cls) => dispositions[cls] === 'cascade').length, 13);
   assert.deepEqual(next('config', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'run', reason: 'config is terminal for the run' });
+});
+
+test('blocked cascades like refusal', () => {
+  assert.equal(failureDisposition('blocked'), 'cascade');
+  assert.deepEqual(next('blocked', { model: 0, mode: 0 }, agy), next('refusal', { model: 0, mode: 0 }, agy));
+  assert.deepEqual(next('blocked', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: true }), { kind: 'reserve' });
+  assert.deepEqual(next('blocked', lastModel, agy, { orchestratorPlatform: 'agy', reserveAvailable: false }), { kind: 'native-fallback' });
+  assert.deepEqual(next('blocked', lastModel, agy), { kind: 'terminal', scope: 'slot', reason: 'agy[0] failed: blocked' });
 });
 
 // SECTION: Model and mode cascade

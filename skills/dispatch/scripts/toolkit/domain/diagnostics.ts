@@ -1,4 +1,4 @@
-import type { FailureClass } from '../types.ts';
+import type { CoverageReason, FailureClass } from '../types.ts';
 
 // Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
 // The caller supplies captured facts; this module applies heuristics without reading session state.
@@ -24,7 +24,7 @@ export const CATEGORIES = {
 } as const;
 export type Category = keyof typeof CATEGORIES;
 
-export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number };
 
 /** `input` is canonical uncached input; `models` holds per-model counters when the provider reports them. */
 export type Usage = ModelUsage & { models?: Record<string, ModelUsage> };
@@ -43,7 +43,7 @@ export type DiagnosticEvent = {
 );
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
-  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[];
+  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason;
   estimated?: boolean; tokens?: number; slot?: string;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'; subject?: string; attempt?: number; targetSlot?: string;
 };
@@ -53,6 +53,20 @@ export type InvocationFacts = {
  * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
  */
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
+
+/** Per-responder review yield: findings raised and ruled, plus the slot's measured token cost. */
+export type SlotYieldFacts = {
+  kind: 'provider' | 'native' | 'tool'; provider: string; model: string | null;
+  raised: { MUST: number; SHOULD: number; CONSIDER: number };
+  accepted: number; rejected: number; deferred: number; duplicate: number; unruled: number;
+  tokens?: number; measured: number; launched: number;
+};
+/** Adds one responder's yield to another's; absent tokens stay absent. */
+export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
+  for (const severity of ['MUST', 'SHOULD', 'CONSIDER'] as const) current.raised[severity] += row.raised[severity];
+  for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const) current[key] += row[key];
+  if (row.tokens !== undefined) current.tokens = (current.tokens ?? 0) + row.tokens;
+}
 export type RunFacts = {
   timingScope?: 'tool-calls';
   capture?: {state:'opened'|'completed'; start:number; end?:number; storageFailed?:number};
@@ -68,6 +82,7 @@ export type RunFacts = {
   phases: PhaseFacts[];
   invocations: InvocationFacts[];
   reviews: ReviewFacts[];
+  slotYield?: SlotYieldFacts[];
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
 };
@@ -153,7 +168,7 @@ function counters(v: unknown): ModelUsage | undefined {
   const input = count(v['input']), output = count(v['output']);
   if (input === undefined || output === undefined) return undefined;
   const out: ModelUsage = { input, output };
-  for (const key of ['cacheRead', 'cacheWrite'] as const) {
+  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
     if (v[key] === undefined) continue;
     const n = count(v[key]);
     if (n === undefined) return undefined;
@@ -184,11 +199,11 @@ const uncached = (u: ModelUsage) => u.input + (u.cacheWrite ?? 0) + u.output;
 const measured = (i: InvocationFacts): Usage | undefined => i.estimated || i.surface !== 'cli' || !i.launched ? undefined : i.usage;
 const estimate = (i: InvocationFacts): number | undefined => !i.estimated ? undefined : i.tokens ?? (i.usage ? total(i.usage) : undefined);
 const sum = (values: readonly (number | undefined)[]): number | undefined => values.some((v) => v !== undefined) ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : undefined;
-type Totals = { input: number; output: number; cacheRead?: number; cacheWrite?: number; all: number };
+type Totals = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; all: number };
 
 function totals(usages: readonly ModelUsage[]): Totals | undefined {
   if (!usages.length) return undefined;
-  return { input: sum(usages.map((u) => u.input))!, output: sum(usages.map((u) => u.output))!, ...opt('cacheRead', sum(usages.map((u) => u.cacheRead))), ...opt('cacheWrite', sum(usages.map((u) => u.cacheWrite))), all: sum(usages.map(total))! };
+  return { input: sum(usages.map((u) => u.input))!, output: sum(usages.map((u) => u.output))!, ...opt('cacheRead', sum(usages.map((u) => u.cacheRead))), ...opt('cacheWrite', sum(usages.map((u) => u.cacheWrite))), ...opt('reasoning', sum(usages.map((u) => u.reasoning))), all: sum(usages.map(total))! };
 }
 
 // SECTION: Gates
@@ -233,6 +248,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('subject',match(/^[a-f0-9]{16}$/)(v['subject'])), ...opt('attempt',count(v['attempt'])),
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
+    ...opt('coverage', (['no usage output'] as const).find(x => x === v['coverage'])),
     ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
   }];
 }
@@ -281,6 +297,19 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         ...opt('cap', cap !== undefined && cap <= DIAGNOSTIC_THRESHOLDS.maxRoundCap ? cap : undefined),
       }];
     }),
+    ...opt('slotYield', Array.isArray(r['slotYield']) ? r['slotYield'].filter(record).flatMap((v): SlotYieldFacts[] => {
+      const kind = (['provider', 'native', 'tool'] as const).find((name) => name === v['kind']);
+      const provider = token(v['provider']);
+      if (!kind || !provider) return [];
+      const raised = record(v['raised']) ? v['raised'] : {};
+      return [{
+        kind, provider, model: kind === 'provider' ? modelName(v['model']) ?? null : null,
+        raised: { MUST: count(raised['MUST']) ?? 0, SHOULD: count(raised['SHOULD']) ?? 0, CONSIDER: count(raised['CONSIDER']) ?? 0 },
+        accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0, deferred: count(v['deferred']) ?? 0,
+        duplicate: count(v['duplicate']) ?? 0, unruled: count(v['unruled']) ?? 0, ...opt('tokens', count(v['tokens'])),
+        measured: count(v['measured']) ?? 0, launched: count(v['launched']) ?? 0,
+      }];
+    }) : undefined),
     ...opt('observations', r['observations']),
   };
 }
@@ -310,6 +339,7 @@ const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
   quota: ['references/providers.md', 'Reorder or remove the exhausted model alias, or check its quota; quota limits may be shared.'],
   timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
+  blocked: ['references/providers.md', 'Read the blocked reason; fix the denied path or brief, or replace the model.'],
   'context-overflow': ['scripts/toolkit/prompts.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
 };
@@ -448,22 +478,53 @@ function overview(runs: readonly RunFacts[]): string[] {
     if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; ${run.fault.waitBy === 'user' ? 'user' : 'host'} wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
   });
   if (notes.length) lines.push('', ...notes);
-  lines.push('', '### Tokens by provider and model', '', row(['Provider', 'Model', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage']), '| --- | --- | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('', '### Tokens by provider, model and effort', '', row(['Provider', 'Model', 'Effort', 'Uncached input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Coverage']), '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |');
   const items = runs.flatMap((run) => run.invocations).filter((i) => measured(i) || (i.surface === 'cli' && i.launched));
-  for (const [provider, rows] of groups(items, (i) => i.provider)) {
-    lines.push(row([provider, 'all models', ...tokenCells(totals(rows.flatMap((i) => measured(i) ?? []))), coverage(rows)]));
-    const models = new Map<string, ModelUsage[]>();
-    const attribute = (model: string, usage: ModelUsage) => models.set(model, [...(models.get(model) ?? []), usage]);
-    for (const i of rows) {
-      const usage = measured(i);
-      if (!usage) continue;
-      // Per-model counters win; a multi-model aggregate cannot be split, so its attribution is unavailable.
-      if (usage.models) for (const [model, part] of Object.entries(usage.models)) attribute(model, part);
-      else attribute((i.reportedModels?.length ?? 0) > 1 ? DASH : `${i.model} (configured)`, usage);
-    }
-    for (const [model, usages] of models) lines.push(row([provider, model, ...tokenCells(totals(usages)), DASH]));
+  type TokenRow = { provider: string; model: string; effort: string; configured: boolean; usages: ModelUsage[]; measured: number; launched: number; reasons: Set<CoverageReason> };
+  const tokenRows = new Map<string, TokenRow>();
+  const addToken = (provider: string, model: string, effort: string, usage: ModelUsage | undefined, reason: CoverageReason | undefined, configured = false) => {
+    const key = [provider, model, effort].join('\0');
+    const current = tokenRows.get(key) ?? { provider, model, effort, configured, usages: [], measured: 0, launched: 0, reasons: new Set<CoverageReason>() };
+    current.configured ||= configured;
+    current.launched++;
+    if (usage) { current.measured++; current.usages.push(usage); }
+    else if (reason) current.reasons.add(reason);
+    tokenRows.set(key, current);
+  };
+  for (const i of items) {
+    if (i.surface !== 'cli' || !i.launched) continue;
+    const effort = i.effort ?? DASH, usage = measured(i);
+    // Per-model counters win; a multi-model aggregate cannot be split, so its attribution is unavailable.
+    if (usage?.models) for (const [model, part] of Object.entries(usage.models)) addToken(i.provider, model, effort, part, undefined);
+    else addToken(i.provider, (i.reportedModels?.length ?? 0) > 1 ? DASH : i.model, effort, usage, i.coverage, (i.reportedModels?.length ?? 0) <= 1);
   }
-  if (!items.length) lines.push(row(Array<string>(7).fill(DASH)));
+  const tokenRowsSorted = [...tokenRows.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort));
+  for (const entry of tokenRowsSorted) {
+    const t = totals(entry.usages), model = entry.model === DASH ? DASH : entry.configured ? `${entry.model} (configured)` : entry.model;
+    lines.push(row([entry.provider, model, entry.effort, ...tokenCells(t), t?.reasoning === undefined ? DASH : num(t.reasoning),
+      `${entry.measured}/${entry.launched}${entry.reasons.size ? ' ' + [...entry.reasons].join(', ') : ''}`]));
+  }
+  if (!items.length) lines.push(row(Array<string>(9).fill(DASH)));
+  const yields = new Map<string, SlotYieldFacts>();
+  for (const run of runs) for (const row of run.slotYield ?? []) {
+    const key = [row.kind, row.provider, row.model ?? ''].join('\0');
+    const current = yields.get(key);
+    if (!current) { yields.set(key, { ...row, raised: { ...row.raised } }); continue; }
+    addYield(current, row);
+  }
+  const yieldRows = [...yields.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
+  lines.push('', '### Review yield by slot', '',
+    row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted']),
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  for (const entry of yieldRows) {
+    const partial = entry.measured < entry.launched ? ' partial' : '';
+    const cost = `${entry.tokens === undefined ? DASH : num(entry.tokens)}${partial}`;
+    const perAccepted = entry.accepted === 0 || entry.tokens === undefined ? DASH : `${num(entry.tokens / entry.accepted)}${partial}`;
+    const model = entry.kind === 'native' ? 'native' : entry.kind === 'tool' ? DASH : entry.model ?? DASH;
+    lines.push(row([entry.provider, model, String(entry.raised.MUST), String(entry.raised.SHOULD), String(entry.raised.CONSIDER),
+      String(entry.accepted), String(entry.rejected), String(entry.deferred), String(entry.duplicate), String(entry.unruled), cost, perAccepted]));
+  }
+  if (!yieldRows.length) lines.push(row(Array<string>(12).fill(DASH)));
   return [...lines, ''];
 }
 

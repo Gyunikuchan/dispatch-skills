@@ -100,6 +100,15 @@ describe('toolkit CLI contract', () => {
       assert.equal(f.output().path, null);
     } finally { f.cleanup(); }
   });
+  test('ledger append accepts bom record', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const file = f.artifact('bom-record.json', '\uFEFF' + JSON.stringify({kind:'note',key:'bom-note',by:'orchestrator',data:{text:'bom record'}}));
+      assert.equal(await main(['ledger', 'append', '--session', f.session, file], f.deps), 0);
+      assert.equal(f.output().ok, true);
+      assert.deepEqual(foldLedger(f.session).records.filter(row=>row.key==='bom-note').map(row=>row.kind), ['note']);
+    } finally { f.cleanup(); }
+  });
 });
 
 test('lint run summary lists first defects with remaining count', async () => {

@@ -10,9 +10,22 @@ export type Settled = { id: string; locus: string; defect: string; ruling: strin
 export function settledSection(settled: readonly Settled[], revisions = false): string {
   settled=settled.filter(entry=>entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
   if (!settled.length) return '';
-  const clip = (value: string) => value.length > 200 ? `${value.slice(0, 199)}…` : value;
-  const rows = settled.map((entry) => `- ${entry.id} ${entry.locus}: ${clip(entry.defect)} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : ''}`);
-  return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${rows.join('\n')}\n`;
+  const clip = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+  // Reviewers must re-read rejected and deferred text in full; accepted and duplicate rows need only identity.
+  const row = (entry: Settled) => {
+    const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
+    const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '';
+    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${clip(firstLine, 120)} — accepted${suffix}`;
+    if (entry.ruling === 'duplicate') {
+      const reason = entry.reason || 'no reason recorded', clipped = clip(reason, 120), labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
+      const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map(match => match[0]!).filter(id => id !== entry.id);
+      const target = labeled && labeled !== entry.id ? labeled : cited[0];
+      const detail = target && !new RegExp(`\\b${target}\\b`).test(clipped) ? `${target}: ${clip(reason, 120 - target.length - 2)}` : clipped;
+      return `- ${entry.id} ${entry.locus}: ${clip(firstLine, 120)} — duplicate: ${detail}${suffix}`;
+    }
+    return `- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${suffix}`;
+  };
+  return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${settled.map(row).join('\n')}\n`;
 }
 
 export function askPrompt(question: string, context: string): string {

@@ -30,7 +30,7 @@ export function capSummary(text: string): string {
 // Counts stay in `head` so a truncated list never hides totals; the omission notice is budgeted before any item.
 const SUMMARY_ITEM_LIMIT = 5;
 const SUMMARY_ITEM_BYTES = 200;
-function clipBytes(text: string, max: number): string {
+export function clipBytes(text: string, max: number): string {
   if (Buffer.byteLength(text, 'utf8') <= max) return text;
   let result = '';
   let bytes = Buffer.byteLength('…', 'utf8');

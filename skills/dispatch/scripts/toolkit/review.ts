@@ -19,10 +19,13 @@ import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
-import { summaryWithItems, ToolError } from './output.ts';
+import { clipBytes, summaryWithItems, ToolError } from './output.ts';
 import { redGaps } from './red.ts';
 import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection } from './review-findings.ts';
+import { sanitizeText } from './domain/sanitize.ts';
+import type { BlockedAttempt } from './fanout.ts';
+import type { LedgerRecord } from './records.ts';
 
 // NOTE: shared by every target rejection so the host can correct its target in one turn.
 const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
@@ -41,6 +44,72 @@ function atomic(file: string, value: unknown) {
 const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const splitPaths = (text: string) => text.split('\0').filter(Boolean);
+
+// SECTION: Blocked attempts
+type BlockedEntry = {slot: string} & BlockedAttempt;
+type BlockerEntry = {slot: string; reason: string; rounds: [number, number]};
+type BlockedState = {blocked: BlockedEntry[]; blockers: BlockerEntry[]};
+const BLOCKED_NOTICE_BYTES = 400; // Leaves the summary room for counts and at least one finding.
+
+/** Blocked attempts of one round, read from its current generation so a resumed pending run keeps them. */
+function blockedEntries(directory: string, number: number): BlockedEntry[] {
+  const root = path.join(directory, 'round-' + number), metadata = read<Round>(path.join(root, 'round.json'));
+  if (!metadata) return [];
+  const slots = path.join(root, 'gen-' + metadata.generation, 'slots');
+  return metadata.roster.flatMap(slot => (read<SlotOutcome>(path.join(slots, slot.slot + '.json'))?.blocked ?? []).map(entry => ({slot: slot.slot, ...entry})));
+}
+
+/** Same slot and reason identity in the nearest earlier round that has findings; a narrowed slot has no partner. */
+function blockersFor(directory: string, number: number, blocked: readonly BlockedEntry[]): BlockerEntry[] {
+  const previous = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).filter(candidate => candidate < number && fs.existsSync(path.join(directory, 'round-' + candidate, 'findings.json'))).sort((left, right) => right - left)[0];
+  if (previous === undefined) return [];
+  const prior = new Set(blockedEntries(directory, previous).map(entry => entry.slot + '\0' + entry.reasonHash)), seen = new Set<string>(), blockers: BlockerEntry[] = [];
+  for (const entry of blocked) {
+    const key = entry.slot + '\0' + entry.reasonHash;
+    if (!prior.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    blockers.push({slot: entry.slot, reason: entry.reason, rounds: [previous, number]});
+  }
+  return blockers;
+}
+
+/** Blockers first, then blocked attempts, within the summary budget; the result keeps every entry. */
+function blockedNotice(blocked: readonly BlockedEntry[], blockers: readonly BlockerEntry[]): string {
+  const items = [...blockers.map(entry => `orchestrator blocker ${entry.slot}: ${entry.reason} (rounds ${entry.rounds[0]}-${entry.rounds[1]})`), ...blocked.map(entry => `blocked ${entry.slot}: ${entry.reason}`)];
+  const reserve = Buffer.byteLength(`; +${items.length} more blocked`, 'utf8'), shown: string[] = [];
+  let bytes = 0;
+  for (const item of items) {
+    const text = clipBytes(item, 160), size = Buffer.byteLength(text, 'utf8') + 2;
+    if (shown.length && bytes + size + reserve > BLOCKED_NOTICE_BYTES) break;
+    shown.push(text); bytes += size;
+  }
+  const omitted = items.length - shown.length;
+  return shown.join('; ') + (omitted ? `; +${omitted} more blocked` : '');
+}
+// SECTION: Review ceiling
+type CeilingState = {ceiling: number; deferred: boolean; open: boolean};
+const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
+/**
+ * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
+ * Defer grants nothing and applies only to the current ceiling id.
+ */
+function ceilingState(records: readonly LedgerRecord[], review: string, cap1: number): CeilingState {
+  const prefix = 'ceiling:' + review + ':';
+  const opened = new Map<string, number>(), state = new Map<string, string>(), grants = new Set<string>(), defers = new Set<string>();
+  for (const row of records) {
+    if (row.kind !== 'escalation') continue;
+    const id = row.data['id'];
+    if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
+    state.set(id, row.data['state']);
+    if (row.by === 'tool' && row.data['state'] === 'open' && !opened.has(id)) opened.set(id, row.seq);
+    if (row.by !== 'user' || row.data['state'] !== 'resolved' || !row.quote?.trim() || row.seq <= (opened.get(id) ?? Infinity)) continue;
+    const summary = String(row.data['summary'] ?? '');
+    if (CEILING_GRANT.test(summary)) grants.add(id);
+    else if (summary.startsWith('defer:')) defers.add(id);
+  }
+  const ceiling = cap1 + 2 + 2 * grants.size;
+  return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
+}
 // NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
 function specHashFor(root: string, input: string): string {
   const specPath = path.resolve(root, input);
@@ -75,6 +144,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     if (!confirmation.allowed) throw new ToolError(4, confirmation.reason!, confirmation.reason!);
   }
   const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
+  const noReviewer = () => cap > 0 ? 'No live or usable reviewer is configured for this review; restore a provider or configure one' + underfillNote(roster) : 'Review at ' + level + ' has no reviewers; raise the level to continue';
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
   const bound = latest(fold, 'bind');
   let taskTarget = false;
@@ -98,7 +168,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const rejectionStates=()=>loadRejections(session,foldLedger(session),[review]);
   const initialRejections=rejectionStates();
   if(initialRejections.some(state=>state.state==='escalated'))throw new ToolError(4,'escalation-open','Resolve the disputed MUST rejection before another confirmation round');
-  if (!cap && !initialRejections.some(state=>state.state==='pending')) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
   const directory = path.join(session, '.state/reviews', review);
   fs.mkdirSync(directory, {recursive: true});
 
@@ -185,16 +254,46 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const last = numbers.at(-1) ?? 0;
     const completed = last > 0 && fs.existsSync(path.join(directory, 'round-' + last, 'findings.json'));
     const n = completed ? last + 1 : last || 1;
-    if (n > cap) {
-      // MUST has no cap (ADR 0005 D4): an accepted MUST fix earns a round; recurrence escalations bound the loop.
+    // Computed once after the slots exist: every return path reports the same blocked state.
+    let blockedState: BlockedState | undefined;
+    const blockedStateOf = (): BlockedState => blockedState ??= (() => {
+      const blocked = blockedEntries(directory, n);
+      return {blocked, blockers: blockersFor(directory, n, blocked)};
+    })();
+    const publicBlocked = () => blockedStateOf().blocked.map(({slot, provider, model, reason}) => ({slot, provider, model, reason}));
+    const first = read<Round>(path.join(directory, 'round-1', 'round.json'));
+    const cap1 = first?.cap ?? cap;
+    const ceiling = ceilingState(foldLedger(session).records, review, cap1);
+    const continuation = () => {
       const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
       const previousMetadata=read<Round>(path.join(directory,'round-'+(n-1),'round.json'));
       const fixed = numbers.some(number=>read<FindingsValue>(path.join(directory,'round-'+number,'findings.json'))?.findings.some(finding=>{
         const ruling=rulings.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id);
         return finding.severity==='MUST' && ruling?.data['ruling']==='accepted' && (number===n-1 || ruling.seq>(previousMetadata?.startSeq ?? 0));
       }));
-      if (!fixed && !rejectionStates().some(state=>state.state==='pending')) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap);
+      return {fixed, pending: rejectionStates().some(state=>state.state==='pending')};
+    };
+    // A fresh review may skip at a zero-round level; an existing review runs the saved-cap checks below.
+    if (!cap && !numbers.length) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
+    // An incomplete round is reused before the ceiling checks; the round-cap predicate still applies.
+    if (completed && ceiling.open) throw new ToolError(4, 'escalation-open', 'Resolve the review ceiling escalation before another round');
+    if (n > cap1) {
+      const {fixed, pending} = continuation();
+      const pastCeiling = completed && n > ceiling.ceiling;
+      // Defer grants no rounds; a pending MUST rejection keeps its confirmation round.
+      if ((!fixed && !pending) || (pastCeiling && ceiling.deferred && !pending)) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap1);
+      if (pastCeiling && !ceiling.deferred) {
+        const id = 'ceiling:' + review + ':' + ceiling.ceiling;
+        await withLedger(session, 'review ceiling', deps, async tx => {
+          await tx.append({kind: 'escalation', by: 'tool', key: id, data: {id, state: 'open', summary: 'ceiling ' + ceiling.ceiling + ' reached'}});
+        });
+        throw new ToolError(4, 'review-ceiling', 'Review reached ceiling ' + ceiling.ceiling + '; resolve the review escalation before another round');
+      }
     }
+    // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
+    const existingRound = read<Round>(path.join(directory, 'round-' + n, 'round.json'));
+    if (!cap && !existingRound && !rejectionStates().some(state => state.state === 'pending'))
+      throw new ToolError(4, 'level-unapproved', 'Review at ' + level + ' has no reviewers; raise the level to continue');
     const dir = path.join(directory, 'round-' + n);
     const current = await capture();
     fs.mkdirSync(dir, {recursive: true});
@@ -221,6 +320,13 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
 
     // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
     const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.md$/, '.context.md'));
+    function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean } {
+      const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
+      const target = previous?.metadata.roster.find(slot => !slot.reserve), rulings = rulingRows();
+      const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
+        && (finding.severity === 'MUST' || (finding.severity === 'SHOULD' && n - 1 < cap1)));
+      return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
+    }
     async function start(generation: number, captured: Capture): Promise<Round> {
       let scope = 'Full review', changedPaths = captured.changed;
       if (n > 1) {
@@ -233,13 +339,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
       // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
-      const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
-      const previousTarget = previous?.metadata.roster.find(slot => !slot.reserve);
-      const rulings = rulingRows();
-      const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
-        && (finding.severity === 'MUST' || (finding.severity === 'SHOULD' && n - 1 < cap)));
-      const targets = previousTarget && !decisive ? [previousTarget] : roster.targets;
-      if (n > 1 && previousTarget && !decisive) scope = scope.replace('(full)', '(narrowed)');
+      const {targets, narrowed} = replacement();
+      if (narrowed) scope = scope.replace('(full)', '(narrowed)');
       const turnPaths = kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
       const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
       const slots=[...targets,...roster.reserves];
@@ -250,7 +351,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         slots.push({...saved,reserve:false});
       }
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
-      const value: Round = {round: n, generation, cap, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
+      const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
+      if (!slots.some(entry => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -258,6 +360,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
 
     async function supersede(captured: Capture) {
+      const staffed = replacement().targets.some(slot => !slot.reserve)
+        || rejectionStates().filter(state => state.state === 'pending').some(state => state.request.sourceSlots.some(source => confirmationRounds.some(round => round.metadata.roster.some(slot => slot.slot === source))));
+      if (!staffed) throw new ToolError(4, 'level-unapproved', noReviewer());
       const pending = read<Finalized>(pendingFile);
       if (pending) {
         await withLedger(session, 'review supersede', deps, async tx => {
@@ -292,15 +397,27 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const validate = (text: string,logicalSlot:string): Validation => {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
         if (parsed.ok) return {ok: true};
+        if (parsed.failure.kind === 'blocked') {
+          // The raw reason stops here: only its sanitized display and hash identity leave this frame.
+          const raw = parsed.failure.detail.trim();
+          const reason = sanitizeText(raw).slice(0, 200) || '(reason removed by sanitizer)';
+          return {ok: false, cls: 'blocked', reason: 'blocked: ' + reason, blocked: {reason, reasonHash: crypto.createHash('sha256').update(raw).digest('hex')}};
+        }
         const cls = parsed.failure.kind === 'uncovered-scope' || parsed.failure.kind === 'loose-locus' ? 'refusal' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
-      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd}, deps);
+      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session}, deps);
       const captured = await capture();
       if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
-      if (native.length) return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + underfillNote(round)};
-      if (!replies.some(reply => reply.state === 'done')) throw new ToolError(2, 'review-failed', 'Every review slot failed' + underfillNote(round));
+      if (native.length) {
+        const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
+        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + (notice ? '; ' + notice : '') + underfillNote(round)};
+      }
+      if (!replies.some(reply => reply.state === 'done')) {
+        const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
+        throw new ToolError(2, 'review-failed', (notice ? notice + '; ' : '') + 'Every review slot failed' + underfillNote(round));
+      }
       const changedSince: Record<number, string[]> = {}, owners: Record<string, string[]> = {};
       if (kind === 'code' && requested === 'integration') {
         for (const [number, target] of Object.entries(priorTargets)) changedSince[Number(number)] = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(target), label(round.target)]));
@@ -373,14 +490,17 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const findings = kind === 'plan' || kind === 'design'
       ? refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; })
       : null;
+    const state = blockedStateOf(), blockedSummary = blockedNotice(state.blocked, state.blockers);
     return {
       ok: true, exit: 0,
       value: {
         path: file, review, round: n,
         ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
+        ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
+        ...(state.blockers.length ? { blockers: state.blockers } : {}),
         ...(round.underfill ? { underfill: round.underfill } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots${underfillNote(round)}`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
         ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity)
           .map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`))),
     };

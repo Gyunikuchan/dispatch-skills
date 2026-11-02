@@ -39,7 +39,18 @@ export async function stub(file: string, args: readonly string[]): Promise<void>
   fs.renameSync(path.join(recordDir, 'launch.tmp'), path.join(recordDir, 'launch.json'));
   if (scenario.delayMs) await new Promise<void>((resolve) => setTimeout(resolve, scenario.delayMs));
   const output = scenario.responses[Math.min(index, scenario.responses.length - 1)];
-  await new Promise<void>((resolve, reject) => process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`, (error) => error ? reject(error) : resolve()));
+  if (args.includes('--format') && args[args.indexOf('--format') + 1] === 'json') {
+    // OpenCode JSON mode: one text event carries the scenario reply; tool output stays on the event stream.
+    const text = typeof output === 'string' ? output : JSON.stringify(output);
+    const event = (type: string, part: Record<string, unknown>) => JSON.stringify({ type, timestamp: 0, sessionID: 'stub-session', part });
+    const stream = [
+      event('text', { id: 'stub-text', sessionID: 'stub-session', messageID: 'stub-message', type: 'text', text }),
+      event('step_finish', { id: 'stub-step', sessionID: 'stub-session', messageID: 'stub-message', type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }),
+    ].join('\n');
+    await new Promise<void>((resolve, reject) => process.stdout.write(`${stream}\n`, (error) => error ? reject(error) : resolve()));
+  } else {
+    await new Promise<void>((resolve, reject) => process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`, (error) => error ? reject(error) : resolve()));
+  }
   fs.writeFileSync(path.join(recordDir, 'done.tmp'), JSON.stringify({ index, pid: process.pid }));
   fs.renameSync(path.join(recordDir, 'done.tmp'), path.join(recordDir, 'done.json'));
 }

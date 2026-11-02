@@ -2,6 +2,7 @@
 // credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
+import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
@@ -70,10 +71,22 @@ const DENYLIST_BLOCK =
 
 export const GUARDRAIL_HEADER = '[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]';
 
-export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string; attachedFiles?: readonly string[] } = {}): string {
+/** Where the word-pattern exemption applies; worktree roots stay excluded because they hold host source. */
+export type SessionScope = { sessionRoot?: string; sessionRealRoot?: string; worktreeRealRoot?: string; worktreeRoots?: readonly string[] };
+
+export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string; attachedFiles?: readonly string[] } & SessionScope = {}): string {
   const lines: string[] = [];
   if (scope.workspaceRoot) lines.push(`[PRIMARY WORKSPACE]: ${scope.workspaceRoot}`);
   if (scope.attachedFiles?.length) lines.push(`[ATTACHED FILES]: ${scope.attachedFiles.join(', ')}`);
+  // NOTE: only the word patterns yield inside one directory; the other denied patterns still apply there, and worktrees hold host source.
+  const real = scope.sessionRealRoot && scope.sessionRealRoot !== scope.sessionRoot ? ` (resolved ${scope.sessionRealRoot})` : '';
+  const worktree = scope.sessionRoot ? `${scope.sessionRoot}/.state/worktrees` : '';
+  const physicalWorktree = scope.worktreeRealRoot ?? (scope.sessionRealRoot ? `${scope.sessionRealRoot}/.state/worktrees` : worktree);
+  const worktreeReal = physicalWorktree && physicalWorktree !== worktree ? ` (resolved ${physicalWorktree})` : '';
+  const checkouts = scope.worktreeRoots?.length ? ` or a resolved checkout directory (${scope.worktreeRoots.join(', ')})` : '';
+  const sessionExemption = scope.sessionRoot
+    ? `[SESSION ARTIFACTS]: a file under ${scope.sessionRoot}${real} whose resolved path is also under ${scope.sessionRealRoot ?? scope.sessionRoot} is exempt from *token* and *secret*, except a file under ${worktree}${worktreeReal}${checkouts}; every other denied pattern applies; if the path cannot be resolved, no exemption applies.\n`
+    : '';
   return `${GUARDRAIL_HEADER}\n`
     + 'You are running in strict READ-ONLY analysis mode.\n'
     + '- You MUST NOT edit, overwrite, create, or delete any project repository files; read tools and permitted read commands may create or update only their own internal cache or index directory (such as a code index).\n'
@@ -82,23 +95,46 @@ export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string;
     + '- You may read files from the workspace, attached paths, and tool/runtime directories.\n'
     + '- You MUST NOT read files or directories matching the denied patterns below.\n'
     + (lines.length ? `${lines.join('\n')}\n` : '')
-    + `${DENYLIST_BLOCK}\n--------------------------------------------------\n\n${raw}`;
+    + `${DENYLIST_BLOCK}\n${sessionExemption}--------------------------------------------------\n\n${raw}`;
 }
 
 const basename = (file: string): string => file.split(/[/\\]/).pop() ?? file;
 
+// Windows compares paths case-insensitively, as `samePath` in lib/session.ts does.
+const pathKey = (value: string): string => {
+  const resolved = path.resolve(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
+
+/** Whether `file` sits at or under `root`. */
+const insidePath = (file: string, root: string): boolean => {
+  const relative = path.relative(pathKey(root), pathKey(file));
+  return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+};
+
+const worktreeRoot = (root: string): string => path.join(root, '.state', 'worktrees');
+
 /** 'file' | 'dir' when `file` or its realpath (symlink target) matches the denylist, else null. */
-export function findSensitiveMatch(file: string, realpath: (file: string) => string | null): 'file' | 'dir' | null {
+export function findSensitiveMatch(file: string, realpath: (file: string) => string | null, session: SessionScope = {}): 'file' | 'dir' | null {
+  const { sessionRoot, sessionRealRoot = sessionRoot, worktreeRealRoot, worktreeRoots = [] } = session;
   const real = realpath(file);
   const candidates = real === null || real === file ? [file] : [file, real];
+  // NOTE: an unresolvable path gets no exemption: a symlink may point at a real secret outside the session.
+  const lexicalWorktree = sessionRoot === undefined ? '' : worktreeRoot(sessionRoot);
+  const physicalWorktree = sessionRealRoot === undefined ? lexicalWorktree : worktreeRoot(sessionRealRoot);
+  const resolvedWorktree = worktreeRealRoot ?? (lexicalWorktree ? realpath(lexicalWorktree) : null) ?? '';
+  const resolvedPhysical = physicalWorktree ? realpath(physicalWorktree) ?? '' : '';
+  const underWorktree = [lexicalWorktree, physicalWorktree, resolvedWorktree, resolvedPhysical, ...worktreeRoots].filter(Boolean)
+    .some(root => insidePath(file, root) || (real !== null && insidePath(real, root)));
+  const sessionExempt = sessionRoot !== undefined && real !== null
+    && insidePath(file, sessionRoot) && insidePath(real, sessionRealRoot ?? sessionRoot) && !underWorktree;
   for (const candidate of candidates) {
     const base = basename(candidate);
     if (SENSITIVE_FILE_PATTERNS.some((pattern) => pattern.test(candidate) || pattern.test(base))) return 'file';
-    if (SENSITIVE_BASENAME_PATTERNS.some((pattern) => pattern.test(base))) return 'file';
+    if (!sessionExempt && SENSITIVE_BASENAME_PATTERNS.some((pattern) => pattern.test(base))) return 'file';
   }
   return candidates.some((candidate) => SENSITIVE_DIR_PATTERNS.some((pattern) => pattern.test(candidate))) ? 'dir' : null;
 }
-
 // SECTION: Attachments
 
 export type RunnerFs = {
@@ -106,6 +142,8 @@ export type RunnerFs = {
   writeText(file: string, text: string): void;
   /** Resolved real path, or null when missing. */
   realpath(file: string): string | null;
+  /** Directory entry names; throws when the directory cannot be read. */
+  readdir(directory: string): readonly string[];
   /** Regular-file size, or null when absent or not a file. */
   size(file: string): number | null;
   /** First `maxBytes` bytes decoded as UTF-8. */
@@ -114,15 +152,39 @@ export type RunnerFs = {
 
 export type AttachmentBlock = { text: string; notes: string[]; attachedFiles: string[]; usedBytes: number };
 
+/** Failed checkout discovery removes the exemption rather than failing open. */
+function sessionScope(sessionRoot: string | undefined, fs: RunnerFs): SessionScope {
+  if (sessionRoot === undefined) return {};
+  const lexical = worktreeRoot(sessionRoot);
+  let worktreeRoots: string[];
+  try {
+    worktreeRoots = fs.readdir(lexical).flatMap(name => {
+      const child = path.join(lexical, name), real = fs.realpath(child);
+      if (real === null) throw new Error('unresolved checkout');
+      return real !== child && !insidePath(real, lexical) ? [real] : [];
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return {};
+    worktreeRoots = [];
+  }
+  const sessionRealRoot = fs.realpath(sessionRoot), worktreeRealRoot = fs.realpath(lexical);
+  return {
+    sessionRoot,
+    ...(sessionRealRoot === null ? {} : { sessionRealRoot }),
+    ...(worktreeRealRoot === null ? {} : { worktreeRealRoot }),
+    ...(worktreeRoots.length ? { worktreeRoots } : {}),
+  };
+}
+
 /** Caps each file and the total; wraps each in a nonce-tagged DATA block so content cannot pose as instructions. */
-export function buildAttachmentBlock(files: readonly string[], fs: RunnerFs, nonce: () => string, limits = { perFile: MAX_ATTACHMENT_BYTES_PER_FILE, total: MAX_ATTACHMENT_BYTES_TOTAL }): AttachmentBlock {
+export function buildAttachmentBlock(files: readonly string[], fs: RunnerFs, nonce: () => string, limits = { perFile: MAX_ATTACHMENT_BYTES_PER_FILE, total: MAX_ATTACHMENT_BYTES_TOTAL }, session: SessionScope = {}): AttachmentBlock {
   const snippets: string[] = [];
   const notes: string[] = [];
   const attachedFiles: string[] = [];
   let usedBytes = 0;
   for (const file of files) {
     if (usedBytes >= limits.total) { notes.push(`skipped ${file} (total attachment budget of ${limits.total} bytes reached)`); continue; }
-    const sensitive = findSensitiveMatch(file, fs.realpath);
+    const sensitive = findSensitiveMatch(file, fs.realpath, session);
     if (sensitive) { notes.push(`rejected ${file} (sensitive ${sensitive})`); continue; }
     const size = fs.size(file);
     if (size === null) { notes.push(`unreadable ${file}`); continue; }
@@ -365,10 +427,10 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   if (req.sandbox && spec.sandbox && !spec.sandbox.supported(ports.platform)) {
     return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
   }
-  const attachments = buildAttachmentBlock(req.attachments, ports.fs, ports.nonce);
+  const session = sessionScope(req.sessionRoot, ports.fs);
+  const attachments = buildAttachmentBlock(req.attachments, ports.fs, ports.nonce, undefined, session);
   const body = ports.fs.readText(req.promptPath);
-  const scope: { workspaceRoot?: string; attachedFiles: string[] } = { attachedFiles: attachments.attachedFiles };
-  if (ports.workspaceRoot !== undefined) scope.workspaceRoot = ports.workspaceRoot;
+  const scope = { attachedFiles: attachments.attachedFiles, ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
   const guarded = formatSafetyPrompt(attachments.text ? `${attachments.text}\n\n${body}` : body, scope);
   const schemaText = req.schemaPath && spec.schema ? ports.fs.readText(req.schemaPath) : null;
   const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform };
@@ -401,7 +463,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
     try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
-    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : {}) });
+    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;

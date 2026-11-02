@@ -3,7 +3,7 @@
 
 import type { FailureClass } from '../toolkit/types.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
-import type { DiagnosticUsage } from '../toolkit/types.ts';
+import type { CoverageReason, DiagnosticUsage } from '../toolkit/types.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 
@@ -22,6 +22,10 @@ export type DelegateRequest = {
   schemaPath: string | null;
   resume: string | null;
   cwd: string;
+  /** Active Dispatch session directory; its artifacts skip the basename word patterns in the guard. */
+  sessionRoot?: string;
+  /** Logical slot this reserve attempt substitutes for; set only on reserve attempts. */
+  targetSlot?: string;
   timeoutMs: number;
   outputCapBytes: number;
   attachments: readonly string[];
@@ -73,7 +77,7 @@ export type RunOutcome =
   | { status: 'fail'; cls: FailureClass; detail: string; retryWithoutEffort?: boolean };
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage };
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
 export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
@@ -105,6 +109,10 @@ export type ProviderSpec = {
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
   usage?(raw: string): DiagnosticUsage | undefined;
+  /** Marks a launched invocation whose provider has no machine-readable usage output. */
+  usageUnavailable?: CoverageReason;
+  /** Provider-specific stdout cap; the runner default is 10 MiB. */
+  outputCapBytes?: number;
   sandbox?: SandboxSpec;
   schema?: true;
   /** Host platform whose native subagents can serve this provider's targets. */

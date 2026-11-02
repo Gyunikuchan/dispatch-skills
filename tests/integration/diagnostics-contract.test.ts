@@ -13,6 +13,8 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.ok(instruction.includes('JSON array'));
   assert.ok(instruction.includes('<session>/.state/retro.json'));
   assert.ok(instruction.includes('{id,component,category,evidence,impact,proposedFix}'));
+  assert.ok(instruction.includes('unique ids'));
+  assert.ok(instruction.includes('1-48 A-Za-z0-9_- chars'));
   for (const key of Object.keys(CATEGORIES)) assert.ok(instruction.includes('`' + key + '`'), key);
   assert.ok(instruction.includes('at most ' + DIAGNOSTIC_LIMITS.fieldBytes + ' bytes'));
   assert.match(instruction, /Exclude repository, toolchain, and user-work issues/);

@@ -59,6 +59,94 @@ test('delegates-one-report-parse: one path parses fenced or bare JSON into draft
   assert.ok(clean.ok && clean.findings.length === 0);
 });
 
+test('the report must end the reply', () => {
+  const clean = report([], 'CLEAN'), found = report([finding()]);
+  const fenced = (body: string) => `\`\`\`json\n${body}\n\`\`\``;
+  const accepted: [string, string, 'CLEAN' | 'FINDINGS'][] = [
+    ['closing fence after narration', `Reading.\r\n${fenced(found)}`, 'FINDINGS'],
+    ['closing bare fence', `Done.\n\`\`\`\n${found}\n\`\`\``, 'FINDINGS'],
+    ['line-start object after narration', `Reading {plan}.\n${found}`, 'FINDINGS'],
+    ['quoted example before the report', `${fenced(clean)}\nNow the report:\n${found}`, 'FINDINGS'],
+    ['unrelated JSON before the report', `{"status":"failed","reason":"x"}\n[1,2]\n${clean}`, 'CLEAN'],
+    ['narration ending in a comma', `After checking,\n${found}`, 'FINDINGS'],
+    ['narration ending in a bracket', `A stray [\n${found}`, 'FINDINGS'],
+    ['narration quoting a key', `The plan says "report":\n${found}`, 'FINDINGS'],
+    ['narration bullet quoting a path', `* Checked "src/index.ts": no issues\n${found}`, 'FINDINGS'],
+    ['narration checklist line', `[x] reviewed the plan\n${found}`, 'FINDINGS'],
+    ['narration bracket heading', `[Summary]\n${found}`, 'FINDINGS'],
+    ['line-start quoted label', `"src/a.ts": no issues\n${found}`, 'FINDINGS'],
+    ['line-start quoted label with a pointer', `"report": see below\n${found}`, 'FINDINGS'],
+    ['line-start label with a count', `"src/a.ts": 1 finding\n${found}`, 'FINDINGS'],
+    ['unbalanced prose before the report', `A stray " and ( and [ and {\n${found}`, 'FINDINGS'],
+    ['pretty-printed report', `Report:\n${JSON.stringify({ status: 'FINDINGS', findings: [finding()] }, null, 2)}`, 'FINDINGS'],
+  ];
+  for (const [name, text, status] of accepted) {
+    const result = parseReport({ kind: 'code', source: 'codex[0]', text });
+    assert.ok(result.ok, name);
+    assert.equal(result.status, status, name);
+  }
+  const rejected: [string, string][] = [
+    ['clean example then a cut-off report', `${clean}\nActual: {"status":"FINDINGS","findings":[`],
+    ['clean example then relaxed JSON', `${clean}\nActual: {status:'FINDINGS',findings:[]}`],
+    ['clean example then an inline report', `${fenced(clean)}\nActual: ${found}`],
+    ['report then trailing prose', `${found}\nReview complete.`],
+    ['clean report then a bare findings array', `${clean}\n[${JSON.stringify(finding())}]`],
+    ['clean report then a non-report object', `${clean}\n{"status":"FINDNGS","findings":[]}`],
+    ['fenced non-report', fenced('{"status":"done"}')],
+    ['cut-off report ending at a nested clean report', `Narration
+{"status":"FINDINGS","findings":[
+${clean}`],
+    ['cut-off report with a nested clean report after a comma', `{"status":"FINDINGS","findings":[
+${JSON.stringify(finding())},
+${clean}`],
+    ['cut-off report with a spaced key colon', `{"status":"FINDINGS","findings" :\n${clean}`],
+    ['cut-off report with an object value', `{"status":"FINDINGS","notes":{\n${clean}`],
+    ['cut-off pretty report after a closing line', `{"status":"FINDINGS","findings":[\n{\n"severity":"MUST"\n},\n${clean}`],
+    ['cut-off report after a scalar row', `{"status":"FINDINGS","findings":[\n"a",\n${clean}`],
+    ['cut-off report after an array row', `{"status":"FINDINGS","findings":[\n[1,2],\n${clean}`],
+    ['cut-off report after a malformed value', `{"status":"FINDINGS","findings":[\n{"severity": MUST,\n${clean}`],
+    ['cut-off report ending at a finding', `{"status":"FINDINGS","findings":[\n${JSON.stringify(finding())}`],
+  ];
+  for (const [name, text] of rejected) assert.equal(failure(text), 'uncovered-scope', name);
+});
+
+test('a line-start blocked report keeps its reason', () => {
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Note\n${JSON.stringify({ reason: 'target unreadable', status: 'BLOCKED' })}` });
+  assert.ok(!result.ok);
+  assert.equal(result.failure.kind, 'blocked');
+  assert.match(result.failure.detail, /target unreadable/);
+});
+
+test('a narrated report with many findings parses', () => {
+  const rows = Array.from({ length: 1100 }, (_, i) => JSON.stringify(finding({ locus: `src/fetch.ts:L${i + 1}` }))).join(',\n');
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Note:\n{"status":"FINDINGS","findings":[\n${rows}\n]}` });
+  assert.ok(result.ok);
+  assert.equal(result.findings.length, 1100);
+});
+
+test('a fence inside a JSON string does not end the report', () => {
+  const body = JSON.stringify({ status: 'FINDINGS', findings: [finding({ defect: 'the ``` delimiter' })] });
+  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: 'Note\n```json\n' + body + '\n```' }).ok, true);
+});
+
+test('a tagged fence inside a JSON string does not end the report', () => {
+  const body = JSON.stringify({ status: 'FINDINGS', findings: [finding({ defect: 'use a ```json block' })] });
+  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: 'Note\n```json\n' + body + '\n```' }).ok, true);
+});
+
+test('a degenerate fence stays bounded', () => {
+  const started = Date.now();
+  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(200000) + 'x\n```y```' }).ok, false);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test('a large malformed reply stays bounded', () => {
+  const text = `${'{"a":\n'.repeat(10000)}{"status":1}`;
+  const started = Date.now();
+  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text }).ok, false);
+  assert.ok(Date.now() - started < 2000, 'large malformed reply exceeded 2s');
+});
+
 test('delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope, loose locus', () => {
   assert.equal(failure('   '), 'empty-output');
   assert.equal(failure("I'm unable to help with reviewing this."), 'refusal');
@@ -67,6 +155,21 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
   assert.equal(failure(report([finding()], 'CLEAN')), 'uncovered-scope');
   assert.equal(failure(report([finding({ locus: 'src/fetch.ts' })])), 'loose-locus');
   assert.equal(failure(report([finding({ locus: 'src/fetch.ts:L1-L9' })])), 'loose-locus');
+});
+
+test('blocked json report keeps reason', () => {
+  const result = parseReport({ kind: 'plan', source: 'codex[0]', text: JSON.stringify({ status: 'BLOCKED', reason: '  Session artifact denied by the guard  ' }) });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.deepEqual(result.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
+});
+
+test('blocked without reason stays uncovered', () => {
+  for (const text of [
+    JSON.stringify({ status: 'BLOCKED' }),
+    JSON.stringify({ status: 'BLOCKED', reason: '   ' }),
+    JSON.stringify({ status: 'BLOCKED', reason: 42 }),
+    JSON.stringify({ status: 'BLOCKED', findings: [] }),
+  ]) assert.equal(failure(text), 'uncovered-scope', text);
 });
 
 test('review-dedup: duplicates keep their own id with dupOf; the first cites every reporting source', () => {
@@ -333,7 +436,7 @@ test('diagnostics report: renders unavailable as dash', () => {
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
   })]);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), text);
-  assert.ok(text.includes('| claude | all models | — | — | — | — | 0/1 |'), text);
+  assert.ok(text.includes('| claude | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), text);
   assert.match(text, /native and write —/);
 });
 
@@ -580,22 +683,30 @@ test('diagnostics report: attributes tokens per reported model', () => {
     provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'],
     usage: { input: 150, output: 15, models: { 'claude-opus-5-5': { input: 100, output: 10 }, 'claude-haiku-5': { input: 50, output: 5 } } },
   })] })]);
-  assert.ok(text.includes('| claude | all models | 150 | — | — | 15 | 1/1 |'), text);
-  assert.ok(text.includes('| claude | claude-opus-5-5 | 100 | — | — | 10 | — |'), text);
-  assert.ok(text.includes('| claude | claude-haiku-5 | 50 | — | — | 5 | — |'), text);
+  assert.ok(text.includes('| claude | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), text);
+  assert.ok(text.includes('| claude | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.doesNotMatch(text, /\(configured\)/);
+});
+
+test('diagnostics report: mixed measured and unmeasured launches share one model row', () => {
+  const text = render([facts({ invocations: [
+    invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 100, output: 10, models: { 'claude-opus-5-5': { input: 100, output: 10 } } } }),
+    bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
+  ] })]);
+  assert.ok(text.includes('| claude | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), text);
+  const table = text.split('### Tokens by provider, model and effort')[1]!.split('### Review yield')[0]!;
+  assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
 });
 
 test('diagnostics report: labels configured-model attribution', () => {
   const text = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| codex | gpt-6-sol (configured) | 100 | — | — | 10 | — |'), text);
+  assert.ok(text.includes('| codex | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.ok(text.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), text);
 });
 
 test('diagnostics report: multi-model aggregate leaves model attribution unavailable', () => {
   const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| claude | all models | 100 | — | — | 10 | 1/1 |'), text);
-  assert.ok(text.includes('| claude | — | 100 | — | — | 10 | — |'), text);
+  assert.ok(text.includes('| claude | — | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.doesNotMatch(text, /\(configured\)/);
 });
 
@@ -688,7 +799,7 @@ test('retro observations: rejects locators in ids models and config', () => {
     assert.match(text, /- Host retro: collected · 0 accepted · 1 rejected/, 'observation id');
     assert.match(text, /code review: 1 round; 1 finding re-raised across rounds \(R1-F001\); deadlock escalation\./, 'review ids');
     assert.ok(text.includes('— (reported: gpt-6-sol)'), 'model and reported-model keys');
-    assert.ok(text.includes('| codex | — (configured) | 10 | — | — | 1 | — |'), 'usage.models keys drop the per-model split');
+    assert.ok(text.includes('| codex | — | medium | 10 | — | — | 1 | — | 1/1 |'), 'usage.models keys drop the per-model split');
     assert.ok(text.includes('"model": "—"'), 'config strings');
   }
   const names = ['gemini-3.8-flash', 'gpt-6.1-sol', 'opencode-go/muse-spark-1.3-contributor', 'claude-opus-5-5'];
@@ -698,7 +809,7 @@ test('retro observations: rejects locators in ids models and config', () => {
   })]);
   for (const name of names) {
     assert.ok(text.includes(`| ${name} (reported: ${name}) |`), `model ${name}`);
-    assert.ok(text.includes(`| codex | ${name} | 10 |`), `usage key ${name}`);
+    assert.ok(text.includes(`| codex | ${name} | medium | 10 |`), `usage key ${name}`);
     assert.ok(text.includes(`"model": "${name}"`), `config ${name}`);
   }
 });

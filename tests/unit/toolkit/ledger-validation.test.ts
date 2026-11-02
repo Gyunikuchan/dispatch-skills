@@ -159,3 +159,41 @@ test('confirm records are user-only with a quote, a key and a spec hash', () => 
   assert.throws(() => validateRecord(confirm({data: {spec: 'sha256:' + 'A'.repeat(64)}})), {reason: 'invalid-record'});
   assert.throws(() => validateRecord(confirm({data: {}})), {reason: 'invalid-record'});
 });
+
+test('ceiling resolution requires user quote', () => {
+  const id = 'ceiling:plan-work.plan:4', key = id + ':resolved';
+  const record = (overrides: object = {}) => ({kind: 'escalation', by: 'user', quote: 'User decision', key, data: {id, state: 'resolved', summary: 're-author: rewrite'}, ...overrides});
+  assert.doesNotThrow(() => validateRecord(record()));
+  assert.throws(() => validateRecord(record({by: 'orchestrator'})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(record({by: 'tool'})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(record({quote: ' '})), {reason: 'user-only'});
+  const {quote, ...missing} = record();
+  assert.throws(() => validateRecord(missing), {reason: 'user-only'});
+});
+
+test('ceiling resolution requires option prefix', () => {
+  const id = 'ceiling:plan-work.plan:4';
+  const record = (summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id + ':resolved', data: {id, state: 'resolved', summary}});
+  for (const summary of ['raise the ceiling', ' re-author: rewrite', 'Re-author: rewrite', 'defer'])
+    assert.throws(() => validateRecord(record(summary)), (error) => {
+      const failure = error as Error & {reason: string};
+      assert.equal(failure.reason, 'invalid-record');
+      assert.match(failure.message, /data\.summary/);
+      return true;
+    }, summary);
+  for (const summary of ['re-author: rewrite', 'model-effort: raise effort', 'relax-split: narrow scope', 'defer: rule remaining MUST deferred'])
+    assert.doesNotThrow(() => validateRecord(record(summary)));
+});
+
+test('ceiling resolution refuses code review defer', () => {
+  const record = (id: string, summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id + ':resolved', data: {id, state: 'resolved', summary}});
+  const code = 'ceiling:code-integration:4';
+  assert.throws(() => validateRecord(record(code, 'defer: accept as follow-up')), (error) => {
+    const failure = error as Error & {reason: string};
+    assert.equal(failure.reason, 'invalid-record');
+    assert.match(failure.message, /data\.id/);
+    return true;
+  });
+  assert.doesNotThrow(() => validateRecord(record(code, 're-author: rewrite the fix')));
+  assert.doesNotThrow(() => validateRecord(record('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
+});

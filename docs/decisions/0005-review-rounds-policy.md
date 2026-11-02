@@ -6,11 +6,11 @@
 
 ## Context
 
-A round cap limits review cost, but cannot establish that a blocking defect is resolved. A rejected finding also needs an evidence-based resolution rather than disappearing because the orchestrator disagrees.
+A round cap limits review cost, but cannot establish that a blocking defect is resolved. A rejected finding also needs an evidence-based resolution rather than disappearing because the orchestrator disagrees. Later MUST rounds in prior runs mostly found regressions from the previous fix, so a user decision at a ceiling costs less than further regression-chasing.
 
 ## Decision
 
-Use one review policy across plan, design and code review. Bound routine quality rounds while allowing accepted MUST fixes and pending MUST rejections to continue past the cap. Preserve findings, rulings and actual review coverage so later edits cannot inherit coverage they did not receive.
+Use one review policy across plan, design and code review. Bound routine quality rounds while allowing accepted MUST fixes and pending MUST rejections to continue past the cap up to a ceiling: the round-1 cap plus 2 rounds, plus 2 more rounds per user-resolved review escalation. At the ceiling, `review run` refuses `review-ceiling` and the [review escalation Decision Frame](../../skills/dispatch/references/decision-frame.md#review-escalation) offers re-authoring, a higher level/model/effort, relaxing or splitting the requirement, or deferring remaining accepted MUST findings (plan and design only). Preserve findings, rulings and actual review coverage so later edits cannot inherit coverage they did not receive.
 
 Require explicit source-slot or configured substitute confirmation for rejected MUST findings. Escalate repeated disagreement or recurring failed fixes rather than running an unbounded dispute loop. Resolve intent claims against governing spec evidence; unsettled intent remains a user decision under [ADR 0010](0010-canonical-session-intent.md#readers-and-review).
 

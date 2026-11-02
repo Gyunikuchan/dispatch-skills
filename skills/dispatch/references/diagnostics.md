@@ -10,4 +10,6 @@ Item: `{id,component,category,evidence,impact,proposedFix}`.
 
 Exclude repository, toolchain, and user-work issues. Fixes must hold on any repository and machine. Use Dispatch terms only: no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets.
 
+Tables: [tokens by model/effort + coverage](toolkit.md#diagnostics-render); review yield by slot.
+
 Missing data cannot prove no defects. Collection is never a workflow gate.

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sessionFixture } from './helpers/session.ts';
 import type { RosterSlot } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
+import type { Validation } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 
 const slot = (provider: string, model: string | string[] = 'good', reserve = false, native = false): RosterSlot =>
   ({slot: provider + '[0]', provider, index: 0, model, reserve, native});
@@ -178,6 +179,14 @@ test('fan-out passes configured read commands to each delegate request', async (
     assert.deepEqual(f.launches[0]?.request.readCommands,['codegraph explore']);
   }finally{f.cleanup();}
 });
+test('fan-out forwards session root to delegate', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f=sessionFixture({memory:true});try {
+    f.script('claude','good','answer');
+    await fanOut({dir:path.join(f.session,'session-root'),slots:[slot('claude')],prompt:'question',validate,quota,sessionRoot:f.session},f.deps);
+    assert.equal(f.launches[0]?.request.sessionRoot,f.session);
+  }finally{f.cleanup();}
+});
 test('native prompt names its reply file', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
@@ -199,5 +208,131 @@ test('native prompt names its reply file', async () => {
       if (outcome.state !== 'native') throw new Error('expected native slot');
       assert.equal(fs.readFileSync(outcome.promptPath,'utf8').split('## Native reply').length,2);
     }
+  } finally {f.cleanup();}
+});
+test('blocked attempt kept after alias success', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','bad','BLOCKED'); f.script('claude','good','answer');
+    const outcomes = await fanOut({dir:path.join(f.session,'alias'), slots:[slot('claude',['bad','good'])], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(outcomes[0]?.state,'done');
+    assert.deepEqual(outcomes[0]?.blocked,[{provider:'claude',model:'bad',reason:'Artifact denied',reasonHash:'hash-1'}]);
+  } finally {f.cleanup();}
+});
+test('blocked attempt kept after reserve success', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','good','BLOCKED'); f.script('copilot','good','reserve answer');
+    const outcomes = await fanOut({dir:path.join(f.session,'reserve'), slots:[slot('claude'),slot('copilot','good',true)], prompt:'question', validate:check, quota}, f.deps);
+    const served = outcomes.find(outcome=>outcome.slot==='claude[0]');
+    assert.equal(served?.state,'done'); assert.equal(served.state === 'done' && served.text,'reserve answer');
+    assert.deepEqual(served?.blocked,[{provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'}]);
+  } finally {f.cleanup();}
+});
+test('blocked attempt kept after native completion', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    f.deps.orchestrator = {platform:'claude',model:null};
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','good','BLOCKED');
+    const dir = path.join(f.session,'native'), slots=[slot('claude')];
+    const pending = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(pending[0]?.state,'native');
+    assert.deepEqual(pending[0]?.blocked,[{provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'}]);
+    if (pending[0]?.state !== 'native') return;
+    fs.writeFileSync(pending[0].replyPath,'answer');
+    const done = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(done[0]?.state,'done');
+    assert.deepEqual(done[0]?.blocked,[{provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'}]);
+  } finally {f.cleanup();}
+});
+test('native blocked reply kept after later completion', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    f.deps.orchestrator = {platform:'claude',model:'native-model'};
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','good','BLOCKED');
+    const dir = path.join(f.session,'native-blocked'), slots=[slot('claude')];
+    const pending = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(pending[0]?.state,'native');
+    if (pending[0]?.state !== 'native') return;
+    fs.writeFileSync(pending[0].replyPath,'BLOCKED');
+    const blocked = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(blocked[0]?.state,'native');
+    assert.deepEqual(blocked[0]?.blocked,[
+      {provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'},
+      {provider:'claude',model:'native-model',reason:'Artifact denied',reasonHash:'hash-1'},
+    ]);
+    fs.writeFileSync(pending[0].replyPath,'answer');
+    const done = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(done[0]?.state,'done');
+    assert.deepEqual(done[0]?.blocked,[
+      {provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'},
+      {provider:'claude',model:'native-model',reason:'Artifact denied',reasonHash:'hash-1'},
+    ]);
+  } finally {f.cleanup();}
+});
+test('blocked attempt kept after failed slot retry', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','good','BLOCKED');
+    const dir = path.join(f.session,'retry'), slots=[slot('claude')];
+    const failed = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(failed[0]?.state,'failed');
+    assert.equal(failed[0]?.state === 'failed' && failed[0].cls,'blocked');
+    f.script('claude','good','answer');
+    const done = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(done[0]?.state,'done');
+    assert.deepEqual(done[0]?.blocked,[{provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'}]);
+  } finally {f.cleanup();}
+});
+test('failed slot retry same reason stays single', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: Artifact denied', blocked:{reason:'Artifact denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.script('claude','bad','BLOCKED'); f.script('claude','good',{status:'fail',cls:'auth',detail:'denied'});
+    const dir = path.join(f.session,'single'), slots=[slot('claude',['bad','good'])];
+    assert.equal((await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps))[0]?.state,'failed');
+    f.script('claude','good','answer');
+    const done = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(done[0]?.state,'done');
+    assert.deepEqual(done[0]?.blocked,[{provider:'claude',model:'bad',reason:'Artifact denied',reasonHash:'hash-1'}]);
+  } finally {f.cleanup();}
+});
+test('blocked attempts beyond eight aliases kept', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const models = Array.from({length:10},(_,index)=>'m'+index);
+    const check = (text: string): Validation => text === 'BLOCKED'
+      ? {ok:false, cls:'blocked', reason:'blocked: denied', blocked:{reason:'denied', reasonHash:'hash-1'}}
+      : validate(text);
+    f.deps.delegate = async () => ({outcome:{status:'ok',text:'BLOCKED',resume:null,sessionId:null},invocations:[]});
+    const failed = await fanOut({dir:path.join(f.session,'many'), slots:[slot('claude',models)], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(failed[0]?.state,'failed');
+    assert.equal(failed[0]?.blocked?.length,10);
+  } finally {f.cleanup();}
+});
+test('reserve attempts carry target slot', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    f.script('claude','good',{status:'fail',cls:'auth',detail:'unavailable'}); f.script('copilot','good','reserve answer');
+    await fanOut({dir:path.join(f.session,'target'), slots:[slot('claude'),slot('copilot','good',true)], prompt:'question', validate, quota}, f.deps);
+    assert.equal(f.launches.find(launch=>launch.provider==='claude')?.request.targetSlot,undefined);
+    assert.equal(f.launches.find(launch=>launch.provider==='copilot')?.request.targetSlot,'claude[0]');
   } finally {f.cleanup();}
 });
