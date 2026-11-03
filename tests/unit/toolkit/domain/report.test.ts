@@ -923,3 +923,10 @@ test('a registry-only adapter contributes its host rows to both token tables', (
   assert.ok(text.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
   assert.ok(text.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
 });
+test('diagnostics report names each lifecycle step outcome and keeps raw details out', () => {
+  const step = (name: string, outcome: string, extra: Record<string, unknown> = {}) => ({ step: name, elapsedMs: 120, budgetMs: 5000, outcome, ...extra });
+  const hostile = { lifecycleSteps: [step('debug-config', 'timeout'), step('prepare', 'failed', { detail: '/home/me/.config/opencode' }), step('teardown', 'unconfirmed')] } as unknown as Partial<InvocationFacts>;
+  const text = render([facts({ invocations: [bare(hostile)] })]);
+  assert.match(text, /lifecycle debug-config timeout 120\/5000 ms, teardown unconfirmed 120\/5000 ms/);
+  assert.doesNotMatch(text, /prepare failed|home\/me|opencode/);
+});

@@ -893,3 +893,24 @@ test('report render and complete collect host usage without gating outcomes', as
     assert.equal((await hostTest_invoke(f,'report','complete')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
   } finally { f.cleanup(); }
 });
+
+test('OpenCode lifecycle steps survive failure without private data', async () => {
+ const f=sessionFixture({ memory: true });try {
+ const skill=path.join(f.root,'skill');fs.mkdirSync(skill);fs.writeFileSync(path.join(skill,'config.jsonc'),'{"diagnostics":true}');f.deps.skillRoot=skill;
+ const step=(name:string,elapsedMs:number,budgetMs:number,outcome:string)=>({step:name,elapsedMs,budgetMs,outcome});
+ const kept=[step('debug-config',12,5000,'ok'),step('prepare',3,400,'failed'),step('response',400,400,'timeout'),step('teardown',900,2000,'unconfirmed')];
+ const rejected=[step('prepare',1,1,'ok'),step('debug-agents',-1,5,'ok'),step('debug-agents',1.5,5,'ok'),step('debug-agents',1,2147483648,'ok'),step('custom',1,1,'ok'),step('debug-agents',1,2,'C:\private\path'),{...step('debug-agents',1,2,'failed'),detail:'/home/private/secret'}];
+ const seen:Record<string,unknown>={};
+ f.deps.delegate=async(provider,request)=>{
+  seen[provider]=request.collectLifecycle;
+  throw Object.assign(new Error('private error'),{invocations:[{provider,model:'m',mode:'cli',launched:true,outcome:'timeout',lifecycleSteps:[...kept,...rejected]}]});
+ };
+ const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+ for(const provider of ['opencode','claude'] as const)await assert.rejects(observer.deps.delegate(provider,{logPath:path.join(f.session,'logs',provider+'[0].log')} as never,'cli'));
+ assert.deepEqual(seen,{opencode:true,claude:undefined},'only OpenCode collects lifecycle steps');
+ const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete');
+ assert.deepEqual(facts.invocations.map(i=>i.lifecycleSteps),[kept,kept],'failed launches keep only bounded, unique, allowlisted steps');
+ const directory=path.join(f.session,'.state','diagnostics');
+ assert.doesNotMatch(fs.readdirSync(directory).map(file=>fs.readFileSync(path.join(directory,file),'utf8')).join(''),/private|secret|detail/);
+ } finally {f.cleanup();}
+});

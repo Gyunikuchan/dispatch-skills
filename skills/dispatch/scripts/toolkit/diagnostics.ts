@@ -443,7 +443,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
         const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
         const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{})});
+          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{})});
       }
       persist();
     } catch { /* Malformed optional runner metadata cannot change its outcome. */ }
@@ -477,7 +477,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
       }catch{}
     }, async delegate(provider,request,mode) {
       try {
-        const result=await deps.delegate(provider,{...request,collectUsage:true},mode);
+        const result=await deps.delegate(provider,{...request,collectUsage:true,...(provider==='opencode'?{collectLifecycle:true}:{})},mode);
         collect(result.invocations,request);return result;
       } catch(error) {
         try {collect((error as {invocations?:unknown})?.invocations,request);}catch{}

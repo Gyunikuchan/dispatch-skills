@@ -10,8 +10,9 @@ import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
 import { nativeOpencodeIntrospection } from '../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import { opencode } from '../../skills/dispatch/scripts/providers/opencode.ts';
+import { nodeDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
 import { runDelegate, type RunnerFs, type RunnerPorts } from '../../skills/dispatch/scripts/providers/runner.ts';
-import type { DelegateRequest } from '../../skills/dispatch/scripts/providers/types.ts';
+import type { DelegateRequest, LifecycleStep } from '../../skills/dispatch/scripts/providers/types.ts';
 
 type Scenario = 'inspect' | 'hang' | 'unsupported' | 'success' | 'failure' | 'timeout' | 'cap' | 'exit-with-descendant' | 'closed-stdio-success' | 'closed-stdio-failure';
 
@@ -288,6 +289,57 @@ test('OpenCode closed-stdio descendants expose the accepted Windows limit and se
           assert.equal(fs.existsSync(fixture.worktree),false);
         }
       } finally {await fixture.cleanup();}
+    }
+  });
+});
+
+test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', async () => {
+  await withServiceSentinel(async () => {
+    const hanging = makeFixture('hang');
+    try {
+      const steps: LifecycleStep[] = [];
+      const startedAt = Date.now();
+      await assert.rejects(nativeOpencodeIntrospection(hanging.binary, hanging.request, process.env, 400, steps)('config'), /opencode-lifecycle-timeout/);
+      assert.ok(Date.now() - startedAt < 2500, 'collection must not extend the introspection bound');
+      assert.deepEqual(steps.map(({ step, outcome, budgetMs }) => ({ step, outcome, budgetMs })), [{ step: 'debug-config', outcome: 'timeout', budgetMs: steps[0]!.budgetMs }]);
+      assert.ok(steps[0]!.budgetMs > 0 && steps[0]!.budgetMs <= 400, 'budget is the remaining request deadline, not a storage ceiling');
+      await assertOwnedProcessExited(Number(fs.readFileSync(hanging.childPidPath, 'utf8')));
+      fs.rmSync(hanging.worktree, { recursive: true });
+    } finally { await hanging.cleanup(); }
+
+    // Preflight steps ride on the unlaunched row of the same delegate call, and only when requested.
+    const unsupported = makeFixture('unsupported');
+    const originalPath = process.env['PATH'];
+    process.env['PATH'] = `${path.dirname(unsupported.binary)}${path.delimiter}${originalPath ?? ''}`;
+    try {
+      const deps = nodeDeps();
+      for (const collect of [true, false]) {
+        const result = await deps.delegate('opencode', { ...unsupported.request, ...(collect ? { collectLifecycle: true } : {}) }, 'cli');
+        assert.deepEqual(result.invocations.map((i) => [i.launched, i.outcome, i.lifecycleSteps?.map((s) => [s.step, s.outcome])]), [[false, 'config', collect ? [['debug-config', 'failed']] : undefined]]);
+      }
+    } finally { process.env['PATH'] = originalPath; await unsupported.cleanup(); }
+
+    for (const collect of [true, false]) {
+      const fixture = makeFixture('exit-with-descendant');
+      try {
+        const run = await runDelegate(opencode, { ...fixture.request, ...(collect ? { collectLifecycle: true } : {}) }, 'cli', runnerPorts(fixture.binary, fixture.request.promptPath));
+        const steps = run.invocations.flatMap((i) => i.lifecycleSteps ?? []);
+        if (!collect) assert.deepEqual(steps, [], 'disabled collection leaves no lifecycle steps');
+        else {
+          const by = new Map(steps.map((s) => [s.step, s]));
+          assert.equal(by.size, steps.length, 'one record per step');
+          assert.ok(by.has('response') && by.has('teardown'));
+          for (const s of steps) assert.ok(Number.isSafeInteger(s.elapsedMs) && s.elapsedMs >= 0 && s.budgetMs > 0 && s.budgetMs <= fixture.request.timeoutMs + 2000, `${s.step} stays within its real bound`);
+          // The accepted Windows limit reports an unconfirmed tree; POSIX group settlement confirms it.
+          assert.equal(by.get('teardown')!.outcome, run.result?.lifecycleError ? 'unconfirmed' : 'ok');
+          if (process.platform === 'win32') assert.equal(by.get('teardown')!.outcome, 'unconfirmed');
+          assert.doesNotMatch(JSON.stringify(steps), /fixture|lifecycle-|\|\//);
+        }
+        const childPid = Number(fs.readFileSync(fixture.childPidPath, 'utf8'));
+        if (process.platform !== 'win32') await assertOwnedProcessExited(childPid);
+        else { assert.equal(ownedProcessAlive(childPid), true); continue; }
+        fs.rmSync(fixture.worktree, { recursive: true });
+      } finally { await fixture.cleanup(); }
     }
   });
 });

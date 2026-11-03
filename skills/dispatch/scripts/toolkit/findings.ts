@@ -1,8 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { collectFindings, matchFinding, parseReport } from './domain/report.ts';
 import type { Finding, ReviewKind } from './domain/types.ts';
 import type { SlotOutcome } from './fanout.ts';
 import type { LedgerRecord, RecordInput } from './records.ts';
-import { rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
+import { effectiveSeverity } from './domain/severity.ts';
+import type { Fold } from './ledger.ts';
+import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
 export type ReviewTarget = string | {base: string; head: string};
 export type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
 export type FindingsValue = {
@@ -67,3 +71,51 @@ export function finalizeRound(input: {
     clusters: [...clusters].map(([file, findings]) => ({file, findings})),
     failed: input.replies.filter((reply): reply is Extract<SlotOutcome, {state: 'failed'}> => reply.state === 'failed'), confirmations, escalations};
 }
+// SECTION: Review budget
+export function read<T>(file: string): T | null {
+  try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
+  catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
+}
+const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
+/**
+ * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
+ * Defer grants nothing and applies only to the current ceiling id.
+ */
+function ceilingState(records: readonly LedgerRecord[], review: string, cap1: number) {
+  const prefix = 'ceiling:' + review + ':';
+  const opened = new Map<string, number>(), state = new Map<string, string>(), grants = new Set<string>(), defers = new Set<string>();
+  for (const row of records) {
+    if (row.kind !== 'escalation') continue;
+    const id = row.data['id'];
+    if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
+    state.set(id, row.data['state']);
+    if (row.by === 'tool' && row.data['state'] === 'open' && !opened.has(id)) opened.set(id, row.seq);
+    if (row.by !== 'user' || row.data['state'] !== 'resolved' || !row.quote?.trim() || row.seq <= (opened.get(id) ?? Infinity)) continue;
+    const summary = String(row.data['summary'] ?? '');
+    if (CEILING_GRANT.test(summary)) grants.add(id);
+    else if (summary.startsWith('defer:')) defers.add(id);
+  }
+  const ceiling = cap1 + 2 + 2 * grants.size;
+  return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
+}
+export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open'};
+/** The single admission policy: launch refuses by `state`; status and summaries only report it, opening and granting nothing. */
+export function admission(session: string, fold: Fold, review: string, cap: number): {budget: ReviewBudget; rounds: number} {
+  const directory = path.join(session, '.state/reviews', review), file = (round: number, name: string) => path.join(directory, 'round-' + round, name);
+  const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
+  const last = numbers.at(-1) ?? 0, completed = last > 0 && fs.existsSync(file(last, 'findings.json')), n = completed ? last + 1 : last || 1;
+  const cap1 = read<{cap: number}>(file(1, 'round.json'))?.cap ?? cap, ceiling = ceilingState(fold.records, review, cap1);
+  const rulings = fold.records.filter(row => row.kind === 'ruling'), startSeq = read<{startSeq?: number}>(file(n - 1, 'round.json'))?.startSeq ?? 0;
+  const rejections = loadRejections(session, fold, [review]), pending = rejections.some(state => state.state === 'pending');
+  const fixed = numbers.some(number => read<FindingsValue>(file(number, 'findings.json'))?.findings.some(finding => {
+    const history = rulings.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id), ruling = history.at(-1);
+    return effectiveSeverity(finding, history) === 'MUST' && ruling?.data['ruling'] === 'accepted' && (number === n - 1 || ruling.seq > startSeq);
+  }));
+  const past = completed && n > ceiling.ceiling;
+  // Defer grants no rounds; a pending MUST rejection keeps its confirmation round.
+  const state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
+    : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending)) ? 'requires-continuation'
+    : past && !ceiling.deferred ? 'requires-ceiling-resolution' : 'allowed';
+  return {budget: {cap: cap1, ceiling: ceiling.ceiling, nextRound: n, asOfSeq: fold.lastSeq, state}, rounds: numbers.length};
+}
+export const renderBudget = (budget: ReviewBudget) => `next round ${budget.nextRound} ${budget.state} (cap ${budget.cap}, ceiling ${budget.ceiling})`;

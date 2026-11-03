@@ -12,7 +12,7 @@ import { SPECS } from '../providers/index.ts';
 import { runDelegate, type RunnerFs } from '../providers/runner.ts';
 import { nodeProcess } from '../providers/node-process.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
-import type { DelegateRequest, ModeId, ProviderId, RunResult } from '../providers/types.ts';
+import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
 import { renderBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
@@ -73,24 +73,30 @@ export function nodeDeps(): CliDeps {
     modes, orchestrator:detectOrchestrator(key=>process.env[key]),
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
     async delegate(provider,request,mode) {
+      // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
+      const steps:LifecycleStep[]=[];
+      const attach=(rows:RunResult['invocations'])=>{const first=rows[0];if(steps.length&&first)first.lifecycleSteps=[...steps,...(first.lifecycleSteps??[])];return rows;};
       const failedLaunch=(cls:'not-found'|'config'|'timeout',detail:string):RunResult=>({
-        outcome:{status:'fail',cls,detail},invocations:[{provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls}],
+        outcome:{status:'fail',cls,detail},invocations:attach([{provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls}]),
       });
       const binary=discovery.resolve(provider,mode).path;
       if(!binary)return failedLaunch('not-found',provider+': missing '+mode);
       const deadline=Date.now()+request.timeoutMs;
       let resolved=request;
       if(provider==='opencode'){
-        try{resolved=await resolveEffectiveOpencodeLaunch(request,nativeOpencodeIntrospection(binary,request,process.env,request.timeoutMs));}
+        try{resolved=await resolveEffectiveOpencodeLaunch(request,nativeOpencodeIntrospection(binary,request,process.env,request.timeoutMs,request.collectLifecycle?steps:undefined));}
         catch(error){const detail=String(error);return failedLaunch(/effective-config-unverified: opencode-lifecycle-timeout:/.test(detail)?'timeout':'config',detail);}
         if(resolved.readOnlyBestEffort)process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
       }
       resolved={...resolved,timeoutMs:Math.max(1,deadline-Date.now())};
-      return runDelegate(SPECS[provider],resolved,mode,{
+      try{
+      const run=await runDelegate(SPECS[provider],resolved,mode,{
         process:nodeProcess,fs:runnerFs,env:process.env,platform,binary,nonce:crypto.randomUUID,workspaceRoot:request.cwd,
         clock:{now:()=>Date.now(),every:(ms,fn)=>{const timer=setInterval(fn,ms);return()=>clearInterval(timer);}},
         ...(provider==='opencode'?{prepare:createOpencodePreparePorts(deadline)}:{}),
       });
+      attach(run.invocations);return run;
+      }catch(error){attach((error as Partial<RunResult>).invocations??[]);throw error;}
     },
     run: (argv, options) => new Promise((resolve, reject) => {
       // cmd.exe must receive the plan command without Node's argument quoting.

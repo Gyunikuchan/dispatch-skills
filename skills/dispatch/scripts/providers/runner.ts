@@ -5,7 +5,7 @@
 import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import type { OsId } from '../lib/platform.ts';
-import type { DelegateRequest, Invocation, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 1800 * 1000;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
@@ -301,7 +301,7 @@ export type RunnerPorts = {
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
 /** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean): Promise<ProcessResult> {
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, steps?: LifecycleStep[]): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
   const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); } });
   let timedOut = false;
@@ -334,6 +334,8 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
       ports.process.signal(-pid, 'SIGKILL');
     });
   };
+  // Settlement is measured apart from the response; budgets are the existing bounds.
+  const teardown = (since: number, budgetMs: number, settled: boolean) => steps?.push({ step: 'teardown', elapsedMs: Math.round(ports.clock.now() - since), budgetMs, outcome: settled ? 'ok' : 'unconfirmed' });
   const stopTimeout = ports.clock.every(req.timeoutMs, kill);
   const stopIdle = !idle ? () => {} : ports.clock.every(Math.min(IDLE_TIMEOUT_MS, 30_000), () => {
     const silent = ports.clock.now() - lastActivity;
@@ -356,13 +358,16 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
       stopTimeout();
       stopIdle();
       if (pid > 1 && ports.platform.os !== 'win32' && ports.process.settleGroup) {
+        const since = ports.clock.now();
         const confirmed = await ports.process.settleGroup(pid, KILL_ESCALATION_MS);
+        teardown(since, KILL_ESCALATION_MS, confirmed);
         if (!confirmed) return { ...completed, lifecycleError: 'OpenCode process group exit unconfirmed; retain the worktree and verify process exit before cleanup' };
       }
       return completed;
     }
     const teardownBudgetMs = ports.platform.os === 'win32' ? KILL_ESCALATION_MS : KILL_ESCALATION_MS * 2;
-    const teardownDeadline = ports.clock.now() + teardownBudgetMs;
+    const teardownStart = ports.clock.now();
+    const teardownDeadline = teardownStart + teardownBudgetMs;
     const settleDelegate = completed ? Promise.resolve(completed) : waitWithin(done, teardownBudgetMs);
     const settleTaskkill: Promise<ProcessResult | null> = ports.platform.os === 'win32' && taskkillDone
       ? waitWithin(taskkillDone, teardownBudgetMs)
@@ -381,6 +386,7 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
       const confirmed = await ports.process.settleGroup(pid, remaining);
       if (!confirmed) lifecycleError = 'OpenCode process group exit unconfirmed';
     }
+    teardown(teardownStart, teardownBudgetMs, !lifecycleError);
     if (lifecycleError) lifecycleError += '; retain the worktree and verify process exit before cleanup';
     const settled = result ?? {
       exit: null, signal: null, stdout: '', stdoutPath: req.logPath, stderrTail: '', durationMs: req.timeoutMs + KILL_ESCALATION_MS,
@@ -418,8 +424,8 @@ type Attempts = { invocations: Invocation[]; model: string | null; effort: strin
 
 async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
   const { invocations } = track;
-  const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null): DelegateRun => {
-    invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls });
+  const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null, steps?: LifecycleStep[]): DelegateRun => {
+    invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
     return { outcome, result: null, attempts, briefFile, invocations };
   };
   const deadline = ports.clock.now() + req.timeoutMs;
@@ -446,24 +452,28 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   let attempts = 0;
   let current = prepared;
   for (;;) {
+    const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
+    const prepareStart = ports.clock.now();
     const pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
-    if (pre?.kind === 'fail') return unlaunched(pre.outcome, attempts, briefFile);
+    if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
+    if (pre?.kind === 'fail') return unlaunched(pre.outcome, attempts, briefFile, steps);
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile); }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     try {
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
-      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode');
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', steps);
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
+    steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
-    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;

@@ -1,4 +1,5 @@
 import { HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, STAGE_ORDER, type HostUsageFacts, type HostUsageRow } from '../host-usage/types.ts';
+import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, FailureClass } from '../types.ts';
 
 // Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
@@ -45,7 +46,7 @@ export type DiagnosticEvent = {
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason;
-  estimated?: boolean; tokens?: number; slot?: string;
+  estimated?: boolean; tokens?: number; slot?: string; lifecycleSteps?: LifecycleStep[];
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'; subject?: string; attempt?: number; targetSlot?: string;
 };
 
@@ -237,6 +238,19 @@ function configValue(v: unknown, depth: number): unknown {
   return DASH;
 }
 
+/** Exact-shape rows only; invalid rows are dropped rather than clamped into success, and each step appears once. */
+function lifecycleOf(v: unknown): LifecycleStep[] | undefined {
+  const rows: LifecycleStep[] = [];
+  const ms = (x: unknown): x is number => Number.isSafeInteger(x) && Number(x) >= 0 && Number(x) <= 2147483647;
+  for (const r of list(v)) {
+    if (!record(r) || Object.keys(r).length !== 4) continue;
+    const step = (['debug-config', 'debug-agents', 'prepare', 'response', 'teardown'] as const).find((x) => x === r['step']);
+    const outcome = (['ok', 'failed', 'timeout', 'unconfirmed'] as const).find((x) => x === r['outcome']);
+    if (step && outcome && ms(r['elapsedMs']) && ms(r['budgetMs']) && !rows.some((x) => x.step === step)) rows.push({ step, elapsedMs: r['elapsedMs'], budgetMs: r['budgetMs'], outcome });
+  }
+  return rows.length ? rows : undefined;
+}
+
 function invocationOf(v: unknown): InvocationFacts[] {
   if (!record(v)) return [];
   const reported = list(v['reportedModels']).map(modelName).filter((m): m is string => !!m).slice(0, 8);
@@ -252,7 +266,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
     ...opt('coverage', (['no usage output'] as const).find(x => x === v['coverage'])),
-    ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
+    ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
   }];
 }
 
@@ -574,7 +588,7 @@ function appendix(runs: readonly RunFacts[]): string[] {
       const review=/^review-[a-f0-9]{16}$/.test(i.phase);
       const ordinal=i.attempt!==undefined&&i.attempt>0?i.attempt:undefined;
       const identity=i.subject?(review?` · attempt ${i.subject}/${ordinal??DASH}`:` · subject ${i.subject} · attempt ${ordinal??DASH}`):ordinal===undefined?'':` · attempt ${ordinal}`;
-      lines.push(row([String(index + 1), phaseName(run, i.phase)+identity+(i.slot?' · slot '+i.slot:''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.surface==='native' ? `native ${i.nativeState??(i.outcome==='ok'?'completed':i.outcome==='native-pending'?'pending':'unavailable')}` : `${i.outcome}${i.validationOutcome?' · validation '+i.validationOutcome:''}${i.routingOutcome?' · routing '+i.routingOutcome:''}${i.slotState?' · slot '+i.slotState:''}${i.launched?'':' (not launched)'}`]));
+      lines.push(row([String(index + 1), phaseName(run, i.phase)+identity+(i.slot?' · slot '+i.slot:''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.surface==='native' ? `native ${i.nativeState??(i.outcome==='ok'?'completed':i.outcome==='native-pending'?'pending':'unavailable')}` : `${i.outcome}${i.validationOutcome?' · validation '+i.validationOutcome:''}${i.routingOutcome?' · routing '+i.routingOutcome:''}${i.slotState?' · slot '+i.slotState:''}${i.lifecycleSteps?.length?' · lifecycle '+i.lifecycleSteps.map(s=>`${s.step} ${s.outcome} ${s.elapsedMs}/${s.budgetMs} ms`).join(', '):''}${i.launched?'':' (not launched)'}`]));
     }
   });
   lines.push('');

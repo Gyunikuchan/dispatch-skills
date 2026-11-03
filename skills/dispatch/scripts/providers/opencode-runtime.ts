@@ -6,7 +6,7 @@ import path from 'node:path';
 import { KILL_ESCALATION_MS, sanitizeEnv, waitWithin } from './runner.ts';
 import { nodeProcess } from './node-process.ts';
 import { unsupportedStandaloneDiagnostic } from './opencode.ts';
-import type { DelegateRequest, PreparePorts, ProcessResult } from './types.ts';
+import type { DelegateRequest, LifecycleStep, PreparePorts, ProcessResult } from './types.ts';
 
 type Row = Record<string, unknown>;
 const record = (x: unknown): x is Row => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -55,13 +55,15 @@ export async function resolveEffectiveOpencodeLaunch(req: DelegateRequest, inspe
   return { ...req, model, endpoint, agent: String(agent['id']), readOnlyVerified: Boolean(verified), ...(verified ? {} : { readOnlyBestEffort: true }) };
 }
 
-export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest, env: Readonly<Record<string, string | undefined>>, budgetMs: number): Introspect {
+export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest, env: Readonly<Record<string, string | undefined>>, budgetMs: number, steps?: LifecycleStep[]): Introspect {
   if (env['OPENCODE_CONFIG_CONTENT']) throw new Error('effective-config-unverified: inline config propagation requires an explicit user choice');
   const deadline = Date.now() + budgetMs;
   return async (command) => {
     const remaining = Math.min(5000, deadline - Date.now());
     if (remaining <= 0) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: preparation deadline expired');
-    const commandDeadline = Date.now() + remaining;
+    const started = Date.now();
+    let outcome: LifecycleStep['outcome'] = 'ok';
+    const commandDeadline = started + remaining;
     const settlementDeadline = commandDeadline + KILL_ESCALATION_MS;
     const logPath = `${req.logPath}.introspect-${command}`;
     const killLogPath = `${logPath}.kill`;
@@ -101,8 +103,13 @@ export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest
       if (result.exit !== 0 || result.truncated) throw new Error('effective-config-unverified: native introspection failed');
       try { return JSON.parse(result.stdout) as unknown; }
       catch { throw new Error('effective-config-unverified: native introspection returned invalid JSON'); }
+    } catch (error) {
+      outcome = /exit unconfirmed|did not confirm exit/.test(String(error)) ? 'unconfirmed' : /opencode-lifecycle-timeout/.test(String(error)) ? 'timeout' : 'failed';
+      throw error;
     } finally {
       clearTimeout(timer);
+      // Covers the command and its own process-tree settlement; the response teardown is measured by the runner.
+      steps?.push({ step: `debug-${command}`, elapsedMs: Date.now() - started, budgetMs: remaining, outcome });
       for (const file of [logPath, killLogPath]) try { fs.unlinkSync(file); } catch { /* no credential-bearing introspection capture retained */ }
     }
   };

@@ -310,3 +310,20 @@ test('corrected finding: rejection confirmation follows the higher of the stored
   assert.equal(rejectionStatesFor('SHOULD', ['rejected']).length, 0);
   assert.equal(rejectionStatesFor('MUST', ['rejected']).length, 1);
 });
+
+// SECTION: Review budget boundaries
+
+test('review budget keeps the saved cap when the level cap changes', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Defect', 'MUST'), resume: null, sessionId: null}, invocations: []});
+    assert.deepEqual((await f.call()).value.budget, {cap: 2, ceiling: 4, nextRound: 2, asOfSeq: 2, state: 'allowed'});
+    const file = path.join(f.deps.skillRoot, 'config.jsonc'), config = JSON.parse(fs.readFileSync(file, 'utf8'));
+    config.phases['plan-review'].rounds.medium = 5;
+    fs.writeFileSync(file, JSON.stringify(config));
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const second = await f.call();
+    // Round 3 would pass the saved cap, and the unruled MUST is not an accepted continuation.
+    assert.deepEqual(second.value.budget, {cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 2, state: 'requires-continuation'});
+  } finally {f.cleanup();}
+});

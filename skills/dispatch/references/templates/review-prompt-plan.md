@@ -32,6 +32,7 @@ Read the whole spec at Spec Path before inspection; use Spec Hash as its governi
 For a spec finding, use § Spec: <heading>.
 Use the authoritative plan. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
+Judge the plan against its Plan standard. Report a missing decision that prevents safe implementation; report a routine writer choice only with a concrete consequence, such as a failed criterion, broken invariant or ownership conflict.
 
 ## tags
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { nodeLinkFs } from '../lib/node-fs-ext.ts';
 import type { Manifest } from '../lib/session.ts';
 import { reviewId, loadRejections, type RejectionState } from './confirmations.ts';
+import { admission, renderBudget } from './findings.ts';
 import { readReviews, type ReviewRound } from './diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { effectiveSeverity, RANK } from './domain/severity.ts';
@@ -87,7 +88,7 @@ export function reviewRows(
   return { rows, rounds };
 }
 
-export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readonly RoundLink[], fromDir: string): string {
+export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readonly RoundLink[], fromDir: string, budget?: string): string {
   const out: string[] = [];
   if (rows.length) {
     out.push('| Review | ID | Round | Severity | Source | Status | Ruling |', '| --- | --- | --- | --- | --- | --- | --- |');
@@ -106,6 +107,7 @@ export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readon
     if (out.length) out.push('');
     out.push(`- Round ${round.round} (${line(round.review)}): ${round.findings} findings — [findings](${link})`);
   }
+  if (budget) out.push('', budget);
   return out.join('\n');
 }
 
@@ -156,7 +158,9 @@ export function refreshFindingsSection(session: string, manifest: Manifest, revi
     const confirmations = loadRejections(session, fold, [review]);
     const current = reviewRows(session, fold, confirmations, [review]);
     const resolvedRounds = current.rounds.map(round => ({ ...round, path: path.resolve(session, round.path) }));
-    const body = renderFindingsSection(current.rows, resolvedRounds, path.dirname(artifact));
+    // Recomputed from the current ledger with the launch admission policy; showing it grants nothing.
+    const budget = current.rounds.length ? `Budget (${line(review)}): ${renderBudget(admission(session, fold, review, 0).budget)}` : undefined;
+    const body = renderFindingsSection(current.rows, resolvedRounds, path.dirname(artifact), budget);
     const updated = replaceFindingsSection(source, body);
     if (updated === source) return 'unchanged';
     nodeLinkFs.writeAtomic(artifact, updated);

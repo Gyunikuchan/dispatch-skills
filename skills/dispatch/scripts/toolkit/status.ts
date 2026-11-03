@@ -8,6 +8,7 @@ import {checks} from './plan-view.ts';
 import {writerStates} from './writers.ts';
 import {integrationRecord} from './integration.ts';
 import {gitOk,headTree,testedTree} from './git.ts';
+import {admission,type ReviewBudget} from './findings.ts';
 
 export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps) {
   const fold = foldLedger(session);
@@ -17,6 +18,13 @@ export async function statusReport(session: string, repositoryRoot: string, deps
   const escalations = new Map<string, Record<string, unknown>>();
   for (const record of fold.records) {
     if (record.kind === 'escalation') escalations.set(record.data['id'], record.data);
+  }
+  // Advisory and recomputed from the latest ledger by the launch admission policy; it opens and grants nothing.
+  const root = path.join(session, '.state/reviews'), reviews: Record<string, ReviewBudget> = {};
+  for (const entry of fs.existsSync(root) ? fs.readdirSync(root, {withFileTypes: true}) : []) {
+    if (!entry.isDirectory()) continue;
+    const {budget, rounds} = admission(session, fold, entry.name, 0);
+    if (rounds) reviews[entry.name] = budget;
   }
   let sections: object = {};
   const opened=integrationRecord(fold);
@@ -66,7 +74,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
     level, bound, current, approved: latest(fold, 'approval')?.data ?? {},
     gate: gate(fold, current, level),
     escalations: [...escalations.values()].filter(record => record['state'] === 'open'),
-    recordCount: fold.records.length, tornTail: fold.torn !== null,
+    reviews, recordCount: fold.records.length, tornTail: fold.torn !== null,
     testCleanup: (() => { const row = latestCleanup(fold); return row ? {from: row.data['from'], removed: row.data['removed'], deleted: row.data['deleted'], merged: row.data['merged']} : null; })(),
     ...sections,
   };

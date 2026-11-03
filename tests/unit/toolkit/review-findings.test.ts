@@ -213,3 +213,25 @@ test('corrected severity: rows reflect latest corrected severity rules across ac
     }
   } finally { f.cleanup(); }
 });
+
+// SECTION: Budget summary
+
+test('review summary refreshes budget from current ledger', () => {
+  const f = fixture();
+  try {
+    bind(f);
+    const plan = path.join(f.docs, 'work.plan.md');
+    fs.writeFileSync(plan, '# Work\n\n## Review Findings & Resolutions\nDriver notes\n');
+    addRound(f.session, 'plan-work.plan', 1, []);
+    addRound(f.session, 'plan-work.plan', 2, [{ id: 'R2-F001', severity: 'MUST' }]);
+    assert.equal(refreshFindingsSection(f.session, f.manifest, 'plan-work.plan'), 'updated');
+    assert.match(fs.readFileSync(plan, 'utf8'), /Budget \(plan-work\.plan\): next round 3 requires-continuation \(cap 2, ceiling 4\)/);
+
+    fs.appendFileSync(path.join(f.session, 'ledger.jsonl'), JSON.stringify({
+      kind: 'ruling', by: 'orchestrator', key: 'accepted', seq: 2, at: '2026-10-28T00:00:00.000Z',
+      data: { subject: 'review:plan-work.plan:R2-F001', ruling: 'accepted', rationale: 'Fixed' },
+    }) + '\n');
+    assert.equal(refreshFindingsSection(f.session, f.manifest, 'plan-work.plan'), 'updated');
+    assert.match(fs.readFileSync(plan, 'utf8'), /Budget \(plan-work\.plan\): next round 3 allowed \(cap 2, ceiling 4\)/);
+  } finally { f.cleanup(); }
+});

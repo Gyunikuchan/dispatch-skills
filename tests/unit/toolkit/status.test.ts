@@ -174,3 +174,23 @@ test('uncommitted consumers report source with a null destination commit',async(
  assert.equal(integration.source,source);assert.equal(integration.to,null);assert.equal(integration.undelivered,false);
  }finally{f.cleanup();}
 });
+
+test('status budget reflects rulings after completion', async () => {
+  const f = sessionFixture();
+  try {
+    const review = 'plan-work.plan', directory = path.join(f.session, '.state/reviews', review);
+    for (const round of [1, 2]) {
+      fs.mkdirSync(path.join(directory, 'round-' + round), { recursive: true });
+      fs.writeFileSync(path.join(directory, 'round-' + round, 'round.json'), JSON.stringify({ round, cap: 2, startSeq: 0 }));
+      fs.writeFileSync(path.join(directory, 'round-' + round, 'findings.json'), JSON.stringify({ review, round, cap: 2, findings: round === 2 ? [{ id: 'R2-F001', severity: 'MUST', sources: [] }] : [] }));
+    }
+    const budget = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[review];
+    };
+    assert.deepEqual(await budget(), { cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 0, state: 'requires-continuation' });
+    await appendRecord(f.session, { kind: 'ruling', by: 'orchestrator', key: 'ruling-accepted', data: { subject: 'review:' + review + ':R2-F001', ruling: 'accepted', rationale: 'Fixed' } }, f.deps);
+    assert.deepEqual(await budget(), { cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 1, state: 'allowed' });
+  } finally { f.cleanup(); }
+});

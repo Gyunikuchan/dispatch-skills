@@ -747,3 +747,42 @@ test('incomplete round past cap without must stays round-cap', async () => {
     assert.equal(fs.existsSync(path.join(f.directory, 'round-3/findings.json')), false);
   } finally { f.cleanup(); }
 });
+
+// SECTION: Advisory review budget
+const statusBudget = async (f: ReviewFixture) => {
+  f.lines.length = 0;
+  assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+  return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[PLAN_REVIEW];
+};
+
+test('review budget matches admission after rulings and ceiling resolutions', async () => {
+  const f = await fixture();
+  try {
+    await seedAcceptedCeiling(f);
+    const records = foldLedger(f.session).records.length;
+    const boundary = await statusBudget(f);
+    assert.deepEqual({...boundary, asOfSeq: undefined}, {cap: 2, ceiling: 4, nextRound: 5, asOfSeq: undefined, state: 'requires-ceiling-resolution'});
+    // Reporting the boundary opens no escalation and grants no round.
+    assert.equal(foldLedger(f.session).records.length, records);
+    assert.equal((await f.call()).output.reason, 'review-ceiling');
+
+    assert.equal((await statusBudget(f)).state, 'escalation-open');
+    assert.equal((await f.call()).output.reason, 'escalation-open');
+
+    await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: rewrite the plan under current evidence');
+    const granted = await statusBudget(f);
+    assert.deepEqual({ceiling: granted.ceiling, nextRound: granted.nextRound, state: granted.state}, {ceiling: 6, nextRound: 5, state: 'allowed'});
+    planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
+    const fifth = await f.call();
+    assert.equal(fifth.exit, 0, JSON.stringify(fifth));
+    // The completed result is historical at its asOfSeq; the unruled round-5 MUST needs a continuation for round 6.
+    assert.deepEqual(fifth.value.budget, {cap: 2, ceiling: 6, nextRound: 6, asOfSeq: foldLedger(f.session).lastSeq, state: 'requires-continuation'});
+    assert.deepEqual(await statusBudget(f), fifth.value.budget);
+    assert.equal((await f.call()).output.reason, 'round-cap');
+
+    await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R5-F001', ruling: 'accepted', rationale: 'Resolution'});
+    const accepted = await statusBudget(f);
+    assert.equal(accepted.state, 'allowed');
+    assert.ok(accepted.asOfSeq > fifth.value.budget.asOfSeq);
+  } finally { f.cleanup(); }
+});

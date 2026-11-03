@@ -350,6 +350,17 @@ describe('writer brief', () => {
   });
 });
 
+test('writer brief binds plan constraints, leaves routine choices to the writer and keeps review evidence with the orchestrator', async () => {
+  const f = await fixture(false, PLAN);
+  try {
+    await f.approve(); await f.launch();
+    const rendered = await f.call();
+    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
+    const brief = fs.readFileSync(rendered.value.path, 'utf8').replace(/\s+/g, ' ');
+    for (const text of ['`Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding', 'decide routine implementation choices yourself', 'the orchestrator runs post-integration `Evidence: review` checks', 'RED command runs as written in the platform\'s subprocess shell']) assert.equal(brief.split(text).length - 1, 1, text);
+  } finally { f.cleanup(); }
+});
+
 test('writer brief keeps task behaviour and criterion fields from collapsed plan sections', async () => {
   const behaviour = '- First returns the validated value after retrying once.';
   const source = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`).replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts').replace('### T2 — Second', '</details>\n\n### T2 — Second').replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n').replace('- [SC2]', '  </details>\n\n- [SC2]');

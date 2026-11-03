@@ -514,3 +514,31 @@ test('POSIX owned-group checks distinguish missing groups, permission failure an
     }
   }
 });
+
+test('OpenCode lifecycle steps keep preparation, response and settlement separate and stay OpenCode-only', async () => {
+  const text = JSON.stringify({ type: 'text', timestamp: 0, sessionID: 'ses', part: { id: 'text-0', sessionID: 'ses', messageID: 'msg', type: 'text', text: 'controlled output' } });
+  const run = async (scenario: 'ok' | 'timeout' | 'offline' | 'other-provider') => {
+    const h = harness(posix);
+    Object.assign(h.ports.process, { settleGroup: async () => scenario !== 'timeout' });
+    h.ports.prepare = { fetchModels: async () => null, acquireGpuLock: async () => () => {} };
+    const request = { ...req, agent: 'explore', readOnlyVerified: true, collectLifecycle: true, ...(scenario === 'offline' ? { endpoint: 'http://127.0.0.1:9/v1' } : {}) };
+    const pending = runDelegate(scenario === 'other-provider' ? claude : opencode, request, 'cli', h.ports);
+    await flush();
+    if (scenario === 'offline') return pending;
+    if (scenario === 'timeout') h.clock.advance(req.timeoutMs);
+    h.finish(ok({ stdout: scenario === 'other-provider' ? '{}' : text }));
+    return pending;
+  };
+  // Settlement is recorded inside the launch, so compare by step name rather than recording order.
+  const steps = async (scenario: Parameters<typeof run>[0]) => (await run(scenario)).invocations.flatMap((i) => i.lifecycleSteps ?? []).sort((a, b) => a.step.localeCompare(b.step));
+  assert.deepEqual(await steps('ok'), [
+    { step: 'prepare', elapsedMs: 0, budgetMs: req.timeoutMs, outcome: 'ok' },
+    { step: 'response', elapsedMs: 1, budgetMs: req.timeoutMs, outcome: 'ok' },
+    { step: 'teardown', elapsedMs: 0, budgetMs: 1000, outcome: 'ok' },
+  ]);
+  const timeout = await steps('timeout');
+  assert.deepEqual(timeout.map(({ step, outcome }) => [step, outcome]), [['prepare', 'ok'], ['response', 'timeout'], ['teardown', 'unconfirmed']]);
+  const offline = await run('offline');
+  assert.deepEqual(offline.invocations.map((i) => [i.launched, i.lifecycleSteps?.map((s) => [s.step, s.outcome])]), [[false, [['prepare', 'failed']]]]);
+  assert.deepEqual(await steps('other-provider'), [], 'other providers never record lifecycle steps');
+});

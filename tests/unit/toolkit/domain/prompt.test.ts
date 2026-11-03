@@ -344,6 +344,28 @@ test('quality selection keeps artifact finding loci in review kind blocks', () =
   }
 });
 
+test('plan authors and reviewers share the binding decision standard', () => {
+  const bar = read(templates, 'quality-bar.md');
+  const planSection = bar.split(/^## plan$/m)[1]!.split(/^## design$/m)[0]!;
+  const standards = planSection.split('\n').filter((line) => line.startsWith('- Plan standard:'));
+  assert.equal(standards.length, 1, 'one canonical plan standard');
+  const standard = standards[0]!.replace(/\s+/g, ' ');
+  for (const term of ['observable outcomes', 'binding interfaces and invariants', 'ownership', 'dependencies', 'failure behavior', 'verification', 'exact algorithm']) assert.ok(standard.includes(term), term);
+  // Reviewers receive the standard once; other kinds do not.
+  assert.equal(flat('plan').split(standard).length - 1, 1, 'plan review prompt');
+  for (const kind of ['code', 'design'] as const) assert.ok(!flat(kind).includes(standard), kind);
+  // Authors read it through pointers, without a second copy.
+  for (const name of ['plan.md', '../verbs/plan.md']) {
+    const author = read(templates, name);
+    assert.ok(author.includes('quality-bar.md#plan'), `${name}: points to the canonical plan standard`);
+    assert.ok(!author.includes('exact algorithm'), `${name}: no restated standard`);
+  }
+  // Reviewers separate a decision that blocks safe implementation from a routine writer choice.
+  const reviewer = flat('plan');
+  assert.match(reviewer, /missing decision that prevents safe implementation/);
+  assert.match(reviewer, /routine writer choice[^.]*only with a concrete consequence/);
+});
+
 // SECTION: Computed turn target and context map
 
 test('turn target: the advisory budget shows the computed number in every kind', () => {

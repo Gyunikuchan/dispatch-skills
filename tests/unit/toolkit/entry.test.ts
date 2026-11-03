@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { main as toolkitMain } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 test('dispatch entry routes sessions and toolkit operations with bounded output', async () => {
@@ -108,5 +110,26 @@ test('session instructions always point at grounding and add diagnostics only wh
     f.lines.length = 0;
     assert.equal(await entry.main(['session', 'reactivate', '--session-dir', enabledVal.path], deps), 0);
     assertInstructions(JSON.parse(f.lines[0]!), true);
+  } finally { f.cleanup(); }
+});
+
+test('disabled diagnostics add neither lifecycle collection requests nor capture artifacts for OpenCode', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: false }));
+    f.deps.skillRoot = skill;
+    const requests: DelegateRequest[] = [];
+    f.deps.delegate = async (provider, request, mode) => {
+      requests.push(request);
+      return { outcome: { status: 'ok', text: 'answer', sessionId: null, resume: null }, invocations: [{ provider, model: null, mode, effort: null, launched: true, outcome: 'ok' }] };
+    };
+    f.deps.handler = async ({ deps }) => {
+      await deps.delegate('opencode', { logPath: path.join(f.session, 'logs', 'opencode[0].log') } as DelegateRequest, 'cli');
+      return { ok: true, exit: 0, summary: 'done', value: null };
+    };
+    assert.equal(await toolkitMain(['ask', 'run', '--session', f.session], f.deps), 0);
+    assert.deepEqual(requests.map((r) => [r.collectUsage, r.collectLifecycle]), [[undefined, undefined]]);
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false);
   } finally { f.cleanup(); }
 });

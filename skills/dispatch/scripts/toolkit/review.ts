@@ -14,7 +14,7 @@ import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
-import { finalizeRound, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
+import { admission, finalizeRound, read, renderBudget, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
 import { git, gitOk } from './git.ts';
 import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
@@ -33,10 +33,6 @@ const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktr
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string};
-function read<T>(file: string): T | null {
-  try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
-  catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
-}
 function atomic(file: string, value: unknown) {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
@@ -86,30 +82,6 @@ function blockedNotice(blocked: readonly BlockedEntry[], blockers: readonly Bloc
   }
   const omitted = items.length - shown.length;
   return shown.join('; ') + (omitted ? `; +${omitted} more blocked` : '');
-}
-// SECTION: Review ceiling
-type CeilingState = {ceiling: number; deferred: boolean; open: boolean};
-const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
-/**
- * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
- * Defer grants nothing and applies only to the current ceiling id.
- */
-function ceilingState(records: readonly LedgerRecord[], review: string, cap1: number): CeilingState {
-  const prefix = 'ceiling:' + review + ':';
-  const opened = new Map<string, number>(), state = new Map<string, string>(), grants = new Set<string>(), defers = new Set<string>();
-  for (const row of records) {
-    if (row.kind !== 'escalation') continue;
-    const id = row.data['id'];
-    if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
-    state.set(id, row.data['state']);
-    if (row.by === 'tool' && row.data['state'] === 'open' && !opened.has(id)) opened.set(id, row.seq);
-    if (row.by !== 'user' || row.data['state'] !== 'resolved' || !row.quote?.trim() || row.seq <= (opened.get(id) ?? Infinity)) continue;
-    const summary = String(row.data['summary'] ?? '');
-    if (CEILING_GRANT.test(summary)) grants.add(id);
-    else if (summary.startsWith('defer:')) defers.add(id);
-  }
-  const ceiling = cap1 + 2 + 2 * grants.size;
-  return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
 }
 // NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
 function specHashFor(root: string, input: string): string {
@@ -251,10 +223,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   }
 
   return withLockFile(path.join(directory, 'claim'), 'review', deps, 0, async () => {
-    const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
-    const last = numbers.at(-1) ?? 0;
-    const completed = last > 0 && fs.existsSync(path.join(directory, 'round-' + last, 'findings.json'));
-    const n = completed ? last + 1 : last || 1;
+    const {budget: admitted, rounds} = admission(session, foldLedger(session), review, cap), n = admitted.nextRound, cap1 = admitted.cap;
     // Computed once after the slots exist: every return path reports the same blocked state.
     let blockedState: BlockedState | undefined;
     const blockedStateOf = (): BlockedState => blockedState ??= (() => {
@@ -262,36 +231,19 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return {blocked, blockers: blockersFor(directory, n, blocked)};
     })();
     const publicBlocked = () => blockedStateOf().blocked.map(({slot, provider, model, reason}) => ({slot, provider, model, reason}));
-    const first = read<Round>(path.join(directory, 'round-1', 'round.json'));
-    const cap1 = first?.cap ?? cap;
-    const ceiling = ceilingState(foldLedger(session).records, review, cap1);
     // The corrected severity of a finding, from every ruling recorded for it.
     const effective = (finding: Finding, rows: readonly LedgerRecord[]) => effectiveSeverity(finding, rows.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id));
-    const continuation = () => {
-      const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
-      const previousMetadata=read<Round>(path.join(directory,'round-'+(n-1),'round.json'));
-      const fixed = numbers.some(number=>read<FindingsValue>(path.join(directory,'round-'+number,'findings.json'))?.findings.some(finding=>{
-        const ruling=rulings.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id);
-        return effective(finding,rulings)==='MUST' && ruling?.data['ruling']==='accepted' && (number===n-1 || ruling.seq>(previousMetadata?.startSeq ?? 0));
-      }));
-      return {fixed, pending: rejectionStates().some(state=>state.state==='pending')};
-    };
     // A fresh review may skip at a zero-round level; an existing review runs the saved-cap checks below.
-    if (!cap && !numbers.length) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
+    if (!cap && !rounds) return {ok: true, exit: 0, value: {skipped: true}, summary: 'review skipped at ' + level};
     // An incomplete round is reused before the ceiling checks; the round-cap predicate still applies.
-    if (completed && ceiling.open) throw new ToolError(4, 'escalation-open', 'Resolve the review ceiling escalation before another round');
-    if (n > cap1) {
-      const {fixed, pending} = continuation();
-      const pastCeiling = completed && n > ceiling.ceiling;
-      // Defer grants no rounds; a pending MUST rejection keeps its confirmation round.
-      if ((!fixed && !pending) || (pastCeiling && ceiling.deferred && !pending)) throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap1);
-      if (pastCeiling && !ceiling.deferred) {
-        const id = 'ceiling:' + review + ':' + ceiling.ceiling;
-        await withLedger(session, 'review ceiling', deps, async tx => {
-          await tx.append({kind: 'escalation', by: 'tool', key: id, data: {id, state: 'open', summary: 'ceiling ' + ceiling.ceiling + ' reached'}});
-        });
-        throw new ToolError(4, 'review-ceiling', 'Review reached ceiling ' + ceiling.ceiling + '; resolve the review escalation before another round');
-      }
+    if (admitted.state === 'escalation-open') throw new ToolError(4, 'escalation-open', 'Resolve the review ceiling escalation before another round');
+    if (admitted.state === 'requires-continuation') throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap1);
+    if (admitted.state === 'requires-ceiling-resolution') {
+      const id = 'ceiling:' + review + ':' + admitted.ceiling;
+      await withLedger(session, 'review ceiling', deps, async tx => {
+        await tx.append({kind: 'escalation', by: 'tool', key: id, data: {id, state: 'open', summary: 'ceiling ' + admitted.ceiling + ' reached'}});
+      });
+      throw new ToolError(4, 'review-ceiling', 'Review reached ceiling ' + admitted.ceiling + '; resolve the review escalation before another round');
     }
     // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
     const existingRound = read<Round>(path.join(directory, 'round-' + n, 'round.json'));
@@ -494,16 +446,18 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       ? refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; })
       : null;
     const state = blockedStateOf(), blockedSummary = blockedNotice(state.blocked, state.blockers);
+    // Advisory only: reporting a boundary opens no escalation and grants no round.
+    const {budget} = admission(session, foldLedger(session), review, cap);
     return {
       ok: true, exit: 0,
       value: {
-        path: file, review, round: n,
+        path: file, review, round: n, budget,
         ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
         ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
         ...(state.blockers.length ? { blockers: state.blockers } : {}),
         ...(round.underfill ? { underfill: round.underfill } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${pending.failed.length} failed slots${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
         ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity)
           .map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`))),
     };

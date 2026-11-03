@@ -202,6 +202,16 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   for (const rule of ['fail RED for the right reason', 'Prefer FIRST (deterministic, isolated) tests and preserve meaningful failures.', 'static checks do not guarantee runtime authorization or state transitions', 'name its consumer, failure and protection', 'Plan observable values, used errors, readable state, external payloads, prohibited/duplicate effects or invariants', 'mutation-style break-it checks', 'Retain multiple layers only for distinct failures', 'Coverage never justifies retention; resolve required-contract uncertainty before deletion', 'Self-derived expectations, source restatements and assertions on test-created data do not establish runtime behavior unless that artifact is the contract.', 'If brittle mocks, broad unrelated fixtures or costly infrastructure outweigh regression value, use the closest executable or review evidence and record the limit.']) assert.ok(qualityBar(quality, 'plan').includes(rule), rule);
   const explorer = readFileSync(new URL('explorer-brief.md', root), 'utf8');
   for (const rule of ['Surprises', 'Not covered', '## Questions', '## Coverage checklist', '## Map, budget and output']) assert.ok(explorer.includes(rule), rule);
+  // Evidence rule: one shared home, reached by every consumer, linked from the explorer, stack neutral.
+  const evidenceRule = quality.split('\n').filter((line) => line.startsWith('- Evidence:'));
+  assert.equal(evidenceRule.length, 1);
+  for (const term of ['sample inspected against the population', 'uncertainty', "search method's exclusions", 'direct evidence the host supports', 'mark it unverified']) assert.ok(evidenceRule[0]!.includes(term), term);
+  for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.ok(qualityCriteria(quality, consumer).includes(evidenceRule[0]!), consumer);
+  assert.ok(explorer.includes('[shared evidence rule](quality-bar.md#shared)'));
+  const planGuidance = readFileSync(new URL('plan.md', root), 'utf8');
+  for (const text of [evidenceRule[0]!, section('plan')]) assert.doesNotMatch(text, /\.codegraph|node_modules|\.gitignore|package\.json|\bnpm\b|\bjest\b|\bpytest\b/);
+  assert.match(planGuidance, /Ownership names who changes the outcome, not who runs the evidence/);
+  assert.match(planGuidance, /review-only criterion still completes by user manual-complete/);
   const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
   assert.ok(frame.includes('Verification evidence comes from the orchestrator; run no test or build commands.'));
   assert.ok(frame.includes('Inspect required callers, interfaces, host rules and governing material even outside Scope.'));
