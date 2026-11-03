@@ -303,3 +303,9 @@ test('scope round rule has one canonical home', () => {
   }
   assert.match(read(root + 'references/verbs/implement.md'), /brief names the governing spec path for a whole read/i);
 });
+
+test('review rules link the shared severity rubric and restate no table cell', () => {
+  const rules = read(root + 'references/review-rules.md');
+  assert.ok(links(rules).includes('templates/review-severity.md'));
+  assert.doesNotMatch(rules, /^\s*\|.*\b(critical|blocks|degrades|minor)\b.*\b(MUST|SHOULD|CONSIDER)\b/im);
+});

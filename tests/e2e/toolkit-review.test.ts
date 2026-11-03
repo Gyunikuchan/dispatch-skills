@@ -14,7 +14,7 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
   fs.writeFileSync(path.join(f.root,'src/file.ts'),'first captured change\n');
   const run=()=>f.run(['review','run','worktree','--kind','code','--spec','work.spec.md','--level','low']);
   const first=await run();assert.equal(first.output.reason,'native-pending');
-  fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{severity:'MUST',tag:'correctness',locus:'src/file.ts:L1',defect:'Writes are unbounded',requiredChange:'Bound the writes'}]}));
+  fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{impact:'blocks',trigger:'realistic',tag:'correctness',locus:'src/file.ts:L1',defect:'Writes are unbounded',requiredChange:'Bound the writes'}]}));
   const finding=await run();assert.equal(finding.exit,0);const saved=JSON.parse(fs.readFileSync(finding.value.path,'utf8'));
   await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-captured',data:{subject:'review:'+saved.review+':R1-F001',ruling:'rejected',rationale:'Captured writes have a bound'}},f.deps);
   const second=await run();assert.equal(second.output.reason,'native-pending');
@@ -173,7 +173,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
     const f=await toolkitRepo(two,{'src/other.ts':'initial\n'});try{
       f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
       f.deps.liveness={claude:true};f.deps.orchestrator=null;
-      f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'FINDINGS',findings:[{severity:'SHOULD',tag:'correctness',locus:'src/file.ts:L1',defect:'The file returns an invalid result',requiredChange:'Return the expected result'}]}),resume:null,sessionId:null},invocations:[]});
+      f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'FINDINGS',findings:[{impact:'degrades',trigger:'realistic',tag:'correctness',locus:'src/file.ts:L1',defect:'The file returns an invalid result',requiredChange:'Return the expected result'}]}),resume:null,sessionId:null},invocations:[]});
       await f.level('high');await f.approve();
       const submit=async(task:string,file:string)=>{
         const made=await f.run(['worktree','create',task]);assert.equal(made.exit,0,JSON.stringify(made.output));
@@ -200,7 +200,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
         fs.writeFileSync(path.join(f.session,'.state/briefs/T1-1.report.md'),'## Observed RED failures\nSC1 failed before the fix\n');
         assert.equal((await review()).findings.filter((finding:any)=>finding.defect.startsWith('missing-red:')).length,0);
       }
-      else{assert.deepEqual(finding.unresolved,{of:first.findings[0].id});assert.equal(second.escalations.length,0);const gap=second.findings.find((finding:any)=>finding.id==='R2-RED01');assert.ok(gap.unresolved);assert.match(gap.defect,/Tests touched: no$/);}
+      else{assert.deepEqual(finding.unresolved,{of:first.findings[0].id});assert.equal(second.escalations.length,0);const gap=second.findings.find((finding:any)=>finding.id==='R2-RED01');assert.ok(gap.unresolved);assert.deepEqual([gap.severity,gap.impact,gap.trigger],['SHOULD','degrades','realistic']);assert.match(gap.defect,/Tests touched: no$/);}
     }finally{f.cleanup();}
   }
 });

@@ -7,6 +7,7 @@ import type { Fold } from './ledger.ts';
 import { latest, currentHashes } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { parseReport } from './domain/report.ts';
+import { effectiveSeverity } from './domain/severity.ts';
 import { reviewFixFromCommit } from './integrate.ts';
 import type { ReviewFix } from './records.ts';
 import { gitOk } from './git.ts';
@@ -93,12 +94,14 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
   const all=rounds.flatMap(r=>r?.findings.findings??[]);
   if(findings.findings.some((finding:any)=>!finding||typeof finding.id!=='string'||!finding.id.trim()) ||
       new Set(findings.findings.map((finding:any)=>finding.id)).size!==findings.findings.length)refuse('review-required');
+  // The corrected severity of a code-integration finding, from every ruling recorded for it.
+  const effective=(finding:any)=>effectiveSeverity(finding,fold.records.filter(r=>r.kind==='ruling'&&r.data['subject']==='review:code-integration:'+finding.id));
   const settled=(finding:any,seen=new Set<string>()):boolean=>{
     if(seen.has(finding.id))return false;seen.add(finding.id);
     const ruling=fold.records.findLast(r=>r.kind==='ruling' &&
       r.data['subject']==='review:code-integration:'+finding.id);
     if(!ruling?.data['rationale']?.trim())return false;
-    if(ruling.data['ruling']==='rejected')return finding.severity!=='MUST' || states.some(state=>state.request.review==='code-integration' && state.request.finding===finding.id && state.state==='confirmed');
+    if(ruling.data['ruling']==='rejected')return effective(finding)!=='MUST' || states.some(state=>state.request.review==='code-integration' && state.request.finding===finding.id && state.state==='confirmed');
     if(ruling.data['ruling']==='duplicate') {const original=all.find(f=>f.id!==finding.id &&
       ruling.data['rationale'].includes(f.id));
     return !!original &&
@@ -113,7 +116,7 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       f.recurrence?.of===finding.id);
     return false;
   };
-  if(all.some((f:any)=>f.severity==='MUST' &&
+  if(all.some((f:any)=>effective(f)==='MUST' &&
       !settled(f)))refuse('review-required');
   const corrections:ReviewCorrection[]=[];
   if(head!==baseline) {
@@ -134,7 +137,9 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       for(const id of metadata.findings) {
         const finding=finalFindings.get(id);
         const ruling=fold.records.findLast(candidate=>candidate.kind==='ruling'&&candidate.data['subject']==='review:code-integration:'+id);
-        if(!finding||finding.severity!=='SHOULD'||!ruling||ruling.data['ruling']!=='accepted'||!String(ruling.data['rationale']??'').trim()||ruling.seq<=round.startSeq||ruling.seq>=record.seq)refuse('review-required');
+        // NOTE: a finding corrected down to CONSIDER keeps its required fix; a reviewer-rated CONSIDER does not qualify.
+        const qualifies=finding&&(effective(finding)==='SHOULD'||(effective(finding)==='CONSIDER'&&finding.severity!=='CONSIDER'));
+        if(!qualifies||!ruling||ruling.data['ruling']!=='accepted'||!String(ruling.data['rationale']??'').trim()||ruling.seq<=round.startSeq||ruling.seq>=record.seq)refuse('review-required');
       }
       const allowed=new Set<string>();
       for(const id of metadata.findings) {

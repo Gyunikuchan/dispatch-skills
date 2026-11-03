@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { rejectionState } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
 import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
 
 // SECTION: Later-round roster policy
@@ -206,4 +207,129 @@ test('context map: code review never receives a session map', async () => {
     assert.ok(prompts.length > 0);
     for (const prompt of prompts) assert.doesNotMatch(prompt, /Context Map/);
   } finally {f.cleanup();}
+});
+
+// SECTION: Corrected severity governs rounds
+
+const CORRECTIONS = {
+  consider: {impact: 'minor', trigger: 'contrived', rationale: 'impact and trigger: a cosmetic point on a contrived path'},
+  should: {impact: 'degrades', trigger: 'realistic', rationale: 'impact: the Verify gate surfaces this gap'},
+  must: {impact: 'blocks', trigger: 'realistic', rationale: 'impact: the promised outcome fails'},
+} as const;
+const correct = (f: Awaited<ReturnType<typeof fixture>>, id: string, to: keyof typeof CORRECTIONS) =>
+  f.add('ruling', {subject: 'review:plan-work.plan:' + id, ruling: 'accepted', ...CORRECTIONS[to]});
+const findingsDelegate = (severity: 'MUST' | 'SHOULD', counter: {step: number}): CliDeps['delegate'] => async () =>
+  ({outcome: {status: 'ok', text: report('§ Work', 'Defect ' + counter.step, severity), resume: null, sessionId: null}, invocations: []});
+
+test('corrected finding: a MUST downgraded to CONSIDER narrows the next roster, with or without a later plain ruling', async () => {
+  for (const plainRulingAfter of [false, true]) {
+    const f = await fixture();
+    try {
+      f.deps.delegate = findingsDelegate('MUST', {step: 1});
+      assert.equal((await f.call()).exit, 0);
+      const [first] = targetSlots(f.read(1, 'round.json'));
+      await correct(f, 'R1-F001', 'consider');
+      if (plainRulingAfter) await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Applied the fix'});
+      fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      assert.equal((await f.call()).exit, 0);
+      assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
+    } finally {f.cleanup();}
+  }
+});
+
+test('corrected finding: a MUST downgraded to SHOULD earns no continuation past the cap', async () => {
+  const f = await fixture();
+  try {
+    const counter = {step: 0};
+    f.deps.delegate = findingsDelegate('MUST', counter);
+    for (const id of ['R1-F001', 'R2-F001']) {
+      counter.step++;
+      assert.equal((await f.call()).exit, 0);
+      await correct(f, id, 'should');
+      fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
+    }
+    const refused = await f.call();
+    assert.equal(refused.exit, 4);
+    assert.equal(refused.output.reason, 'round-cap');
+  } finally {f.cleanup();}
+});
+
+test('corrected finding: a SHOULD raised to MUST earns continuation and a full roster past the cap', async () => {
+  const f = await fixture();
+  try {
+    const counter = {step: 0};
+    f.deps.delegate = findingsDelegate('SHOULD', counter);
+    let everyTarget: string[] = [];
+    for (const id of ['R1-F001', 'R2-F001']) {
+      counter.step++;
+      assert.equal((await f.call()).exit, 0);
+      if (id === 'R1-F001') everyTarget = targetSlots(f.read(1, 'round.json'));
+      await correct(f, id, 'must');
+      fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
+    }
+    assert.equal((await f.call()).exit, 0);
+    assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
+  } finally {f.cleanup();}
+});
+
+test('corrected finding: the ruling snapshot lists a SHOULD raised to MUST and omits a MUST lowered to SHOULD', async () => {
+  for (const [stored, to] of [['SHOULD', 'must'], ['MUST', 'should']] as const) {
+    const f = await fixture();
+    try {
+      f.deps.delegate = findingsDelegate(stored, {step: 1});
+      assert.equal((await f.call()).exit, 0);
+      const ruling = await correct(f, 'R1-F001', to);
+      fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      assert.equal((await f.call()).exit, 0);
+      assert.equal(f.read(2, 'round.json').rulingSnapshot, stored === 'SHOULD' ? JSON.stringify([['R1-F001', ruling.seq]]) : '[]');
+    } finally {f.cleanup();}
+  }
+});
+
+test('corrected finding: settled rows hide a rejected SHOULD that was raised to MUST until it is confirmed', async () => {
+  const run = async (raise: boolean) => {
+    const f = await fixture();
+    try {
+      let phase = 'finding';
+      f.deps.delegate = async (provider, request, mode) => {
+        f.launches.push({provider, request, mode});
+        const ids = [...fs.readFileSync(request.promptPath, 'utf8').matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+        if (phase === 'finding' && provider === 'agy') return {outcome: {status: 'ok', text: report('§ Work', 'Retries are unbounded', 'SHOULD'), resume: null, sessionId: null}, invocations: []};
+        return {outcome: {status: 'ok', text: JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'Checked the captured isolation'}))}), resume: null, sessionId: null}, invocations: []};
+      };
+      assert.equal((await f.call()).exit, 0);
+      if (raise) await correct(f, 'R1-F001', 'must');
+      await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'rejected', rationale: 'The captured implementation bounds the retries'});
+      phase = 'rejection';
+      f.launches.length = 0;
+      assert.equal((await f.call()).exit, 0);
+      return promptsOf(f).some(prompt => prompt.includes('### Settled in earlier rounds'));
+    } finally {f.cleanup();}
+  };
+  assert.equal(await run(false), true);
+  assert.equal(await run(true), false);
+});
+
+// SECTION: Rejection confirmation after corrections
+
+const rejectionStatesFor = (stored: 'MUST' | 'SHOULD', chain: readonly ('must' | 'should' | 'rejected')[]) => {
+  const finding = {id: 'R1-F001', severity: stored, sources: ['reviewer'], defect: 'Defect', locus: '§ Work', requiredChange: 'Fix'};
+  const round = {
+    review: 'plan-work.plan',
+    metadata: {round: 1, generation: 1, startSeq: 0, target: {base: 'a'.repeat(40), head: 'b'.repeat(40)}, spec: {path: 'spec', hash: 'sha256:' + 'a'.repeat(64)}, roster: [{slot: 'reviewer', reserve: false}]},
+    findings: {review: 'plan-work.plan', round: 1, findings: [finding]},
+  } as unknown as Parameters<typeof rejectionState>[0][number];
+  const rulings = chain.map((step, index) => ({
+    kind: 'ruling', seq: index + 1, key: 'k' + index, at: '', by: 'orchestrator',
+    data: {subject: 'review:plan-work.plan:R1-F001', ...(step === 'rejected' ? {ruling: 'rejected', rationale: 'Ruling ' + index} : {ruling: 'accepted', ...CORRECTIONS[step]})},
+  }));
+  return rejectionState([round], rulings as never, []);
+};
+
+test('corrected finding: rejection confirmation follows the higher of the stored and latest corrected severities', () => {
+  assert.equal(rejectionStatesFor('MUST', ['should', 'rejected']).length, 1);
+  assert.equal(rejectionStatesFor('SHOULD', ['must', 'rejected']).length, 1);
+  assert.equal(rejectionStatesFor('SHOULD', ['must', 'should', 'rejected']).length, 0);
+  assert.equal(rejectionStatesFor('SHOULD', ['rejected']).length, 0);
+  assert.equal(rejectionStatesFor('MUST', ['rejected']).length, 1);
 });

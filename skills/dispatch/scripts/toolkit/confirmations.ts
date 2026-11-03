@@ -9,6 +9,7 @@ import { latest, type Fold } from './ledger.ts';
 import type { LedgerRecord } from './records.ts';
 import { ToolError } from './output.ts';
 import { parseReport } from './domain/report.ts';
+import { effectiveSeverity } from './domain/severity.ts';
 
 export type RejectionRequest = {
   requestId: string; review: string; finding: string; rulingSeq: number; claim: Finding;
@@ -27,8 +28,8 @@ export function rejectionRequest(request: Omit<RejectionRequest,'requestId'>): R
 export function rejectionState(rounds: readonly ConfirmationRound[], rulings: readonly LedgerRecord[], escalations: readonly LedgerRecord[]): RejectionState[] {
   const states: RejectionState[] = [];
   for (const round of rounds) for (const finding of round.findings.findings) {
-    if (finding.severity !== 'MUST') continue;
     const history = rulings.filter(row => row.kind === 'ruling' && row.data['subject'] === 'review:'+round.review+':'+finding.id);
+    if (effectiveSeverity(finding, history) !== 'MUST') continue;
     const ruling = history.findLast(row=>row.data['ruling']==='accepted' || row.data['ruling']==='rejected');
     if (ruling?.data['ruling'] !== 'rejected') continue;
     const current = rounds.filter(value => value.review === round.review).at(-1)!.metadata;

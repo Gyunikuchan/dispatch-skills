@@ -5,6 +5,8 @@ import type { Manifest } from '../lib/session.ts';
 import { reviewId, loadRejections, type RejectionState } from './confirmations.ts';
 import { readReviews, type ReviewRound } from './diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
+import { effectiveSeverity, RANK } from './domain/severity.ts';
+import type { Severity } from './domain/types.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
 import { sectionRanges, structuralLines } from './domain/plan.ts';
 import type { WalkthroughView } from './walkthrough.ts';
@@ -60,14 +62,18 @@ export function reviewRows(
     for (const raw of findings) {
       if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
       const finding = raw as { id: string; severity?: unknown; sources?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
-      const ruling = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
+      const history = fold.records.filter((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
+      const ruling = history.at(-1);
+      const stored = typeof finding.severity === 'string' ? finding.severity : 'unknown';
+      const severity: string = stored in RANK ? effectiveSeverity(finding as { severity: Severity }, history) : stored;
       const rulingValue = ruling?.data['ruling'];
       const confirmation = confirmations.find(state => state.request.review === round.review && state.request.finding === finding.id);
       rows.push({
         review: round.review,
         id: finding.id,
         round: round.round,
-        severity: typeof finding.severity === 'string' ? finding.severity : 'unknown',
+        severity,
+        ...(stored in RANK && RANK[severity as Severity] < RANK[stored as Severity] ? { downgradedFrom: stored } : {}),
         sources: (Array.isArray(finding.sources) ? finding.sources : []).filter((id): id is string => typeof id === 'string')
           .map((id) => slotLabel(round, id)),
         ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as ReviewRow['ruling'] : null,
@@ -88,7 +94,7 @@ export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readon
     for (const row of rows) {
       const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`].filter(Boolean);
       const rulingStatus = row.ruling ? row.ruling[0]!.toUpperCase() + row.ruling.slice(1) : 'Open';
-      const status = [rulingStatus, ...markers].join(' ');
+      const status = [rulingStatus, ...(row.downgradedFrom ? [`(downgraded from ${line(row.downgradedFrom)})`] : []), ...markers].join(' ');
       out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.sources?.length ? row.sources.join(', ') : '—')} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);
     }
   } else if (!rounds.length) out.push('*No reviews conducted yet.*');

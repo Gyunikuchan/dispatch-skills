@@ -199,7 +199,7 @@ data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. 
 
 ### ruling
 
-data: `subject`, `ruling`, `rationale`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, with ruling accepted/rejected/duplicate/deferred.
+data: `subject`, `ruling`, `rationale`, optional `impact` and `trigger`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, with ruling accepted/rejected/duplicate/deferred. `impact` and `trigger` correct the finding's rating as a pair, only on an `accepted` ruling of a review finding; the toolkit derives the severity. Refused with `invalid-record`: a lone dimension, an invalid value, a `severity` key, a non-accepted or non-review ruling, a subject outside `review:<review>:R<n>-F|RED<n>`, a finding that is absent, unreadable or lacks a stored `impact`, a lowered `critical` impact (rule the finding rejected instead), an unchanged rating, and a rationale that omits a changed dimension name.
 
 ### note
 

@@ -639,7 +639,8 @@ test('resumed review round keeps underfill from the roster it launched', async (
 test('review run summary lists first findings by severity', async () => {
   const f = await fixture();
   try {
-    const finding = (severity: string, i: number) => ({severity, tag: 'reliability', locus: '§ Work ' + i,
+    const rating = {MUST: {impact: 'blocks', trigger: 'realistic'}, SHOULD: {impact: 'degrades', trigger: 'realistic'}, CONSIDER: {impact: 'minor', trigger: 'contrived'}} as const;
+    const finding = (severity: keyof typeof rating, i: number) => ({...rating[severity], tag: 'reliability', locus: '§ Work ' + i,
       defect: severity + ' defect ' + i, requiredChange: 'Fix defect ' + i});
     const findings = [finding('CONSIDER', 1), finding('SHOULD', 2), finding('MUST', 3), finding('SHOULD', 4),
       finding('CONSIDER', 5), finding('SHOULD', 6), finding('MUST', 7)];

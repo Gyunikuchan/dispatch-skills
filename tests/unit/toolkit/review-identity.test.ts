@@ -91,3 +91,54 @@ test('review identity accepts a narrowed re-review round',async()=>{
   assert.equal(result.round,2);
  }finally{f.cleanup();}
 });
+
+// SECTION: Delivery gates read the corrected severity
+
+async function correctedGate(stored: {severity: string; impact: string; trigger: string}, correction: {impact: string; trigger: string} | null) {
+ const f=sessionFixture({memory:true});
+ try{
+  f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
+  const baseline='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),commitReason='repair accepted SHOULD';
+  const bind={kind:'bind',seq:1,key:'bind',at:'',by:'tool',data:{spec:'work.spec.md',plan:'work.plan.md'}};
+  const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline};
+  const ruling={kind:'ruling',seq:2,key:'ruling',at:'',by:'orchestrator',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'impact: corrected after review',...(correction??{})}};
+  const fix={kind:'integrate',seq:3,key:'fix',at:'',by:'tool',data:{phase:'fix',commit:head,reason:commitReason,reviewFix}};
+  const artifacts=currentHashes(f.root,bind);
+  const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');fs.mkdirSync(path.join(reviewDir,'gen-1/slots'),{recursive:true});
+  const finding={id:'R3-F001',...stored,fix:{paths:['src/file.ts'],dependencies:[],verification:[]},locus:'src/file.ts:L1',defect:'The source is incorrect',requiredChange:'Correct the source'};
+  fs.writeFileSync(path.join(reviewDir,'round.json'),JSON.stringify({round:3,cap:3,generation:1,startSeq:1,target:{base,head:baseline},scope:'Full review',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]}));
+  fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[finding],failed:[]}));
+  fs.writeFileSync(path.join(reviewDir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
+  const canonical=stableValue(reviewFix),fixDigest='sha256:'+crypto.createHash('sha256').update(canonical).digest('hex'),fixData=Buffer.from(canonical).toString('base64url');
+  const manifest=readManifest(f.session),message=[`fix(dispatch): ${commitReason}`,'',`Dispatch-Fix: ${manifest.safeSessionId}`,`Dispatch-Review-Fix: ${fixDigest}`,`Dispatch-Review-Fix-Data: ${fixData}`,''].join('\n');
+  f.deps.run=async(argv)=>{
+   const args=argv.slice(1),output=(stdout='')=>({exit:0,stdout,stderr:''});
+   if(args[0]==='rev-list'&&args[1]==='--reverse'&&args[2]==='--parents')return output(head+' '+baseline+'\n');
+   if(args[0]==='diff-tree'&&args.includes(head))return output('src/file.ts\0');
+   if(args[0]==='log'&&args[1]==='-1'&&args[2]==='--format=%B'&&args[3]===head)return output(message);
+   throw new Error('Unexpected Git argv: '+JSON.stringify(argv));
+  };
+  const ctx={session:f.session,manifest,deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+  return await reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base).then(
+   value=>({ok:true as const,value}),error=>({ok:false as const,reason:(error as {reason?:string}).reason}));
+ }finally{f.cleanup();}
+}
+
+test('corrected finding: a MUST downgraded to SHOULD qualifies for the final-round SHOULD fix',async()=>{
+ const result=await correctedGate({severity:'MUST',impact:'blocks',trigger:'realistic'},{impact:'degrades',trigger:'realistic'});
+ assert.equal(result.ok,true,JSON.stringify(result));
+});
+
+test('corrected finding: a finding corrected to CONSIDER qualifies for the final-round fix, and a reviewer-rated CONSIDER does not',async()=>{
+ for(const stored of [{severity:'MUST',impact:'blocks',trigger:'realistic'},{severity:'SHOULD',impact:'degrades',trigger:'realistic'}]){
+  const result=await correctedGate(stored,{impact:'degrades',trigger:'contrived'});
+  assert.equal(result.ok,true,JSON.stringify(result));
+ }
+ assert.deepEqual(await correctedGate({severity:'CONSIDER',impact:'minor',trigger:'contrived'},null),{ok:false,reason:'review-required'});
+});
+
+test('corrected finding: a SHOULD raised to MUST no longer qualifies for the final-round SHOULD fix',async()=>{
+ assert.equal((await correctedGate({severity:'SHOULD',impact:'degrades',trigger:'realistic'},null)).ok,true);
+ const result=await correctedGate({severity:'SHOULD',impact:'degrades',trigger:'realistic'},{impact:'blocks',trigger:'realistic'});
+ assert.deepEqual(result,{ok:false,reason:'review-required'});
+});

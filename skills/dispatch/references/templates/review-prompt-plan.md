@@ -53,9 +53,9 @@ Check task-specific constraints (including rationale for non-obvious prerequisit
 
 ## severity
 
-In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding
+In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
 constraint. A gap that the plan's own Verify gates would surface deterministically during
-implementation, such as a fixture update or a test assertion, is SHOULD.
+implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 
 ## budget
 

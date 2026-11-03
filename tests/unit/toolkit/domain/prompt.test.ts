@@ -69,7 +69,7 @@ test('settled section halves round-7 fixture', () => {
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);
 const golden = new URL('../../../fixtures/review-prompt-golden/', import.meta.url);
 const read = (base: URL, name: string) => readFileSync(new URL(name, base), 'utf8');
-const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind)];
+const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind), read(templates, 'review-severity.md')];
 
 test('prompt: fill rejects missing declared values and undeclared value names', () => {
   assert.throws(() => fillTemplate('<A> <B>', ['A', 'B'], { A: '1' }), /Missing value\(s\) for declared variable\(s\): B/);
@@ -219,22 +219,28 @@ test('prompt: a section declared in both a kind and a shared kind block throws',
   assert.throws(() => assembleTemplate(frame, '## a\nx\n', undefined, ['## b\ny\n', '## b\nz\n']), /declares section "b" twice/);
 });
 
-// SECTION: Plan-review severity calibration
+// SECTION: Severity rubric
 
-const CALIBRATION = "In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Verify gates would surface deterministically during implementation, such as a fixture update or a test assertion, is SHOULD.";
+const CALIBRATION = "In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Verify gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.";
 const assembled = (kind: QualityConsumer) => assembleTemplate(read(templates, 'review-prompt.md'), read(templates, `review-prompt-${kind}.md`), undefined, shared(kind)).template;
+const rubricBody = () => read(templates, 'review-severity.md').split(/^## rubric$/m)[1]!.trim();
 
-test('plan prompt calibrates MUST', () => {
-  const flat = assembled('plan').replace(/\s+/g, ' ');
-  assert.ok(flat.includes(`\`CONSIDER\`: optional improvement; no defect. ${CALIBRATION} In \`defect\`, state`), flat);
+test('all kinds share an identical severity rubric', () => {
+  const rubric = rubricBody();
+  for (const kind of ['code', 'design', 'plan'] as const) {
+    const prompt = readFileSync(new URL(`${kind}.md`, golden), 'utf8');
+    assert.ok(prompt.includes(rubric), `${kind}: rubric text`);
+    const reply = prompt.split('\n').find((line) => line.startsWith('{"status":"FINDINGS"'))!;
+    assert.ok(reply.includes('"findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus"'), kind);
+    assert.doesNotMatch(reply, /"severity"/, kind);
+  }
 });
 
-test('code and design prompts omit severity calibration', () => {
-  assert.match(extractTemplate(read(templates, 'review-prompt.md')).template, /improvement; no defect\.\n<<slot:severity>>\nIn `defect`/);
+test('only the plan kind has the Verify-gate sentence', () => {
+  assert.ok(flat('plan').includes(CALIBRATION));
   for (const kind of ['code', 'design'] as const) {
     const template = assembled(kind);
-    assert.match(template, /improvement; no defect\.\nIn `defect`/, kind);
-    assert.ok(!template.includes('In plan reviews') && !template.includes('<<slot:'), kind);
+    assert.ok(!template.includes('Verify gates') && !template.includes('<<slot:'), kind);
   }
 });
 

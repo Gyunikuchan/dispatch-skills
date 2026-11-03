@@ -207,3 +207,21 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
   assert.ok(!appendix.includes('Review Findings & Resolutions') && !appendix.includes('Deviations & Follow-ups'));
   assert.ok(rendered.indexOf('## Verification') < rendered.indexOf('## Deviations & Follow-ups') && rendered.indexOf('## Review Findings & Resolutions') < rendered.indexOf('## Appendix'));
 });
+
+test('downgraded finding: a downgraded row appears in attention and in the findings table, whatever the ruling', () => {
+  for (const ruling of ['accepted', 'deferred'] as const) {
+    const rendered = renderWalkthrough(view({
+      reviewRows: [
+        { review: 'review-alpha', id: 'R1-F001', round: 1, severity: 'SHOULD', downgradedFrom: 'MUST', ruling, rationale: 'impact: the gate surfaces it' },
+        { review: 'review-alpha', id: 'R1-F002', round: 1, severity: 'SHOULD', ruling: 'accepted' as const, rationale: 'Fixed' },
+      ],
+    }));
+    const focus = section(rendered, '## Review Focus', '## Behaviour Changes');
+    assert.match(focus, /^- Downgraded finding review-alpha:R1-F001 \(MUST to SHOULD\) — see Review Findings & Resolutions$/m);
+    assert.doesNotMatch(focus, /R1-F002/);
+    const findings = section(rendered, '## Review Findings & Resolutions', '## Appendix');
+    const label = ruling === 'accepted' ? 'Accepted' : 'Deferred';
+    assert.ok(findings.includes(`| ${label} (downgraded from MUST) |`), findings);
+    assert.ok(findings.includes('| R1-F002 | 1 | SHOULD | — | Accepted |'), findings);
+  }
+});

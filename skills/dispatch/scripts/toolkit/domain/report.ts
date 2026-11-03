@@ -3,7 +3,8 @@
 
 import type { FindingId, SlotId } from '../types.ts';
 import { sanitizeText } from './sanitize.ts';
-import type { DraftFinding, Finding, ReviewKind, Severity } from './types.ts';
+import { IMPACTS, TRIGGERS, severityOf } from './severity.ts';
+import type { DraftFinding, Finding, Impact, ReviewKind, Trigger } from './types.ts';
 
 // SECTION: Kind contracts
 
@@ -21,8 +22,7 @@ const LOCUS: Readonly<Record<ReviewKind, { pattern: RegExp; description: string 
   design: { pattern: SECTION_LOCUS, description: '"§ <Design heading>"' },
 };
 
-const SEVERITIES: ReadonlySet<string> = new Set<Severity>(['MUST', 'SHOULD', 'CONSIDER']);
-const FINDING_FIELDS = ['defect', 'locus', 'requiredChange', 'severity', 'tag'];
+const FINDING_FIELDS = ['defect', 'impact', 'locus', 'requiredChange', 'tag', 'trigger'];
 const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
 
 /** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
@@ -155,9 +155,14 @@ export function parseReport(input: ReportInput): ReportResult {
   for (const [index, item] of items.entries()) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return fail('uncovered-scope', `finding ${index} must be a JSON object`);
     const finding = item as Record<string, unknown>;
-    if (Object.keys(finding).sort().join('\0') !== FINDING_FIELDS.join('\0')) return fail('uncovered-scope', `finding ${index} fields must be exactly: severity, locus, tag, defect, requiredChange`);
-    const { severity, locus, tag, defect, requiredChange } = finding;
-    if (typeof severity !== 'string' || !SEVERITIES.has(severity)) return fail('uncovered-scope', `finding ${index} severity must be MUST, SHOULD, or CONSIDER`);
+    const missing = FINDING_FIELDS.filter(field => !Object.hasOwn(finding, field)), unexpected = Object.keys(finding).filter(field => !FINDING_FIELDS.includes(field));
+    // NOTE: key names are delegate text, so only the retired field is named and other keys are counted.
+    const others = unexpected.filter(field => field !== 'severity').length;
+    const unsupported = [...(unexpected.includes('severity') ? ['severity'] : []), ...(others ? [others + ' other field(s)'] : [])];
+    if (missing.length || unsupported.length) return fail('uncovered-scope', `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`);
+    const { impact, trigger, locus, tag, defect, requiredChange } = finding;
+    if (!IMPACTS.includes(impact as Impact)) return fail('uncovered-scope', `finding ${index} impact must be one of ${IMPACTS.join(', ')}`);
+    if (!TRIGGERS.includes(trigger as Trigger)) return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
     if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
     const normalizedTag = tag.trim();
     const known = REVIEW_TAGS.has(normalizedTag);
@@ -170,7 +175,9 @@ export function parseReport(input: ReportInput): ReportResult {
     // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
     if (!sanitizeText(defect) || !sanitizeText(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
     const draft: DraftFinding = {
-      severity: severity as Severity,
+      impact: impact as Impact,
+      trigger: trigger as Trigger,
+      severity: severityOf(impact as Impact, trigger as Trigger),
       category,
       locus: normalizeLocus(kind, locus),
       defect: sanitizeText(defect),

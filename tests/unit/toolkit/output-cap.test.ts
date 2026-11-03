@@ -40,7 +40,7 @@ test('summary byte cap preserves large ask answers review findings and native sl
     try {
       const skill = path.join(f.root, 'skill');
       fs.mkdirSync(path.join(skill, 'references/templates'), {recursive: true});
-      for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md'])
+      for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md', 'review-severity.md'])
         fs.copyFileSync(path.join(f.deps.skillRoot, 'references/templates', file), path.join(skill, 'references/templates', file));
       const native = scenario === 'native';
       fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
@@ -50,7 +50,7 @@ test('summary byte cap preserves large ask answers review findings and native sl
       f.deps.skillRoot = skill;
       if (native) f.deps.orchestrator = {platform: 'codex', model: null};
       const answer = '日本語😀'.repeat(2000);
-      const findings = Array.from({length: 300}, (_, i) => ({severity: 'SHOULD', tag: 'correctness',
+      const findings = Array.from({length: 300}, (_, i) => ({impact: 'degrades', trigger: 'realistic', tag: 'correctness',
         locus: `§ Work ${i}`, defect: `日本語😀 defect ${i}`, requiredChange: `修正 ${i}`}));
       f.script('codex', 'fixture', scenario === 'ask' ? answer : JSON.stringify({status: 'FINDINGS', findings}));
       const target = f.artifact(scenario === 'ask' ? 'question.md' : 'work.plan.md', '# Work\n## Work\n日本語\n');

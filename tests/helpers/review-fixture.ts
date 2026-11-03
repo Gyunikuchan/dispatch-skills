@@ -9,9 +9,10 @@ import { artifactHash } from '../../skills/dispatch/scripts/toolkit/artifacts.ts
 import { memoryNodeFs } from './memory-node-fs.ts';
 
 export const CLEAN = JSON.stringify({status:'CLEAN',findings:[]});
-export const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results', severity = 'SHOULD') => JSON.stringify({status:'FINDINGS',findings:[{severity,tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
+const RATING = {MUST:{impact:'blocks',trigger:'realistic'},SHOULD:{impact:'degrades',trigger:'realistic'},CONSIDER:{impact:'minor',trigger:'contrived'}} as const;
+export const report = (locus = '§ Work', defect = 'Concurrent writes overwrite captured results', severity = 'SHOULD') => JSON.stringify({status:'FINDINGS',findings:[{...RATING[severity as keyof typeof RATING],tag:'reliability',locus,defect,requiredChange:'Keep writes isolated until finalization'}]});
 export const CONTEXT_MAP='# Context map: work\n\n> **Commit:** abc123\n>\n> **Tool:** text\n\n## Map\n- Work — `work.plan.md:1`\n';
-const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
+const templates=['review-prompt.md','review-prompt-plan.md','review-prompt-design.md','review-prompt-code.md','quality-bar.md','review-severity.md'].map(file=>[file,fs.readFileSync(path.resolve('skills/dispatch/references/templates',file),'utf8')] as const);
 export async function fixture(bound=true, confirmed=true) {
   // A shallow virtual root avoids physical ancestor probes in quota-path validation.
   const root=path.join(path.parse(os.tmpdir()).root,'review-'+crypto.randomUUID());

@@ -50,9 +50,7 @@ in-scope risk.
 <<slot:budget>>
 
 ### Severity
-Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
-constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
-improvement; no defect.
+<<slot:rubric>>
 <<slot:severity>>
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
@@ -69,7 +67,7 @@ text. For a clean review use:
 
 Otherwise use status `FINDINGS` and one or more findings with every field:
 ```json
-{"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
+{"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
 Use only the tags above.

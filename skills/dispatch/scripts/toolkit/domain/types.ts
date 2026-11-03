@@ -5,6 +5,8 @@ import type { FindingId, SlotId } from '../types.ts';
 // SECTION: Findings
 
 export type Severity = 'MUST' | 'SHOULD' | 'CONSIDER';
+export type Impact = 'critical' | 'blocks' | 'degrades' | 'minor';
+export type Trigger = 'realistic' | 'contrived';
 export type ReviewKind = 'code' | 'plan' | 'design';
 export type FindingScope = 'in' | 'adjacent';
 
@@ -14,6 +16,9 @@ export type FindingFix = { paths: readonly string[]; dependencies: readonly Find
 export type Finding = {
   id: FindingId;
   severity: Severity;
+  /** Reviewer rating; absent on findings stored before the two-dimension format. */
+  impact?: Impact;
+  trigger?: Trigger;
   category: string;
   locus: string;
   defect: string;

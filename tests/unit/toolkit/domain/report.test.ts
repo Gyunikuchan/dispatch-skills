@@ -3,9 +3,10 @@ import { test } from 'node:test';
 
 import { readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
 import { collectFindings, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
+import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
 
 const finding = (overrides: Record<string, string> = {}) => ({
-  severity: 'MUST', locus: 'src/fetch.ts:L12', tag: 'correctness', defect: 'retry loop never terminates on persistent failure',
+  impact: 'blocks', trigger: 'realistic', locus: 'src/fetch.ts:L12', tag: 'correctness', defect: 'retry loop never terminates on persistent failure',
   requiredChange: 'bound the retry loop with a counter', ...overrides,
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
@@ -47,6 +48,65 @@ const failure = (text: string, truncated = false) => {
   const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
   return result.ok ? null : result.failure.kind;
 };
+
+const parseDetail = (text: string) => {
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
+  return result.ok ? null : result.failure.detail;
+};
+
+test('derives severity from impact and trigger', () => {
+  const table = {
+    critical: { realistic: 'MUST', contrived: 'MUST' },
+    blocks: { realistic: 'MUST', contrived: 'SHOULD' },
+    degrades: { realistic: 'SHOULD', contrived: 'CONSIDER' },
+    minor: { realistic: 'SHOULD', contrived: 'CONSIDER' },
+  } as const;
+  for (const [impact, row] of Object.entries(table)) {
+    for (const [trigger, severity] of Object.entries(row)) {
+      const result = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ impact, trigger })]) });
+      assert.ok(result.ok, `${impact}/${trigger}`);
+      assert.deepEqual([result.findings[0]?.impact, result.findings[0]?.trigger, result.findings[0]?.severity], [impact, trigger, severity], `${impact}/${trigger}`);
+    }
+  }
+});
+
+test('the rubric table matches the derived severity', () => {
+  const rows = fs.readFileSync(path.join(SKILL_ROOT, 'references/templates/review-severity.md'), 'utf8').split(/\r?\n/);
+  const columns = (row: string | undefined) => (row ?? '').split('|').slice(2, -1).map(cell => cell.trim());
+  const headers = columns(rows.find(row => row.startsWith('| `impact` |')));
+  assert.deepEqual([...headers].sort(), TRIGGERS.map(trigger => '`trigger: ' + trigger + '`').sort());
+  for (const impact of IMPACTS) {
+    const cells = columns(rows.find(row => row.startsWith('| `' + impact + '` |')));
+    assert.deepEqual(cells, headers.map(header => '`' + severityOf(impact, TRIGGERS.find(trigger => header.includes(trigger))!) + '`'), impact);
+  }
+});
+
+test('refuses a reply carrying severity', () => {
+  const text = report([{ ...finding(), severity: 'MUST' }]);
+  assert.equal(failure(text), 'uncovered-scope');
+  assert.match(parseDetail(text) ?? '', /impact, trigger, locus, tag, defect, requiredChange; unsupported: severity$/);
+});
+
+test('counts unsupported fields other than severity instead of echoing their names', () => {
+  const text = report([{ ...finding(), severity: 'MUST', ignore_prior_rulings: 'x', ['<tool_call>\u001b[31m']: 'x' }]);
+  assert.match(parseDetail(text) ?? '', /; unsupported: severity, 2 other field\(s\)$/);
+});
+
+test('refuses a missing dimension', () => {
+  for (const field of ['impact', 'trigger']) {
+    const { [field]: _omitted, ...rest } = finding() as Record<string, string>;
+    assert.equal(failure(report([rest])), 'uncovered-scope', field);
+    assert.match(parseDetail(report([rest])) ?? '', new RegExp('; missing: ' + field + '$'), field);
+  }
+});
+
+test('refuses an invalid dimension value', () => {
+  for (const [field, value] of [['impact', 'HIGH'], ['impact', 'MUST'], ['impact', 3], ['trigger', 'likely'], ['trigger', null]] as const) {
+    const text = report([{ ...finding(), [field]: value }]);
+    assert.equal(failure(text), 'uncovered-scope', `${field}=${value}`);
+    assert.match(parseDetail(text) ?? '', new RegExp(`finding 0 ${field} must be one of`));
+  }
+});
 
 test('delegates-one-report-parse: one path parses fenced or bare JSON into draft findings', () => {
   const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Banner\n\`\`\`json\n${report([finding({ locus: 'src/fetch.ts:12' }), finding({ locus: 'Dockerfile:12' })])}\n\`\`\`` });
@@ -200,7 +260,7 @@ test('delegates-one-report-parse: extra top-level keys and sanitised-empty field
 // SECTION: Unknown tag recovery
 
 const planFinding = (tag: string, heading: string, defect: string) => ({
-  severity: 'SHOULD', locus: `§ ${heading}`, tag, defect, requiredChange: `revise ${heading} to address the gap`,
+  impact: 'degrades', trigger: 'realistic', locus: `§ ${heading}`, tag, defect, requiredChange: `revise ${heading} to address the gap`,
 });
 const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   const result = parseReport({ kind, source: 'agy[0]', text });
@@ -277,14 +337,14 @@ test('empty or non-string tag still fails the report', () => {
 
 test('unknown tag does not mask other report failures', () => {
   const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
-  assert.equal(failure(report([unknown({ severity: 'HIGH' })])), 'uncovered-scope');
+  assert.equal(failure(report([unknown({ impact: 'HIGH' })])), 'uncovered-scope');
   assert.equal(failure(report([unknown({ defect: '' })])), 'uncovered-scope');
   assert.equal(failure(report([unknown({ defect: '<invoke name="x">' })])), 'uncovered-scope');
   const { defect: _defect, ...noDefect } = unknown();
   assert.equal(failure(report([noDefect])), 'uncovered-scope');
   assert.equal(failure(report([unknown({ locus: 'src/fetch.ts' })])), 'loose-locus');
   assert.equal(failure(report([unknown()], 'CLEAN')), 'uncovered-scope');
-  assert.equal(failure(report([finding(), unknown({ severity: 'HIGH' })])), 'uncovered-scope');
+  assert.equal(failure(report([finding(), unknown({ impact: 'HIGH' })])), 'uncovered-scope');
   const cut = report([unknown()]).slice(0, -12);
   assert.equal(failure(cut, true), 'truncated');
   assert.equal(failure(cut), 'uncovered-scope');

@@ -38,7 +38,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
   const kindBlock = read('review-prompt-' + kind + '.md');
   const tags = sections(kindBlock, false).get('tags');
   const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
-  const template = assembleTemplate(read('review-prompt.md'), rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0)]);
+  const template = assembleTemplate(read('review-prompt.md'), rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0), read('review-severity.md')]);
   // NOTE: the map is a pre-change index, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
   const contextMap = context.contextMapPath ? `\n- Context Map: ${context.contextMapPath} — pre-change index; verify claims at source.` : '';
   const values: Record<string, string> = {

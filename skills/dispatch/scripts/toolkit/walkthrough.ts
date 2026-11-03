@@ -39,6 +39,8 @@ export type WalkthroughView = {
     id: string;
     round: number;
     severity: string;
+    /** The reviewer's severity when a ruling correction lowered it. */
+    downgradedFrom?: string;
     /** `model/effort` of each source slot, or the slot id when the roster lacks it. */
     sources?: readonly string[];
     ruling: 'accepted' | 'rejected' | 'duplicate' | 'deferred' | null;
@@ -121,6 +123,9 @@ function reviewFocus(view: WalkthroughView): string[] {
     if (row.ruling === 'rejected' && (row.severity === 'MUST' || row.severity === 'SHOULD')) {
       attention.push(`- Rejected ${line(row.severity)} finding ${line(row.review)}:${line(row.id)} — see Review Findings & Resolutions`);
     }
+  }
+  for (const row of view.reviewRows) {
+    if (row.downgradedFrom) attention.push(`- Downgraded finding ${line(row.review)}:${line(row.id)} (${line(row.downgradedFrom)} to ${line(row.severity)}) — see Review Findings & Resolutions`);
   }
   for (const edit of view.edits) {
     if (!['intent', 'dependency', 'discard'].includes(edit.class)) continue;

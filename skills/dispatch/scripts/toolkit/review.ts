@@ -8,6 +8,7 @@ import { withLockFile } from './lock.ts';
 import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { parseReport } from './domain/report.ts';
+import { effectiveSeverity, severityOf } from './domain/severity.ts';
 import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
 import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
@@ -264,12 +265,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const first = read<Round>(path.join(directory, 'round-1', 'round.json'));
     const cap1 = first?.cap ?? cap;
     const ceiling = ceilingState(foldLedger(session).records, review, cap1);
+    // The corrected severity of a finding, from every ruling recorded for it.
+    const effective = (finding: Finding, rows: readonly LedgerRecord[]) => effectiveSeverity(finding, rows.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id));
     const continuation = () => {
       const rulings = foldLedger(session).records.filter(row => row.kind === 'ruling');
       const previousMetadata=read<Round>(path.join(directory,'round-'+(n-1),'round.json'));
       const fixed = numbers.some(number=>read<FindingsValue>(path.join(directory,'round-'+number,'findings.json'))?.findings.some(finding=>{
         const ruling=rulings.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id);
-        return finding.severity==='MUST' && ruling?.data['ruling']==='accepted' && (number===n-1 || ruling.seq>(previousMetadata?.startSeq ?? 0));
+        return effective(finding,rulings)==='MUST' && ruling?.data['ruling']==='accepted' && (number===n-1 || ruling.seq>(previousMetadata?.startSeq ?? 0));
       }));
       return {fixed, pending: rejectionStates().some(state=>state.state==='pending')};
     };
@@ -309,13 +312,13 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const rulingRows = () => foldLedger(session).records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'));
     const rulingSnapshot=()=>{
       const rows=rulingRows();
-      return JSON.stringify(prior.flatMap(value=>value.findings.filter(finding=>finding.severity==='MUST').map(finding=>[finding.id,rows.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id)?.seq ?? 0])));
+      return JSON.stringify(prior.flatMap(value=>value.findings.filter(finding=>effective(finding,rows)==='MUST').map(finding=>[finding.id,rows.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id)?.seq ?? 0])));
     };
     const settledRulings=rulingRows(),settledRejections=rejectionStates();
     const settled: Settled[] = prior.flatMap(value => value.findings.flatMap(finding => {
       const ruling = settledRulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
       const state=settledRejections.find(state=>state.request.finding===finding.id);
-      return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, severity:finding.severity,...(state?{rejectionConfirmed:state.state==='confirmed'}:{}),ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
+      return ruling ? [{id: finding.id, locus: finding.locus, defect: finding.defect, severity:effective(finding,settledRulings),...(state?{rejectionConfirmed:state.state==='confirmed'}:{}),ruling: ruling.data['ruling'], reason: ruling.data['rationale']}] : [];
     }));
 
     // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
@@ -324,7 +327,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
       const target = previous?.metadata.roster.find(slot => !slot.reserve), rulings = rulingRows();
       const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
-        && (finding.severity === 'MUST' || (finding.severity === 'SHOULD' && n - 1 < cap1)));
+        && (effective(finding, rulings) === 'MUST' || (effective(finding, rulings) === 'SHOULD' && n - 1 < cap1)));
       return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
     }
     async function start(generation: number, captured: Capture): Promise<Round> {
@@ -452,7 +455,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
             if (priorGaps.some(({finding}) => settledRulings.some(row => row.data['subject'] === 'review:' + review + ':' + finding.id && row.data['ruling'] === 'rejected'))) continue;
             const file = path.resolve(manifest.repositoryRoot, bind.data['plan']);
             const finding: Finding & {unresolved?: {of: string}} = {
-              id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'), severity: 'SHOULD', category: 'testing',
+              id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'), impact: 'degrades', trigger: 'realistic', severity: severityOf('degrades', 'realistic'), category: 'testing',
               locus: file + ':L' + gap.line, defect: defect + '; Tests touched: ' + (gap.testsTouched ? 'yes' : 'no'),
               requiredChange: "Show the criterion's test failing before the fix in the writer report", sources: ['tool'], scope: 'in',
             };

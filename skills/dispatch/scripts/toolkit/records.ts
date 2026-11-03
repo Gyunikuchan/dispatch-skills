@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { IMPACTS, TRIGGERS } from './domain/severity.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { ToolError } from './output.ts';
 
@@ -76,7 +77,7 @@ const shapes: Record<string, Record<string, Rule>> = {
   waiver: { criterion: text, reason: text },
   'manual-complete': { criterion: text, evidence: text },
   escalation: { id: text, state: choice('open', 'resolved'), summary: text },
-  ruling: { subject: text, ruling: text, rationale: text },
+  ruling: { subject: text, ruling: text, rationale: text, impact: choice(...IMPACTS), trigger: choice(...TRIGGERS) },
   note: { text },
   edit: {
     artifact: choice('spec', 'plan', 'design'), before: hash, after: hash,
@@ -123,12 +124,16 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
+  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
     invalid('data', 'a spec and at least one plan or design');
   if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
+  }
+  if (value.kind === 'ruling' && ('impact' in value.data || 'trigger' in value.data)) {
+    for (const dimension of ['impact', 'trigger']) if (!(dimension in value.data)) invalid('data.' + dimension, 'required with the other corrected dimension');
+    if (!value.data['subject'].startsWith('review:') || value.data['ruling'] !== 'accepted') invalid('data.impact', 'absent unless an accepted ruling names a review finding');
   }
   if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
   const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(value.kind) ||

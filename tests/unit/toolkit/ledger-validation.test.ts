@@ -197,3 +197,34 @@ test('ceiling resolution refuses code review defer', () => {
   assert.doesNotThrow(() => validateRecord(record(code, 're-author: rewrite the fix')));
   assert.doesNotThrow(() => validateRecord(record('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
 });
+
+const correction = (data: object, extra: object = {}) => ({
+  kind: 'ruling', by: 'orchestrator', key: 'correction',
+  data: {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'impact: the gate surfaces it', ...data}, ...extra,
+});
+
+test('severity correction accepted: both dimensions on an accepted review ruling', () => {
+  assert.doesNotThrow(() => validateRecord(correction({impact: 'degrades', trigger: 'realistic'})));
+});
+
+test('severity correction refused: a lone dimension, an invalid value or a severity key', () => {
+  for (const data of [{impact: 'degrades'}, {trigger: 'realistic'}])
+    assert.throws(() => validateRecord(correction(data)), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord(correction({impact: 'severe', trigger: 'realistic'})), error => {
+    assert.equal((error as {reason: string}).reason, 'invalid-record');
+    assert.match((error as Error).message, /data\.impact/);
+    return true;
+  });
+  assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'sometimes'})), /data\.trigger/);
+  assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', severity: 'MUST'})), error => {
+    assert.equal((error as {reason: string}).reason, 'invalid-record');
+    assert.match((error as Error).message, /data\.severity/);
+    return true;
+  });
+});
+
+test('severity correction refused: a non-accepted ruling or a non-review subject', () => {
+  for (const ruling of ['rejected', 'duplicate', 'deferred'])
+    assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', ruling})), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', subject: 'plan:T1'})), {reason: 'invalid-record'});
+});

@@ -31,7 +31,7 @@ describe('toolkit delivery and cleanup',()=>{
  it('pending MUST rejection blocks caller writes and delivered records until native agreement',async()=>{const {r}=await prepared();try {
   r.deps.skillRoot=setupTestSkill(r.deps,r.session,'confirmation-skill',{'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}});r.deps.orchestrator={platform:'codex',model:'native'};r.deps.liveness={};
   const review=()=>r.run(['review','run','integration','--kind','code','--level','low']);
-  const first=await review();assert.equal(first.output.reason,'native-pending');fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{severity:'MUST',tag:'correctness',locus:'src/file.ts:L1',defect:'Unbounded writes',requiredChange:'Bound writes'}]}));
+  const first=await review();assert.equal(first.output.reason,'native-pending');fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{impact:'blocks',trigger:'realistic',tag:'correctness',locus:'src/file.ts:L1',defect:'Unbounded writes',requiredChange:'Bound writes'}]}));
   assert.equal((await review()).exit,0);
   await appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'reject-delivery',data:{subject:'review:code-integration:R1-F001',ruling:'rejected',rationale:'Captured writes have a bound'}},r.deps);
   const before=caller(r),bytes=fs.readFileSync(path.join(r.root,'src/file.ts'));

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readManifest } from '../lib/session.ts';
 import { artifactHash, artifactKind, readArtifact, type ArtifactKind } from './artifacts.ts';
+import { currentRating, IMPACTS, TRIGGERS } from './domain/severity.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { withLock, type LockDeps } from './lock.ts';
 import { ToolError } from './output.ts';
@@ -121,6 +122,29 @@ function approvalChain(fold: Fold, artifact: string, approved: string, current: 
   return baselineOneFailure ?? { allowed: false, reason: 'unrecorded-change' };
 }
 
+// The subject grammar excludes path separators, and the resolved file must stay inside the reviews directory.
+const CORRECTED_SUBJECT = /^review:([A-Za-z0-9][A-Za-z0-9._-]*):(R(\d+)-(?:F|RED)\d+)$/;
+/** Refuses a severity correction the stored finding or earlier rulings cannot support; fails closed when the finding is unreadable. */
+function checkCorrection(session: string, fold: Fold, data: Record<string, any>): void {
+  if (data['impact'] === undefined) return;
+  const refuse = (why: string): never => { throw new ToolError(1, 'invalid-record', 'severity correction refused: ' + why); };
+  const match = CORRECTED_SUBJECT.exec(data['subject']);
+  if (!match || match[1]!.includes('..')) refuse('data.subject must be review:<review>:<finding> with a finding ID such as R1-F001');
+  const reviews = path.resolve(session, '.state', 'reviews');
+  const file = path.resolve(reviews, match![1]!, 'round-' + match![3], 'findings.json');
+  if (path.relative(reviews, file).startsWith('..')) refuse('data.subject resolves outside the session reviews');
+  let finding: Record<string, any> | undefined;
+  try { finding = JSON.parse(fs.readFileSync(file, 'utf8')).findings.find((row: any) => row?.id === match![2]); } catch { /* Absent and unreadable findings refuse alike. */ }
+  if (!finding) refuse('stored finding ' + match![2] + ' is absent or unreadable');
+  if (!IMPACTS.includes(finding!['impact']) || !TRIGGERS.includes(finding!['trigger'])) refuse('finding ' + match![2] + ' has no stored impact and trigger to correct');
+  const current: Record<string, any> = currentRating(finding as never, fold.records.filter(row => row.kind === 'ruling' && row.data['subject'] === data['subject']));
+  if (current['impact'] === 'critical' && data['impact'] !== 'critical') refuse('a critical impact cannot be lowered by correction; rule the finding rejected, which needs reviewer confirmation');
+  const changed = ['impact', 'trigger'].filter(dimension => current[dimension] !== data[dimension]);
+  if (!changed.length) refuse('the corrected rating is unchanged');
+  const unnamed = changed.filter(dimension => !new RegExp('\\b' + dimension + '\\b', 'i').test(data['rationale']));
+  if (unnamed.length) refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', '));
+}
+
 export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
 export async function appendRecord(session: string, input: unknown, deps: LockDeps): Promise<{ seq: number; deduped: boolean }> {
   return withLedger(session, 'ledger append', deps, tx => tx.append(input));
@@ -136,6 +160,7 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
       if (content(existing) !== content(record)) throw new ToolError(2, 'key-conflict', 'key ' + key + ' has different content');
       return { seq: existing.seq, deduped: true };
     }
+    if (record.kind === 'ruling') checkCorrection(session, fold, record.data);
 
     const root = readManifest(session).repositoryRoot;
     const bind = latest(fold, 'bind');

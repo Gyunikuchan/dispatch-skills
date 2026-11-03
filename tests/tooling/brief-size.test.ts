@@ -98,6 +98,7 @@ test('agent-consumed markdown files report soft byte-budget diagnostics via meas
     'skills/dispatch/references/templates/review-prompt-design.md',
     'skills/dispatch/references/templates/review-prompt-plan.md',
     'skills/dispatch/references/templates/review-prompt.md',
+    'skills/dispatch/references/templates/review-severity.md',
     'skills/dispatch/references/templates/spec.md',
     'skills/dispatch/references/templates/test-cleanup-brief.md',
     'skills/dispatch/references/templates/walkthrough.md',
@@ -107,7 +108,7 @@ test('agent-consumed markdown files report soft byte-budget diagnostics via meas
     'spec.md': 3365, 'plan.md': 13190, 'design.md': 4334, 'walkthrough.md': 4669,
     'quality-bar.md': 13710, 'toolkit.md': 27475, 'explorer-brief.md': 4701,
   };
-  assert.equal(files.length, 30);
+  assert.equal(files.length, 31);
   let totalBytes = 0;
   for (const file of files) {
     const report = measureBrief(readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8'));

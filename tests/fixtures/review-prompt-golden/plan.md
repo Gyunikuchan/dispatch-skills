@@ -38,7 +38,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
 - Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.
 - **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Map requirements to changes and goals to requirements; state non-goals. Check that the result serves the requested users. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, XY problem, conflicting constraints, and missing prerequisites; add nothing beyond the ask. Keep the existing format of rendered output unless a recorded user decision changes it. Route a design or plan that changes intent through the user gate.
-- **maintainability** — Delete › reuse › stdlib › new. DRY: one source of truth; search the repository by name and behaviour for an existing equivalent before adding any exported/shared symbol, helper, module or type. Rule of three: extract on third use; duplication beats wrong abstraction. YAGNI, KISS; deep modules, low coupling, high cohesion. Remove needless branches; fix root causes once. Preserve Chesterton's fence; names/docs/comments explain why and track behaviour. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. Smells (judgement calls, never `MUST` alone): Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Shotgun Surgery, Divergent Change, Repeated Switches, Message Chains, Middle Man, Speculative Generality, Refused Bequest, Mysterious Name.
+- **maintainability** — Delete › reuse › stdlib › new. DRY: one source of truth; search the repository by name and behaviour for an existing equivalent before adding any exported/shared symbol, helper, module or type. Rule of three: extract on third use; duplication beats wrong abstraction. YAGNI, KISS; deep modules, low coupling, high cohesion. Remove needless branches; fix root causes once. Preserve Chesterton's fence; names/docs/comments explain why and track behaviour. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. Smells (judgement calls, never `blocks` or `critical` alone): Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Shotgun Surgery, Divergent Change, Repeated Switches, Message Chains, Middle Man, Speculative Generality, Refused Bequest, Mysterious Name.
 - **correctness** — State system-wide invariants that hold within and across increments, and check domain-valid formulas and algorithms, preconditions, postconditions, and invariants; type-valid but domain-invalid states; valid transitions and reachable states; off-by-one errors; units, signs, and scales; runtime behavior; and type validity.
 - **reliability** — Cover edge, boundary, empty, and zero inputs; unhandled branches; partial failures and updates; atomicity and crash consistency; idempotency; races and TOCTOU; floating promises; fail-closed behavior; data loss; and destructive-operation guards.
 - **security** — Map trust boundaries and least privilege; use STRIDE at design altitude (spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege) and OWASP/CWE at code altitude; check injection, traversal, and missing escaping; authorization and IDOR; isolation, input validation, and object ownership; and sensitive data in logs or errors.
@@ -98,12 +98,22 @@ The tool-turn target is advisory: stop early when grounded; exceed it only for a
 in-scope risk.
 
 ### Severity
-Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
-constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
-improvement; no defect.
-In plan reviews, MUST means the plan as written cannot deliver its outcome or breaks a binding
+Rate each finding on two dimensions; the toolkit derives severity from them. Report `impact` and `trigger`, never `severity`.
+- `impact`: `critical` — security breach or irreversible data loss; `blocks` — the promised outcome or a binding constraint fails; `degrades` — a real defect that lowers the outcome without blocking it; `minor` — a small defect with negligible effect, or an optional improvement, which is `contrived` because no failure occurs.
+- `trigger`: `realistic` — normal use or one plausible fault produces it; `contrived` — it needs several independent faults, contrived input, or no failure at all.
+
+| `impact` | `trigger: realistic` | `trigger: contrived` |
+|---|---|---|
+| `critical` | `MUST` | `MUST` |
+| `blocks` | `MUST` | `SHOULD` |
+| `degrades` | `SHOULD` | `CONSIDER` |
+| `minor` | `SHOULD` | `CONSIDER` |
+
+A `critical` finding's `defect` names the boundary crossed or the data lost.
+Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
+In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
 constraint. A gap that the plan's own Verify gates would surface deterministically during
-implementation, such as a fixture update or a test assertion, is SHOULD.
+implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
@@ -119,7 +129,7 @@ text. For a clean review use:
 
 Otherwise use status `FINDINGS` and one or more findings with every field:
 ```json
-{"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"§ <Plan heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
+{"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"§ <Plan heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
 Use only the tags above.
