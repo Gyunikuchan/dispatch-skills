@@ -1,3 +1,4 @@
+import { HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, STAGE_ORDER, type HostUsageFacts, type HostUsageRow } from '../host-usage/types.ts';
 import type { CoverageReason, FailureClass } from '../types.ts';
 
 // Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
@@ -68,6 +69,7 @@ export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
   if (row.tokens !== undefined) current.tokens = (current.tokens ?? 0) + row.tokens;
 }
 export type RunFacts = {
+  hostUsage?: HostUsageFacts;
   timingScope?: 'tool-calls';
   capture?: {state:'opened'|'completed'; start:number; end?:number; storageFailed?:number};
   retroState?: 'missing'|'unreadable'|'malformed'|'invalid'|'empty'|'collected';
@@ -108,6 +110,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
+  ...files('scripts/toolkit/host-usage', 'claude-code codex index read types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief cli confirmations deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-findings review-identity status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
@@ -253,6 +256,24 @@ function invocationOf(v: unknown): InvocationFacts[] {
   }];
 }
 
+function hostUsageOf(value: unknown): HostUsageFacts | undefined {
+  if (!record(value)) return undefined;
+  const rows: HostUsageRow[] = list(value['rows']).flatMap(v => {
+    if (!record(v)) return [];
+    const stage=STAGE_ORDER.find(x=>x===v['stage']), role=HOST_ROLES.find(x=>x===v['role']), usage=counters(v);
+    if(!stage || !role || !usage) return [];
+    return [{stage,role,model:modelName(v['model']) ?? DASH,effort:token(v['effort']) ?? null,...usage}];
+  });
+  const notes: NonNullable<HostUsageFacts['notes']> = {};
+  if(record(value['notes'])) for(const role of HOST_ROLES) {
+    const raw=value['notes'][role]; if(!record(raw)) continue;
+    const clean=Object.fromEntries(HOST_NOTES.flatMap(key=>{const n=count(raw[key]);return n===undefined?[]:[[key,n]];}));
+    if(Object.keys(clean).length) notes[role]=clean;
+  }
+  const unavailable=HOST_UNAVAILABLE.find(x=>x===value['unavailable']);
+  return {platform:token(value['platform']) ?? null,rows,...opt('unavailable',unavailable),...(Object.keys(notes).length?{notes}:{})};
+}
+
 /** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
 
 export function sanitizeFacts(run: RunFacts): RunFacts {
@@ -262,6 +283,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
   const config = record(r['config']) ? Object.fromEntries(CONFIG_KEYS.filter((key) => (r['config'] as Record<string, unknown>)[key] !== undefined).map((key) => { const v = (r['config'] as Record<string, unknown>)[key]; return [key, key === 'read-commands' && Array.isArray(v) ? v.slice(0, 16).map(commandText) : configValue(v, 0)]; })) : undefined;
   const fault = record(r['fault']) ? r['fault'] : undefined;
   return {
+    ...opt('hostUsage',hostUsageOf(r['hostUsage'])),
     ...opt('capture',record(r['capture']) && (r['capture']['state']==='opened'||r['capture']['state']==='completed') ? {
       state:r['capture']['state'] as 'opened'|'completed',start:millis(r['capture']['start'])??0,
       ...opt('end',millis(r['capture']['end'])),...opt('storageFailed',count(r['capture']['storageFailed']))} : undefined),
@@ -478,33 +500,46 @@ function overview(runs: readonly RunFacts[]): string[] {
     if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; ${run.fault.waitBy === 'user' ? 'user' : 'host'} wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
   });
   if (notes.length) lines.push('', ...notes);
-  lines.push('', '### Tokens by provider, model and effort', '', row(['Provider', 'Model', 'Effort', 'Uncached input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Coverage']), '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |');
-  const items = runs.flatMap((run) => run.invocations).filter((i) => measured(i) || (i.surface === 'cli' && i.launched));
-  type TokenRow = { provider: string; model: string; effort: string; configured: boolean; usages: ModelUsage[]; measured: number; launched: number; reasons: Set<CoverageReason> };
-  const tokenRows = new Map<string, TokenRow>();
-  const addToken = (provider: string, model: string, effort: string, usage: ModelUsage | undefined, reason: CoverageReason | undefined, configured = false) => {
-    const key = [provider, model, effort].join('\0');
-    const current = tokenRows.get(key) ?? { provider, model, effort, configured, usages: [], measured: 0, launched: 0, reasons: new Set<CoverageReason>() };
-    current.configured ||= configured;
-    current.launched++;
-    if (usage) { current.measured++; current.usages.push(usage); }
-    else if (reason) current.reasons.add(reason);
-    tokenRows.set(key, current);
+  lines.push('', 'Overview token columns count CLI delegates only.', '');
+  type TokenRow = {stage:string; platform:string; role:string; model:string; effort:string; configured:boolean; usages:ModelUsage[]; measured:number; launched:number; reasons:Set<CoverageReason>};
+  const rows = new Map<string,TokenRow>();
+  const add = (stage:string,platform:string,role:string,model:string,effort:string,usage?:ModelUsage,reason?:CoverageReason,configured=false) => {
+    const key=[stage,platform,role,model,effort].join('\0');
+    const entry=rows.get(key) ?? {stage,platform,role,model,effort,configured,usages:[],measured:0,launched:0,reasons:new Set<CoverageReason>()};
+    entry.configured ||= configured; entry.launched++; if(usage){entry.measured++;entry.usages.push(usage);} else if(reason) entry.reasons.add(reason); rows.set(key,entry);
   };
-  for (const i of items) {
-    if (i.surface !== 'cli' || !i.launched) continue;
-    const effort = i.effort ?? DASH, usage = measured(i);
-    // Per-model counters win; a multi-model aggregate cannot be split, so its attribution is unavailable.
-    if (usage?.models) for (const [model, part] of Object.entries(usage.models)) addToken(i.provider, model, effort, part, undefined);
-    else addToken(i.provider, (i.reportedModels?.length ?? 0) > 1 ? DASH : i.model, effort, usage, i.coverage, (i.reportedModels?.length ?? 0) <= 1);
+  for(const run of runs) {
+    for(const h of run.hostUsage?.rows ?? []) add(h.stage,run.hostUsage?.platform ?? DASH,h.role,h.model,h.effort ?? DASH,h);
+    for(const i of run.invocations) {
+      if(i.surface!=='cli'||!i.launched) continue;
+      const phase=run.phases.find(p=>p.key===i.phase)?.name, stage=phase==='integration review'?'code review':STAGE_ORDER.find(x=>x===phase)??DASH;
+      const usage=measured(i), effort=i.effort??DASH;
+      if(usage?.models) for(const [model,part] of Object.entries(usage.models)) add(stage,i.provider,'delegate',model,effort,part);
+      else add(stage,i.provider,'delegate',(i.reportedModels?.length??0)>1?DASH:i.model,effort,usage,i.coverage,(i.reportedModels?.length??0)<=1);
+    }
   }
-  const tokenRowsSorted = [...tokenRows.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort));
-  for (const entry of tokenRowsSorted) {
-    const t = totals(entry.usages), model = entry.model === DASH ? DASH : entry.configured ? `${entry.model} (configured)` : entry.model;
-    lines.push(row([entry.provider, model, entry.effort, ...tokenCells(t), t?.reasoning === undefined ? DASH : num(t.reasoning),
-      `${entry.measured}/${entry.launched}${entry.reasons.size ? ' ' + [...entry.reasons].join(', ') : ''}`]));
+  const sorted=[...rows.values()].sort((a,b)=>(STAGE_ORDER.indexOf(a.stage as never) < 0 ? 99 : STAGE_ORDER.indexOf(a.stage as never))-(STAGE_ORDER.indexOf(b.stage as never) < 0 ? 99 : STAGE_ORDER.indexOf(b.stage as never)) || a.platform.localeCompare(b.platform) || ['host','subagent','delegate'].indexOf(a.role)-['host','subagent','delegate'].indexOf(b.role) || a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort));
+  const platforms=new Set([...sorted.map(r=>r.platform),...runs.flatMap(r=>r.hostUsage?[r.hostUsage.platform??DASH]:[])]);
+  const cells=(usage:ModelUsage[])=>{const t=totals(usage);return [...tokenCells(t),t?.reasoning===undefined?DASH:num(t.reasoning)];};
+  const coverageRow=(r:TokenRow)=>`${r.measured}/${r.launched}${r.reasons.size?' '+[...r.reasons].join(', '):''}`;
+  lines.push('### Tokens by platform','',row(['Platform','Uncached input','Cache read','Cache write','Output','Reasoning','Coverage']),'| --- | ---: | ---: | ---: | ---: | ---: | --- |');
+  for(const platform of [...platforms].sort()) {
+    const selected=sorted.filter(r=>r.platform===platform), hosts=runs.flatMap(r=>r.hostUsage && (r.hostUsage.platform??DASH)===platform?[r.hostUsage]:[]);
+    const segments:string[]=[];
+    for(const role of HOST_ROLES) {
+      const roleRows=selected.filter(r=>r.role===role), roleNotes=hosts.flatMap(h=>Object.entries(h.notes?.[role]??{}));
+      const aggregated=new Map<string,number>(); for(const [key,n] of roleNotes) aggregated.set(key,(aggregated.get(key)??0)+n);
+      const noteText=aggregated.size?' ('+[...aggregated].map(([key,n])=>`${key} ${n}`).join(', ')+')':'';
+      if(role==='host' && hosts.length) {const reasons=[...new Set(hosts.flatMap(h=>h.unavailable?[h.unavailable]:[]))];if(roleRows.length) segments.push('host measured'+noteText); if(reasons.length) segments.push(`host unavailable: ${reasons.join(', ')}`+(roleRows.length?'':noteText)); else if(!roleRows.length) segments.push('host unavailable: no usage records'+noteText);}
+      if(role==='subagent' && (roleRows.length || aggregated.size)) segments.push((roleRows.length?'subagents measured':'subagents not measured')+noteText);
+    }
+    const delegates=runs.flatMap(r=>r.invocations).filter(i=>i.provider===platform && i.surface==='cli' && i.launched); if(delegates.length){const reasons=[...new Set(delegates.flatMap(i=>!measured(i)&&i.coverage?[i.coverage]:[]))];segments.push(`delegates ${delegates.filter(i=>measured(i)).length}/${delegates.length}${reasons.length?' '+reasons.join(', '):''}`);}
+    lines.push(row([platform,...cells(selected.flatMap(r=>r.usages)),segments.join(' · ')||DASH]));
   }
-  if (!items.length) lines.push(row(Array<string>(9).fill(DASH)));
+  if(!platforms.size) lines.push(row(Array<string>(7).fill(DASH)));
+  lines.push('','### Tokens by stage','','Host and subagent stages are time-derived; delegate stages are recorded.','',row(['Stage','Platform','Role','Model','Effort','Uncached input','Cache read','Cache write','Output','Reasoning','Coverage']),'| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |');
+  for(const entry of sorted) lines.push(row([entry.stage,entry.platform,entry.role,entry.model===DASH?DASH:entry.configured?`${entry.model} (configured)`:entry.model,entry.effort,...cells(entry.usages),entry.role==='delegate'?coverageRow(entry):DASH]));
+  if(!sorted.length) lines.push(row(Array<string>(11).fill(DASH)));
   const yields = new Map<string, SlotYieldFacts>();
   for (const run of runs) for (const row of run.slotYield ?? []) {
     const key = [row.kind, row.provider, row.model ?? ''].join('\0');
@@ -576,8 +611,8 @@ export function renderDiagnostics(input: readonly RunFacts[]): { text: string; f
     `- Runs: ${runs.length} · measured duration: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
     `- Provider CLI measured tokens: ${usageSummary(invocations)} · launch coverage ${coverage(invocations)}`,
     `- Estimated, excluded from measured totals: native and write ${estimated === undefined ? DASH : `~${num(estimated)}`}`,
-    ...(runs.some(run => run.timingScope === 'tool-calls') ? ['- Timing scope: summed measured tool-call durations; concurrent calls can overlap. Host reasoning, user wait, native/writer usage and work before enablement are unavailable.'] : []),
-    '- Full conversation totals are unavailable: provider measurements cover reported CLI launches only. Full collection coverage is unavailable. Total storage loss can be unobservable.',
+    ...(runs.some(run => run.timingScope === 'tool-calls') ? [`- Timing scope: summed measured tool-call durations; concurrent calls can overlap. Host reasoning, user wait, ${runs.some(run => run.hostUsage?.rows.length) ? 'native/writer timing' : 'native/writer usage'} and work before enablement are unavailable.`] : []),
+    runs.some(run => run.hostUsage?.rows.length) ? '- Full conversation totals: Host and subagent tokens cover the current host thread within the session window; other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.' : '- Full conversation totals are unavailable: provider measurements cover reported CLI launches only. Full collection coverage is unavailable. Total storage loss can be unobservable.',
     `- Host retro: ${unique(runs.map((run,index)=>run.retroState??retro[index]?.state??'missing'))} · ${sum(collected.map(r=>r.values.length))??0} accepted · ${sum(collected.map(r=>r.rejected))??0} rejected`,
     `- Collection health: ${runs.some(r=>Object.entries(r.collection??{}).some(([key,n])=>key!=='completed'&&n>0))?'partial':runs.some(r=>(r.collection?.completed??0)>0)?'complete for observed captures':'unknown'} · corrupt ${num(sum(runs.map(r=>r.collection?.corrupt)))} · unreadable ${num(sum(runs.map(r=>r.collection?.unreadable)))} · incomplete ${num(sum(runs.map(r=>r.collection?.incomplete)))} · storage-failed ${num(sum(runs.map(r=>r.collection?.storageFailed)))}`,
     '', 'Top findings:', '',

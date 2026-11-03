@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
 import { collectFindings, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 
 const finding = (overrides: Record<string, string> = {}) => ({
@@ -436,7 +437,7 @@ test('diagnostics report: renders unavailable as dash', () => {
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
   })]);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), text);
-  assert.ok(text.includes('| claude | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), text);
+  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), text);
   assert.match(text, /native and write —/);
 });
 
@@ -683,8 +684,8 @@ test('diagnostics report: attributes tokens per reported model', () => {
     provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'],
     usage: { input: 150, output: 15, models: { 'claude-opus-5-5': { input: 100, output: 10 }, 'claude-haiku-5': { input: 50, output: 5 } } },
   })] })]);
-  assert.ok(text.includes('| claude | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), text);
-  assert.ok(text.includes('| claude | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), text);
+  assert.ok(text.includes('| code review | claude | delegate | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), text);
+  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.doesNotMatch(text, /\(configured\)/);
 });
 
@@ -693,20 +694,20 @@ test('diagnostics report: mixed measured and unmeasured launches share one model
     invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 100, output: 10, models: { 'claude-opus-5-5': { input: 100, output: 10 } } } }),
     bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
   ] })]);
-  assert.ok(text.includes('| claude | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), text);
-  const table = text.split('### Tokens by provider, model and effort')[1]!.split('### Review yield')[0]!;
+  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), text);
+  const table = text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
   assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
 });
 
 test('diagnostics report: labels configured-model attribution', () => {
   const text = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| codex | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), text);
+  assert.ok(text.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.ok(text.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), text);
 });
 
 test('diagnostics report: multi-model aggregate leaves model attribution unavailable', () => {
   const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| claude | — | medium | 100 | — | — | 10 | — | 1/1 |'), text);
+  assert.ok(text.includes('| code review | claude | delegate | — | medium | 100 | — | — | 10 | — | 1/1 |'), text);
   assert.doesNotMatch(text, /\(configured\)/);
 });
 
@@ -799,7 +800,7 @@ test('retro observations: rejects locators in ids models and config', () => {
     assert.match(text, /- Host retro: collected · 0 accepted · 1 rejected/, 'observation id');
     assert.match(text, /code review: 1 round; 1 finding re-raised across rounds \(R1-F001\); deadlock escalation\./, 'review ids');
     assert.ok(text.includes('— (reported: gpt-6-sol)'), 'model and reported-model keys');
-    assert.ok(text.includes('| codex | — | medium | 10 | — | — | 1 | — | 1/1 |'), 'usage.models keys drop the per-model split');
+    assert.ok(text.includes('| code review | codex | delegate | — | medium | 10 | — | — | 1 | — | 1/1 |'), 'usage.models keys drop the per-model split');
     assert.ok(text.includes('"model": "—"'), 'config strings');
   }
   const names = ['gemini-3.8-flash', 'gpt-6.1-sol', 'opencode-go/muse-spark-1.3-contributor', 'claude-opus-5-5'];
@@ -809,7 +810,7 @@ test('retro observations: rejects locators in ids models and config', () => {
   })]);
   for (const name of names) {
     assert.ok(text.includes(`| ${name} (reported: ${name}) |`), `model ${name}`);
-    assert.ok(text.includes(`| codex | ${name} | medium | 10 |`), `usage key ${name}`);
+    assert.ok(text.includes(`| code review | codex | delegate | ${name} | medium | 10 |`), `usage key ${name}`);
     assert.ok(text.includes(`"model": "${name}"`), `config ${name}`);
   }
 });
@@ -854,4 +855,49 @@ test('repeated failures emit actionable H1', () => {
     assert.ok(finding, cls);
     assert.doesNotMatch(finding.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
   }
+});
+
+test('host rows preserve missing effort, notes and platform totals without transcript fields', () => {
+  const run=facts({hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'m',effort:null,input:10,output:2,cacheRead:5,cacheWrite:2,reasoning:4},{stage:'plan',role:'subagent',model:'m',effort:null,input:20,output:3}],notes:{host:{'unparsed lines':2},subagent:{'read budget reached':1}}},invocations:[invocation({provider:'claude',usage:{input:7,output:1}})]});
+  (run.hostUsage!.rows[0] as unknown as Record<string,unknown>)['text']='secret transcript';
+  const text=render([run]);
+  assert.ok(text.includes('| claude | 37 | 5 | 2 | 6 | 4 | host measured (unparsed lines 2) · subagents measured (read budget reached 1) · delegates 1/1 |'));
+  assert.ok(text.includes('| plan | claude | host | m | — | 10 | 5 | 2 | 2 | 4 | — |'));
+  assert.ok(text.includes('| plan | claude | subagent | m | — | 20 | — | — | 3 | — | — |'));
+  assert.ok(text.includes('| code review | claude | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 1 | — | 1/1 |'));
+  assert.ok(text.includes('Overview token columns count CLI delegates only.'));
+  assert.ok(text.includes('other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.'));
+  assert.ok(!text.includes('secret transcript'));
+});
+
+test('invalid host labels retain valid counters and host unavailability remains visible beside subagent notes', () => {
+  const hostUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
+  const text=render([facts({hostUsage,invocations:[]})]);
+  assert.ok(text.includes('| plan | claude | host | — | — | 4 | — | — | 1 | — | — |'));
+  assert.ok(text.includes('host unavailable: read-error:EACCES'));
+  assert.ok(text.includes('subagents not measured (unreadable files 2)'));
+  assert.ok(!text.includes('C:/private'));
+});
+
+
+test('Codex delegates keep their own platform under a Claude host and timing scope reports native timing', () => {
+  const run=facts({timingScope:'tool-calls',hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'claude-model',effort:null,input:10,output:2}]},invocations:[invocation({provider:'claude',usage:{input:3,output:1}}),invocation({provider:'codex',usage:{input:7,output:4}})]});
+  const text=render([run]);
+  assert.ok(text.includes('| claude | 13 | — | — | 3 | — | host measured · delegates 1/1 |'));
+  assert.ok(text.includes('| codex | 7 | — | — | 4 | — | delegates 1/1 |'));
+  assert.ok(text.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 4 | — | 1/1 |'));
+  assert.match(text, /Timing scope:.*native\/writer timing/);
+});
+
+test('missing orchestrator renders no adapter coverage under the dash platform', () => {
+  const text=render([facts({hostUsage:{platform:null,rows:[],unavailable:'no adapter'},invocations:[]})]);
+  assert.ok(text.includes('| — | — | — | — | — | — | host unavailable: no adapter |'));
+});
+
+test('a registry-only adapter contributes its host rows to both token tables', () => {
+  const fs={list:()=>[],stat:()=>null,read:()=>Buffer.alloc(0),decompress:null};
+  const hostUsage=readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},fs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,input:17,output:4,cacheRead:2}]})}});
+  const text=render([facts({hostUsage,invocations:[]})]);
+  assert.ok(text.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
+  assert.ok(text.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
 });

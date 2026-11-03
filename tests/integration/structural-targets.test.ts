@@ -12,8 +12,8 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 11,414 covers the review-loop diagnostics (blocked reports, ceiling, yield, usage coverage).
-  assert.ok(lines <= 11414, `driver TS LOC ${lines} exceeds 11414`);
+  // NOTE: 11,700 covers review-loop diagnostics and host usage adapters and tables.
+  assert.ok(lines <= 11700, `driver TS LOC ${lines} exceeds 11700`);
   assert.ok(KINDS.length <= 14, `ledger kinds ${KINDS.length} exceeds 14`);
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
   assert.ok(bytes <= 4352, `SKILL.md bytes ${bytes} exceeds 4352`);

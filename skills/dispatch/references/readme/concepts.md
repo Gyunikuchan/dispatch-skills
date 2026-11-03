@@ -56,7 +56,7 @@ Dispatch keeps internal task and integration commits, then delivers the verified
 
 ## Optional session diagnostics
 
-When `diagnostics` is on, `report complete` or `diagnostics render` at a verb's final handoff writes `diagnostics.md` from session captures, the ledger, current review results and host retro notes; it is one cumulative report per session. Captured CLI attempts retain reported provider usage. Native timing and usage, and unsupported measurements, remain unavailable as `—`. The report shows review rounds, outcomes, findings and collection limits.
+When `diagnostics` is on, `report complete` or `diagnostics render` at a verb's final handoff writes `diagnostics.md` from session captures, the ledger, current review results and host retro notes; it is one cumulative report per session. Captured CLI attempts retain reported provider usage. Claude Code and Codex host transcripts can also measure host and native subagent tokens for the current host thread during the session; Codex includes direct subagents only. Other host threads are excluded. Native timing and usage recorded per Dispatch slot, and unsupported measurements, remain unavailable as `—`. The report groups tokens by platform and stage, with time-derived host and subagent stages, and shows review rounds, outcomes, findings and collection limits.
 
 The host records Dispatch instruction, driver or routing friction through the [retro format](../diagnostics.md). Findings cover Dispatch's own behavior. Proposed fixes are unverified.
 

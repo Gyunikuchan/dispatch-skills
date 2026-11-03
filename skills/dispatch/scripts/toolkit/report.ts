@@ -320,7 +320,7 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
   const writeDiagnosticsEnabled = diagnosticsEnabled(ctx.deps.skillRoot);
   const facts = await reportFacts(ctx);
   const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
-  const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered') : undefined;
+  const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered', {manifest:ctx.manifest,deps:ctx.deps}) : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviationCount = facts.edits.length + facts.unplannedPaths.length;
@@ -375,7 +375,7 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
   const facts = await materialize(ctx, captured.snapshot);
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
   const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
-  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete') : undefined;
+  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete', {manifest:ctx.manifest,deps:ctx.deps}) : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviationCount = facts.edits.length + facts.unplannedPaths.length;

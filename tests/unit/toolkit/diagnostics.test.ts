@@ -10,6 +10,10 @@ import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
+import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
 
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), {recursive: true});
@@ -800,11 +804,11 @@ test('token table groups by effort', () => {
     ]);
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /### Tokens by provider, model and effort/);
-    assert.match(table, /^\| Provider \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \|$/m);
-    assert.match(table, /^\| codex \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \|$/m);
-    assert.match(table, /^\| codex \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \|$/m);
-    assert.doesNotMatch(table, /^\| codex \| all models \|/m);
+    assert.match(table, /### Tokens by stage/);
+    assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \|$/m);
+    assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
   } finally { f.cleanup(); }
 });
 
@@ -817,7 +821,7 @@ test('copilot usage unavailable reason', () => {
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.equal(facts.invocations[0]?.coverage, 'no usage output');
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| copilot \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage output \|$/m);
+    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage output \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -832,26 +836,7 @@ test('reasoning tokens persist', () => {
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.invocations[0]?.usage, { input: 100, output: 10, cacheRead: 20, cacheWrite: 3, reasoning: 7 });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| claude \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('per model reasoning row renders', () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    captureRuns(f.session, [
-      { phase: 'plan-review', attempt: 1, provider: 'claude', model: 'aggregate', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', reportedModels: ['alpha', 'beta'],
-        usage: { input: 150, output: 15, reasoning: 6, models: { alpha: { input: 100, output: 10, reasoning: 4 }, beta: { input: 50, output: 5, reasoning: 2 } } } },
-    ]);
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
-    assert.deepEqual(facts.invocations[0]?.usage?.models, {
-      alpha: { input: 100, output: 10, reasoning: 4 },
-      beta: { input: 50, output: 5, reasoning: 2 },
-    });
-    const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| claude \| alpha \| high \| 100 \| — \| — \| 10 \| 4 \| 1\/1 \|$/m);
-    assert.match(table, /^\| claude \| beta \| high \| 50 \| — \| — \| 5 \| 2 \| 1\/1 \|$/m);
-    assert.doesNotMatch(table, /^\| claude \| aggregate \|/m);
+    assert.match(table, /^\| — \| claude \| delegate \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -879,8 +864,9 @@ test('Claude per model reasoning survives the observer capture', async () => {
       beta: {input: 5, output: 1, reasoning: 4},
     });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| claude \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \|$/m);
-    assert.match(table, /^\| claude \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \|$/m);
+    assert.doesNotMatch(table, /^\| — \| claude \| delegate \| aggregate \|/m);
   } finally { f.cleanup(); }
 });
 
@@ -904,4 +890,162 @@ test('diagnostics render keeps an older report when the write fails', async t =>
     assert.equal(JSON.parse(fs.readFileSync(output.path!, 'utf8')).path ?? null, null);
     assert.equal(fs.readFileSync(file, 'utf8'), 'older report\n');
   } finally { t.mock.restoreAll(); f.cleanup(); }
+});
+
+test('design-led milestones enter plan after the last design review and implementation at the earlier launch', async () => {
+  const {stageMilestones}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
+  const stamp=(n:number)=>new Date(n).toISOString();
+  const basic={records:[{kind:'confirm',at:stamp(1),data:{}}],lastSeq:1,torn:null} as unknown as Fold;
+  assert.deepEqual(stageMilestones(basic,[],0),[{stage:'spec',atMs:0},{stage:'plan',atMs:1}]);
+  const fold={records:[{kind:'confirm',at:stamp(2),data:{}},{kind:'writer',at:stamp(9),data:{phase:'launched'}},{kind:'approval',at:stamp(10),data:{}}],lastSeq:3,torn:null} as unknown as Fold;
+  const capture=(name:string,start:number,end:number)=>({capture:{state:'completed' as const,start,end},phases:[{key:name,name}],invocations:[],reviews:[]});
+  const stages=stageMilestones(fold,[capture('design review',3,4),capture('design review',5,6),capture('plan review',7,8)],1);
+  assert.deepEqual(stages,[{stage:'spec',atMs:1},{stage:'design',atMs:2},{stage:'design review',atMs:3},{stage:'plan',atMs:6},{stage:'plan review',atMs:7},{stage:'implementation',atMs:9}]);
+  assert.deepEqual(stageMilestones({records:[],lastSeq:0,torn:null},[capture('design review',3,4)],1),[{stage:'design review',atMs:1}]);
+});
+
+test('diagnostics render reads host usage only while enabled', async () => {
+  const f=sessionFixture({memory:true});
+  try {
+    const skill=path.join(f.root,'skill'); fs.mkdirSync(skill); const config=path.join(skill,'config.local.jsonc'); f.deps.skillRoot=skill;
+    const manifestPath=path.join(f.session,'manifest.json'); const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')); manifest.createdAt=new Date(1000).toISOString(); fs.writeFileSync(manifestPath,JSON.stringify(manifest));
+    f.deps.orchestrator={platform:'claude',model:null}; f.deps.env={CLAUDE_CODE_SESSION_ID:'thread'}; f.deps.clock=()=>2000;
+    const line=Buffer.from([
+      JSON.stringify({type:'assistant',timestamp:new Date(500).toISOString(),message:{id:'old',model:'m',usage:{input_tokens:99,output_tokens:3}}}),
+      JSON.stringify({type:'assistant',timestamp:new Date(1500).toISOString(),message:{id:'one',model:'m',usage:{input_tokens:12,output_tokens:3},text:'secret transcript'}}),
+      JSON.stringify({type:'assistant',timestamp:new Date(2500).toISOString(),message:{id:'late',model:'m',usage:{input_tokens:99,output_tokens:3}}}),
+    ].join('\n')); let reads=0;
+    f.deps.hostUsageFs={list:dir=>dir.endsWith('projects')?['project']:[],stat:()=>({size:line.length,mtimeMs:2000}),read:()=>{reads++;return line;},decompress:null};
+    fs.writeFileSync(config,'{"diagnostics":false}'); assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0); assert.equal(reads,0);
+    f.lines.splice(0); fs.writeFileSync(config,'{"diagnostics":true}'); assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0);
+    const rendered=fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8');
+    assert.equal(reads,1); assert.match(rendered,/\| claude \| 12 \|/);
+    assert.match(rendered,/^\| spec \| claude \| host \| m \| — \| 12 \| — \| — \| 3 \| — \| — \|$/m);
+    assert.doesNotMatch(rendered,/secret transcript/);
+    f.lines.splice(0); f.deps.hostUsageFs.list=()=>{throw Object.assign(new Error('private'),{code:'EACCES'});};
+    assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
+    f.lines.splice(0); manifest.createdAt='invalid'; fs.writeFileSync(manifestPath,JSON.stringify(manifest));
+    assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0);
+    assert.equal(reads,1); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: invalid session start/);
+  } finally { f.cleanup(); }
+});
+
+const hostTest_HEAD = 'a'.repeat(40);
+const hostTest_TREE = 'b'.repeat(40);
+
+function hostTest_planSource(): string {
+  return [
+    '# Report fixture', '',
+    '## Task Map',
+    '| ID | Title | Outcome | Prerequisites | Criteria |',
+    '| --- | --- | --- | --- | --- |',
+    '| T1 | Task 1 | Works | none | SC1 |',
+    '', '## Proposed Changes', '',
+    '### T1 — Task 1',
+    '#### [NEW] src/task-1.ts',
+    '- Purpose: implements the fixture behavior.', '',
+    '## Success Criteria',
+    '- [SC1] Criterion works',
+    '  - Changes: src/task-1.ts',
+    '  - Verify: `node verify-1.js`',
+    '  - Evidence: verify',
+    '', '## Verification Plan', '### Automated Tests',
+    '- `node verify-1.js`', '- `node contract-check.js`', '',
+  ].join('\n');
+}
+
+let hostTest_eventNumber = 0;
+
+async function hostTest_fixture() {
+  const f = sessionFixture({memory:true});
+  const skillRoot = path.join(f.root, 'isolated-skill');
+  fs.mkdirSync(skillRoot);
+  fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
+  f.deps.skillRoot = skillRoot;
+  f.artifact('brief.spec.md', '# Brief\n');
+  f.artifact('report.plan.md', hostTest_planSource());
+  await hostTest_append(f, {
+    kind: 'bind', by: 'tool', key: `bind:${++hostTest_eventNumber}`,
+    data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
+  });
+  return { ...f, skillRoot };
+}
+
+async function hostTest_invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
+  f.lines.splice(0);
+  const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
+  assert.equal(f.lines.length, 1);
+  return { exit, output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null } };
+}
+
+async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
+  const file = f.artifact(`event-${++hostTest_eventNumber}.json`, JSON.stringify(record));
+  const result = await hostTest_invoke(f, 'ledger', 'append', file);
+  assert.equal(result.exit, 0, result.output.summary);
+  return result.output;
+}
+
+async function hostTest_integrate(f: ReturnType<typeof sessionFixture>, state: FakeGitState, dest = { path: f.root, branch: 'main' }) {
+  const worktree = path.join(f.session, '.state', 'worktrees', 'integration');
+  fs.mkdirSync(worktree, { recursive: true });
+  state.session = f.session;
+  f.deps.run = fakeGit(state);
+  await hostTest_append(f, {
+    kind: 'integrate', by: 'tool', key: `integrate:opened:${++hostTest_eventNumber}`,
+    data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'dispatch/test/integration', base: 'f'.repeat(40), dest },
+  });
+  return worktree;
+}
+
+async function hostTest_evidence(f: ReturnType<typeof sessionFixture>, criterion: string, commandDigest: string, tree: string) {
+  const data = { criterion, commandDigest, tree, clean: true, before: tree, after: tree, exit: 0 };
+  const digest = crypto.createHash('sha256').update(stableValue(data)).digest('hex');
+  const evidencePath = `.state/evidence/${digest}.json`;
+  const evidenceFile = path.join(f.session, evidencePath);
+  fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
+  fs.writeFileSync(evidenceFile, JSON.stringify(data));
+  await hostTest_append(f, {
+    kind: 'evidence', by: 'tool', key: `evidence:${digest}`,
+    data: { ...data, path: evidencePath },
+  });
+  return evidencePath;
+}
+
+async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
+  const plan = loadPlan(f.session, readManifest(f.session));
+  const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
+  const paths = new Map<string, string>();
+  for (const row of rows) paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
+  return paths;
+}
+
+function hostTest_gitState(session: string, head = hostTest_HEAD, tree = hostTest_TREE, testedTree = tree): FakeGitState {
+  return { session, head, tree, testedTree, changes: [], calls: [] };
+}
+
+async function hostTest_deliver(f: ReturnType<typeof sessionFixture>, head: string, dest = { path: f.root, branch: 'main' }) {
+  await hostTest_append(f, {
+    kind: 'integrate', by: 'tool', key: `integrate:delivered:${++hostTest_eventNumber}`,
+    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
+  });
+}
+
+
+test('report render and complete collect host usage without gating outcomes', async () => {
+  const f = await hostTest_fixture();
+  try {
+    const manifestPath=path.join(f.session,'manifest.json'); const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')); manifest.createdAt=new Date(1000).toISOString(); fs.writeFileSync(manifestPath,JSON.stringify(manifest));
+    f.deps.clock=()=>2000; f.deps.orchestrator={platform:'claude',model:null}; f.deps.env={CLAUDE_CODE_SESSION_ID:'thread'};
+    const line=Buffer.from(JSON.stringify({type:'assistant',timestamp:new Date(1500).toISOString(),message:{id:'one',model:'m',usage:{input_tokens:12,output_tokens:3}}})); let reads=0;
+    f.deps.hostUsageFs={list:dir=>dir.endsWith('projects')?['project']:[],stat:()=>({size:line.length,mtimeMs:2000}),read:()=>{reads++;return line;},decompress:null};
+    await hostTest_integrate(f,hostTest_gitState(f.session)); await hostTest_evidenceForPlan(f,hostTest_TREE); await hostTest_deliver(f,hostTest_HEAD);
+    fs.writeFileSync(path.join(f.skillRoot,'config.local.jsonc'),'{"diagnostics":false}');
+    assert.equal((await hostTest_invoke(f,'report','render')).exit,0); assert.equal((await hostTest_invoke(f,'report','complete')).exit,0); assert.equal(reads,0);
+    fs.writeFileSync(path.join(f.skillRoot,'config.local.jsonc'),'{"diagnostics":true}');
+    assert.equal((await hostTest_invoke(f,'report','render')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/\| claude \| 12 \|/);
+    assert.equal((await hostTest_invoke(f,'report','complete')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/\| claude \| 12 \|/);
+    f.deps.hostUsageFs.list=()=>{throw Object.assign(new Error('private'),{code:'EACCES'});};
+    assert.equal((await hostTest_invoke(f,'report','render')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
+    assert.equal((await hostTest_invoke(f,'report','complete')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
+  } finally { f.cleanup(); }
 });

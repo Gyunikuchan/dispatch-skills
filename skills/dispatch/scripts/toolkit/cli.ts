@@ -1,3 +1,4 @@
+import type { HostUsageFs } from './host-usage/types.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +35,7 @@ import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  hostUsageFs?: HostUsageFs;
   diagnostics?: (event: DiagnosticEvent) => void;
   delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
   modes: (provider: ProviderId) => readonly ModeId[];

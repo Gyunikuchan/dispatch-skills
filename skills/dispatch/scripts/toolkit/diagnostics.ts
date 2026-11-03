@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { readHostUsage, nodeHostUsageFs } from './host-usage/index.ts';
+import { readErrorReason } from './host-usage/read.ts';
+import type { Milestone, HostStage } from './host-usage/types.ts';
 import { addYield, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
@@ -193,8 +197,30 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
   return [...rows.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
 }
 
+export function stageMilestones(fold: Fold, captures: readonly RunFacts[], startMs: number): Milestone[] {
+  const capturesOf = (name: string) => captures.filter(c => c.phases.some(p => p.name === name) && c.capture?.start !== undefined);
+  const confirm = fold.records.filter(r => r.kind === 'confirm').map(r => Date.parse(r.at)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
+  if (confirm === undefined) {
+    const first = captures.filter(c => c.capture && c.phases.some(p => ['ask','design review','plan review','code review'].includes(p.name))).sort((a,b)=>a.capture!.start-b.capture!.start)[0];
+    return [{stage: (first?.phases.find(p => ['ask','design review','plan review','code review'].includes(p.name))?.name ?? 'spec') as HostStage, atMs:startMs}];
+  }
+  const designs=capturesOf('design review'), plans=capturesOf('plan review');
+  const stages: Milestone[]=[{stage:'spec',atMs:startMs},{stage:designs.length?'design':'plan',atMs:confirm}];
+  for (const name of ['design review','plan review','code review'] as const) {
+    const first=capturesOf(name).sort((a,b)=>a.capture!.start-b.capture!.start)[0];
+    if(first) stages.push({stage:name,atMs:first.capture!.start});
+  }
+  if(designs.length && (plans.length || fold.records.some(r=>r.kind==='bind' && typeof r.data['plan']==='string'))) {
+    const ends=designs.flatMap(c=>c.capture?.end === undefined ? [] : [c.capture.end]);
+    if(ends.length) stages.push({stage:'plan',atMs:Math.max(...ends)});
+  }
+  const implementation=fold.records.filter(r=>r.kind==='approval'||(r.kind==='writer'&&r.data['phase']==='launched')).map(r=>Date.parse(r.at)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
+  if(implementation!==undefined) stages.push({stage:'implementation',atMs:implementation});
+  return stages.sort((a,b)=>a.atMs-b.atMs);
+}
+
 /** Builds optional facts independently of the strict walkthrough reader. */
-export function sessionFacts(session: string, fold: Fold, outcome: string): RunFacts {
+export function sessionFacts(session: string, fold: Fold, outcome: string, hostContext?: {manifest: HandlerContext['manifest']; deps: CliDeps}): RunFacts {
   const collection = {completed:0, partial:0, corrupt:0, unreadable:0, incomplete:0, storageFailed:0};
   const object = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
   const issue = (key: keyof typeof collection) => { collection[key] = Math.min(1_000_000, collection[key]+1); };
@@ -309,12 +335,20 @@ export function sessionFacts(session: string, fold: Fold, outcome: string): RunF
   collection.partial=Math.min(1_000_000,collection.corrupt+collection.unreadable+collection.incomplete+collection.storageFailed);
   const level=latest(fold,'level')?.data['level'],host=measured.find(row=>row.host)?.host;
   const slotYield=slotYieldFacts(rounds,invocations,fold);
+  let hostUsage: RunFacts['hostUsage'];
+  if(hostContext) {
+    const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
+    const startMs=Date.parse(manifest.createdAt);
+    try {
+      hostUsage = !Number.isFinite(startMs) ? {platform,rows:[],unavailable:'invalid session start'} : readHostUsage(platform,{startMs,endMs:deps.clock(),home:(process.platform==='win32' ? deps.env['USERPROFILE'] ?? deps.env['HOME'] : deps.env['HOME'] ?? deps.env['USERPROFILE']) ?? os.homedir(),env:name=>deps.env[name],stages:stageMilestones(fold,measured,startMs)},deps.hostUsageFs ?? nodeHostUsageFs);
+    } catch(error) { hostUsage={platform,rows:[],unavailable:readErrorReason(error)}; }
+  }
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
     ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
-    ...(slotYield.length?{slotYield}:{}),
+    ...(slotYield.length?{slotYield}:{}),...(hostUsage?{hostUsage}:{}),
     retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };
@@ -462,16 +496,16 @@ export function observeTool(session: string, tool: string, action: string, kind:
   }catch{return undefined;}
 }
 
-export function optionalDiagnostics(session: string, fold: Fold, outcome: string): string | undefined {
-  try { return writeDiagnostics(session,sessionFacts(session,fold,outcome)); }
+export function optionalDiagnostics(session: string, fold: Fold, outcome: string, host?: {manifest: HandlerContext['manifest']; deps: CliDeps}): string | undefined {
+  try { return writeDiagnostics(session,sessionFacts(session,fold,outcome,host)); }
   catch { return undefined; }
 }
 
 // NOTE: Render is not captured as a tool observation, so it cannot describe its own run.
-export async function diagnosticsRender({session, args, deps}: HandlerContext): Promise<HandlerResult> {
+export async function diagnosticsRender({session, args, deps, manifest}: HandlerContext): Promise<HandlerResult> {
   if (args.length) throw new ToolError(1, 'invalid-input', 'diagnostics render takes no positional arguments');
   if (!diagnosticsEnabled(deps.skillRoot)) return {ok: true, exit: 0, summary: 'diagnostics off', value: {path: null}};
-  const file = optionalDiagnostics(session, foldLedger(session), 'rendered');
+  const file = optionalDiagnostics(session, foldLedger(session), 'rendered', {manifest,deps});
   if (file === undefined) return {ok: false, exit: 4, reason: 'diagnostics-failed', summary: 'diagnostics render failed; existing diagnostics.md unchanged', value: {path: null}};
   return {ok: true, exit: 0, summary: 'diagnostics rendered: ' + file, value: {path: file}};
 }
