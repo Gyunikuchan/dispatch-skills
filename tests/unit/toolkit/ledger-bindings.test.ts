@@ -100,7 +100,8 @@ test('ledger bindings approvals and input filters preserve validation and retrie
   },
  );
  fs.unlinkSync(path.join(f.root,'s.spec.md'));assert.equal((await call(binding)).value.deduped,true);
- for(const phase of ['deliver-started','delivered'])assert.ok((await add('integrate',{phase,mode:'uncommitted',dest:{branch:'b',path:'p'},from:git,source:git})).seq>0);
+ for(const phase of ['deliver-started','delivered'])assert.equal((await call({kind:'integrate',key:phase,by:'tool',data:{phase,mode:'uncommitted',dest:{branch:'b',path:'p'},from:git,source:git}})).exit,0);
+ assert.equal(foldLedger(f.session).records.filter(r=>r.kind==='integrate'&&r.data['mode']==='uncommitted').length,2);
  f.lines.length=0;assert.equal(await main(['ledger','query','--session',f.session,'--kind','integrate'],f.deps),0);assert.equal(JSON.parse(fs.readFileSync(f.output().path!,'utf8')).length,2);
  const folded=foldLedger(f.session);
  assert.equal(queryLedger(folded,{kind:'integrate',since:'0'}).length,2);
@@ -120,17 +121,6 @@ test('ledger bindings approvals and input filters preserve validation and retrie
  for(const extra of [[],[input,input]]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,...extra],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.match(f.output().summary,/ledger append <record\.json>/);}
  fs.writeFileSync(input,'bad');f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.ok(f.output().summary.startsWith('Record file '+path.resolve(input)+' is not valid JSON: '));
  const ledger=path.join(f.session,'ledger.jsonl');const bytes=fs.readFileSync(ledger,'utf8');const first=JSON.parse(bytes.split('\n')[0]!);fs.appendFileSync(ledger,JSON.stringify(first)+'\n');const corrupt=fs.readFileSync(ledger,'utf8');await assert.rejects(add('note',{text:'n'}),{reason:'ledger-corrupt'});assert.equal(fs.readFileSync(ledger,'utf8'),corrupt);
- }finally{f.cleanup();}
-});
-
-test('uncommitted records append through the ledger command', async () => {
- const f=sessionFixture({ memory: true });try{
- const input=f.artifact('record.json',''),git='a'.repeat(40),dest={branch:'b',path:'p'};
- for(const [phase,extra] of [['deliver-started',{}],['delivered',{noop:true}]] as const){
-  fs.writeFileSync(input,JSON.stringify({kind:'integrate',by:'tool',key:phase,data:{phase,mode:'uncommitted',dest,from:git,source:git,...extra}}));
-  f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),0,phase);
- }
- assert.equal(foldLedger(f.session).records.filter(r=>r.kind==='integrate'&&r.data['mode']==='uncommitted').length,2);
  }finally{f.cleanup();}
 });
 

@@ -187,21 +187,19 @@ test('audit probe interrupted during OpenCode introspection keeps the fixture an
   assert.ok(record?.fixturePath && fs.existsSync(record.fixturePath), 'fixture kept while introspection may be live');
   assert.deepEqual((await lateSettle()).probes['opencode'], record, 'late settlement does not overwrite the interrupted record');
   assert.equal(launches.length, 0);
-});
 
-test('audit probe times out OpenCode introspection that never settles past deadline plus grace and releases ownership', async () => {
-  const { result, manifest, record, launches, introspections, lateSettle } = await opencodeMain(({ clock }) => clock.advance(70_000));
-  assert.equal(result.interrupted, false);
-  assert.equal(record?.lifecycle, 'timeout');
-  assert.equal(record?.liveness, 'unknown');
-  assert.equal(record?.exitConfirmed, false);
-  assert.equal(record?.cleanup, 'blocked');
-  assert.match(record?.cause ?? '', /^preparation-timeout: introspection did not settle/);
-  assert.ok(record?.fixturePath && fs.existsSync(record.fixturePath), 'fixture kept while introspection may be live');
-  assert.ok(manifest.probeOwner?.finishedAt, 'owner released after main resolves');
-  assert.deepEqual((await lateSettle()).probes['opencode'], record, 'late settlement does not overwrite the timeout record');
-  assert.equal(launches.length, 0);
-  assert.equal(introspections(), 1);
+  const timeoutRun = await opencodeMain(({ clock }) => clock.advance(70_000));
+  assert.equal(timeoutRun.result.interrupted, false);
+  assert.equal(timeoutRun.record?.lifecycle, 'timeout');
+  assert.equal(timeoutRun.record?.liveness, 'unknown');
+  assert.equal(timeoutRun.record?.exitConfirmed, false);
+  assert.equal(timeoutRun.record?.cleanup, 'blocked');
+  assert.match(timeoutRun.record?.cause ?? '', /^preparation-timeout: introspection did not settle/);
+  assert.ok(timeoutRun.record?.fixturePath && fs.existsSync(timeoutRun.record.fixturePath));
+  assert.ok(timeoutRun.manifest.probeOwner?.finishedAt, 'owner released after main resolves');
+  assert.deepEqual((await timeoutRun.lateSettle()).probes['opencode'], timeoutRun.record);
+  assert.equal(timeoutRun.launches.length, 0);
+  assert.equal(timeoutRun.introspections(), 1);
 });
 
 test('audit probe releases its own unlaunched reservation when the owner exits early', () => {

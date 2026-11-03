@@ -27,25 +27,6 @@ test('code review evidence is actionable with and without a bound plan', () => {
   }
 });
 
-test('plan template shows behaviour before task details', () => {
-  const template = readFileSync(new URL('plan.md', root), 'utf8');
-  const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
-  const task = skeleton.split('### T<n> — <Task title>')[1]!.split('\n## Success Criteria')[0]!;
-  assert.match(task, /- <Observable behaviour this task implements and how it works\.>\n\n<details>/);
-  assert.doesNotMatch(task, /<summary>/);
-  const criteria = skeleton.split('## Success Criteria\n')[1]!.split('\n## Verification Plan')[0]!;
-  assert.match(criteria, /- \[SC1\] <checkable outcome>\n  <details>\n\n  - Satisfies:/);
-  assert.doesNotMatch(criteria, /<summary>/);
-});
-
-test('design template shows behaviour before increment details', () => {
-  const template = readFileSync(new URL('design.md', root), 'utf8');
-  const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
-  const increment = skeleton.split('### I01\n')[1]!.split('\n## Final Integration')[0]!;
-  assert.match(increment, /- <Observable behaviour this increment implements and how it works\.>\n\n<details>/);
-  assert.doesNotMatch(increment, /<summary>/);
-});
-
 test('readable artifact templates: human layout sections, callouts, details and diagrams', async (t) => {
   for (const name of ['spec.md', 'design.md', 'plan.md', 'walkthrough.md']) {
     const template = readFileSync(new URL(name, root), 'utf8');
@@ -56,8 +37,21 @@ test('readable artifact templates: human layout sections, callouts, details and 
       assert.match(skeleton, /<details>\n/, name);
       assert.match(skeleton, /\n\n<\/details>/, name);
     }
-    if (name === 'design.md') assert.doesNotMatch(skeleton, /<summary>[^<]*<\/summary>/, name);
+    if (name === 'design.md') {
+      assert.doesNotMatch(skeleton, /<summary>[^<]*<\/summary>/, name);
+      const increment = skeleton.split('### I01\n')[1]!.split('\n## Final Integration')[0]!;
+      assert.match(increment, /- <Observable behaviour this increment implements and how it works\.>\n\n<details>/);
+      assert.doesNotMatch(increment, /<summary>/);
+    }
     if (name === 'walkthrough.md') assert.match(skeleton, /<summary>Audit records<\/summary>/, name);
+    if (name === 'plan.md') {
+      const task = skeleton.split('### T<n> — <Task title>')[1]!.split('\n## Success Criteria')[0]!;
+      assert.match(task, /- <Observable behaviour this task implements and how it works\.>\n\n<details>/);
+      assert.doesNotMatch(task, /<summary>/);
+      const criteria = skeleton.split('## Success Criteria\n')[1]!.split('\n## Verification Plan')[0]!;
+      assert.match(criteria, /- \[SC1\] <checkable outcome>\n  <details>\n\n  - Satisfies:/);
+      assert.doesNotMatch(criteria, /<summary>/);
+    }
     if (name === 'plan.md' || name === 'design.md') {
       assert.match(skeleton, /```mermaid\n/, name);
       assert.match(skeleton, /Text summary: .+/, name);
@@ -186,14 +180,6 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
   assert.ok(!plan.includes('<Component Name>'));
 });
 
-test('quality selection: plan review checks task dependencies, ownership, and independence', () => {
-  const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
-  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8');
-  assert.match(bar, /^- \*\*decomposition\*\* — .*A task that consumes another's output without a prerequisite is a defect\. Treat contention on a shared write path as a defect only when neither a `Requires` ordering nor a justified `Overlap:` line covers it\. Shared port, cache, or output contention needs a prerequisite\./m);
-  assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
-  assert.match(prompt, /The plan summary, success criteria and task graph/);
-});
-
 test('review prompts offer shared family tags each defined by a quality-bar bullet', async (t) => {
   const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
   const families = [
@@ -244,64 +230,51 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
       assert.equal(selectedQuality.split('\n').filter((line) => line.startsWith(`- **${family}** —`)).length, 1, `${kind}: ${family} quality bullet exactly once`);
     }
   }
-});
 
-test('quality selection: plans name searched equivalents and plan review checks them', () => {
-  const plan = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(plan, /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/);
-  const reuseRule = plan.match(/^- Reuse:.*$/m)?.[0];
+  // Plan review decomposition checks
+  const planPrompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
+  assert.match(quality, /^- \*\*decomposition\*\* — .*A task that consumes another's output without a prerequisite is a defect\. Treat contention on a shared write path as a defect only when neither a `Requires` ordering nor a justified `Overlap:` line covers it\. Shared port, cache, or output contention needs a prerequisite\./m);
+  assert.match(planPrompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
+  assert.match(planPrompt, /The plan summary, success criteria and task graph/);
+
+  // Searched equivalents and reuse checks
+  const planTemplate = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(planTemplate, /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/);
+  const reuseRule = planTemplate.match(/^- Reuse:.*$/m)?.[0];
   assert.ok(reuseRule);
   assert.match(reuseRule, /\bnone found\b/);
   assert.match(reuseRule, /\[quality bar's shared reuse criterion\]\(quality-bar\.md#shared\)/);
-  const shared = readFileSync(new URL('quality-bar.md', root), 'utf8').split(/^## shared$/m)[1]!.split(/^## /m)[0]!;
-  const maintainability = shared.split('\n').find((line) => line.startsWith('- **maintainability** —'));
+  const maintainability = section('shared').split('\n').find((line) => line.startsWith('- **maintainability** —'));
   assert.ok(maintainability);
   assert.ok(maintainability.includes('search the repository by name and behaviour for an existing equivalent'));
-});
 
-test('quality bar names standard code smells as judgement calls', () => {
-  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
-  const maintainability = qualityBar(bar, 'code').split('\n').find((line) => line.startsWith('- **maintainability** —'));
-  assert.ok(maintainability);
+  // Standard code smells as judgement calls
+  const codeMaintainability = qualityBar(quality, 'code').split('\n').find((line) => line.startsWith('- **maintainability** —'));
+  assert.ok(codeMaintainability);
   for (const smell of [
     'Duplicated Code', 'Feature Envy', 'Data Clumps', 'Primitive Obsession', 'Shotgun Surgery', 'Divergent Change',
     'Repeated Switches', 'Message Chains', 'Middle Man', 'Speculative Generality', 'Refused Bequest', 'Mysterious Name',
-  ]) assert.ok(maintainability.includes(smell), `missing ${smell}`);
-  assert.ok(maintainability.includes('Smells (judgement calls, never `blocks` or `critical` alone)'));
-});
+  ]) assert.ok(codeMaintainability.includes(smell), `missing ${smell}`);
+  assert.ok(codeMaintainability.includes('Smells (judgement calls, never `blocks` or `critical` alone)'));
 
-test('code review flags unrequested consumer-boundary behaviour as intent', () => {
-  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
-  const against = codePrompt.split(/^## against$/m)[1]?.split(/^## /m)[0]?.replace(/\s+/g, ' ');
+  // Unrequested consumer-boundary behaviour as intent
+  const against = readFileSync(new URL('review-prompt-code.md', root), 'utf8').split(/^## against$/m)[1]?.split(/^## /m)[0]?.replace(/\s+/g, ' ');
   assert.ok(against);
   assert.ok(against.includes('Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an `intent` finding; internal helpers and refactors are not.'));
-
   const rules = readFileSync(new URL('../review-rules.md', root), 'utf8');
   assert.ok(rules.includes('For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).'));
-});
 
-test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
-  const brief = readFileSync(new URL('test-cleanup-brief.md', root), 'utf8');
-  assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
-  assert.ok(brief.includes('git diff <base>..HEAD'));
-  assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
-  assert.ok(brief.includes('quality-bar.md#code'));
-});
-
-test('quality selection keeps judging rules single-sourced', () => {
-  const bar = readFileSync(new URL('quality-bar.md', root), 'utf8').replace(/\r\n/g, '\n');
-  const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
-  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
-  assert.deepEqual([...bar.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'plan', 'design']);
+  // Single-sourced judging rules
+  assert.deepEqual([...quality.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'plan', 'design']);
   const adjacentRule = 'Report concrete existing-code defects encountered in the selected target or during that required inspection';
   assert.equal(frame.split(adjacentRule).length - 1, 1);
-  assert.doesNotMatch(bar, /Adjacent findings|nearest plan|nearest design/);
+  assert.doesNotMatch(quality, /Adjacent findings|nearest plan|nearest design/);
   assert.match(codePrompt, /cite code at its real `path:L<line>` locus/);
   for (const consumer of ['plan', 'design'] as const) {
     const kindPrompt = readFileSync(new URL(`review-prompt-${consumer}.md`, root), 'utf8');
     assert.match(kindPrompt, /Cite existing code as `path\/to\/file:L<line>` inside `defect`/);
   }
-  assert.doesNotMatch(bar, /^- Standards:/m);
+  assert.doesNotMatch(quality, /^- Standards:/m);
   for (const kind of ['plan', 'design']) {
     const prompt = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
     assert.doesNotMatch(prompt, /^## quality$/m);
@@ -311,5 +284,13 @@ test('quality selection keeps judging rules single-sourced', () => {
     assert.doesNotMatch(tags, /\u2014|findings/);
     for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- `[^`]+`$/);
   }
-  for (const rule of ['Trace the ask to applicable REQs and DECs', 'search the repository by name and behaviour for an existing equivalent', "A task that consumes another's output without a prerequisite", 'Weigh alternatives and trade-offs']) assert.equal(bar.split(rule).length, 2, rule);
+  for (const rule of ['Trace the ask to applicable REQs and DECs', 'search the repository by name and behaviour for an existing equivalent', "A task that consumes another's output without a prerequisite", 'Weigh alternatives and trade-offs']) assert.equal(quality.split(rule).length, 2, rule);
+});
+
+test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
+  const brief = readFileSync(new URL('test-cleanup-brief.md', root), 'utf8');
+  assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
+  assert.ok(brief.includes('git diff <base>..HEAD'));
+  assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
+  assert.ok(brief.includes('quality-bar.md#code'));
 });

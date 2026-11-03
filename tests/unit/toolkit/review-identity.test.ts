@@ -124,21 +124,15 @@ async function correctedGate(stored: {severity: string; impact: string; trigger:
  }finally{f.cleanup();}
 }
 
-test('corrected finding: a MUST downgraded to SHOULD qualifies for the final-round SHOULD fix',async()=>{
- const result=await correctedGate({severity:'MUST',impact:'blocks',trigger:'realistic'},{impact:'degrades',trigger:'realistic'});
- assert.equal(result.ok,true,JSON.stringify(result));
-});
-
-test('corrected finding: a finding corrected to CONSIDER qualifies for the final-round fix, and a reviewer-rated CONSIDER does not',async()=>{
+test('corrected finding: corrected severity transitions govern final-round fix qualification',async()=>{
+ const downgraded=await correctedGate({severity:'MUST',impact:'blocks',trigger:'realistic'},{impact:'degrades',trigger:'realistic'});
+ assert.equal(downgraded.ok,true,JSON.stringify(downgraded));
  for(const stored of [{severity:'MUST',impact:'blocks',trigger:'realistic'},{severity:'SHOULD',impact:'degrades',trigger:'realistic'}]){
   const result=await correctedGate(stored,{impact:'degrades',trigger:'contrived'});
   assert.equal(result.ok,true,JSON.stringify(result));
  }
  assert.deepEqual(await correctedGate({severity:'CONSIDER',impact:'minor',trigger:'contrived'},null),{ok:false,reason:'review-required'});
-});
-
-test('corrected finding: a SHOULD raised to MUST no longer qualifies for the final-round SHOULD fix',async()=>{
  assert.equal((await correctedGate({severity:'SHOULD',impact:'degrades',trigger:'realistic'},null)).ok,true);
- const result=await correctedGate({severity:'SHOULD',impact:'degrades',trigger:'realistic'},{impact:'blocks',trigger:'realistic'});
- assert.deepEqual(result,{ok:false,reason:'review-required'});
+ const raised=await correctedGate({severity:'SHOULD',impact:'degrades',trigger:'realistic'},{impact:'blocks',trigger:'realistic'});
+ assert.deepEqual(raised,{ok:false,reason:'review-required'});
 });

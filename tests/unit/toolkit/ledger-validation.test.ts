@@ -169,33 +169,28 @@ test('ceiling resolution requires user quote', () => {
   assert.throws(() => validateRecord(record({quote: ' '})), {reason: 'user-only'});
   const {quote, ...missing} = record();
   assert.throws(() => validateRecord(missing), {reason: 'user-only'});
-});
 
-test('ceiling resolution requires option prefix', () => {
-  const id = 'ceiling:plan-work.plan:4';
-  const record = (summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id + ':resolved', data: {id, state: 'resolved', summary}});
+  const recordWithSummary = (summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id + ':resolved', data: {id, state: 'resolved', summary}});
   for (const summary of ['raise the ceiling', ' re-author: rewrite', 'Re-author: rewrite', 'defer'])
-    assert.throws(() => validateRecord(record(summary)), (error) => {
+    assert.throws(() => validateRecord(recordWithSummary(summary)), (error) => {
       const failure = error as Error & {reason: string};
       assert.equal(failure.reason, 'invalid-record');
       assert.match(failure.message, /data\.summary/);
       return true;
     }, summary);
   for (const summary of ['re-author: rewrite', 'model-effort: raise effort', 'relax-split: narrow scope', 'defer: rule remaining MUST deferred'])
-    assert.doesNotThrow(() => validateRecord(record(summary)));
-});
+    assert.doesNotThrow(() => validateRecord(recordWithSummary(summary)));
 
-test('ceiling resolution refuses code review defer', () => {
-  const record = (id: string, summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id + ':resolved', data: {id, state: 'resolved', summary}});
+  const recordWithTarget = (targetId: string, summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: targetId + ':resolved', data: {id: targetId, state: 'resolved', summary}});
   const code = 'ceiling:code-integration:4';
-  assert.throws(() => validateRecord(record(code, 'defer: accept as follow-up')), (error) => {
+  assert.throws(() => validateRecord(recordWithTarget(code, 'defer: accept as follow-up')), (error) => {
     const failure = error as Error & {reason: string};
     assert.equal(failure.reason, 'invalid-record');
     assert.match(failure.message, /data\.id/);
     return true;
   });
-  assert.doesNotThrow(() => validateRecord(record(code, 're-author: rewrite the fix')));
-  assert.doesNotThrow(() => validateRecord(record('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
+  assert.doesNotThrow(() => validateRecord(recordWithTarget(code, 're-author: rewrite the fix')));
+  assert.doesNotThrow(() => validateRecord(recordWithTarget('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
 });
 
 const correction = (data: object, extra: object = {}) => ({
@@ -203,11 +198,8 @@ const correction = (data: object, extra: object = {}) => ({
   data: {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'impact: the gate surfaces it', ...data}, ...extra,
 });
 
-test('severity correction accepted: both dimensions on an accepted review ruling', () => {
-  assert.doesNotThrow(() => validateRecord(correction({impact: 'degrades', trigger: 'realistic'})));
-});
-
 test('severity correction refused: a lone dimension, an invalid value or a severity key', () => {
+  assert.doesNotThrow(() => validateRecord(correction({impact: 'degrades', trigger: 'realistic'})));
   for (const data of [{impact: 'degrades'}, {trigger: 'realistic'}])
     assert.throws(() => validateRecord(correction(data)), {reason: 'invalid-record'});
   assert.throws(() => validateRecord(correction({impact: 'severe', trigger: 'realistic'})), error => {
@@ -221,9 +213,6 @@ test('severity correction refused: a lone dimension, an invalid value or a sever
     assert.match((error as Error).message, /data\.severity/);
     return true;
   });
-});
-
-test('severity correction refused: a non-accepted ruling or a non-review subject', () => {
   for (const ruling of ['rejected', 'duplicate', 'deferred'])
     assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', ruling})), {reason: 'invalid-record'});
   assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', subject: 'plan:T1'})), {reason: 'invalid-record'});

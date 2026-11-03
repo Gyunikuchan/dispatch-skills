@@ -23,10 +23,7 @@ test('review-sanitization: comment markers are neutralised so rendered Markdown 
   assert.ok(!/--!?>/.test(out));
 });
 
-test('review-sanitization: a shorter inner fence does not close a longer opener', () => {
+test('review-sanitization: inner fences and closing fences with info strings do not close opener', () => {
   assert.equal(sanitizeText(['keep', '````', 'hidden', '```', 'still hidden', '````', 'after'].join('\n')), 'keep after');
-});
-
-test('review-sanitization: a fence line with an info string never closes an open fence', () => {
   assert.equal(sanitizeText(['keep', '```', 'hidden', '```sh', 'still hidden', '```', 'after'].join('\n')), 'keep after');
 });

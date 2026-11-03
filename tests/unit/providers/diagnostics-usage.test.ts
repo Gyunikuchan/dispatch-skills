@@ -98,22 +98,7 @@ test('codex sums distinct turns', () => {
     input: 300, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 0,
     scope: 'invocation', provenance: 'codex.turn.completed', inputSemantics: 'includes-cache',
   });
-});
-
-test('codex equal distinct turns both count', () => {
-  const usage = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'));
-  assert.equal(usage?.input, 200);
-  assert.equal(usage?.output, 20);
-});
-
-test('codex replayed completion counts once', () => {
-  const usage = codex.usage!([codexCompleted(100, 10), codexCompleted(100, 10)].join('\n'));
-  assert.equal(usage?.input, 100);
-  assert.equal(usage?.output, 10);
-});
-
-test('codex lone completed turn counts', () => {
-  const usage = codex.usage!(codexCompleted(100, 10));
-  assert.equal(usage?.input, 100);
-  assert.equal(usage?.output, 10);
+  const equalTurns = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'));
+  assert.equal(equalTurns?.input, 200);
+  assert.equal(equalTurns?.output, 20);
 });

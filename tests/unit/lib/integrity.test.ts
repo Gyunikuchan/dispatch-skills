@@ -11,23 +11,16 @@ test('hash drift is reported before dispatch', () => {
   fs.mkdirSync(path.join(skill, 'scripts'));
   fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
   fs.writeFileSync(path.join(skill, 'scripts', 'a.ts'), 'export {};\n');
+  assert.equal(readVersion(skill), undefined);
   assert.equal(checkIntegrity(skill).status, 'missing-manifest');
-  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify({ $version: '1.2.3', ...generateSkillHashes(skill) }));
   assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+  assert.equal(readVersion(skill), '1.2.3');
   assert.equal(integrityDiagnostic({ status: 'ok' }), null);
   fs.writeFileSync(path.join(skill, 'scripts', 'a.ts'), 'export const x = 1;\n');
   const drift = checkIntegrity(skill);
   assert.deepEqual(drift, { status: 'drift', violations: ['scripts/a.ts'] });
   assert.match(integrityDiagnostic(drift) ?? '', /^INTEGRITY_VIOLATION: .*scripts\/a\.ts/);
-});
-
-test('integrity ignores the $version key and readVersion returns it', () => {
-  const skill = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
-  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
-  assert.equal(readVersion(skill), undefined);
-  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify({ $version: '1.2.3', ...generateSkillHashes(skill) }));
-  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
-  assert.equal(readVersion(skill), '1.2.3');
 });
 
 test('integrity accepts a skill checked out with CRLF line endings against an LF manifest', () => {
@@ -58,15 +51,6 @@ function skillWith(files: Record<string, string>): string {
   return skill;
 }
 
-test('integrity tolerates formatting-only markdown and json rewrites', () => {
-  const skill = skillWith(SKILL_FILES);
-  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
-  fs.writeFileSync(path.join(skill, 'SKILL.md'), '#  skill  \r\n\r\nUse _emphasis_ here.   \r\n');
-  fs.writeFileSync(path.join(skill, 'references', 'guide.md'), 'Use the plan.\n\na | b\n--- | ---\nc | d\n');
-  fs.writeFileSync(path.join(skill, 'references', 'data.json'), '{\n  "a": [\n    1,\n    2\n  ],\n  "b": 1\n}\n');
-  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
-});
-
 test('integrity drift reports ts whitespace and markdown or json meaning changes', () => {
   const cases: Array<[file: string, changed: string]> = [
     ['scripts/a.ts', 'export  {};\n'],
@@ -76,6 +60,17 @@ test('integrity drift reports ts whitespace and markdown or json meaning changes
   ];
   const skill = skillWith(SKILL_FILES);
   fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+
+  // Formatting-only rewrites are accepted without drift
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '#  skill  \r\n\r\nUse _emphasis_ here.   \r\n');
+  fs.writeFileSync(path.join(skill, 'references', 'guide.md'), 'Use the plan.\n\na | b\n--- | ---\nc | d\n');
+  fs.writeFileSync(path.join(skill, 'references', 'data.json'), '{\n  "a": [\n    1,\n    2\n  ],\n  "b": 1\n}\n');
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+
+  // Meaning changes and TS whitespace changes trigger drift
+  for (const [relative, contents] of Object.entries(SKILL_FILES)) {
+    fs.writeFileSync(path.join(skill, relative), contents);
+  }
   for (const [file, changed] of cases) {
     const target = path.join(skill, file);
     const original = SKILL_FILES[file]!;

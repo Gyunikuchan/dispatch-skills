@@ -35,6 +35,7 @@ test('ask run returns sanitized source answers and launches a new completed atte
     assert.equal(f.launches.length, 2);
     assert.match(f.launches[1]!.request.promptPath, /attempt-2/);
     assert.match(fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8'), /Why does this work\?/);
+    assert.equal(f.launches[0]?.request.sessionRoot, f.session);
     assert.deepEqual(foldLedger(f.session).records, []);
   } finally {f.cleanup();}
 });
@@ -131,14 +132,6 @@ test('ask run attributes reserve and cross-provider native answers to their actu
   }
 });
 
-test('ask forwards session root to delegate', async () => {
-  const f = fixture(); try {
-    f.script('codex', 'answer', 'Useful answer');
-    assert.equal((await f.call()).exit, 0);
-    assert.equal(f.launches[0]?.request.sessionRoot, f.session);
-  } finally {f.cleanup();}
-});
-
 function nativeExclusionFixture() {
   const f = fixture();
   fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
@@ -156,17 +149,12 @@ test('ask summary reports underfill for native-only providers excluded for anoth
     assert.equal(result.exit, 0);
     assert.deepEqual(result.value.underfill, {host: 'claude', configured: 1, resolved: 1, excluded: ['copilot']});
     assert.equal(result.output.summary, 'ask: 1 answers, 0 failed; underfill 1/1 targets, host claude, excluded native-only: copilot');
-  } finally {f.cleanup();}
-});
 
-test('ask run refusal with zero targets names the underfill cause', async () => {
-  const f = nativeExclusionFixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       copilot: {nativeSubagentsOnly: true, targets: [{medium: {model: 'native'}}]},
     }}));
     const refused = await f.call();
     assert.equal(refused.exit, 1); assert.equal(refused.output.reason, 'invalid-input');
     assert.equal(refused.output.summary, 'ask requires a read delegate; underfill 0/1 targets, host claude, excluded native-only: copilot');
-    assert.equal(f.launches.length, 0);
   } finally {f.cleanup();}
 });

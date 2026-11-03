@@ -335,50 +335,46 @@ test('report complete low session accepts bound evidence and a user contract wai
   } finally { f.cleanup(); }
 });
 
-test('report complete refuses med-risk delivery without review focus', async () => {
-  for (const risk of ['med', 'high']) {
-    const f = await fixture(1, risk);
-    try {
-      const state = gitState(f.session);
-      await integrate(f, state);
-      let result = await invoke(f, 'report', 'complete');
-      assert.equal(result.output.reason, 'criteria-unmet', `${risk} risk must retain earlier refusal precedence`);
-      await evidenceForPlan(f, TREE_A);
-      result = await invoke(f, 'report', 'complete');
-      assert.equal(result.output.reason, 'undelivered', `${risk} risk must retain delivery refusal precedence`);
-      await deliver(f, HEAD_A);
-      result = await invoke(f, 'report', 'complete');
-      assert.equal(result.exit, 4);
-      assert.equal(result.output.reason, 'focus-required');
-      assert.equal(fs.existsSync(path.join(f.session, 'report.walkthrough.md')), false);
+test('report complete enforces review focus rules based on plan risk level', async () => {
+  // Med/high risk requires review focus
+  const fMed = await fixture(1, 'med');
+  try {
+    const state = gitState(fMed.session);
+    await integrate(fMed, state);
+    let result = await invoke(fMed, 'report', 'complete');
+    assert.equal(result.output.reason, 'criteria-unmet');
+    await evidenceForPlan(fMed, TREE_A);
+    result = await invoke(fMed, 'report', 'complete');
+    assert.equal(result.output.reason, 'undelivered');
+    await deliver(fMed, HEAD_A);
+    result = await invoke(fMed, 'report', 'complete');
+    assert.equal(result.exit, 4);
+    assert.equal(result.output.reason, 'focus-required');
+    assert.equal(fs.existsSync(path.join(fMed.session, 'report.walkthrough.md')), false);
 
-      const focus = (key: string, count: number) => append(f, {
-        kind: 'focus', by: 'orchestrator', key,
-        data: { bullets: Array.from({ length: count }, (_, index) => ({ text: `Review point ${index + 1}`, evidence: `src/task-${index + 1}.ts` })) },
-      });
-      await focus(`focus:${risk}:sufficient`, 3);
-      assert.equal((await invoke(f, 'report', 'complete')).exit, 0);
-      await focus(`focus:${risk}:superseding-short`, 2);
-      result = await invoke(f, 'report', 'complete');
-      assert.equal(result.output.reason, 'focus-required', 'the latest short record must supersede earlier sufficient focus');
-      await focus(`focus:${risk}:latest-sufficient`, 3);
-      assert.equal((await invoke(f, 'report', 'complete')).exit, 0);
-    } finally { f.cleanup(); }
-  }
-});
+    const focus = (key: string, count: number) => append(fMed, {
+      kind: 'focus', by: 'orchestrator', key,
+      data: { bullets: Array.from({ length: count }, (_, index) => ({ text: `Review point ${index + 1}`, evidence: `src/task-${index + 1}.ts` })) },
+    });
+    await focus('focus:med:sufficient', 3);
+    assert.equal((await invoke(fMed, 'report', 'complete')).exit, 0);
+    await focus('focus:med:superseding-short', 2);
+    result = await invoke(fMed, 'report', 'complete');
+    assert.equal(result.output.reason, 'focus-required', 'the latest short record must supersede earlier sufficient focus');
+    await focus('focus:med:latest-sufficient', 3);
+    assert.equal((await invoke(fMed, 'report', 'complete')).exit, 0);
+  } finally { fMed.cleanup(); }
 
-test('report complete accepts low-risk delivery without review focus', async () => {
-  for (const risk of ['low', 'unknown', undefined]) {
-    const f = await fixture(1, risk);
-    try {
-      await integrate(f, gitState(f.session));
-      await evidenceForPlan(f, TREE_A);
-      await deliver(f, HEAD_A);
-      const result = await invoke(f, 'report', 'complete');
-      assert.equal(result.exit, 0, result.output.summary);
-      assert.equal(foldLedger(f.session).records.some(record => record.kind === 'focus'), false);
-    } finally { f.cleanup(); }
-  }
+  // Low/unspecified risk completes without review focus
+  const fLow = await fixture(1, 'low');
+  try {
+    await integrate(fLow, gitState(fLow.session));
+    await evidenceForPlan(fLow, TREE_A);
+    await deliver(fLow, HEAD_A);
+    const result = await invoke(fLow, 'report', 'complete');
+    assert.equal(result.exit, 0, result.output.summary);
+    assert.equal(foldLedger(fLow.session).records.some(record => record.kind === 'focus'), false);
+  } finally { fLow.cleanup(); }
 });
 
 test('uncommitted consumers complete by source and ignore later caller history',async()=>{

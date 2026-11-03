@@ -15,55 +15,31 @@ const cleanDelegate = (f: Awaited<ReturnType<typeof fixture>>): CliDeps['delegat
   return {outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []};
 };
 
-test('roster: later rounds keep every target after an accepted MUST', async () => {
-  const f = await fixture();
-  try {
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Concurrent writes overwrite captured results', 'MUST'), resume: null, sessionId: null}, invocations: []});
-    assert.equal((await f.call()).exit, 0);
-    const everyTarget = targetSlots(f.read(1, 'round.json'));
-    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
-    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
-    assert.equal((await f.call()).exit, 0);
-    assert.deepEqual(targetSlots(f.read(2, 'round.json')), everyTarget);
-  } finally {f.cleanup();}
-});
-
-test('roster: later rounds keep every target after an accepted SHOULD below the cap', async () => {
-  const f = await fixture();
-  try {
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Retries are unbounded', 'SHOULD'), resume: null, sessionId: null}, invocations: []});
-    assert.equal((await f.call()).exit, 0);
-    const everyTarget = targetSlots(f.read(1, 'round.json'));
-    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Bound the retries'});
-    fs.appendFileSync(f.plan, '\n## Fix\nBounded.\n');
-    assert.equal((await f.call()).exit, 0);
-    assert.deepEqual(targetSlots(f.read(2, 'round.json')), everyTarget);
-  } finally {f.cleanup();}
-});
-
-test('roster: a CONSIDER-only round narrows the next round to its first target', async () => {
-  const f = await fixture();
-  try {
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Naming could be clearer', 'CONSIDER'), resume: null, sessionId: null}, invocations: []});
-    assert.equal((await f.call()).exit, 0);
-    const [first] = targetSlots(f.read(1, 'round.json'));
-    assert.equal((await f.call()).exit, 0);
-    assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
-  } finally {f.cleanup();}
-});
-
-test('roster: narrowed and full re-review rounds label their scope', async () => {
-  for (const severity of ['CONSIDER', 'MUST'] as const) {
+test('roster: later rounds roster scoping and labeling reflect finding severity', async () => {
+  // CONSIDER narrows next round to first target and labels narrowed scope
+  {
     const f = await fixture();
     try {
-      f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('\u00a7 Work', 'Concurrent writes overwrite captured results', severity), resume: null, sessionId: null}, invocations: []});
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Naming could be clearer', 'CONSIDER'), resume: null, sessionId: null}, invocations: []});
       assert.equal((await f.call()).exit, 0);
-      if (severity === 'MUST') {
-        await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
-        fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
-      }
+      const [first] = targetSlots(f.read(1, 'round.json'));
       assert.equal((await f.call()).exit, 0);
-      assert.match(f.read(2, 'round.json').scope, severity === 'MUST' ? /^Re-review round 2 \(full\)/ : /^Re-review round 2 \(narrowed\)/);
+      assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
+      assert.match(f.read(2, 'round.json').scope, /^Re-review round 2 \(narrowed\)/);
+    } finally {f.cleanup();}
+  }
+  // Accepted MUST or SHOULD preserves every target and labels full scope
+  for (const severity of ['MUST', 'SHOULD'] as const) {
+    const f = await fixture();
+    try {
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Concurrent writes overwrite captured results', severity), resume: null, sessionId: null}, invocations: []});
+      assert.equal((await f.call()).exit, 0);
+      const everyTarget = targetSlots(f.read(1, 'round.json'));
+      await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+      fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      assert.equal((await f.call()).exit, 0);
+      assert.deepEqual(targetSlots(f.read(2, 'round.json')), everyTarget);
+      assert.match(f.read(2, 'round.json').scope, /^Re-review round 2 \(full\)/);
     } finally {f.cleanup();}
   }
 });
@@ -157,29 +133,27 @@ test('turn target: design review counts distinct increment graph paths', async (
 
 const contextLine = (f: Awaited<ReturnType<typeof fixture>>, file: string) => '- Context Map: ' + path.join(f.session, file) + ' — pre-change index; verify claims at source.';
 
-test('context map: plan review names its phase map and ignores the legacy slug map', async () => {
+test('context map: plan review renders phase map when present and omits line when absent', async () => {
   const f = await fixture();
   try {
+    assert.equal((await f.call()).exit, 0);
+    let prompts = promptsOf(f);
+    assert.ok(prompts.length > 0);
+    for (const prompt of prompts) assert.doesNotMatch(prompt, /Context Map/);
+
+    f.launches.length = 0;
     fs.writeFileSync(path.join(f.session, 'work.plan.context.md'), CONTEXT_MAP);
     fs.writeFileSync(path.join(f.session, 'work.context.md'), CONTEXT_MAP);
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
     assert.equal((await f.call()).exit, 0);
-    const prompts = promptsOf(f);
+    prompts = promptsOf(f);
     assert.ok(prompts.length > 0);
     for (const prompt of prompts) {
       const lines = prompt.split('\n');
       assert.equal(lines[lines.findIndex(line => line.startsWith('- Spec Hash: ')) + 1], contextLine(f, 'work.plan.context.md'));
       assert.doesNotMatch(prompt, /work\.context\.md/);
     }
-  } finally {f.cleanup();}
-});
-
-test('context map: plan review without a session map renders no map line', async () => {
-  const f = await fixture();
-  try {
-    assert.equal((await f.call()).exit, 0);
-    const prompts = promptsOf(f);
-    assert.ok(prompts.length > 0);
-    for (const prompt of prompts) assert.doesNotMatch(prompt, /Context Map/);
   } finally {f.cleanup();}
 });
 
@@ -237,39 +211,42 @@ test('corrected finding: a MUST downgraded to CONSIDER narrows the next roster, 
   }
 });
 
-test('corrected finding: a MUST downgraded to SHOULD earns no continuation past the cap', async () => {
-  const f = await fixture();
-  try {
-    const counter = {step: 0};
-    f.deps.delegate = findingsDelegate('MUST', counter);
-    for (const id of ['R1-F001', 'R2-F001']) {
-      counter.step++;
+test('corrected finding: corrected severity governs continuation and roster past the round cap', async () => {
+  // MUST downgraded to SHOULD earns no continuation past cap
+  {
+    const f = await fixture();
+    try {
+      const counter = {step: 0};
+      f.deps.delegate = findingsDelegate('MUST', counter);
+      for (const id of ['R1-F001', 'R2-F001']) {
+        counter.step++;
+        assert.equal((await f.call()).exit, 0);
+        await correct(f, id, 'should');
+        fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
+      }
+      const refused = await f.call();
+      assert.equal(refused.exit, 4);
+      assert.equal(refused.output.reason, 'round-cap');
+    } finally {f.cleanup();}
+  }
+  // SHOULD raised to MUST earns continuation and a full roster past the cap
+  {
+    const f = await fixture();
+    try {
+      const counter = {step: 0};
+      f.deps.delegate = findingsDelegate('SHOULD', counter);
+      let everyTarget: string[] = [];
+      for (const id of ['R1-F001', 'R2-F001']) {
+        counter.step++;
+        assert.equal((await f.call()).exit, 0);
+        if (id === 'R1-F001') everyTarget = targetSlots(f.read(1, 'round.json'));
+        await correct(f, id, 'must');
+        fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
+      }
       assert.equal((await f.call()).exit, 0);
-      await correct(f, id, 'should');
-      fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
-    }
-    const refused = await f.call();
-    assert.equal(refused.exit, 4);
-    assert.equal(refused.output.reason, 'round-cap');
-  } finally {f.cleanup();}
-});
-
-test('corrected finding: a SHOULD raised to MUST earns continuation and a full roster past the cap', async () => {
-  const f = await fixture();
-  try {
-    const counter = {step: 0};
-    f.deps.delegate = findingsDelegate('SHOULD', counter);
-    let everyTarget: string[] = [];
-    for (const id of ['R1-F001', 'R2-F001']) {
-      counter.step++;
-      assert.equal((await f.call()).exit, 0);
-      if (id === 'R1-F001') everyTarget = targetSlots(f.read(1, 'round.json'));
-      await correct(f, id, 'must');
-      fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
-    }
-    assert.equal((await f.call()).exit, 0);
-    assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
-  } finally {f.cleanup();}
+      assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
+    } finally {f.cleanup();}
+  }
 });
 
 test('corrected finding: the ruling snapshot lists a SHOULD raised to MUST and omits a MUST lowered to SHOULD', async () => {

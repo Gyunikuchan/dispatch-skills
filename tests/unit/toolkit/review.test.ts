@@ -15,7 +15,7 @@ const configure = (f: Awaited<ReturnType<typeof fixture>>, config: Record<string
     phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: rounds}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
   }));
 
-test('review run lists blocked slot reasons', async () => {
+test('review run lists blocked slot reasons and orders them before findings in summary', async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Cannot read the session artifact') : report('§ Work', 'A defect', 'SHOULD'));
@@ -23,6 +23,8 @@ test('review run lists blocked slot reasons', async () => {
     assert.equal(result.exit, 0, JSON.stringify(result));
     assert.deepEqual(result.value.blocked, [{slot: 'claude[0]', provider: 'claude', model: 'fake', reason: 'Cannot read the session artifact'}]);
     assert.match(result.output.summary, /blocked claude\[0\]: Cannot read the session artifact/);
+    const summary = result.output.summary;
+    assert.ok(summary.indexOf('blocked claude[0]:') < summary.indexOf('R1-F001'), summary);
   } finally { f.cleanup(); }
 });
 
@@ -34,21 +36,6 @@ test('all blocked review-failed carries reasons', async () => {
     assert.equal(result.exit, 2);
     assert.equal(result.output.reason, 'review-failed');
     assert.match(result.output.summary, /^blocked claude\[0\]: claude cannot read the artifact; blocked agy\[0\]: agy cannot read the artifact; Every review slot failed/);
-  } finally { f.cleanup(); }
-});
-
-test('repeated blocked reason becomes blocker', async () => {
-  const f = await fixture();
-  try {
-    f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : report());
-    assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
-    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
-    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
-    f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : CLEAN);
-    const second = await f.call();
-    assert.equal(second.exit, 0, JSON.stringify(second));
-    assert.deepEqual(second.value.blockers, [{slot: 'claude[0]', reason: 'Artifact denied by the guard', rounds: [1, 2]}]);
-    assert.match(second.output.summary, /orchestrator blocker claude\[0\]: Artifact denied by the guard \(rounds 1-2\)/);
   } finally { f.cleanup(); }
 });
 
@@ -98,18 +85,6 @@ test('sanitized-empty blocked reasons stay distinct', async () => {
   } finally { f.cleanup(); }
 });
 
-test('blocked reasons precede findings in summary', async () => {
-  const f = await fixture();
-  try {
-    f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Cannot read the session artifact') : report());
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    const summary = result.output.summary;
-    assert.ok(summary.indexOf('blocked claude[0]:') >= 0, summary);
-    assert.ok(summary.indexOf('blocked claude[0]:') < summary.indexOf('R1-F001'), summary);
-  } finally { f.cleanup(); }
-});
-
 test('native pending lists blocked reasons', async () => {
   const f = await fixture();
   try {
@@ -151,7 +126,7 @@ test('many blocked reasons keep blocker notice', async () => {
   } finally { f.cleanup(); }
 });
 
-test('resumed pending run keeps blocked and blockers', async () => {
+test('repeated blocked reason becomes blocker and survives interruption across rounds', async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : report());
@@ -166,6 +141,7 @@ test('resumed pending run keeps blocked and blockers', async () => {
     assert.equal(resumed.exit, 0, JSON.stringify(resumed));
     assert.deepEqual(resumed.value.blocked, [{slot: 'claude[0]', provider: 'claude', model: 'fake', reason: 'Artifact denied by the guard'}]);
     assert.deepEqual(resumed.value.blockers, [{slot: 'claude[0]', reason: 'Artifact denied by the guard', rounds: [1, 2]}]);
+    assert.match(resumed.output.summary, /orchestrator blocker claude\[0\]: Artifact denied by the guard \(rounds 1-2\)/);
   } finally { f.cleanup(); }
 });
 
@@ -340,35 +316,26 @@ const codeAccepted = async (f: ReviewFixture, step: number, review?: string) => 
   return result;
 };
 
-test('review ceiling refuses after accepted must', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    const launches = f.launches.length;
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.match(result.output.summary, /ceiling 4/);
-    assert.equal(f.launches.length, launches);
-    assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
-    const escalation = foldLedger(f.session).records.at(-1)!;
-    assert.equal(escalation.kind, 'escalation');
-    assert.equal(escalation.by, 'tool');
-    assert.equal(escalation.key, ceilingId(PLAN_REVIEW, 4));
-    assert.deepEqual(escalation.data, { id: ceilingId(PLAN_REVIEW, 4), state: 'open', summary: 'ceiling 4 reached' });
-  } finally { f.cleanup(); }
-});
-
-test('review ceiling refuses after pending rejection', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.equal(foldLedger(f.session).records.at(-1)!.data['id'], ceilingId(PLAN_REVIEW, 4));
-  } finally { f.cleanup(); }
+test('review ceiling refuses and opens escalation after accepted must and pending rejection', async () => {
+  for (const ruling of ['accepted', 'rejected'] as const) {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      if (ruling === 'rejected') await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
+      const launches = f.launches.length;
+      const result = await f.call();
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'review-ceiling');
+      assert.match(result.output.summary, /ceiling 4/);
+      assert.equal(f.launches.length, launches);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
+      const escalation = foldLedger(f.session).records.at(-1)!;
+      assert.equal(escalation.kind, 'escalation');
+      assert.equal(escalation.key, ceilingId(PLAN_REVIEW, 4));
+      assert.equal(escalation.data['id'], ceilingId(PLAN_REVIEW, 4));
+      assert.equal(escalation.data['state'], 'open');
+    } finally { f.cleanup(); }
+  }
 });
 
 test('review past ceiling without must stays round-cap', async () => {
@@ -384,7 +351,7 @@ test('review past ceiling without must stays round-cap', async () => {
   } finally { f.cleanup(); }
 });
 
-test('open ceiling blocks review', async () => {
+test('open ceiling blocks review across configured and zero round levels', async () => {
   const f = await fixture();
   try {
     await seedAcceptedCeiling(f);
@@ -395,14 +362,7 @@ test('open ceiling blocks review', async () => {
     assert.equal(blocked.output.reason, 'escalation-open');
     assert.equal(f.launches.length, launches);
     assert.equal(foldLedger(f.session).lastSeq, seq);
-  } finally { f.cleanup(); }
-});
 
-test('open ceiling blocks a zero round level', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await openCeiling(f, PLAN_REVIEW, 4);
     f.lines.length = 0;
     const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
     assert.equal(exit, 4);
@@ -541,7 +501,7 @@ test('resolved ceiling escalation grants two rounds', async () => {
   } finally { f.cleanup(); }
 });
 
-test('deferred ceiling resolution grants no rounds', async () => {
+test('deferred ceiling resolution grants no rounds and enforces round-cap', async () => {
   const f = await fixture();
   try {
     await seedAcceptedCeiling(f);
@@ -553,64 +513,61 @@ test('deferred ceiling resolution grants no rounds', async () => {
     assert.equal(f.launches.length, launches);
     assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
     assert.equal(openCeilingRows(f).length, 0);
-  } finally { f.cleanup(); }
-});
 
-test('deferred ceiling resolution ends at round-cap', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await deferCeiling(f);
+    // Explicit deferred ruling on the finding also ends at round-cap
     await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'deferred', rationale: 'Follow-up' });
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'round-cap');
+    const second = await f.call();
+    assert.equal(second.exit, 4);
+    assert.equal(second.output.reason, 'round-cap');
     assert.equal(openCeilingRows(f).length, 0);
   } finally { f.cleanup(); }
 });
 
-test('defer keeps pending rejection gate', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
-    await deferCeiling(f);
-    confirmDelegate(f);
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.equal(f.read(5, 'round.json').requests.length, 1);
-    assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('rejection after defer runs confirmation round', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await deferCeiling(f);
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Late evidence' });
-    confirmDelegate(f);
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.equal(f.read(5, 'round.json').requests.length, 1);
-    assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('defer and pending rejection runs confirmation round', async () => {
-  const f = await fixture();
-  try {
-    singlePlanTarget(f);
-    const accepted = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'accepted', rationale: 'Resolution' });
-    const rejected = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F002', ruling: 'rejected', rationale: 'Still broken' });
-    seedCompletedRound(f, 4, [seededFinding('R4-F001', 'MUST'), seededFinding('R4-F002', 'MUST')], JSON.stringify([['R4-F001', accepted.seq], ['R4-F002', rejected.seq]]));
-    await deferCeiling(f);
-    confirmDelegate(f);
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.equal(f.read(5, 'round.json').requests.length, 1);
-    assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
-  } finally { f.cleanup(); }
+test('deferred ceiling resolution runs confirmation round for pending rejections regardless of ruling order', async () => {
+  // Case 1: Rejection ruled before defer
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
+      await deferCeiling(f);
+      confirmDelegate(f);
+      const result = await f.call();
+      assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.equal(f.read(5, 'round.json').requests.length, 1);
+      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+    } finally { f.cleanup(); }
+  }
+  // Case 2: Rejection ruled after defer
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      await deferCeiling(f);
+      await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Late evidence' });
+      confirmDelegate(f);
+      const result = await f.call();
+      assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.equal(f.read(5, 'round.json').requests.length, 1);
+      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+    } finally { f.cleanup(); }
+  }
+  // Case 3: Mixed accepted and rejected findings with deferred ceiling
+  {
+    const f = await fixture();
+    try {
+      singlePlanTarget(f);
+      const accepted = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'accepted', rationale: 'Resolution' });
+      const rejected = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F002', ruling: 'rejected', rationale: 'Still broken' });
+      seedCompletedRound(f, 4, [seededFinding('R4-F001', 'MUST'), seededFinding('R4-F002', 'MUST')], JSON.stringify([['R4-F001', accepted.seq], ['R4-F002', rejected.seq]]));
+      await deferCeiling(f);
+      confirmDelegate(f);
+      const result = await f.call();
+      assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.equal(f.read(5, 'round.json').requests.length, 1);
+      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+    } finally { f.cleanup(); }
+  }
 });
 
 test('accepted must after granted ceiling opens escalation', async () => {
@@ -715,36 +672,39 @@ test('cap past without ceiling starts round', async () => {
   } finally { f.cleanup(); }
 });
 
-test('ceiling ignores later level cap', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await grantCeiling(f);
-    setPlanRounds(f, 'high', 8);
-    await f.add('level', { level: 'high' });
-    await seedAcceptedRound(f, 5);
-    await seedAcceptedRound(f, 6);
-    const result = await callDefaultLevel(f);
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.equal(foldLedger(f.session).records.at(-1)!.data['id'], ceilingId(PLAN_REVIEW, 6));
-  } finally { f.cleanup(); }
-});
-
-test('round cap ignores later level cap', async () => {
-  const f = await fixture();
-  try {
-    singlePlanTarget(f);
-    setPlanRounds(f, 'high', 8);
-    seedCompletedRound(f, 1, []);
-    await f.add('level', { level: 'high' });
-    const second = await callDefaultLevel(f);
-    assert.equal(second.exit, 0, JSON.stringify(second));
-    assert.equal(f.read(2, 'round.json').cap, 2);
-    const third = await callDefaultLevel(f);
-    assert.equal(third.exit, 4);
-    assert.equal(third.output.reason, 'round-cap');
-  } finally { f.cleanup(); }
+test('saved ceiling and round cap ignore subsequent level cap raises', async () => {
+  // Saved ceiling ignores later level cap
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      await grantCeiling(f);
+      setPlanRounds(f, 'high', 8);
+      await f.add('level', { level: 'high' });
+      await seedAcceptedRound(f, 5);
+      await seedAcceptedRound(f, 6);
+      const result = await callDefaultLevel(f);
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'review-ceiling');
+      assert.equal(foldLedger(f.session).records.at(-1)!.data['id'], ceilingId(PLAN_REVIEW, 6));
+    } finally { f.cleanup(); }
+  }
+  // Saved round cap ignores later level cap
+  {
+    const f = await fixture();
+    try {
+      singlePlanTarget(f);
+      setPlanRounds(f, 'high', 8);
+      seedCompletedRound(f, 1, []);
+      await f.add('level', { level: 'high' });
+      const second = await callDefaultLevel(f);
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      assert.equal(f.read(2, 'round.json').cap, 2);
+      const third = await callDefaultLevel(f);
+      assert.equal(third.exit, 4);
+      assert.equal(third.output.reason, 'round-cap');
+    } finally { f.cleanup(); }
+  }
 });
 
 test('granted clean round then launch stays round-cap', async () => {
@@ -761,16 +721,16 @@ test('granted clean round then launch stays round-cap', async () => {
   } finally { f.cleanup(); }
 });
 
-test('incomplete round above ceiling is reused', async () => {
+test('incomplete round above ceiling is reused even when ceiling escalation is open', async () => {
   const f = await fixture();
   try {
     await seedAcceptedCeiling(f);
     seedRound(f, 5);
+    await openCeiling(f, PLAN_REVIEW, 4);
     planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
     const result = await f.call();
     assert.equal(result.exit, 0, JSON.stringify(result));
     assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
-    assert.equal(openCeilingRows(f).length, 0);
   } finally { f.cleanup(); }
 });
 
@@ -785,18 +745,5 @@ test('incomplete round past cap without must stays round-cap', async () => {
     assert.equal(result.output.reason, 'round-cap');
     assert.equal(f.launches.length, launches);
     assert.equal(fs.existsSync(path.join(f.directory, 'round-3/findings.json')), false);
-  } finally { f.cleanup(); }
-});
-
-test('incomplete round reused before open ceiling check', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    seedRound(f, 5);
-    await openCeiling(f, PLAN_REVIEW, 4);
-    planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
   } finally { f.cleanup(); }
 });

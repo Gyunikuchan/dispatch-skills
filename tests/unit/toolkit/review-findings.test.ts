@@ -190,7 +190,7 @@ function ledgerWith(f: ReturnType<typeof fixture>, rulings: readonly object[]): 
 const DEGRADES = {ruling: 'accepted', impact: 'degrades', trigger: 'realistic', rationale: 'impact: the Verify gate surfaces this gap'};
 const BLOCKS = {ruling: 'accepted', impact: 'blocks', trigger: 'realistic', rationale: 'impact: the promised outcome fails'};
 
-test('corrected severity: rows show the corrected severity and mark only downgrades', () => {
+test('corrected severity: rows reflect latest corrected severity rules across accepted, deferred, and rejected rulings', () => {
   const cases: [string, string, readonly object[], string, string | undefined][] = [
     ['MUST', 'blocks', [DEGRADES], 'SHOULD', 'MUST'],
     ['MUST', 'blocks', [DEGRADES, {ruling: 'deferred', rationale: 'Later'}], 'SHOULD', 'MUST'],
@@ -198,28 +198,18 @@ test('corrected severity: rows show the corrected severity and mark only downgra
     ['SHOULD', 'degrades', [BLOCKS], 'MUST', undefined],
     ['SHOULD', 'degrades', [BLOCKS, DEGRADES], 'SHOULD', undefined],
     ['MUST', 'blocks', [], 'MUST', undefined],
+    ['MUST', 'blocks', [DEGRADES, {ruling: 'rejected', rationale: 'The code prevents it'}], 'MUST', undefined],
+    ['SHOULD', 'degrades', [BLOCKS, {ruling: 'rejected', rationale: 'The code prevents it'}], 'MUST', undefined],
+    ['SHOULD', 'degrades', [DEGRADES, {ruling: 'rejected', rationale: 'The code prevents it'}], 'SHOULD', undefined],
   ];
-  for (const [stored, impact, rulings, severity, downgradedFrom] of cases) {
-    const f = fixture();
-    try {
+  const f = fixture();
+  try {
+    for (const [stored, impact, rulings, severity, downgradedFrom] of cases) {
       addRound(f.session, 'plan-work.plan', 1, [{id: 'R1-F001', severity: stored, impact, trigger: 'realistic'}]);
       ledgerWith(f, rulings);
       const [row] = reviewRows(f.session, foldLedger(f.session), [], ['plan-work.plan']).rows;
       assert.equal(row!.severity, severity, JSON.stringify(rulings));
       assert.equal(row!.downgradedFrom, downgradedFrom, JSON.stringify(rulings));
-    } finally { f.cleanup(); }
-  }
-});
-
-test('corrected severity: a rejected finding shows the higher of its stored and latest corrected severities', () => {
-  for (const [stored, impact, correction, severity] of [['MUST', 'blocks', DEGRADES, 'MUST'], ['SHOULD', 'degrades', BLOCKS, 'MUST'], ['SHOULD', 'degrades', DEGRADES, 'SHOULD']] as const) {
-    const f = fixture();
-    try {
-      addRound(f.session, 'plan-work.plan', 1, [{id: 'R1-F001', severity: stored, impact, trigger: 'realistic'}]);
-      ledgerWith(f, [correction, {ruling: 'rejected', rationale: 'The code prevents it'}]);
-      const [row] = reviewRows(f.session, foldLedger(f.session), [], ['plan-work.plan']).rows;
-      assert.equal(row!.severity, severity);
-      assert.equal(row!.downgradedFrom, undefined);
-    } finally { f.cleanup(); }
-  }
+    }
+  } finally { f.cleanup(); }
 });

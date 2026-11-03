@@ -63,10 +63,7 @@ test('audit scenarios review selection spreads code, design and plan targets', a
   const { selectScenarios } = await load();
   const review = scopeOf(selectScenarios({ catalog: catalog(), exists }), 'review');
   assert.deepEqual(review?.scenarios.map((s) => s.kind).sort(), ['code', 'design', 'plan']);
-});
 
-test('audit scenarios missing review target kinds are reported as gaps', async () => {
-  const { selectScenarios } = await load();
   const onlyCode = { version: 1, scenarios: catalog().scenarios.filter((s) => !(s.scope === 'review' && s.kind !== 'code')) };
   const selection = selectScenarios({ catalog: onlyCode, exists });
   assert.ok(selection.gaps.some((g) => /review/.test(g) && /design/.test(g) && /plan/.test(g)), selection.gaps.join('\n'));

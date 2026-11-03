@@ -97,6 +97,11 @@ test('codex keeps child rows when the host transcript is compressed or oversized
   assert.equal(oversized.unavailable, 'transcript over size cap');
   assert.equal(oversized.rows[0]?.role, 'subagent');
   assert.equal(oversizedFs.reads.length, 1);
+
+  const plainHost = rollout('00-03', 'host');
+  const plainFs = memoryFs({ [plainHost]: 'x', [child]: lines(meta('host'), context, event(2)) });
+  const plainResult = codex.read({ ...query, budget: { remaining: 256 * 1024 * 1024 } }, { ...plainFs, stat: file => file.endsWith('host.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10000 } : plainFs.stat(file) });
+  assert.equal(plainResult.unavailable, 'transcript over size cap'); assert.equal(plainResult.rows[0]?.role, 'subagent');
 });
 
 test('codex reports unsupported, oversized, and over-budget child transcripts', () => {
@@ -144,17 +149,6 @@ test('codex ignores stale and removed children while deduplicating resumed child
   assert.ok(!fs.reads.some(file => file.endsWith('stale.jsonl') || file.endsWith('removed.jsonl')));
 });
 
-test('codex keeps child rows when a host transcript has no valid usage', () => {
-  const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child');
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, memoryFs({
-    [host]: '{bad\n',
-    [child]: lines(meta('host'), context, event(3)),
-  }));
-  assert.equal(result.unavailable, 'no usage records');
-  assert.equal(result.notes?.host?.['unparsed lines'], 1);
-  assert.equal(result.rows[0]?.role, 'subagent');
-});
-
 test('codex ignores unrelated lines and malformed events do not poison token totals', () => {
   const host = rollout('00-01', 'host');
   const badTime = { ...event(7), timestamp: 'invalid' };
@@ -165,6 +159,15 @@ test('codex ignores unrelated lines and malformed events do not poison token tot
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(result.rows.map(row => row.input), [6, 6, 6, 6, 6]);
   assert.equal(result.notes?.host?.['unparsed lines'], 4);
+
+  const child = rollout('00-02', 'child');
+  const partial = codex.read({ ...query, budget: { remaining: 10000 } }, memoryFs({
+    [host]: '{bad\n',
+    [child]: lines(meta('host'), context, event(3)),
+  }));
+  assert.equal(partial.unavailable, 'no usage records');
+  assert.equal(partial.notes?.host?.['unparsed lines'], 1);
+  assert.equal(partial.rows[0]?.role, 'subagent');
 });
 
 test('codex lists rollout dates but stats only candidates in the bounded window', () => {
@@ -194,6 +197,11 @@ test('codex caps candidates and keeps the newest ones', () => {
   assert.equal(result.notes?.subagent?.['too many candidates'], 1);
   assert.equal(result.rows.filter(row => row.role === 'subagent').length, 256);
   assert.ok(!fs.reads.some(file => file.includes('child-0.jsonl')));
+
+  const resumedFiles: Record<string, string> = { [host]: lines(context, event(1)) }; const times: Record<string, number> = {};
+  for (let i = 0; i < 257; i++) { const time = `${String(Math.floor(i / 60) + 1).padStart(2, '0')}-${String(i % 60).padStart(2, '0')}`; const file = rollout(time, 'child'); resumedFiles[file] = lines(meta('host'), context, event(i + 1)); times[file] = i === 256 ? 10000 : 1000; }
+  const resumedFs = memoryFs(resumedFiles, times); const resumedResult = codex.read({ ...query, startMs: 2000, budget: { remaining: 1000000 } }, resumedFs);
+  assert.equal(resumedResult.notes?.subagent?.['too many candidates'], 1); assert.equal(resumedResult.rows.filter(row => row.role === 'subagent').length, 0); assert.equal(resumedFs.reads.length, 1);
 });
 
 test('codex finds direct children from the earliest host rollout date', () => {
@@ -238,12 +246,6 @@ test('codex validates the first nonblank child header before counting rows', () 
   const result = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
   assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
 });
-test('codex reads stale prior rollout for live resumed child without scanning stale-only threads', () => {
-  const host = rollout('00-01', 'host'); const prior = rollout('00-02', 'child'); const live = rollout('00-03', 'child'); const stale = rollout('00-04', 'stale');
-  const fs = memoryFs({ [host]: lines(context, event(1)), [prior]: lines(meta('host'), context, event(7, 1000)), [live]: lines(meta('host'), context, event(7, 3000), event(8, 4000)), [stale]: lines(meta('host'), context, event(5)) }, { [prior]: 1000, [stale]: 1000 });
-  const result = codex.read({ ...query, startMs: 2000, budget: { remaining: 10000 } }, fs);
-  assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1); assert.ok(fs.reads.some(file => file.endsWith('child.jsonl'))); assert.ok(!fs.reads.some(file => file.endsWith('stale.jsonl')));
-});
 test('codex preserves host counters when candidate listing or stat fails', () => {
   const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child'); const fs = memoryFs({ [host]: lines(context, event(1)), [child]: lines(meta('host'), context, event(2)) }); let listCount = 0;
   const listFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, list: dir => { if (/1970[\\/]01[\\/]01$/.test(dir) && ++listCount === 2) throw Object.assign(Error('private'), { code: 'EACCES' }); return fs.list(dir); } });
@@ -251,22 +253,11 @@ test('codex preserves host counters when candidate listing or stat fails', () =>
   const statFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => { if (file.endsWith('child.jsonl')) throw Error('private'); return fs.stat(file); } });
   assert.equal(statFailure.rows[0]?.role, 'host'); assert.equal(statFailure.notes?.subagent?.['unreadable files'], 1);
 });
-test('codex reports plain oversized host while retaining child counters', () => {
-  const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child'); const fs = memoryFs({ [host]: 'x', [child]: lines(meta('host'), context, event(2)) });
-  const result = codex.read({ ...query, budget: { remaining: 256 * 1024 * 1024 } }, { ...fs, stat: file => file.endsWith('host.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10000 } : fs.stat(file) });
-  assert.equal(result.unavailable, 'transcript over size cap'); assert.equal(result.rows[0]?.role, 'subagent');
-});
 test('codex repeated compressed overflows exhaust the shared decode budget', () => {
   const host = rollout('00-01', 'host'); const text = lines(context, event(1)); const files: Record<string, string> = { [host]: text };
   for (let i = 2; i <= 4; i++) files[rollout(`00-0${i}`, `child-${i}`, true)] = 'x';
   const fs = memoryFs(files); const result = codex.read({ ...query, budget: { remaining: Buffer.byteLength(text) + 2 * MAX_FILE_BYTES } }, { ...fs, decompress: () => { throw Object.assign(Error('large'), { code: 'ERR_BUFFER_TOO_LARGE' }); } });
   assert.equal(result.rows.length, 1); assert.equal(result.notes?.subagent?.['unverified candidates'], 2); assert.equal(result.notes?.subagent?.['read budget reached'], 1); assert.equal(fs.reads.length, 3);
-});
-test('codex omits an incomplete resumed thread when its history exceeds the candidate cap', () => {
-  const host = rollout('00-00', 'host'); const files: Record<string, string> = { [host]: lines(context, event(1)) }; const times: Record<string, number> = {};
-  for (let i = 0; i < 257; i++) { const time = `${String(Math.floor(i / 60) + 1).padStart(2, '0')}-${String(i % 60).padStart(2, '0')}`; const file = rollout(time, 'child'); files[file] = lines(meta('host'), context, event(i + 1)); times[file] = i === 256 ? 10000 : 1000; }
-  const fs = memoryFs(files, times); const result = codex.read({ ...query, startMs: 2000, budget: { remaining: 1000000 } }, fs);
-  assert.equal(result.notes?.subagent?.['too many candidates'], 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 0); assert.equal(fs.reads.length, 1);
 });
 test('codex does not count resumed child usage after unreadable or oversized history', () => {
   const host = rollout('00-01', 'host'); const prior = rollout('00-02', 'child'); const live = rollout('00-03', 'child');
@@ -316,9 +307,9 @@ test('codex reports and blocks listed host and child files that vanish before di
   const fs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs, stat: file => file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl') ? null : fs.stat(file) });
   assert.equal(result.unavailable, 'read-error:ENOENT'); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
-});
-test('codex reports a selected host that vanishes before reading', () => {
-  const host = rollout('00-01', 'host'); const fs = memoryFs({ [host]: lines(context, event(1)) }); let calls = 0;
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => file.endsWith('host.jsonl') && ++calls === 2 ? null : fs.stat(file) });
-  assert.equal(result.unavailable, 'read-error:ENOENT'); assert.deepEqual(result.rows, []);
+
+  let calls = 0;
+  const singleHost = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });
+  const vanishRead = codex.read({ ...query, budget: { remaining: 10000 } }, { ...singleHost, stat: file => file.endsWith('host.jsonl') && ++calls === 2 ? null : singleHost.stat(file) });
+  assert.equal(vanishRead.unavailable, 'read-error:ENOENT'); assert.deepEqual(vanishRead.rows, []);
 });

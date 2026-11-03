@@ -53,6 +53,8 @@ test('walkthrough follows reviewer order and states counts once', () => {
   for (const count of ['1/1 criteria', '1 files', '0 recorded edits', '0 unplanned paths', '0 findings']) {
     assert.equal((rendered.match(new RegExp(count, 'g')) ?? []).length, 1, count);
   }
+  assert.equal(section(rendered, '## Review Focus', '## Behaviour Changes'),
+    '## Review Focus\n\n- Risk: low · Delivery matched the plan and all criteria are verified.\n\n');
   const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
   assert.match(verification, /- \*\*Status:\*\* complete/);
   assert.doesNotMatch(verification, /\d+\/\d+|\d+ files|\d+ findings/);
@@ -116,15 +118,6 @@ test('walkthrough review focus points to attention details in their owning secti
   for (const detail of ['R1-F011', 'The evidence is incomplete.', 'R1-F012', 'The rejected CONSIDER stays with findings.']) {
     assert.ok(findings.includes(detail), detail);
   }
-});
-
-test('walkthrough review focus collapses when delivery matched the plan', () => {
-  const rendered = renderWalkthrough(view({
-    risk: 'low',
-    statuses: [{ criterion: 'SC1', state: 'verified' as const, evidence: 'evidence/sc1.json' }],
-  }));
-  assert.equal(section(rendered, '## Review Focus', '## Behaviour Changes'),
-    '## Review Focus\n\n- Risk: low · Delivery matched the plan and all criteria are verified.\n\n');
 });
 
 test('walkthrough shows copied visuals or the recorded replacement', () => {

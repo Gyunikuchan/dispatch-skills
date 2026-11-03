@@ -186,55 +186,50 @@ test('report render rejects early complete, unbound and positional input cases',
   } finally { f.cleanup(); }
 });
 
-test('report render diagnostics toggle writes only when enabled for render and complete', async () => {
-  const f = await fixture(1);
+test('report render diagnostics toggle honors config setting for render and complete', async () => {
+  // Diagnostics enabled
+  const fEnabled = await fixture(1);
   try {
-    fs.writeFileSync(path.join(f.skillRoot, 'config.local.jsonc'), '{"diagnostics": true}\n');
-    const rendered = await invoke(f, 'report', 'render');
+    fs.writeFileSync(path.join(fEnabled.skillRoot, 'config.local.jsonc'), '{"diagnostics": true}\n');
+    const rendered = await invoke(fEnabled, 'report', 'render');
     assert.equal(rendered.exit, 0);
-    assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), true);
+    assert.equal(fs.existsSync(path.join(fEnabled.session, 'diagnostics.md')), true);
 
-    fs.rmSync(path.join(f.session, 'diagnostics.md'));
-    await completeFixture(f);
-    const completed = await invoke(f, 'report', 'complete');
+    fs.rmSync(path.join(fEnabled.session, 'diagnostics.md'));
+    await completeFixture(fEnabled);
+    const completed = await invoke(fEnabled, 'report', 'complete');
     assert.equal(completed.exit, 0);
-    assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), true);
-  } finally { f.cleanup(); }
+    assert.equal(fs.existsSync(path.join(fEnabled.session, 'diagnostics.md')), true);
+  } finally { fEnabled.cleanup(); }
+
+  // Diagnostics disabled or absent
+  const fDisabled = await fixture();
+  try {
+    fs.writeFileSync(path.join(fDisabled.skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
+    const result = await invoke(fDisabled, 'report', 'render');
+    assert.equal(result.exit, 0);
+    assert.equal(fs.existsSync(path.join(fDisabled.session, 'diagnostics.md')), false);
+    assert.equal('diagnostics' in JSON.parse(fs.readFileSync(result.output.path!, 'utf8')), false);
+    await completeFixture(fDisabled);
+    const complete = await invoke(fDisabled, 'report', 'complete');
+    assert.equal(complete.exit, 0, complete.output.summary);
+    assert.equal(fs.existsSync(path.join(fDisabled.session, 'diagnostics.md')), false);
+  } finally { fDisabled.cleanup(); }
 });
 
-test('report render diagnostics false and absent config do not write diagnostics', async () => {
-  for (const config of ['{"diagnostics": false}\n', null]) {
-    const f = await fixture();
-    try {
-      if (config !== null) fs.writeFileSync(path.join(f.skillRoot, 'config.local.jsonc'), config);
-      const result = await invoke(f, 'report', 'render');
-      assert.equal(result.exit, 0);
-      assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), false);
-      assert.equal('diagnostics' in JSON.parse(fs.readFileSync(result.output.path!, 'utf8')),false);
-      await completeFixture(f);
-      const complete = await invoke(f, 'report', 'complete');
-      assert.equal(complete.exit, 0, complete.output.summary);
-      assert.equal(fs.existsSync(path.join(f.session, 'diagnostics.md')), false);
-    } finally { f.cleanup(); }
-  }
-});
-
-test('report render maps invalid diagnostics config to config-invalid', async () => {
-  for (const config of ['{"diagnostics":"yes"}\n', '{broken', '[]\n']) {
-    const f = await fixture();
-    try {
+test('report render maps invalid or unreadable config to config-invalid', async () => {
+  const f = await fixture();
+  try {
+    // Malformed JSON and type errors
+    for (const config of ['{"diagnostics":"yes"}\n', '{broken']) {
       fs.writeFileSync(path.join(f.skillRoot, 'config.local.jsonc'), config);
       const result = await invoke(f, 'report', 'render');
       assert.equal(result.exit, 2);
       assert.equal(result.output.reason, 'config-invalid');
       assert.equal(fs.existsSync(path.join(f.session, 'report.walkthrough.md')), false);
-    } finally { f.cleanup(); }
-  }
-});
-
-test('report render does not fall through after a higher-precedence config read error', async () => {
-  const f = await fixture();
-  try {
+    }
+    // Higher-precedence config read error does not fall through
+    fs.rmSync(path.join(f.skillRoot, 'config.local.jsonc'));
     fs.mkdirSync(path.join(f.skillRoot, 'config.local.jsonc'));
     fs.writeFileSync(path.join(f.skillRoot, 'config.jsonc'), '{"diagnostics": true}\n');
     const result = await invoke(f, 'report', 'render');

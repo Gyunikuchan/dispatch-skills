@@ -62,6 +62,11 @@ test('reader caps growing plain files and decoded compressed data', () => {
   size = MAX_FILE_BYTES * 2 + 1;
   assert.equal(readTranscript(fs, 'x.zst', { remaining: 1 }).stop, 'file cap');
   assert.equal(reads, 1);
+
+  const overflowFs = { list: () => [], stat: () => ({ size: 1, mtimeMs: 0 }), read: () => Buffer.from('x'), decompress: () => { throw Object.assign(Error('large'), { code: 'ERR_BUFFER_TOO_LARGE' }); } }; const overflowBudget = { remaining: MAX_FILE_BYTES * 2 };
+  assert.equal(readTranscript(overflowFs, 'a.zst', overflowBudget).stop, 'file cap'); assert.equal(overflowBudget.remaining, MAX_FILE_BYTES);
+  assert.equal(readTranscript(overflowFs, 'b.zst', overflowBudget).stop, 'file cap'); assert.equal(overflowBudget.remaining, 0);
+  assert.equal(readTranscript(overflowFs, 'c.zst', overflowBudget).stop, 'budget');
 });
 
 test('adapter exceptions expose allowlisted codes without their messages', () => {
@@ -75,12 +80,6 @@ test('adapter exceptions expose allowlisted codes without their messages', () =>
 
 test('events before all stage milestones use the first stage', () => {
   assert.equal(stageAt([{ stage: 'spec', atMs: 100 }, { stage: 'plan', atMs: 200 }], 0), 'spec');
-});
-test('decoded overflow charges the file cap to the shared budget', () => {
-  const fs = { list: () => [], stat: () => ({ size: 1, mtimeMs: 0 }), read: () => Buffer.from('x'), decompress: () => { throw Object.assign(Error('large'), { code: 'ERR_BUFFER_TOO_LARGE' }); } }; const budget = { remaining: MAX_FILE_BYTES * 2 };
-  assert.equal(readTranscript(fs, 'a.zst', budget).stop, 'file cap'); assert.equal(budget.remaining, MAX_FILE_BYTES);
-  assert.equal(readTranscript(fs, 'b.zst', budget).stop, 'file cap'); assert.equal(budget.remaining, 0);
-  assert.equal(readTranscript(fs, 'c.zst', budget).stop, 'budget');
 });
 
 test('node filesystem treats paths beneath regular files as absent', () => {

@@ -12,6 +12,8 @@ test('audit report init tracks both kinds and preserves statuses and notes on re
   assert.match(text, /Opportunity status: open 0, fixed 0, false-positive 0, decision 1.*total 1/);
   assert.match(text, /fixed — abc123/);
   assert.match(captured(() => status.cmdList(root, file, ['list'])), /O-1\s.*decision/);
+  recordTriage(root, file, 'A-2');
+  assert.match(fs.readFileSync(file, 'utf8'), /#### A-2: Title of A-2\n- \*\*medium\*\* · correctness/);
 });
 test('audit report init opportunity-only reports retain the zero-defect sentinel', () => {
   const { root, file } = report(SENTINEL, opportunity());
@@ -32,25 +34,16 @@ test('audit report init rejects malformed sections and duplicate IDs before muta
   }
   const { root, file } = report(finding('A-1'), opportunity() + opportunity());
   unchanged(file, () => status.cmdInit(root, file), /duplicate/i);
-});
-test('audit report init rejects invalid status and malformed remediation JSON', () => {
-  const { root, file } = report(finding('A-1', 'high', 'done'));
-  unchanged(file, () => status.cmdInit(root, file), /Unknown status/);
-  const second = report(finding('A-1') + '- **Triage**: {invalid}\n');
-  unchanged(second.file, () => status.cmdInit(second.root, second.file), /Triage/);
-});
-test('audit report init malformed opportunity fields leave both sections unchanged', () => {
-  const { root, file } = report(finding('A-1'), opportunity().replace('- **Cost**: state and frame changes.', ''));
-  unchanged(file, () => status.cmdInit(root, file), /Cost/);
+  const invalidStatus = report(finding('A-1', 'high', 'done'));
+  unchanged(invalidStatus.file, () => status.cmdInit(invalidStatus.root, invalidStatus.file), /Unknown status/);
+  const malformedTriage = report(finding('A-1') + '- **Triage**: {invalid}\n');
+  unchanged(malformedTriage.file, () => status.cmdInit(malformedTriage.root, malformedTriage.file), /Triage/);
+  const missingCost = report(finding('A-1'), opportunity().replace('- **Cost**: state and frame changes.', ''));
+  unchanged(missingCost.file, () => status.cmdInit(missingCost.root, missingCost.file), /Cost/);
 });
 test('audit report init Markdown heading whitespace does not hide opportunities', () => {
   const { root, file } = report(finding('A-1'), opportunity());
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## 3. Findings', '## 3. Findings  ').replace('## 4. Opportunities', '## 4. Opportunities\t'));
   captured(() => status.cmdInit(root, file));
   assert.match(captured(() => status.cmdList(root, file, ['list'])), /O-1/);
-});
-test('audit report init metadata preserves the severity line directly below the heading', () => {
-  const { root, file } = report(finding('A-1'));
-  captured(() => status.cmdInit(root, file)); recordTriage(root, file, 'A-1');
-  assert.match(fs.readFileSync(file, 'utf8'), /#### A-1: Title of A-1\n- \*\*medium\*\* · correctness/);
 });

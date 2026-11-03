@@ -1,4 +1,3 @@
-import { measureBrief } from '../../../scripts/brief-size.ts';
 import assert from 'node:assert/strict';
 import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
@@ -204,7 +203,14 @@ describe('writer brief', () => {
         if (design) {
           assert.ok(brief.includes('strategy.design.md'));
           assert.ok(brief.includes(f.hashes.design!));
-        } else assert.doesNotMatch(brief, /Governing design:|strategy\.design\.md/);
+          assert.ok(brief.includes(`mission.spec.md\` (governed hash ${f.hashes.spec})`));
+          assert.ok(brief.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
+          assert.ok(brief.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
+          assert.match(brief, /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i);
+        } else {
+          assert.doesNotMatch(brief, /Governing design:|strategy\.design\.md/);
+          for (const rule of ['Shared plan context', 'Task scope', 'Criteria', 'Contract commands', 'RED capture commands', 'embedded below', 'Read the whole plan only when', 'Constraints:', 'Invariants:']) assert.ok(brief.includes(rule), rule);
+        }
       } finally { f.cleanup(); }
     }
   });
@@ -269,6 +275,18 @@ describe('writer brief', () => {
       assert.match(brief, /failing tests/i);
       assert.match(brief, /Git write commands/);
       for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check']) assert.ok(!brief.includes(forbidden), forbidden);
+      const template = getWriterTemplate(f.deps.skillRoot);
+      const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
+      const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
+      assert.ok(template.includes('{{redCapture}}'));
+      assert.ok(template.includes('{{reportPath}}'));
+      assert.ok(template.includes('{{redLogDir}}'));
+      assert.ok(brief.includes(reportPath));
+      assert.ok(brief.includes(logDir));
+      assert.ok(template.includes('## Observed RED failures'));
+      assert.match(template, /plain-text lines directly below the heading/i);
+      assert.match(template, /Do not add # or ## headings inside that section/i);
+      assert.match(template, /outside.*{{reportPath}}.*{{redLogDir}}/is);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
     } finally { f.cleanup(); }
   });
@@ -313,56 +331,22 @@ describe('writer brief', () => {
   });
 
   test('empty test paths produce an inline diagnostic and no capture command', async () => {
-    const source = CAPTURE_PLAN.replace('  - Tests: `tests/with space.test.ts`\n', '');
-    const f = await fixture(false, source);
-    try {
-      await f.approve(); await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
-      assert.match(section, /T1/);
-      assert.match(section, /SC1/);
-      assert.match(section, /no test paths/i);
-      assert.doesNotMatch(section, /node -e/);
-    } finally { f.cleanup(); }
-  });
-
-  test('unsafe test paths produce an inline diagnostic and no capture command', async () => {
-    const unsafePath = 'tests/bad;touch marker.test.ts';
-    const source = CAPTURE_PLAN.replaceAll('tests/with space.test.ts', unsafePath);
-    const f = await fixture(false, source);
-    try {
-      await f.approve(); await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
-      assert.match(section, /T1/);
-      assert.match(section, /SC1/);
-      assert.ok(section.includes(unsafePath));
-      assert.doesNotMatch(section, /node -e/);
-    } finally { f.cleanup(); }
-  });
-
-  test('writer instructions save the report in the path redGaps consumes', async () => {
-    const f = await fixture(false, CAPTURE_PLAN);
-    try {
-      await f.approve(); await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const brief = fs.readFileSync(result.value.path, 'utf8');
-      const template = getWriterTemplate(f.deps.skillRoot);
-      const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
-      const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
-      assert.ok(template.includes('{{redCapture}}'));
-      assert.ok(template.includes('{{reportPath}}'));
-      assert.ok(template.includes('{{redLogDir}}'));
-      assert.ok(brief.includes(reportPath));
-      assert.ok(brief.includes(logDir));
-      assert.ok(template.includes('## Observed RED failures'));
-      assert.match(template, /plain-text lines directly below the heading/i);
-      assert.match(template, /Do not add # or ## headings inside that section/i);
-      assert.match(template, /outside.*{{reportPath}}.*{{redLogDir}}/is);
-    } finally { f.cleanup(); }
+    for (const item of [
+      { source: CAPTURE_PLAN.replace('  - Tests: `tests/with space.test.ts`\n', ''), pattern: /no test paths/i },
+      { source: CAPTURE_PLAN.replaceAll('tests/with space.test.ts', 'tests/bad;touch marker.test.ts'), pattern: /tests\/bad;touch marker\.test\.ts/ },
+    ]) {
+      const f = await fixture(false, item.source);
+      try {
+        await f.approve(); await f.launch();
+        const result = await f.call();
+        assert.equal(result.exit, 0);
+        const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
+        assert.match(section, /T1/);
+        assert.match(section, /SC1/);
+        assert.match(section, item.pattern);
+        assert.doesNotMatch(section, /node -e/);
+      } finally { f.cleanup(); }
+    }
   });
 });
 
@@ -377,35 +361,5 @@ test('writer brief keeps task behaviour and criterion fields from collapsed plan
     const markdown = fs.readFileSync(rendered.value.path, 'utf8');
     for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Verify: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(markdown.includes(text), text);
     assert.equal(markdown.split(behaviour).length - 1, 1);
-  } finally { f.cleanup(); }
-});
-
-test('brief labels governed hashes and names lint for comparison', async () => {
-  const f = await fixture(true);
-  try {
-    await f.approve(); await f.launch();
-    const rendered = await f.call();
-    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
-    const markdown = fs.readFileSync(rendered.value.path, 'utf8');
-    assert.ok(markdown.includes(`mission.spec.md\` (governed hash ${f.hashes.spec})`));
-    assert.ok(markdown.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
-    assert.ok(markdown.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
-    assert.match(markdown, /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i);
-  } finally { f.cleanup(); }
-});
-
-
-test('writer brief scopes plan reads to embedded sections unless cross-task reference', async (t) => {
-  const f = await fixture();
-  try {
-    await f.add('level', {level: 'low'});
-    await f.launch();
-    const result = await f.call();
-    assert.equal(result.exit, 0);
-    const brief = fs.readFileSync(result.value.path, 'utf8');
-    for (const rule of ['Shared plan context', 'Task scope', 'Criteria', 'Contract commands', 'RED capture commands', 'embedded below', 'Read the whole plan only when', 'Constraints:', 'Overlap:', 'Invariants:', 'another task or a shared producer/consumer interface outside these sections']) assert.ok(brief.includes(rule), rule);
-    const controlled = brief.replaceAll(f.session, "/session").replaceAll(f.root, "/repo");
-    t.diagnostic(`rendered writer brief (fixture inputs; session=/session, repository=/repo): ${measureBrief(controlled).totalBytes} UTF-8 bytes; advisory only`);
-    t.diagnostic(`skill-owned writer brief + quality: ${Buffer.byteLength(getWriterTemplate(f.deps.skillRoot!), 'utf8') + Buffer.byteLength(qualityCriteria(getQuality(f.deps.skillRoot!), 'writer'), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
   } finally { f.cleanup(); }
 });

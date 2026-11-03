@@ -126,29 +126,41 @@ test('lint run summary lists first defects with remaining count', async () => {
 test('OpenCode preparation classifies bounded lifecycle failures through the native delegate caller', async (t) => {
   const request: DelegateRequest = {promptPath:'/prompt',model:null,effort:null,sandbox:false,schemaPath:null,resume:null,cwd:process.cwd(),timeoutMs:60000,agent:null,outputCapBytes:1000,attachments:[],logPath:'/unused',briefPath:'/unused'};
   const result = (stderrTail = '', stdout = '[]'): ProcessResult => ({exit:stderrTail?2:0,signal:null,stdout,stdoutPath:'/unused',stderrTail,durationMs:0,timedOut:false,truncated:false});
+  t.mock.timers.enable();
+  t.mock.method(fs,'existsSync',()=>true);
+  t.mock.method(fs,'statSync',()=>({isFile:()=>true,mode:0o755}));
+  t.mock.method(fs,'readdirSync',()=>[]);
+  t.mock.method(fs,'unlinkSync',()=>{});
+  let currentScenario = '';
+  let settle: (value: ProcessResult)=>void = ()=>{};
+  let childDone = new Promise<ProcessResult>(resolve=>{settle=resolve;});
+  let launches: string[][] = [];
+  t.mock.method(nodeProcess,'start',(launch:{argv:string[]})=>{
+    launches.push(launch.argv);
+    if (launch.argv[0]==='taskkill') {
+      if(currentScenario==='killer-unconfirmed') {settle(result());return {pid:2,done:new Promise(()=>{})};}
+      if(currentScenario==='timeout') settle(result('terminated'));
+      return {pid:2,done:Promise.resolve(result())};
+    }
+    return {pid:currentScenario==='spawn-failure'?-1:50,done:currentScenario==='unsupported'?Promise.resolve(result('Unrecognized flag: --standalone in command opencode debug config')):currentScenario==='permission'?Promise.resolve(result('permission denied')):currentScenario==='group-unconfirmed'?Promise.resolve(result()):currentScenario==='invalid-json'?Promise.resolve(result('', 'credential-must-not-leak')):childDone};
+  });
+  t.mock.method(nodeProcess as Required<typeof nodeProcess>,'settleGroup',async()=>currentScenario!=='group-unconfirmed');
+  let signals=0;
+  t.mock.method(nodeProcess,'signal',()=>{signals++;if(currentScenario==='timeout')settle(result('terminated'));});
+
   for (const scenario of ['child-unconfirmed','killer-unconfirmed','timeout','unsupported','permission','invalid-json','group-unconfirmed','spawn-failure'] as const) {
-    await t.test(scenario, {skip:scenario==='killer-unconfirmed'&&process.platform!=='win32'}, async (t) => {
-      t.mock.timers.enable();
-      if(scenario==='group-unconfirmed'){const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;Object.defineProperty(process,'platform',{...descriptor,value:'linux'});t.after(()=>Object.defineProperty(process,'platform',descriptor));}
-      t.mock.method(fs,'existsSync',()=>true);
-      t.mock.method(fs,'statSync',()=>({isFile:()=>true,mode:0o755}));
-      t.mock.method(fs,'readdirSync',()=>[]);
-      t.mock.method(fs,'unlinkSync',()=>{});
-      let settle: (value: ProcessResult)=>void = ()=>{};
-      const childDone = new Promise<ProcessResult>(resolve=>{settle=resolve;});
-      const launches: string[][] = [];
-      t.mock.method(nodeProcess,'start',(launch:{argv:string[]})=>{
-        launches.push(launch.argv);
-        if (launch.argv[0]==='taskkill') {
-          if(scenario==='killer-unconfirmed') {settle(result());return {pid:2,done:new Promise(()=>{})};}
-          if(scenario==='timeout') settle(result('terminated'));
-          return {pid:2,done:Promise.resolve(result())};
-        }
-        return {pid:scenario==='spawn-failure'?-1:50,done:scenario==='unsupported'?Promise.resolve(result('Unrecognized flag: --standalone in command opencode debug config')):scenario==='permission'?Promise.resolve(result('permission denied')):scenario==='group-unconfirmed'?Promise.resolve(result()):scenario==='invalid-json'?Promise.resolve(result('', 'credential-must-not-leak')):childDone};
-      });
-      t.mock.method(nodeProcess as Required<typeof nodeProcess>,'settleGroup',async()=>scenario!=='group-unconfirmed');
-      let signals=0;
-      t.mock.method(nodeProcess,'signal',()=>{signals++;if(scenario==='timeout')settle(result('terminated'));});
+    if (scenario === 'killer-unconfirmed' && process.platform !== 'win32') continue;
+    currentScenario = scenario;
+    signals = 0;
+    launches = [];
+    childDone = new Promise<ProcessResult>(resolve=>{settle=resolve;});
+    let restorePlatform: (() => void) | undefined;
+    if(scenario==='group-unconfirmed'){
+      const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
+      Object.defineProperty(process,'platform',{...descriptor,value:'linux'});
+      restorePlatform = () => Object.defineProperty(process,'platform',descriptor);
+    }
+    try {
       const pending = nodeDeps().delegate('opencode',request,'cli');
       const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
       await flush();
@@ -173,7 +185,9 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
         assert.equal(signals,0);
         assert.equal(launches.some(argv=>argv[0]==='taskkill'),false);
       }
-    });
+    } finally {
+      restorePlatform?.();
+    }
   }
 });
 

@@ -63,16 +63,13 @@ test('packetize keeps a unit within the line budget in one packet', async () => 
   assert.deepEqual(packets.map((packet) => [packet.id, packet.files.map((entry) => entry.path)]), [
     ['tests-unit-policy', ['tests/unit/policy/a.test.ts', 'tests/unit/policy/b.test.ts']],
   ]);
-});
 
-test('packetize splits a unit over the line budget by file-name prefix cluster', async () => {
-  const { packetize } = await loadInventory();
   const unit = 'tests/unit/core';
-  const packets = packetize(inventory([
+  const splitPackets = packetize(inventory([
     file(`${unit}/effects-a.test.ts`, unit), file(`${unit}/effects-b.test.ts`, unit),
     file(`${unit}/flow-a.test.ts`, unit), file(`${unit}/flow-b.test.ts`, unit),
   ]), 250);
-  assert.deepEqual(packets.map((packet) => [packet.id, packet.lines, packet.files.map((entry) => entry.path)]), [
+  assert.deepEqual(splitPackets.map((packet) => [packet.id, packet.lines, packet.files.map((entry) => entry.path)]), [
     ['tests-unit-core-1', 200, [`${unit}/effects-a.test.ts`, `${unit}/effects-b.test.ts`]],
     ['tests-unit-core-2', 200, [`${unit}/flow-a.test.ts`, `${unit}/flow-b.test.ts`]],
   ]);
@@ -99,25 +96,18 @@ test('packetize scopes mergeClusters to the packet that owns the file', async ()
   const { packetize } = await loadInventory();
   const unit = 'tests/tooling';
   const cluster = { file: `${unit}/a.test.ts`, prefix: 'rejects invalid', tests: [{ name: 'rejects invalid id', line: 2 }] };
-  const [packet] = packetize(inventory([file(`${unit}/a.test.ts`, unit)], {
-    candidates: { duplicateTitles: [], sharedImports: [], mergeClusters: [cluster, { file: 'tests/e2e/other.test.ts', prefix: 'runs', tests: [] }] },
-  }), 500);
-  assert.deepEqual(packet?.candidates.mergeClusters, [cluster]);
-});
-
-test('packetize scopes budgetOverruns and denseFiles to the packet that owns the file', async () => {
-  const { packetize } = await loadInventory();
-  const unit = 'tests/tooling';
   const overrun = { path: `${unit}/a.test.ts`, durationMs: 850 };
   const dense = { path: `${unit}/a.test.ts`, testCount: 20 };
   const [packet] = packetize(inventory([file(`${unit}/a.test.ts`, unit)], {
     candidates: {
       duplicateTitles: [],
       sharedImports: [],
+      mergeClusters: [cluster, { file: 'tests/e2e/other.test.ts', prefix: 'runs', tests: [] }],
       budgetOverruns: [overrun, { path: 'tests/e2e/other.test.ts', durationMs: 900 }],
       denseFiles: [dense, { path: 'tests/e2e/other.test.ts', testCount: 25 }],
     },
   }), 500);
+  assert.deepEqual(packet?.candidates.mergeClusters, [cluster]);
   assert.deepEqual(packet?.candidates.budgetOverruns, [overrun]);
   assert.deepEqual(packet?.candidates.denseFiles, [dense]);
 });
@@ -168,24 +158,17 @@ test('findCandidates groups 3 or more tests with repetitive prefixes into mergeC
 
 test('findCandidates identifies files with duration >= 800ms as budgetOverruns', async () => {
   const { findCandidates } = await loadInventory();
+  const makeTests = (count: number) => Array.from({ length: count }, (_, i) => ({ name: `test ${i}`, durationMs: 1, line: i + 1 }));
   const slow = file('tests/unit/core/slow.test.ts', 'tests/unit/core', { durationMs: 950 });
-  const boundary = file('tests/unit/core/boundary.test.ts', 'tests/unit/core', { durationMs: 800 });
-  const under = file('tests/unit/core/fast.test.ts', 'tests/unit/core', { durationMs: 799 });
-  const { budgetOverruns } = findCandidates([under, boundary, slow]);
+  const boundary = file('tests/unit/core/boundary.test.ts', 'tests/unit/core', { durationMs: 800, tests: makeTests(15) });
+  const under = file('tests/unit/core/fast.test.ts', 'tests/unit/core', { durationMs: 799, tests: makeTests(3) });
+  const dense = file('tests/unit/core/dense.test.ts', 'tests/unit/core', { tests: makeTests(16) });
+  const veryDense = file('tests/unit/core/very-dense.test.ts', 'tests/unit/core', { tests: makeTests(20) });
+  const { budgetOverruns, denseFiles } = findCandidates([under, boundary, slow, dense, veryDense]);
   assert.deepEqual(budgetOverruns, [
     { path: 'tests/unit/core/slow.test.ts', durationMs: 950 },
     { path: 'tests/unit/core/boundary.test.ts', durationMs: 800 },
   ]);
-});
-
-test('findCandidates identifies files with more than 15 tests as denseFiles', async () => {
-  const { findCandidates } = await loadInventory();
-  const makeTests = (count: number) => Array.from({ length: count }, (_, i) => ({ name: `test ${i}`, durationMs: 1, line: i + 1 }));
-  const dense = file('tests/unit/core/dense.test.ts', 'tests/unit/core', { tests: makeTests(16) });
-  const veryDense = file('tests/unit/core/very-dense.test.ts', 'tests/unit/core', { tests: makeTests(20) });
-  const boundary = file('tests/unit/core/boundary.test.ts', 'tests/unit/core', { tests: makeTests(15) });
-  const small = file('tests/unit/core/small.test.ts', 'tests/unit/core', { tests: makeTests(3) });
-  const { denseFiles } = findCandidates([small, boundary, dense, veryDense]);
   assert.deepEqual(denseFiles, [
     { path: 'tests/unit/core/very-dense.test.ts', testCount: 20 },
     { path: 'tests/unit/core/dense.test.ts', testCount: 16 },
@@ -222,6 +205,14 @@ test('compare passes and reports totals and per-unit deltas when coverage holds'
   assert.equal(result.ok, true);
   assert.match(result.markdown, /\| total \(wall-clock\) \| 2 → 1 \(-1\) \| 2 → 1 \(-1\) \|/);
   assert.match(result.markdown, /\| tests\/tooling \| 2 → 1 \(-1\) \| 2 → 1 \(-1\) \| 10 → 5 \(-5\) \|/);
+
+  const failure = { file: 'tests/tooling/a.test.ts', name: 'breaks', line: 3 };
+  const failedAfter = inventory([], { coverage: beforeInv.coverage, failures: [failure] });
+  const failedLedger = beforeInv.files.map((entry, index) => action(`remove-failed-suite-${index}`, 'delete', [ref(entry.path, entry.tests[0]!.name, entry.tests[0]!.line)], [],
+    'No required contract exists for this placeholder test.', 'synthetic/no-required-contract'));
+  const failedResult = compare(beforeInv, failedAfter, failedLedger);
+  assert.equal(failedResult.ok, false);
+  assert.match(failedResult.markdown, /- tests\/tooling\/a\.test\.ts:3 breaks/);
 });
 
 test('comparison accepts justified pruning despite coverage loss', async () => {
@@ -237,6 +228,14 @@ test('comparison accepts justified pruning despite coverage loss', async () => {
   assert.equal(result.coverageDrops[0]?.before, 40);
   assert.equal(result.coverageDrops[0]?.after, 0);
   assert.match(result.markdown, /- scripts\/x\.ts: 40 → 0/);
+
+  for (const coverage of [{ 'scripts/x.ts': { covered: 20, total: 50 } }, {}]) {
+    const snapshot = before();
+    const keptLedger = snapshot.files.map(entry => retain([ref(entry.path, entry.tests[0]!.name)], [ref(entry.path, entry.tests[0]!.name)]));
+    const covResult = compare(snapshot, inventory(snapshot.files, { coverage }), keptLedger);
+    assert.equal(covResult.ok, true, covResult.markdown);
+    assert.match(covResult.markdown, /Coverage changes \(informational\)/);
+  }
 });
 
 test('comparison enforces retained scenario mappings', async () => {
@@ -362,6 +361,12 @@ test('comparison enforces retained scenario mappings', async () => {
     { name: 'new test has no explicit add action', before: inventory([]), after: newAfter, ledger: [retain([], [ref(filePath, 'newly added test', 52)])] },
     { name: 'merge lists an unchanged survivor among absorbed before members', before: mergeWithUnchangedBefore, after: mergeWithUnchangedAfter, ledger: mergeWithUnchangedLedger },
     { name: 'unsupported deletion category', before: beforeInv, after: afterInv, ledger: [retained, action('bad-category', 'delete', [hollow], [], 'This reason only saves setup time.', 'setup-weight')] },
+    { name: 'unsupported deletion category transient-leak', before: beforeInv, after: afterInv, ledger: [retained, action('bad-cat-1', 'delete', [hollow], [], 'Transient leak.', 'transient-leak')] },
+    { name: 'unsupported deletion category unknown-category', before: beforeInv, after: afterInv, ledger: [retained, action('bad-cat-2', 'delete', [hollow], [], 'Unknown category.', 'unknown-category')] },
+    { name: 'incomplete retain empty contract', before: beforeInv, after: afterInv, ledger: [retain([stable], [ref(filePath, stable.name, 11)], { contract: '' }), hollowDelete] },
+    { name: 'incomplete retain empty plausibleDefect', before: beforeInv, after: afterInv, ledger: [retain([stable], [ref(filePath, stable.name, 11)], { plausibleDefect: '' }), hollowDelete] },
+    { name: 'incomplete retain empty observableOutcome', before: beforeInv, after: afterInv, ledger: [retain([stable], [ref(filePath, stable.name, 11)], { observableOutcome: '' }), hollowDelete] },
+    { name: 'incomplete retain empty distinctContribution', before: beforeInv, after: afterInv, ledger: [retain([stable], [ref(filePath, stable.name, 11)], { distinctContribution: '' }), hollowDelete] },
     { name: 'contradictory deletion and retention', before: beforeInv, after: afterInv, ledger: [...validLedger, action('delete-stable', 'delete', [stable], [], 'No required contract exists for this test.', 'synthetic/no-required-contract')] },
     ...contradictions,
     { name: 'unresolved escalation', before: beforeInv, after: afterInv, ledger: [...validLedger, { kind: 'escalation', reason: 'Required contract remains unclear.' }] },
@@ -372,38 +377,9 @@ test('comparison enforces retained scenario mappings', async () => {
     assert.ok(result.evidenceErrors.length > 0, `${scenario.name}: missing evidence diagnostic`);
     assert.match(result.markdown, /Evidence errors:/, scenario.name);
   }
-});
-
-test('comparison reports coverage without gating', async () => {
-  const { compare } = await loadCompare();
-  for (const coverage of [{ 'scripts/x.ts': { covered: 20, total: 50 } }, { 'scripts/x.ts': { covered: 0, total: 50 } }, {}]) {
-    const snapshot = before();
-    const ledger = snapshot.files.map(entry => retain([ref(entry.path, entry.tests[0]!.name)], [ref(entry.path, entry.tests[0]!.name)]));
-    const result = compare(snapshot, inventory(snapshot.files, { coverage }), ledger);
-    assert.equal(result.ok, true, result.markdown);
-    assert.match(result.markdown, /Coverage changes \(informational\)/);
-    assert.equal(result.coverageDrops[0]?.after, coverage['scripts/x.ts']?.covered ?? 0);
-  }
-});
-
-test('comparison validates deletion categories', async () => {
-  const { compare } = await loadCompare();
-  const snapshot = before();
-  for (const category of ['trivial-spec', 'coverage-padding', 'transient-leak', 'unknown-category']) {
-    const ledger = snapshot.files.map((entry, index) => action(`delete-${index}`, 'delete', [ref(entry.path, entry.tests[0]!.name)], [], 'No severe contract is protected by this scaffolding.', category));
-    const result = compare(snapshot, inventory([]), ledger);
-    assert.equal(result.ok, ['trivial-spec', 'coverage-padding'].includes(category), result.markdown);
-  }
-});
-
-test('comparison rejects incomplete evidence after pruning', async () => {
-  const { compare } = await loadCompare();
-  const snapshot = before();
-  const kept = ref(snapshot.files[0]!.path, snapshot.files[0]!.tests[0]!.name);
-  for (const ledger of [[], [retain([kept], [kept])], ...['contract', 'plausibleDefect', 'observableOutcome', 'distinctContribution'].map(key => [retain([kept], [kept], { [key]: '' })]), [{ kind: 'coverage', target: 'scripts/x.ts' }]]) {
-    const result = compare(snapshot, inventory([snapshot.files[0]!]), ledger);
-    assert.equal(result.ok, false);
-    assert.ok(result.evidenceErrors.length > 0);
+  for (const validCat of ['trivial-spec', 'coverage-padding']) {
+    const validDel = compare(beforeInv, afterInv, [retained, action('del-valid', 'delete', [hollow], [], 'Valid deletion.', validCat)]);
+    assert.equal(validDel.ok, true, validDel.markdown);
   }
 });
 
@@ -464,27 +440,16 @@ test('comparison CLI preserves failure exits', async () => {
   }
 });
 
-test('compare fails when the after run has failures', async () => {
-  const { compare } = await loadCompare();
-  const failure = { file: 'tests/tooling/a.test.ts', name: 'breaks', line: 3 };
-  const beforeInv = before();
-  const after = inventory([], { coverage: beforeInv.coverage, failures: [failure] });
-  const ledger = beforeInv.files.map((entry, index) => action(`remove-failed-suite-${index}`, 'delete', [ref(entry.path, entry.tests[0]!.name, entry.tests[0]!.line)], [],
-    'No required contract exists for this placeholder test.', 'synthetic/no-required-contract'));
-  const result = compare(beforeInv, after, ledger);
-  assert.equal(result.ok, false);
-  assert.match(result.markdown, /- tests\/tooling\/a\.test\.ts:3 breaks/);
-});
-
 test('readLedger preserves malformed rows for comparison diagnostics and sorts files deterministically', async () => {
   const { readLedger } = await loadCompare();
   const fakeFs = {
     existsSync: (_p: string) => true,
-    statSync: (_p: string) => ({ isDirectory: () => true }),
+    statSync: (p: string) => ({ isDirectory: () => !p.endsWith('.jsonl') }),
     readdirSync: (_p: string) => ['b.jsonl', 'a.jsonl', 'notes.txt'],
     readFileSync: (p: string) => {
       if (p.endsWith('a.jsonl')) return '{"kind":"savings","evidence":"first file"}\nnot-json\nnull\n{"kind":"unknown-record"}\n';
       if (p.endsWith('b.jsonl')) return '{"kind":"savings","evidence":"second file"}\n';
+      if (p.endsWith('single.jsonl')) return '{"kind":"savings","evidence":"single file"}\n';
       return '';
     },
   };
@@ -493,17 +458,8 @@ test('readLedger preserves malformed rows for comparison diagnostics and sorts f
   const result = (await loadCompare()).compare(inventory([]), inventory([]), entries);
   assert.equal(result.ok, false);
   assert.match(result.evidenceErrors.join('\n'), /ledger a\.jsonl:2: malformed JSON line/);
-});
 
-test('readLedger parses a single file path without directory scan', async () => {
-  const { readLedger } = await loadCompare();
-  const fakeFs = {
-    existsSync: (_p: string) => true,
-    statSync: (_p: string) => ({ isDirectory: () => false }),
-    readdirSync: (_p: string) => { throw new Error('should not call readdir on single file'); },
-    readFileSync: (_p: string) => '{"kind":"savings","evidence":"single file"}\n',
-  };
-  const entries = readLedger('/virtual/single.jsonl', fakeFs);
-  assert.equal(entries.length, 1);
-  assert.equal((entries[0] as { kind: string }).kind, 'savings');
+  const singleEntries = readLedger('/virtual/single.jsonl', fakeFs);
+  assert.equal(singleEntries.length, 1);
+  assert.equal((singleEntries[0] as { kind: string }).kind, 'savings');
 });

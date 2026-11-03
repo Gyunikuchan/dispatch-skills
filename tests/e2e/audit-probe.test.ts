@@ -49,16 +49,13 @@ test('audit probe terminates a hung provider at the deadline and keeps its captu
   assert.equal(record.liveness, 'exited');
   assert.equal(record.exitConfirmed, true);
   assert.match(fs.readFileSync(path.join(w.stageDir, record.capture), 'utf8'), /partial/);
-});
 
-test('audit probe stops an overflowing provider at the output cap', async () => {
-  const w = workspace(FLOOD);
-  // A generous deadline keeps a loaded machine's slow child startup from tripping the deadline before the cap.
-  w.limits.probeDeadlineSeconds = 30;
-  const record = await probe.runTarget(target, ctxFor(w));
-  killQuietly(record.handle);
-  assert.equal(record.cause, 'output-cap');
-  assert.ok(fs.statSync(path.join(w.stageDir, record.capture)).size <= 16_384);
+  const wFlood = workspace(FLOOD);
+  wFlood.limits.probeDeadlineSeconds = 30;
+  const floodRecord = await probe.runTarget(target, ctxFor(wFlood));
+  killQuietly(floodRecord.handle);
+  assert.equal(floodRecord.cause, 'output-cap');
+  assert.ok(fs.statSync(path.join(wFlood.stageDir, floodRecord.capture)).size <= 16_384);
 });
 
 test('audit probe reports an unconfirmed exit and preserves the fixture when the child survives termination', async () => {

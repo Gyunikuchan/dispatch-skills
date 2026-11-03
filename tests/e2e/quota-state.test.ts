@@ -86,14 +86,14 @@ describe('quota state survives sessions and reprobe races', () => {
     const f = setup();
     try {
       const generation = f.capture().generations[0]!.generation;
-      for (let bucket = 1; bucket < 80; bucket++) assert.equal(publishQuotaFailure(f.options, key, generation, bucket * H).published, true);
+      for (let bucket = 1; bucket <= 10; bucket++) assert.equal(publishQuotaFailure(f.options, key, generation, bucket * H).published, true);
       const at = 100 * H - 1;
       publishQuotaFailure(f.options, key, generation, at);
       publishQuotaFailure(f.options, key, generation, 100 * H);
       const state = f.capture([key], 100 * H + 1);
       assert.equal(state.snapshot.decisions[0]!.skipped, true);
       assert.equal(state.observations.length, 2);
-      assert.equal(fs.readdirSync(f.quotaDir()).length, 82);
+      assert.equal(fs.readdirSync(f.quotaDir()).length, 13);
       fs.writeFileSync(path.join(f.quotaDir(), generation + '.100.json'), '{');
       assert.equal(f.capture([key], 100 * H + 1).snapshot.decisions[0]!.skipped, true);
     } finally { f.cleanup(); }

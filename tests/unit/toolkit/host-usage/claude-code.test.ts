@@ -100,6 +100,10 @@ test('claude retains host rows and notes child size and exhausted-budget stops',
   assert.equal(exhausted.rows.length, 1);
   assert.equal(exhausted.notes?.subagent?.['read budget reached'], 1);
   assert.equal(budgetFs.reads.length, 1);
+
+  const hostOversizedFs = memoryFs({ [host]: 'x', [child]: text });
+  const hostOversized = claudeCode.read({ ...query, budget: { remaining: 256 * 1024 * 1024 } }, { ...hostOversizedFs, stat: file => file.endsWith('host.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10000 } : hostOversizedFs.stat(file) });
+  assert.equal(hostOversized.unavailable, 'transcript over size cap'); assert.equal(hostOversized.rows[0]?.role, 'subagent');
 });
 test('claude preserves host counters when child listing or stat fails', () => {
   const host = '/home/.claude/projects/p/host.jsonl'; const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl'; const msg = { type: 'assistant', timestamp: new Date(3000).toISOString(), message: { id: 'x', model: 'm', usage: { input_tokens: 2, output_tokens: 1 } } }; const fs = memoryFs({ [host]: lines(msg), [child]: lines(msg) });
@@ -107,11 +111,6 @@ test('claude preserves host counters when child listing or stat fails', () => {
   assert.equal(listFailure.rows[0]?.role, 'host'); assert.equal(listFailure.notes?.subagent?.['unreadable files'], 1);
   const statFailure = claudeCode.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => { if (file.endsWith('agent-1.jsonl')) throw Error('private'); return fs.stat(file); } });
   assert.equal(statFailure.rows[0]?.role, 'host'); assert.equal(statFailure.notes?.subagent?.['unreadable files'], 1);
-});
-test('claude reports plain oversized host while retaining child counters', () => {
-  const host = '/home/.claude/projects/p/host.jsonl'; const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl'; const msg = { type: 'assistant', timestamp: new Date(3000).toISOString(), message: { id: 'x', model: 'm', usage: { input_tokens: 2, output_tokens: 1 } } }; const fs = memoryFs({ [host]: 'x', [child]: lines(msg) });
-  const result = claudeCode.read({ ...query, budget: { remaining: 256 * 1024 * 1024 } }, { ...fs, stat: file => file.endsWith('host.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10000 } : fs.stat(file) });
-  assert.equal(result.unavailable, 'transcript over size cap'); assert.equal(result.rows[0]?.role, 'subagent');
 });
 test('claude refuses all attribution when a matching project cannot be inspected', () => {
   const host = '/home/.claude/projects/accessible/host.jsonl'; const inaccessible = '/home/.claude/projects/blocked/host.jsonl';
@@ -125,10 +124,9 @@ test('claude reports selected host and child files that vanish before read', () 
   for (const role of ['host', 'subagent']) { let calls = 0; const result = claudeCode.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => { const selected = role === 'host' ? file.endsWith('host.jsonl') : file.endsWith('agent-1.jsonl'); return selected && ++calls === 2 ? null : fs.stat(file); } });
     if (role === 'host') assert.equal(result.unavailable, 'read-error:ENOENT'); else { assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows[0]?.role, 'host'); }
   }
-});
-test('claude notes a listed child that vanishes during discovery while keeping other usage', () => {
-  const host = '/home/.claude/projects/p/host.jsonl'; const vanished = '/home/.claude/projects/p/host/subagents/agent-vanished.jsonl'; const child = '/home/.claude/projects/p/host/subagents/agent-live.jsonl';
-  const msg = (id: string) => ({ type: 'assistant', timestamp: new Date(3000).toISOString(), message: { id, model: 'm', usage: { input_tokens: 2, output_tokens: 1 } } }); const fs = memoryFs({ [host]: lines(msg('host')), [vanished]: lines(msg('gone')), [child]: lines(msg('live')) });
-  const result = claudeCode.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => file.endsWith('agent-vanished.jsonl') ? null : fs.stat(file) });
-  assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.deepEqual(result.rows.map(row => row.role), ['host', 'subagent']);
+
+  const vanished = '/home/.claude/projects/p/host/subagents/agent-vanished.jsonl';
+  const discoveryFs = memoryFs({ [host]: lines(msg), [vanished]: lines(msg), [child]: lines(msg) });
+  const discoveryResult = claudeCode.read({ ...query, budget: { remaining: 10000 } }, { ...discoveryFs, stat: file => file.endsWith('agent-vanished.jsonl') ? null : discoveryFs.stat(file) });
+  assert.equal(discoveryResult.notes?.subagent?.['unreadable files'], 1); assert.deepEqual(discoveryResult.rows.map(row => row.role), ['host', 'subagent']);
 });

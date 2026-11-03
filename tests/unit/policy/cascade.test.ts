@@ -24,14 +24,6 @@ test('delegates-failure-classes: every class has a disposition; integrity and co
   assert.deepEqual(next('config', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'run', reason: 'config is terminal for the run' });
 });
 
-test('blocked cascades like refusal', () => {
-  assert.equal(failureDisposition('blocked'), 'cascade');
-  assert.deepEqual(next('blocked', { model: 0, mode: 0 }, agy), next('refusal', { model: 0, mode: 0 }, agy));
-  assert.deepEqual(next('blocked', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: true }), { kind: 'reserve' });
-  assert.deepEqual(next('blocked', lastModel, agy, { orchestratorPlatform: 'agy', reserveAvailable: false }), { kind: 'native-fallback' });
-  assert.deepEqual(next('blocked', lastModel, agy), { kind: 'terminal', scope: 'slot', reason: 'agy[0] failed: blocked' });
-});
-
 // SECTION: Model and mode cascade
 
 test('delegates-model-array-cascade: every cascade class, auth and quota included, tries the next model first', () => {

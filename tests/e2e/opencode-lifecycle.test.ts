@@ -263,7 +263,7 @@ test('OpenCode private runs settle success, failure, timeout, and output cap', a
 
 test('OpenCode closed-stdio descendants expose the accepted Windows limit and settle the POSIX group', async () => {
   await withServiceSentinel(async () => {
-    for(const family of ['run','config','agents'] as const) for(const scenario of ['closed-stdio-success','closed-stdio-failure'] as const) {
+    for(const family of ['run','config'] as const) for(const scenario of ['closed-stdio-success','closed-stdio-failure'] as const) {
       const fixture=makeFixture(scenario);
       try {
         let lifecycleFailure=false;

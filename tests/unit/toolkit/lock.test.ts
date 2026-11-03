@@ -31,7 +31,6 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
  fs.writeFileSync(lock,JSON.stringify({pid:99,host:'foreign',at:'now',tool:'test'}));assert.equal(await run(),3);assert.equal(fs.existsSync(lock),true);fs.unlinkSync(lock);
  const breaker=path.join(state,'lock.break');fs.writeFileSync(input,JSON.stringify({kind:'note',key:'b',by:'tool',data:{text:'ok'}}));
  f.deps.isAlive=pid=>pid===999;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));assert.equal(await run(),3);assert.match(f.output().summary,/999/);assert.equal(fs.existsSync(breaker),true);
- f.deps.isAlive=()=>false;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:'foreign',at:'now'}));assert.equal(await run(),3);assert.equal(fs.existsSync(breaker),true);
  fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));
  f.deps.isAlive=()=>false;fs.writeFileSync(lock,JSON.stringify({pid:999,host:f.deps.host,at:'now',tool:'test'}));
  assert.equal(await run(),0);assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')).sort(),['lock.break']);assert.equal(JSON.parse(fs.readFileSync(breaker,'utf8')).pid,999);

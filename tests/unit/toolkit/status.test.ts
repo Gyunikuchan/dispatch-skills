@@ -119,38 +119,48 @@ test('status retains missing automated criteria for manual completions and waive
   } finally { f.cleanup(); }
 });
 
-for (const damage of ['broken', 'missing'] as const) {
-  test('status retains recovery status with ' + damage + ' plan', async () => {
-    const { fakeGit } = await import('./helpers/fake-git.ts');
-    const f = sessionFixture();
-    try {
-      f.artifact('mission.spec.md', 'mission');
-      const plan = f.artifact('work.plan.md', PLAN);
-      await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'tool', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
-      await appendRecord(f.session, { kind: 'level', key: 'level', by: 'orchestrator', data: { level: 'low' } }, f.deps);
-      const cwd = path.join(f.session, '.state/worktrees/integration');
-      fs.mkdirSync(cwd, { recursive: true });
-      const head = 'a'.repeat(40), tree = 'b'.repeat(40);
-      f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
-      await appendRecord(f.session, { kind: 'integrate', key: 'opened', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
-      await appendRecord(f.session, { kind: 'writer', key: 'writer', by: 'tool', data: { phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: { commit: head, seq: 1, taskSection: 'sha256:' + 'a'.repeat(64) } } }, f.deps);
-      await appendRecord(f.session, { kind: 'escalation', key: 'blocked', by: 'orchestrator', data: { id: 'E1', state: 'open', summary: 'Recovery needed' } }, f.deps);
-      await main(['status', 'show', '--session', f.session], f.deps);
-      const before = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
-      f.lines.length = 0;
-      if (damage === 'missing') fs.rmSync(plan); else fs.writeFileSync(plan, '# Broken plan\n');
-      const exit = await main(['status', 'show', '--session', f.session], f.deps);
-      assert.equal(exit, 0);
-      const s = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
-      for (const field of ['level', 'bound', 'escalations', 'recordCount']) assert.deepEqual(s[field], before[field], field);
-      assert.equal(s.writers.state, 'unavailable');
-      assert.equal(s.criteria.state, 'unavailable');
-      assert.ok(s.writers.reason.length > 0);
-      if (damage === 'missing') { assert.equal(s.current.plan, null); assert.match(s.criteria.reason, /unreadable/); }
-      else assert.match(s.criteria.reason, /defect|missing|required|task|section/i);
-    } finally { f.cleanup(); }
-  });
-}
+test('status retains recovery status with broken and missing plan', async () => {
+  const { fakeGit } = await import('./helpers/fake-git.ts');
+  const f = sessionFixture();
+  try {
+    f.artifact('mission.spec.md', 'mission');
+    const plan = f.artifact('work.plan.md', PLAN);
+    await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'tool', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
+    await appendRecord(f.session, { kind: 'level', key: 'level', by: 'orchestrator', data: { level: 'low' } }, f.deps);
+    const cwd = path.join(f.session, '.state/worktrees/integration');
+    fs.mkdirSync(cwd, { recursive: true });
+    const head = 'a'.repeat(40), tree = 'b'.repeat(40);
+    f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
+    await appendRecord(f.session, { kind: 'integrate', key: 'opened', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
+    await appendRecord(f.session, { kind: 'writer', key: 'writer', by: 'tool', data: { phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: { commit: head, seq: 1, taskSection: 'sha256:' + 'a'.repeat(64) } } }, f.deps);
+    await appendRecord(f.session, { kind: 'escalation', key: 'blocked', by: 'orchestrator', data: { id: 'E1', state: 'open', summary: 'Recovery needed' } }, f.deps);
+    await main(['status', 'show', '--session', f.session], f.deps);
+    const before = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+
+    // Check broken plan behavior
+    f.lines.length = 0;
+    fs.writeFileSync(plan, '# Broken plan\n');
+    assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+    const broken = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    for (const field of ['level', 'bound', 'escalations', 'recordCount']) assert.deepEqual(broken[field], before[field], field);
+    assert.equal(broken.writers.state, 'unavailable');
+    assert.equal(broken.criteria.state, 'unavailable');
+    assert.ok(broken.writers.reason.length > 0);
+    assert.match(broken.criteria.reason, /defect|missing|required|task|section/i);
+
+    // Check missing plan behavior
+    f.lines.length = 0;
+    fs.rmSync(plan);
+    assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+    const missing = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    for (const field of ['level', 'bound', 'escalations', 'recordCount']) assert.deepEqual(missing[field], before[field], field);
+    assert.equal(missing.writers.state, 'unavailable');
+    assert.equal(missing.criteria.state, 'unavailable');
+    assert.ok(missing.writers.reason.length > 0);
+    assert.equal(missing.current.plan, null);
+    assert.match(missing.criteria.reason, /unreadable/);
+  } finally { f.cleanup(); }
+});
 
 test('uncommitted consumers report source with a null destination commit',async()=>{
  const {fakeGit}=await import('./helpers/fake-git.ts');const f=sessionFixture();try{

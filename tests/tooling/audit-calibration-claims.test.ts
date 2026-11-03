@@ -19,21 +19,11 @@ test('audit calibration summarize enforces fixed claims integrity before scoring
       writeClaims(workDir, arm, s.cases);
       mod.fixClaims(workDir, arm);
     }
+    const bad = { ...s.matches, [defects(f)[0].id]: { match: 'invented', rationale: 'x' } };
+    assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: bad } }, usage: {} }), /invented/);
     writeClaims(workDir, 'new', { ...s.cases, extra: [] });
     assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: s.matches } }, usage: {} }), /changed after/);
   }
-});
-
-
-test('audit calibration rejects a root-cause match that names no fixed defect claim of that case', async () => {
-  const { mod, workDir, f } = await prepared();
-  const s = scenario(f, ids(defects(f)));
-  for (const arm of ARMS) {
-    writeClaims(workDir, arm, s.cases);
-    mod.fixClaims(workDir, arm);
-  }
-  const bad = { ...s.matches, [defects(f)[0].id]: { match: 'invented', rationale: 'x' } };
-  assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: bad } }, usage: {} }), /invented/);
 });
 
 test('audit calibration accepts an opportunity claim as recovery only for an efficiency case', async () => {

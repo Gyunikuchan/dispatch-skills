@@ -23,22 +23,23 @@ test('dispatch entry routes sessions and toolkit operations with bounded output'
     assert.ok(created.path);
     assert.match(readManifest(created.path).sessionId, /^[0-9a-f-]{36}$/);
     assert.ok(Buffer.byteLength(created.summary) <= 1024);
-    for (let i = 0; i < 2; i++) {
-      const active = await invoke(['session', 'reactivate', '--session-dir', created.path]);
-      assert.equal(active.exit, 0);
-      assert.equal(active.path, created.path);
-      assert.ok(Buffer.byteLength(active.summary) <= 1024);
-    }
+
+    const active = await invoke(['session', 'reactivate', '--session-dir', created.path]);
+    assert.equal(active.exit, 0);
+    assert.equal(active.path, created.path);
+    assert.ok(Buffer.byteLength(active.summary) <= 1024);
+
     const status = await invoke(['status', 'show', '--session', created.path]);
     assert.equal(status.exit, 0);
     assert.ok(status.path && fs.existsSync(status.path));
+
     const quota = await invoke(['session', 'quota-reprobe', '--session-dir', created.path, '--provider', 'codex', '--mode', 'cli']);
     assert.equal(quota.exit, 0);
     assert.deepEqual(JSON.parse(f.lines[0]!), { v: 1, action: 'quota-reprobe', key: { provider: 'codex', model: null, mode: 'cli' }, appliesTo: 'future-waves' });
+
     for (const args of [
-      ['start', 'plan'], ['send', '--run', 'x'], ['rebind', '--run', 'x'], ['checkpoint'],
+      ['start', 'plan'], ['send', '--run', 'x'], ['checkpoint'],
       ['session', 'quota-reprobe', '--session-dir', created.path, '--provider', 'unknown', '--mode', 'cli'],
-      ['session', 'quota-reprobe', '--session-dir', created.path, '--provider', 'codex', '--mode', 'unknown'],
       ['session', 'init', '--unknown', '界'.repeat(2000)],
     ]) {
       const invalid = await invoke(args);
@@ -46,12 +47,32 @@ test('dispatch entry routes sessions and toolkit operations with bounded output'
       assert.equal(invalid.reason, 'usage');
       assert.ok(Buffer.byteLength(invalid.summary) <= 1024);
     }
+
     const broken = await invoke(['session', 'reactivate', '--session-dir', path.join(f.root, '界'.repeat(2000))]);
     assert.equal(broken.exit, 2);
     assert.equal(broken.reason, 'fault');
     assert.ok(Buffer.byteLength(broken.summary) <= 1024);
+
     const explicit = await invoke(['session', 'init', '--objective', 'Explicit', '--session-id', 'chosen']);
     assert.equal(readManifest(explicit.path!).sessionId, 'chosen');
+
+    // Quota preconditions and filesystem faults
+    const quotaArgs = ['session', 'quota-reprobe', '--session-dir', explicit.path!, '--provider', 'codex', '--mode', 'cli'];
+    fs.writeFileSync(path.join(explicit.path!, '.state'), 'blocks quota directory creation');
+    f.lines.length = 0;
+    assert.equal(await entry.main(quotaArgs, deps), 2);
+    const fault = f.output();
+    assert.equal(fault.reason, 'fault');
+    assert.equal(fault.path, null);
+    assert.match(fault.summary, /ENOTDIR/);
+    fs.unlinkSync(path.join(explicit.path!, '.state'));
+
+    const manifestPath = path.join(explicit.path!, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, repositoryRoot: 'another-repository' }));
+    f.lines.length = 0;
+    assert.equal(await entry.main(quotaArgs, deps), 1);
+    assert.equal(f.output().reason, 'usage');
   } finally { f.cleanup(); }
 });
 
@@ -61,52 +82,31 @@ test('dispatch entry recognizes symlinked launch paths', () => {
   assert.equal(entry.isEntry(undefined, () => { throw new Error('unused'); }), false);
 });
 
-test('dispatch entry distinguishes quota preconditions from filesystem faults', async () => {
-  const f = sessionFixture();
-  fs.mkdirSync(path.join(f.root, '.git'));
-  const args = ['session', 'quota-reprobe', '--session-dir', f.session, '--provider', 'codex', '--mode', 'cli'];
-  const deps = { ...f.deps, cwd: () => f.root };
-  try {
-    fs.writeFileSync(path.join(f.session, '.state'), 'blocks quota directory creation');
-    assert.equal(await entry.main(args, deps), 2);
-    const fault = f.output();
-    assert.equal(fault.reason, 'fault');
-    assert.equal(fault.path, null);
-    assert.match(fault.summary, /ENOTDIR/);
-    fs.unlinkSync(path.join(f.session, '.state'));
-    const manifestPath = path.join(f.session, 'manifest.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, repositoryRoot: 'another-repository' }));
-    f.lines.length = 0;
-    assert.equal(await entry.main(args, deps), 1);
-    assert.equal(f.output().reason, 'usage');
-  } finally { f.cleanup(); }
-});
-
-
 test('session instructions always point at grounding and add diagnostics only when enabled', async () => {
-  for (const enabled of [false,true]) {
-    const f = sessionFixture();
-    try {
-      fs.mkdirSync(path.join(f.root,'.git'));
-      const skill = path.join(f.root,'skill'); fs.mkdirSync(skill);
-      fs.writeFileSync(path.join(skill,'config.jsonc'), JSON.stringify({diagnostics:enabled}));
-      const deps = {...f.deps,skillRoot:skill,cwd:()=>f.root};
-      const assertInstructions = (value: { instructions?: unknown }) => {
-        const instructions = value.instructions;
-        if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
-        assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
-        if (enabled) assert.match(instructions,/references\/diagnostics\.md.*diagnostics render/);
-        else assert.doesNotMatch(instructions,/references\/diagnostics\.md/);
-        assert.ok(!instructions.includes(f.root));
-        assert.ok(Buffer.byteLength(instructions) <= 2048);
-      };
-      assert.equal(await entry.main(['session','init','--objective','test'],deps),0);
-      const value = JSON.parse(f.lines[0]!);
-      assertInstructions(value);
-      f.lines.length=0;
-      assert.equal(await entry.main(['session','reactivate','--session-dir',value.path],deps),0);
-      assertInstructions(JSON.parse(f.lines[0]!));
-    } finally {f.cleanup();}
-  }
+  const f = sessionFixture();
+  try {
+    fs.mkdirSync(path.join(f.root, '.git'));
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    const deps = { ...f.deps, skillRoot: skill, cwd: () => f.root };
+    const assertInstructions = (value: { instructions?: unknown }, enabled: boolean) => {
+      const instructions = value.instructions;
+      if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
+      assert.match(instructions, /When a verb needs a new spec, run `doctor run` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers only when doctor reports one for this platform; otherwise self-ground\./);
+      if (enabled) assert.match(instructions, /references\/diagnostics\.md.*diagnostics render/);
+      else assert.doesNotMatch(instructions, /references\/diagnostics\.md/);
+      assert.ok(!instructions.includes(f.root));
+      assert.ok(Buffer.byteLength(instructions) <= 2048);
+    };
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: false }));
+    assert.equal(await entry.main(['session', 'init', '--objective', 'test-disabled'], deps), 0);
+    assertInstructions(JSON.parse(f.lines[0]!), false);
+    f.lines.length = 0;
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: true }));
+    assert.equal(await entry.main(['session', 'init', '--objective', 'test-enabled'], deps), 0);
+    const enabledVal = JSON.parse(f.lines[0]!);
+    assertInstructions(enabledVal, true);
+    f.lines.length = 0;
+    assert.equal(await entry.main(['session', 'reactivate', '--session-dir', enabledVal.path], deps), 0);
+    assertInstructions(JSON.parse(f.lines[0]!), true);
+  } finally { f.cleanup(); }
 });

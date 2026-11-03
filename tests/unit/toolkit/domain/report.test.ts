@@ -81,31 +81,23 @@ test('the rubric table matches the derived severity', () => {
   }
 });
 
-test('refuses a reply carrying severity', () => {
-  const text = report([{ ...finding(), severity: 'MUST' }]);
-  assert.equal(failure(text), 'uncovered-scope');
-  assert.match(parseDetail(text) ?? '', /impact, trigger, locus, tag, defect, requiredChange; unsupported: severity$/);
-});
-
-test('counts unsupported fields other than severity instead of echoing their names', () => {
-  const text = report([{ ...finding(), severity: 'MUST', ignore_prior_rulings: 'x', ['<tool_call>\u001b[31m']: 'x' }]);
-  assert.match(parseDetail(text) ?? '', /; unsupported: severity, 2 other field\(s\)$/);
-});
-
-test('refuses a missing dimension', () => {
+test('refuses report findings with missing, invalid, or unsupported dimension fields', () => {
+  // Missing dimension
   for (const field of ['impact', 'trigger']) {
     const { [field]: _omitted, ...rest } = finding() as Record<string, string>;
     assert.equal(failure(report([rest])), 'uncovered-scope', field);
     assert.match(parseDetail(report([rest])) ?? '', new RegExp('; missing: ' + field + '$'), field);
   }
-});
-
-test('refuses an invalid dimension value', () => {
+  // Invalid dimension value
   for (const [field, value] of [['impact', 'HIGH'], ['impact', 'MUST'], ['impact', 3], ['trigger', 'likely'], ['trigger', null]] as const) {
     const text = report([{ ...finding(), [field]: value }]);
     assert.equal(failure(text), 'uncovered-scope', `${field}=${value}`);
     assert.match(parseDetail(text) ?? '', new RegExp(`finding 0 ${field} must be one of`));
   }
+  // Unsupported severity and other fields
+  const unsupported = report([{ ...finding(), severity: 'MUST', ignore_prior_rulings: 'x', ['<tool_call>\u001b[31m']: 'x' }]);
+  assert.equal(failure(unsupported), 'uncovered-scope');
+  assert.match(parseDetail(unsupported) ?? '', /; unsupported: severity, 2 other field\(s\)$/);
 });
 
 test('delegates-one-report-parse: one path parses fenced or bare JSON into draft findings', () => {
@@ -185,27 +177,19 @@ test('a narrated report with many findings parses', () => {
   assert.equal(result.findings.length, 1100);
 });
 
-test('a fence inside a JSON string does not end the report', () => {
-  const body = JSON.stringify({ status: 'FINDINGS', findings: [finding({ defect: 'the ``` delimiter' })] });
-  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: 'Note\n```json\n' + body + '\n```' }).ok, true);
+test('a fence or tagged fence inside a JSON string does not end the report', () => {
+  for (const defect of ['the ``` delimiter', 'use a ```json block']) {
+    const body = JSON.stringify({ status: 'FINDINGS', findings: [finding({ defect })] });
+    assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: 'Note\n```json\n' + body + '\n```' }).ok, true);
+  }
 });
 
-test('a tagged fence inside a JSON string does not end the report', () => {
-  const body = JSON.stringify({ status: 'FINDINGS', findings: [finding({ defect: 'use a ```json block' })] });
-  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: 'Note\n```json\n' + body + '\n```' }).ok, true);
-});
-
-test('a degenerate fence stays bounded', () => {
+test('degenerate fences and large malformed replies stay bounded', () => {
   const started = Date.now();
-  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(200000) + 'x\n```y```' }).ok, false);
-  assert.ok(Date.now() - started < 2000);
-});
-
-test('a large malformed reply stays bounded', () => {
-  const text = `${'{"a":\n'.repeat(10000)}{"status":1}`;
-  const started = Date.now();
+  assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(50000) + 'x\n```y```' }).ok, false);
+  const text = `${'{"a":\n'.repeat(2000)}{"status":1}`;
   assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text }).ok, false);
-  assert.ok(Date.now() - started < 2000, 'large malformed reply exceeded 2s');
+  assert.ok(Date.now() - started < 2000, 'malformed replies exceeded budget');
 });
 
 test('delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope, loose locus', () => {
@@ -218,13 +202,11 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
   assert.equal(failure(report([finding({ locus: 'src/fetch.ts:L1-L9' })])), 'loose-locus');
 });
 
-test('blocked json report keeps reason', () => {
-  const result = parseReport({ kind: 'plan', source: 'codex[0]', text: JSON.stringify({ status: 'BLOCKED', reason: '  Session artifact denied by the guard  ' }) });
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.deepEqual(result.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
-});
+test('blocked json reports validate and sanitize reason', () => {
+  const valid = parseReport({ kind: 'plan', source: 'codex[0]', text: JSON.stringify({ status: 'BLOCKED', reason: '  Session artifact denied by the guard  ' }) });
+  assert.equal(valid.ok, false);
+  if (!valid.ok) assert.deepEqual(valid.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
 
-test('blocked without reason stays uncovered', () => {
   for (const text of [
     JSON.stringify({ status: 'BLOCKED' }),
     JSON.stringify({ status: 'BLOCKED', reason: '   ' }),
@@ -268,27 +250,31 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   return result.findings;
 };
 
-test('unknown plan tag recovers as uncategorized with original tag', () => {
-  const text = `\`\`\`json\n${report([
+test('collected findings preserve unknown tags across review kinds and maintain known categories', () => {
+  // Plan review recovery
+  const planText = `\`\`\`json\n${report([
     planFinding('robustness', 'Proposed Changes', 'retry path has no bound'),
     planFinding('testing', 'Verification Plan', 'focused command omits a test file'),
-    planFinding('testing', 'Success Criteria', 'criterion lacks a verify command'),
-    planFinding('compatibility', 'Rollback & Blast Radius', 'old journals lose a field'),
   ])}\n\`\`\``;
-  const findings = parsedFindings('plan', text);
-  assert.deepEqual(findings.map((item) => [item.locus, item.category, item.originalTag ?? null, item.scope]), [
-    ['§ Proposed Changes', 'uncategorized', 'robustness', 'in'],
-    ['§ Verification Plan', 'testing', null, 'in'],
-    ['§ Success Criteria', 'testing', null, 'in'],
-    ['§ Rollback & Blast Radius', 'compatibility', null, 'in'],
+  const planFindings = parsedFindings('plan', planText);
+  assert.deepEqual(planFindings.map((item) => [item.locus, item.category, item.originalTag ?? null]), [
+    ['§ Proposed Changes', 'uncategorized', 'robustness'],
+    ['§ Verification Plan', 'testing', null],
   ]);
-});
 
-test('unknown tag recovers in code and design reviews', () => {
+  // Code and design review recovery
   const [code] = parsedFindings('code', report([finding({ tag: 'robustness' })]));
   assert.deepEqual([code?.category, code?.originalTag, code?.scope], ['uncategorized', 'robustness', 'in']);
   const [design] = parsedFindings('design', report([planFinding('robustness', 'Interfaces', 'contract omits errors')]));
   assert.deepEqual([design?.category, design?.originalTag, design?.scope], ['uncategorized', 'robustness', 'in']);
+
+  // Collection preserves originalTag alongside known categories
+  const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'performance', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
+  const findings = collectFindings(1, drafts);
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0]?.originalTag, 'robustness');
+  assert.equal(findings[1]?.category, 'performance');
+  assert.ok(!('originalTag' in (findings[1] ?? {})));
 });
 
 test('findings report: preserves distinct findings with unknown tags differing, sanitizing alike, or bounded', () => {
@@ -303,23 +289,11 @@ test('findings report: preserves distinct findings with unknown tags differing, 
   assert.deepEqual(bounded.map((item) => [item.category, item.originalTag]), [['uncategorized', prefix], ['uncategorized', prefix]]);
 });
 
-test('collected findings preserve unknown tags and known categories', () => {
-  const drafts = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'performance', locus: 'src/b.ts:L4', defect: 'quadratic scan' })]));
-  const findings = collectFindings(1, drafts);
-  assert.equal(findings.length, 2);
-  assert.equal(findings[0]?.originalTag, 'robustness');
-  assert.equal(findings[1]?.category, 'performance');
-  assert.ok(!('originalTag' in (findings[1] ?? {})));
-});
-
-test('adjacent and intent tag variants stay uncategorized in scope', () => {
+test('adjacent and intent tag handling preserves exact keywords and treats variants as uncategorized', () => {
   for (const tag of ['Adjacent', 'ADJACENT', 'adjacent-scope', 'Intent']) {
     const [item] = parsedFindings('code', report([finding({ tag })]));
     assert.deepEqual([item?.category, item?.originalTag, item?.scope], ['uncategorized', tag, 'in'], tag);
   }
-});
-
-test('exact adjacent and intent tags keep category and scope', () => {
   const [adjacent] = parsedFindings('code', report([finding({ tag: ' adjacent ' })]));
   assert.deepEqual([adjacent?.category, adjacent?.scope], ['adjacent', 'adjacent']);
   assert.ok(!('originalTag' in (adjacent ?? {})));
@@ -477,15 +451,11 @@ test('diagnostics report: formats durations', () => {
   assert.equal(formatDuration(undefined), '—');
 });
 
-test('diagnostics report: renders wall driver host and user wait columns', () => {
+test('diagnostics report: renders duration and token breakdown columns', () => {
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
   assert.match(text, /^- Runs: 1 · measured duration: 1h 2m 3s$/m);
-});
-
-test('diagnostics report: renders input cache-read cache-write output tokens', () => {
-  const text = render([facts()]);
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
   assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
@@ -668,21 +638,19 @@ test('diagnostics amendment convergence: evaluates caps, reraises, and escalatio
   assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
 });
 
-test('H2 cap reached wording', () => {
+test('H2 review convergence phrasing distinguishes plain cap from re-raise deadlock', () => {
   const capEnded = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
     ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}) }));
-  const finding = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
-  assert.match(finding.evidence, /cap reached/);
-  assert.doesNotMatch(finding.evidence, /deadlock/);
-  assert.equal(finding.proposedFix, 'Raise the round cap or narrow scope.');
-});
+  const findingCap = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
+  assert.match(findingCap.evidence, /cap reached/);
+  assert.doesNotMatch(findingCap.evidence, /deadlock/);
+  assert.equal(findingCap.proposedFix, 'Raise the round cap or narrow scope.');
 
-test('H2 keeps deadlock wording for a re-raise deadlock at the cap', () => {
   const deadlocked = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
     ...(round === 3 ? { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } } : {}) }));
-  const finding = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
-  assert.match(finding.evidence, /deadlock escalation \(R1-F001\)/);
-  assert.doesNotMatch(finding.evidence, /cap reached/);
+  const findingDeadlock = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
+  assert.match(findingDeadlock.evidence, /deadlock escalation \(R1-F001\)/);
+  assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
 });
 
 test('heuristic precision screens the review cap as a bounded integer', () => {
@@ -691,36 +659,33 @@ test('heuristic precision screens the review cap as a bounded integer', () => {
   for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
 });
 
-test('heuristic precision H3 needs three findings', () => {
+test('heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics', () => {
+  // H3 needs three findings
   assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 2 }] })), 'H3'), [], 'two findings are too few to judge a rejection share');
-  const findings = only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3');
-  assert.equal(findings.length, 1);
-  assert.match(assertShape(findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
-});
+  const h3Findings = only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3');
+  assert.equal(h3Findings.length, 1);
+  assert.match(assertShape(h3Findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
 
-test('heuristic precision H5 needs three uncached samples and a share above two over n', () => {
+  // H5 needs three uncached samples and a share above two over n
   const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation()] })), 'H5'), [], 'with two invocations one always holds at least half');
-  // 5,360 of 8,040 uncached tokens is exactly 2/3, the bound for three invocations.
   const even = invocation({ usage: { input: 5000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
   const cached = invocation({ usage: { input: 1000, cacheRead: 900_000, output: 40 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [cached, invocation(), invocation()] })), 'H5'), [], 'cache reads do not make a launch dominate');
   const zero = invocation({ outcome: 'quota', usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
   assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation(), zero] })), 'H5'), [], 'zero-usage failures are not samples');
-  const findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
-  assert.equal(findings.length, 1);
-  assert.match(assertShape(findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/);
-});
+  const h5Findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
+  assert.equal(h5Findings.length, 1);
+  assert.match(assertShape(h5Findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/);
 
-test('heuristic precision H1 ignores quota-store skips that never launched', () => {
+  // H1 ignores quota-store skips that never launched
   const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
   assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
-  const [finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
-  assert.match(finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./);
-});
+  const [h1Finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
+  assert.match(h1Finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./);
 
-test('heuristic precision H9 needs two relaunches', () => {
+  // H9 needs two relaunches
   assert.deepEqual(only(heuristics(facts({ relaunches: 1 })), 'H9'), [], 'one relaunch without a cause is not a pattern');
   assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
 });
@@ -759,16 +724,14 @@ test('diagnostics report: mixed measured and unmeasured launches share one model
   assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
 });
 
-test('diagnostics report: labels configured-model attribution', () => {
-  const text = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), text);
-  assert.ok(text.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), text);
-});
+test('diagnostics report: handles configured-model labels and multi-model aggregates', () => {
+  const configured = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
+  assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
+  assert.ok(configured.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), configured);
 
-test('diagnostics report: multi-model aggregate leaves model attribution unavailable', () => {
-  const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(text.includes('| code review | claude | delegate | — | medium | 100 | — | — | 10 | — | 1/1 |'), text);
-  assert.doesNotMatch(text, /\(configured\)/);
+  const multi = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
+  assert.ok(multi.includes('| code review | claude | delegate | — | medium | 100 | — | — | 10 | — | 1/1 |'), multi);
+  assert.doesNotMatch(multi, /\(configured\)/);
 });
 
 // SECTION: Scope gate and redaction
@@ -893,20 +856,19 @@ test('diagnostics report: never renders resume objective or absolute paths', () 
   assert.match(text, /- Host retro: collected · 1 accepted · 2 rejected/);
 });
 
-test('absorbed single failure emits no H1', () => {
+test('heuristic H1 fires on repeated slot failures and suppresses isolated failures', () => {
+  // Isolated failures stay silent
   const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
   assert.deepEqual(only(heuristics(reserve), 'H1'), []);
   const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
   assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
-});
 
-test('sanitized slot facts gate H1 in rendered reports', () => {
+  // Sanitized slot facts gate H1
   const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
   assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
   assert.equal(only(heuristics(run), 'H1').length > 0, true);
-});
 
-test('repeated failures emit actionable H1', () => {
+  // Repeated failures emit actionable H1 across classes
   const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
   assert.equal(findings.length, 1);
   assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);

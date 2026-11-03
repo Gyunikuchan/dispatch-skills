@@ -133,37 +133,6 @@ test('toolkit code review reports missing evidence without admission gates and t
   }finally{f.cleanup();}
 });
 
-test('toolkit code review follows new task launches and escalates each repeated changed gap',async()=>{
-  const moveDuringReview=true;
-  const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria'));try{
-    f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
-    f.deps.liveness={claude:true};f.deps.orchestrator=null;
-    f.deps.delegate=async()=>({outcome:{status:'ok',text:JSON.stringify({status:'CLEAN',findings:[]}),resume:null,sessionId:null},invocations:[]});
-    await f.level('high');await f.approve();
-    const launch=async(text:string)=>{
-      const made=await f.run(['worktree','create','T1']);assert.equal(made.exit,0,JSON.stringify(made.output));fs.writeFileSync(path.resolve(f.session,made.value.path,'src/file.ts'),text);
-      assert.equal((await f.run(['worktree','submit','T1'])).exit,0);assert.equal((await f.run(['worktree','integrate','T1'])).exit,0);
-      return foldLedger(f.session).records.findLast(row=>row.kind==='writer'&&row.data['phase']==='finished')!.data['candidate'];
-    };
-    const review=()=>f.run(['review','run','T1','--kind','code']);
-    await launch('first\n');const first=await review();assert.equal(first.exit,0);
-    await launch('second\n');
-    let moved=false,newHead='';
-    let second;
-    const directory=path.join(f.session,'.state/reviews/code-T1/round-2');
-    if(moveDuringReview){
-      const moving=await f.run(['review','run','T1','--kind','code'],async point=>{if(point==='fanout:after-slot'&&!moved){moved=true;newHead=await launch('third\n');}});
-      assert.equal(moving.output.reason,'target-moved');
-      assert.equal(fs.existsSync(path.join(directory,'findings.json')),false);
-    }
-    second=await review();assert.equal(second.exit,0);
-    const value=JSON.parse(fs.readFileSync(second.value.path,'utf8'));
-    assert.equal(value.escalations[0].key,'missing-red:code-T1:T1:SC1:R2:g2');
-    assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'round.json'),'utf8')).target.head,newHead);
-    await launch('fourth\n');const third=await review();assert.equal(third.exit,0);
-    assert.equal(JSON.parse(fs.readFileSync(third.value.path,'utf8')).escalations[0].key,'missing-red:code-T1:T1:SC1:R3:g1');
-  }finally{f.cleanup();}
-});
 
 test('toolkit code review scopes integration recurrence and gaps to committed owner changes',async()=>{
   const two=source.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |')

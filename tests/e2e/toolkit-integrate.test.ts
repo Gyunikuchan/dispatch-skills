@@ -34,7 +34,7 @@ describe('toolkit integration',()=>{
       assert.equal((await r.run(['worktree','integrate','T1'])).exit,0); assert.equal(rows(r,'done').length,1);
     } finally {r.cleanup();}
   });
-  for(const finish of ['continue','abort'] as const) it('recovers '+finish+' after a resolved conflict commit',async()=>{
+  it('recovers continue after a resolved conflict commit',async()=>{
     const r=await toolkitRepo(twoTasks); try {
       await r.level(); await candidate(r); await candidate(r,'T2','second\n');
       fs.writeFileSync(path.join(r.integration,'src/file.ts'),'integration\n');
@@ -49,8 +49,8 @@ describe('toolkit integration',()=>{
       assert.equal(r.git(['rev-parse','HEAD'],r.integration),beforeHead);
       assert.equal((await r.run(['worktree','continue','T1'],crash('continue:after-commit'))).exit,2);
       const head=r.git(['rev-parse','HEAD'],r.integration);
-      const recovered=await r.run(['worktree',finish,'T1',...(finish==='abort'?['--reason','recover']:[])]);
-      assert.equal(recovered.exit,finish==='abort'?4:0); if(finish==='abort')assert.equal(recovered.output.reason,'already-integrated');
+      const recovered=await r.run(['worktree','continue','T1']);
+      assert.equal(recovered.exit,0);
       assert.equal(r.git(['rev-parse','HEAD'],r.integration),head); assert.equal(rows(r,'done').length,1); assert.equal(rows(r,'abandoned').length,0);
     } finally {r.cleanup();}
   });

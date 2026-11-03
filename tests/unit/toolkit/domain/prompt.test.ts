@@ -30,9 +30,6 @@ test('settled duplicate rows keep original id', () => {
   assert.deepEqual(settledRows(settledSection([duplicate])), ['- R4-F002 § Tasks: A repeated defect. — duplicate: Duplicate of R1-F004.']);
   const clipped = {...duplicate, id: 'R4-F003', defect: `${'y'.repeat(130)}\nmore`, reason: 'z'.repeat(140)};
   assert.deepEqual(settledRows(settledSection([clipped])), [`- R4-F003 § Tasks: ${'y'.repeat(119)}… — duplicate: ${'z'.repeat(119)}…`]);
-});
-
-test('settled duplicate keeps original id beyond the reason cutoff', () => {
   const ownFirst = settledRows(settledSection([{id: 'R4-F004', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `R4-F004 repeats the point. ${'z'.repeat(130)} R1-F004`}]))[0]!;
   assert.match(ownFirst, /R1-F004/);
   const labeled = settledRows(settledSection([{id: 'R4-F005', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `${'z'.repeat(130)} Duplicate of R1-F006`}]))[0]!;
@@ -191,10 +188,6 @@ test('review voices receive identical guidance in rotated axis order', () => {
   }
 });
 
-test('rotation zero matches the golden prompt', () => {
-  for (const kind of reviewKinds) assert.equal(`${reviewPrompt(kind, reviewContext(kind))}\n`, read(golden, `${kind}.md`), kind);
-});
-
 function gcd(left: number, right: number): number {
   while (right) [left, right] = [right, left % right];
   return left;
@@ -204,6 +197,9 @@ test('prompt: a slot without a kind section, or a section without a slot, throws
   const frame = '## Prompt template\n````markdown\n<<slot:a>>\n````\n';
   assert.throws(() => assembleTemplate(frame, '## b\ntext\n'), /no section for slot/);
   assert.throws(() => assembleTemplate(frame, '## a\nx\n## b\ny\n'), /no frame slot/);
+  const frameTwo = '## Prompt template\n````markdown\n<<slot:a>> <<slot:b>>\n````\n';
+  assert.throws(() => assembleTemplate(frameTwo, '## a\nx\n## b\ny\n', undefined, ['## b\nz\n']), /declares section "b" twice/);
+  assert.throws(() => assembleTemplate(frameTwo, '## a\nx\n', undefined, ['## b\ny\n', '## b\nz\n']), /declares section "b" twice/);
 });
 
 test('prompt: a shared kind block fills its frame slot and adds its declared variables', () => {
@@ -211,12 +207,6 @@ test('prompt: a shared kind block fills its frame slot and adds its declared var
   const { variables, template } = assembleTemplate(frame, '## a\nkind\n', undefined, ['- `<S>` — shared\n\n## b\nshared <S>\n']);
   assert.equal(template, 'kind shared <S>');
   assert.deepEqual(variables, ['A', 'S']);
-});
-
-test('prompt: a section declared in both a kind and a shared kind block throws', () => {
-  const frame = '## Prompt template\n````markdown\n<<slot:a>> <<slot:b>>\n````\n';
-  assert.throws(() => assembleTemplate(frame, '## a\nx\n## b\ny\n', undefined, ['## b\nz\n']), /declares section "b" twice/);
-  assert.throws(() => assembleTemplate(frame, '## a\nx\n', undefined, ['## b\ny\n', '## b\nz\n']), /declares section "b" twice/);
 });
 
 // SECTION: Severity rubric
@@ -234,9 +224,6 @@ test('all kinds share an identical severity rubric', () => {
     assert.ok(reply.includes('"findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus"'), kind);
     assert.doesNotMatch(reply, /"severity"/, kind);
   }
-});
-
-test('only the plan kind has the Verify-gate sentence', () => {
   assert.ok(flat('plan').includes(CALIBRATION));
   for (const kind of ['code', 'design'] as const) {
     const template = assembled(kind);
@@ -260,6 +247,8 @@ test('review prompts: every kind grounds findings and reports a defective local 
   }
 });
 
+const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind).replace(/\s+/g, ' ');
+
 test('quality selection: reuse applies to every consumer and code tooling applies to code and plan', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
     assert.ok(flat(kind).includes('search the repository by name and behaviour for an existing equivalent'));
@@ -267,11 +256,6 @@ test('quality selection: reuse applies to every consumer and code tooling applie
     assert.equal(flat(kind).includes('Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`'), kind === 'code');
     assert.equal(flat(kind).includes('Reuse searches do not count toward the target.'), kind === 'code');
   }
-});
-
-const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind).replace(/\s+/g, ' ');
-
-test('quality selection: code and plan reviews name data-access and exposure risks', () => {
   for (const kind of ['code', 'plan'] as const) {
     for (const term of ['N+1', 'unpaginated reads', 'index new filter or sort columns', 'object ownership', 'sensitive data in logs']) assert.ok(ruleText(kind).includes(term), `${kind}: ${term}`);
   }
@@ -346,9 +330,6 @@ test('quality selection: reviews hold tests to the two-tier bar', () => {
     }
   }
   assert.ok(ruleText('code').includes('Implementation tests drive TDD: each fails RED for the right reason'));
-});
-
-test('review prompts: prompts keep plan IDs out of tests', () => {
   const text = flat('code');
   for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'never reference plan artifacts such as criterion, task, or finding IDs, plan paths, or session paths']) assert.ok(text.includes(term), term);
 });

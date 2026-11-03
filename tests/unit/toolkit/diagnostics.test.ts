@@ -483,16 +483,24 @@ test('review yield renders per slot outcomes', async () => {
     const consider = finding('F3', {severity: 'CONSIDER', sources: ['codex[0]']});
     const duplicate = finding('F4', {severity: 'MUST', sources: ['codex[0]']});
     const shared = finding('F5', {severity: 'SHOULD', sources: ['claude[0]', 'codex[0]']});
+    const nativeFinding = finding('F6', {severity: 'MUST', sources: ['native[0]']});
+    const toolFinding = finding('F7', {severity: 'MUST', sources: ['tool']});
+    const unruledFinding = finding('F8', {severity: 'MUST', sources: ['claude[0]']});
     saveRound({
       session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude', {model: 'model-a'}), rosterSlot('codex[0]', 'codex', {model: 'model-b'}), rosterSlot('agy[0]', 'agy', {model: 'model-c'})],
+      roster: [
+        rosterSlot('claude[0]', 'claude', {model: 'model-a'}),
+        rosterSlot('codex[0]', 'codex', {model: 'model-b'}),
+        rosterSlot('agy[0]', 'agy', {model: 'model-c'}),
+        rosterSlot('native[0]', 'codex', {native: true}),
+      ],
       outcomes: [
         {slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}},
         {slot: 'codex[0]', state: 'done', text: 'ok', responder: {slot: 'codex[0]', provider: 'codex', model: 'model-b', native: false}},
-        // Legacy slot file without a responder: the roster entry names the model.
         {slot: 'agy[0]', state: 'done', text: 'ok'},
+        {slot: 'native[0]', state: 'done', text: 'ok', responder: {slot: 'native[0]', provider: 'codex', model: 'model-a', native: true}},
       ],
-      findings: [must, should, consider, duplicate, shared],
+      findings: [must, should, consider, duplicate, shared, nativeFinding, toolFinding, unruledFinding],
     });
     const subject = roundSubject(f.session, review, 1);
     captureRuns(f.session, [
@@ -502,13 +510,14 @@ test('review yield renders per slot outcomes', async () => {
     ]);
     const fold = {records: [
       ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'rejected'), ruling(3, review, 'F3', 'deferred'),
-      ruling(4, review, 'F4', 'duplicate'), ruling(5, review, 'F5', 'accepted'),
-    ], lastSeq: 5, torn: null} as Fold;
+      ruling(4, review, 'F4', 'duplicate'), ruling(5, review, 'F5', 'accepted'), ruling(6, review, 'F6', 'accepted'),
+      ruling(7, review, 'F7', 'accepted'),
+    ], lastSeq: 7, torn: null} as Fold;
     const facts = sessionFacts(f.session, fold, 'complete');
-    const row = (provider: string) => facts.slotYield!.find((value) => value.provider === provider)!;
+    const row = (provider: string, kind = 'provider') => facts.slotYield!.find((value) => value.provider === provider && value.kind === kind)!;
     assert.deepEqual(row('claude'), {
-      kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 1, SHOULD: 2, CONSIDER: 0},
-      accepted: 2, rejected: 1, deferred: 0, duplicate: 0, unruled: 0, tokens: 1000, measured: 1, launched: 1,
+      kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 2, SHOULD: 2, CONSIDER: 0},
+      accepted: 2, rejected: 1, deferred: 0, duplicate: 0, unruled: 1, tokens: 1000, measured: 1, launched: 1,
     });
     assert.deepEqual(row('codex'), {
       kind: 'provider', provider: 'codex', model: 'model-b', raised: {MUST: 1, SHOULD: 1, CONSIDER: 1},
@@ -518,36 +527,21 @@ test('review yield renders per slot outcomes', async () => {
       kind: 'provider', provider: 'agy', model: 'model-c', raised: {MUST: 0, SHOULD: 0, CONSIDER: 0},
       accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 1,
     });
+    assert.deepEqual(row('codex', 'native'), {
+      kind: 'native', provider: 'codex', model: null, raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
+      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 0,
+    });
+    assert.deepEqual(row('tool', 'tool'), {
+      kind: 'tool', provider: 'tool', model: null, raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
+      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 0,
+    });
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /### Review yield by slot/);
-    assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 0 \| 1,000 \| 500 \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 2 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 1 \| 1,000 \| 500 \|$/m);
     assert.match(report, /^\| codex \| model-b \| 1 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 500 \| 500 \|$/m);
     assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| — \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('review yield credits reserve responder', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-reserve';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('copilot[0]', 'copilot', {reserve: true, model: 'model-r'})],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
-    });
-    const subject = roundSubject(f.session, review, 1);
-    captureRuns(f.session, [
-      attempt(subject, {slot: 'claude[0]', provider: 'claude', model: 'model-a', outcome: 'timeout'}),
-      attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'claude[0]', attempt: 2, tokens: 700}),
-    ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'copilot', model: 'model-r', raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 700, measured: 1, launched: 2,
-    }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 700 partial \| 700 partial \|$/m);
+    assert.match(report, /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
+    assert.match(report, /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -557,22 +551,27 @@ test('review yield counts every reserve alias attempt', async () => {
     const review = 'plan-reserve-alias';
     saveRound({
       session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('copilot[0]', 'copilot', {reserve: true, model: 'model-r'})],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
+      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('codex[0]', 'codex'), rosterSlot('copilot[0]', 'copilot', {reserve: true, model: 'model-r'})],
+      outcomes: [
+        {slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}},
+        {slot: 'codex[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}},
+      ],
+      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']}), finding('F2', {severity: 'MUST', sources: ['codex[0]']})],
     });
     const subject = roundSubject(f.session, review, 1);
     captureRuns(f.session, [
       attempt(subject, {slot: 'claude[0]', provider: 'claude', model: 'model-a', outcome: 'auth', tokens: 100}),
       attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'claude[0]', attempt: 2, tokens: 300}),
       attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'claude[0]', attempt: 3, tokens: 300}),
+      attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'codex[0]', attempt: 1, tokens: 200}),
     ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
+    const fold = {records: [ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'accepted')], lastSeq: 2, torn: null} as Fold;
     const facts = sessionFacts(f.session, fold, 'complete');
     assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'copilot', model: 'model-r', raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 700, measured: 3, launched: 3,
+      kind: 'provider', provider: 'copilot', model: 'model-r', raised: {MUST: 2, SHOULD: 0, CONSIDER: 0},
+      accepted: 2, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 900, measured: 4, launched: 4,
     }]);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 900 \| 450 \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -603,51 +602,7 @@ test('review yield credits the last attempted responder across captures', async 
       kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 0, SHOULD: 0, CONSIDER: 0},
       accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 600, measured: 3, launched: 3,
     }]);
-  } finally { f.cleanup(); }
-});
-
-test('review yield partial coverage renders partial', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-partial';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude')],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
-    });
-    const subject = roundSubject(f.session, review, 1);
-    captureRuns(f.session, [
-      attempt(subject, {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 500}),
-      attempt(subject, {slot: 'claude[0]', provider: 'claude', model: 'model-a', attempt: 2}),
-    ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 500, measured: 1, launched: 2,
-    }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 500 partial \| 500 partial \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('review yield native responder row', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-native';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('codex[0]', 'codex', {native: true})],
-      outcomes: [{slot: 'codex[0]', state: 'done', text: 'ok', responder: {slot: 'codex[0]', provider: 'codex', model: 'model-a', native: true}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['codex[0]']})],
-    });
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'native', provider: 'codex', model: null, raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 0,
-    }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 600 \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -656,7 +611,7 @@ test('review yield responder change across rounds', async () => {
   try {
     const review = 'plan-change';
     saveRound({
-      session: f.session, review, round: 1,
+      session: f.session, review, round: 1, generation: 2,
       roster: [rosterSlot('claude[0]', 'claude', {model: 'model-a'})],
       outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
       findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
@@ -667,131 +622,20 @@ test('review yield responder change across rounds', async () => {
       outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'codex', model: 'model-b', native: false}}],
       findings: [finding('F2', {severity: 'MUST', sources: ['claude[0]']})],
     });
-    captureRuns(f.session, [
-      attempt(roundSubject(f.session, review, 1), {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 100}),
-      attempt(roundSubject(f.session, review, 2), {slot: 'claude[0]', provider: 'codex', model: 'model-b', tokens: 200}),
-    ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'accepted')], lastSeq: 2, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield?.map((row) => [row.provider, row.model, row.tokens, row.accepted]).sort(), [
-      ['claude', 'model-a', 100, 1], ['codex', 'model-b', 200, 1],
-    ]);
-  } finally { f.cleanup(); }
-});
-
-test('review yield zero accepted renders dash', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-unruled';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude')],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
-    });
-    captureRuns(f.session, [attempt(roundSubject(f.session, review, 1), {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 400})]);
-    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
-    assert.deepEqual(facts.slotYield?.[0], {
-      kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 1, tokens: 400, measured: 1, launched: 1,
-    });
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 1 \| 400 \| — \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('review yield tool findings row', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-tool';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude')],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['tool']})],
-    });
-    captureRuns(f.session, [attempt(roundSubject(f.session, review, 1), {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 100})]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield?.map((row) => [row.kind, row.provider, row.model, row.raised, row.accepted, row.tokens]), [
-      ['provider', 'claude', 'model-a', {MUST: 0, SHOULD: 0, CONSIDER: 0}, 0, 100],
-      ['tool', 'tool', null, {MUST: 1, SHOULD: 0, CONSIDER: 0}, 1, undefined],
-    ]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('review yield failed slot row renders cost', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-failed';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('codex[0]', 'codex', {model: 'model-a'})],
-      outcomes: [{slot: 'codex[0]', state: 'failed', cls: 'timeout', reason: 'slot timed out'}],
-    });
-    const subject = roundSubject(f.session, review, 1);
-    captureRuns(f.session, [
-      attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-a', outcome: 'timeout', tokens: 120}),
-      attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-b', attempt: 2, outcome: 'timeout', tokens: 80}),
-    ]);
-    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'codex', model: 'model-b', raised: {MUST: 0, SHOULD: 0, CONSIDER: 0},
-      accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 200, measured: 2, launched: 2,
-    }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| codex \| model-b \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 200 \| — \|$/m);
-  } finally { f.cleanup(); }
-});
-
-test('review yield resumed round reserve per target', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-resumed';
-    saveRound({
-      session: f.session, review, round: 1,
-      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('codex[0]', 'codex'), rosterSlot('copilot[0]', 'copilot', {reserve: true, model: 'model-r'})],
-      outcomes: [
-        {slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}},
-        {slot: 'codex[0]', state: 'done', text: 'ok', responder: {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', native: false}},
-      ],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']}), finding('F2', {severity: 'MUST', sources: ['codex[0]']})],
-    });
-    const subject = roundSubject(f.session, review, 1);
-    captureRuns(f.session, [
-      attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'claude[0]', tokens: 100}),
-      attempt(subject, {slot: 'copilot[0]', provider: 'copilot', model: 'model-r', targetSlot: 'codex[0]', attempt: 2, tokens: 200}),
-    ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'accepted')], lastSeq: 2, torn: null} as Fold;
-    const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'copilot', model: 'model-r', raised: {MUST: 2, SHOULD: 0, CONSIDER: 0},
-      accepted: 2, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 300, measured: 2, launched: 2,
-    }]);
-  } finally { f.cleanup(); }
-});
-
-test('review yield superseded generation partial', async () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    const review = 'plan-superseded';
-    saveRound({
-      session: f.session, review, round: 1, generation: 2,
-      roster: [rosterSlot('claude[0]', 'claude')],
-      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
-      findings: [finding('F1', {severity: 'MUST', sources: ['claude[0]']})],
-    });
     fs.mkdirSync(path.join(f.session, '.state', 'reviews', review, 'round-1', 'gen-1'), {recursive: true});
     captureRuns(f.session, [
       attempt(roundSubject(f.session, review, 1, 1), {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 900}),
       attempt(roundSubject(f.session, review, 1, 2), {slot: 'claude[0]', provider: 'claude', model: 'model-a', attempt: 2, tokens: 100}),
+      attempt(roundSubject(f.session, review, 2), {slot: 'claude[0]', provider: 'codex', model: 'model-b', tokens: 200}),
     ]);
-    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
+    const fold = {records: [ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'accepted')], lastSeq: 2, torn: null} as Fold;
     const facts = sessionFacts(f.session, fold, 'complete');
-    assert.deepEqual(facts.slotYield, [{
-      kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
-      accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 100, measured: 1, launched: 2,
-    }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 partial \| 100 partial \|$/m);
+    assert.deepEqual(facts.slotYield?.map((row) => [row.provider, row.model, row.tokens, row.accepted, row.measured, row.launched]).sort(), [
+      ['claude', 'model-a', 100, 1, 1, 2], ['codex', 'model-b', 200, 1, 1, 1],
+    ]);
+    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 partial \| 100 partial \|$/m);
+    assert.match(report, /^\| codex \| model-b \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 200 \| 200 \|$/m);
   } finally { f.cleanup(); }
 });
 

@@ -56,39 +56,30 @@ test('spec lint: ids that use plan, criterion, increment, or finding forms are c
   for (const id of ['T1', 'SC2', 'I01', 'R1', 'R1-F2']) {
     assert.deepEqual(codes(spec({ Requirements: `${REQS}### ${id} — Collides\n- Acceptance: c\n` })), ['colliding-id'], id);
   }
-});
-
-test('spec lint: a decision heading that uses a plan ID form is colliding-id', () => {
-  assert.deepEqual(codes(spec({ Decisions: `${DECS}### T1 — Collides
-` })), ['colliding-id']);
+  assert.deepEqual(codes(spec({ Decisions: `${DECS}### T1 — Collides\n` })), ['colliding-id']);
 });
 
 test('spec lint: ids in prose are not defects', () => {
   assert.ok(parseSpec(spec({ 'Intent & Problem': 'Cites SC1, T2, I01, and R1-F1.' })).ok);
 });
 
-test('spec lint: ids absent from requirements are missing-requirement', () => {
+test('spec lint: requirements require ID and acceptance bullet', () => {
   assert.deepEqual(codes(spec({ Requirements: 'Nothing yet.' })), ['missing-requirement']);
-});
-
-test('spec lint: acceptance bullet is required per requirement', () => {
   assert.deepEqual(codes(spec({ Requirements: '### REQ-1 — A\nNo check.\n' })), ['missing-acceptance']);
 });
 
-test('spec lint reports invalid IDs and missing acceptance in duplicated Requirements sections', () => {
+test('spec lint reports invalid IDs, missing acceptance, and malformed headings in duplicated sections', () => {
   const source = `${spec()}\n## Requirements\n### T9 — Shadow\n- Acceptance: hidden.\n\n### REQ-3 — Unchecked\nNo check.\n`;
   const result = parseSpec(source);
   assert.ok(!result.ok);
   const found: string[] = [...result.defects, ...result.warnings].map((d) => d.code);
   for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance']) assert.ok(found.includes(code), `${code} in ${found.join(',')}`);
   assert.ok(result.warnings.some((d) => d.code === 'missing-acceptance' && d.message.startsWith('REQ-3 ')));
-});
 
-test('spec lint reports duplicated Decisions sections and malformed decision IDs', () => {
-  const source = `${spec()}\n## Decisions\n### Decision two\n- Choice: x\n`;
-  const found = codes(source);
-  assert.ok(found.includes('duplicate-section'), found.join(','));
-  assert.ok(found.includes('malformed-id'), found.join(','));
+  const decSource = `${spec()}\n## Decisions\n### Decision two\n- Choice: x\n`;
+  const foundDec = codes(decSource);
+  assert.ok(foundDec.includes('duplicate-section'), foundDec.join(','));
+  assert.ok(foundDec.includes('malformed-id'), foundDec.join(','));
 });
 
 

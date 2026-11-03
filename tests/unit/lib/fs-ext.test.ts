@@ -29,23 +29,15 @@ test('real LinkFs: link to an existing name throws EEXIST; publishExclusive leav
 
 test('real LinkFs: writeAtomic replaces the target and leaves no partial file', () => {
   const root = dir();
-  const file = path.join(root, 'beat.json');
+  assert.equal(nodeLinkFs.readText(path.join(root, 'missing')), null);
+  assert.deepEqual(nodeLinkFs.list(path.join(root, 'missing')), []);
+
+  const file = path.join(root, 'sub', 'beat.json');
   nodeLinkFs.writeAtomic(file, 'one');
   nodeLinkFs.writeAtomic(file, 'two');
   assert.equal(nodeLinkFs.readText(file), 'two');
-  assert.deepEqual(nodeLinkFs.list(root), ['beat.json']);
-});
+  assert.deepEqual(nodeLinkFs.list(path.join(root, 'sub')), ['beat.json']);
 
-test('real LinkFs: absent files and directories return null and an empty list', () => {
-  const root = dir();
-  assert.equal(nodeLinkFs.readText(path.join(root, 'missing')), null);
-  assert.deepEqual(nodeLinkFs.list(path.join(root, 'missing')), []);
-});
-
-test('real LinkFs: atomic and exclusive writes create absent parent directories', () => {
-  const root = dir();
-  nodeLinkFs.writeAtomic(path.join(root, 'review.wave.1', 'input.json'), '{}');
   assert.equal(publishExclusive(nodeLinkFs, path.join(root, 'review.wave.2', 'launch.json'), '{}'), true);
-  assert.equal(fs.readFileSync(path.join(root, 'review.wave.1', 'input.json'), 'utf8'), '{}');
   assert.ok(fs.existsSync(path.join(root, 'review.wave.2', 'launch.json')));
 });

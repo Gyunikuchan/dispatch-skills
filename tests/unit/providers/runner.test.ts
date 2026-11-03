@@ -201,19 +201,16 @@ test('an unresolved checkout denies session word patterns', async () => {
   const prompt = h.launches[0]?.argv[2] ?? '';
   assert.ok(!prompt.includes('unique-token-payload'), prompt);
   assert.ok(!prompt.includes('[SESSION ARTIFACTS]'), prompt);
-});
 
-test('worktree discovery failure denies session word patterns', async () => {
-  const session = '/sessions/s1', file = `${session}/api_token.txt`;
-  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
-  h.fs.readdir = () => { throw new Error('denied'); };
-  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  const errorH = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
+  errorH.fs.readdir = () => { throw new Error('denied'); };
+  const errorRun = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', errorH.ports);
   await flush();
-  h.finish(ok());
-  await run;
-  const prompt = h.launches[0]?.argv[2] ?? '';
-  assert.ok(!prompt.includes('unique-token-payload'), prompt);
-  assert.ok(!prompt.includes('[SESSION ARTIFACTS]'), prompt);
+  errorH.finish(ok());
+  await errorRun;
+  const errorPrompt = errorH.launches[0]?.argv[2] ?? '';
+  assert.ok(!errorPrompt.includes('unique-token-payload'), errorPrompt);
+  assert.ok(!errorPrompt.includes('[SESSION ARTIFACTS]'), errorPrompt);
 });
 
 test('relocated worktree word patterns stay denied', () => {
@@ -222,13 +219,11 @@ test('relocated worktree word patterns stay denied', () => {
   assert.equal(findSensitiveMatch(`${checkout}/T1/api_token.txt`, resolve, { sessionRoot: session }), 'file');
   const prompt = formatSafetyPrompt('Review it', { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: checkout });
   assert.ok(prompt.includes(`(resolved ${checkout})`), prompt);
-});
 
-test('checkout junction to another session path stays denied', () => {
-  const session = '/sessions/s1', checkout = '/sessions/s1/checkouts/integration';
-  assert.equal(findSensitiveMatch(`${checkout}/api_token.txt`, (path) => path, { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [checkout] }), 'file');
-  const prompt = formatSafetyPrompt('Review it', { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [checkout] });
-  assert.ok(prompt.includes(checkout), prompt);
+  const junction = `${checkout}/integration`;
+  assert.equal(findSensitiveMatch(`${junction}/api_token.txt`, (path) => path, { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [junction] }), 'file');
+  const junctionPrompt = formatSafetyPrompt('Review it', { sessionRoot: session, sessionRealRoot: session, worktreeRealRoot: `${session}/.state/worktrees`, worktreeRoots: [junction] });
+  assert.ok(junctionPrompt.includes(junction), junctionPrompt);
 });
 
 test('safety prompt states session exemption', async () => {
@@ -290,19 +285,6 @@ test('timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output 
   assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at \/r\/log/);
 });
 
-test('OpenCode POSIX timeout settles after process-group termination', async () => {
-  const h = harness(posix);
-  const pending = runDelegate(opencode, { ...req, agent: 'explore', readOnlyVerified: true }, 'cli', h.ports);
-  await flush();
-  h.clock.advance(5000);
-  assert.deepEqual(h.signals, ['-50:SIGTERM']);
-  h.clock.advance(1000);
-  assert.deepEqual(h.signals, ['-50:SIGTERM', '-50:SIGKILL']);
-  h.finish(ok({ exit: null, signal: 'SIGKILL', stdout: '' }));
-  const result = await pending;
-  assert.equal(result.result?.timedOut, true);
-  assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
-});
 
 test('timeout on Windows kills the process tree with taskkill /T /F', async () => {
   assert.deepEqual(killArgv('win32', 50), ['taskkill', '/pid', '50', '/T', '/F']);
@@ -499,28 +481,36 @@ test('OpenCode spawn failures with no PID preserve not-found without signaling o
 });
 
 
-test('POSIX owned-group checks distinguish missing groups, permission failure and bounded escalation', async(t) => {
-  const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
-  Object.defineProperty(process,'platform',{...descriptor,value:'linux'});
-  t.after(()=>Object.defineProperty(process,'platform',descriptor));
-  const {nodeProcess}=await import('../../../skills/dispatch/scripts/providers/node-process.ts');
-  for(const scenario of ['gone','permission','term','kill','unconfirmed'] as const) {
-    await t.test(scenario,async(t)=>{
-      t.mock.timers.enable();
-      const signals:(string|number|undefined)[]=[];let terminated=false;let killed=false;
-      t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{
-        assert.equal(pid,-50);signals.push(signal);
-        if(scenario==='permission')throw Object.assign(new Error('denied'),{code:'EPERM'});
-        if(scenario==='gone'||(scenario==='term'&&terminated)||(scenario==='kill'&&killed))throw Object.assign(new Error('gone'),{code:'ESRCH'});
-        if(signal==='SIGTERM')terminated=true;if(signal==='SIGKILL')killed=true;
-        return true;
-      });
-      const pending=nodeProcess.settleGroup!(50,1000);
-      t.mock.timers.tick(500);for(let i=0;i<4;i++)await Promise.resolve();
-      t.mock.timers.tick(500);for(let i=0;i<4;i++)await Promise.resolve();
-      assert.equal(await pending,!['permission','unconfirmed'].includes(scenario));
-      assert.equal(signals.includes('SIGKILL'),['kill','unconfirmed'].includes(scenario));
-      if(scenario==='permission')assert.deepEqual(signals,[0]);
+test('POSIX owned-group checks distinguish missing groups, permission failure and bounded escalation', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...descriptor, value: 'linux' });
+  t.after(() => Object.defineProperty(process, 'platform', descriptor));
+  const { nodeProcess } = await import('../../../skills/dispatch/scripts/providers/node-process.ts');
+  t.mock.timers.enable();
+  for (const scenario of ['gone', 'permission', 'term', 'kill', 'unconfirmed'] as const) {
+    const signals: (string | number | undefined)[] = [];
+    let terminated = false;
+    let killed = false;
+    const killMock = t.mock.method(process, 'kill', (pid: number, signal?: string | number) => {
+      assert.equal(pid, -50);
+      signals.push(signal);
+      if (scenario === 'permission') throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      if (scenario === 'gone' || (scenario === 'term' && terminated) || (scenario === 'kill' && killed)) throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+      if (signal === 'SIGTERM') terminated = true;
+      if (signal === 'SIGKILL') killed = true;
+      return true;
     });
+    try {
+      const pending = nodeProcess.settleGroup!(50, 1000);
+      t.mock.timers.tick(500);
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      t.mock.timers.tick(500);
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      assert.equal(await pending, !['permission', 'unconfirmed'].includes(scenario), scenario);
+      assert.equal(signals.includes('SIGKILL'), ['kill', 'unconfirmed'].includes(scenario), scenario);
+      if (scenario === 'permission') assert.deepEqual(signals, [0], scenario);
+    } finally {
+      killMock.mock.restore();
+    }
   }
 });

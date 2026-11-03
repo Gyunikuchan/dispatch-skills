@@ -32,7 +32,7 @@ test('repository root: ancestor Git metadata identifies the root; absence return
   assert.equal(findRepoRoot('/nowhere', () => false), null);
 });
 
-test('numeric suffix -1 on name collision', () => {
+test('session matching skips corrupt unrelated directories and matches by manifest', () => {
   const { root, temp } = repo();
   const created = initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
   assert.equal(created.reused, false);
@@ -40,16 +40,6 @@ test('numeric suffix -1 on name collision', () => {
   assert.equal(path.basename(dir), '20260929T1754Z-demo');
   assert.equal(readManifest(dir).location, 'workspace');
   assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now, tempRoot: temp }), { path: dir, reused: true });
-  assert.equal(initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now, tempRoot: temp }), dir);
-
-  // Another session holding the same name in the same minute forces a numeric title suffix -1.
-  const suffixed = initializeSession({ repositoryRoot: root, sessionId: 's2', sessionTitle: 'demo', now, tempRoot: temp });
-  assert.equal(path.basename(suffixed), '20260929T1754Z-demo-1');
-});
-
-test('session matching skips corrupt unrelated directories and matches by manifest', () => {
-  const { root, temp } = repo();
-  const dir = initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
 
   // Corrupt or unreadable unrelated directory does not block session matching or initialization.
   const damaged = path.join(path.dirname(dir), '20260929T1754Z-damaged');

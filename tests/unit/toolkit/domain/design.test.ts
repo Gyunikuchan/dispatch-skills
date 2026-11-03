@@ -124,26 +124,16 @@ test('design: parses graph, details, and Execution Status', () => {
 
 test('design: graph cycles are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I01 | 1 | Parser | none |', '| I01 | 1 | Parser | I02 |')).includes('cycle'));
-});
-
-test('design: unknown increment prerequisites are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I02 | 2 | Loader | I01 |', '| I02 | 2 | Loader | I07 |')).includes('missing-prerequisite'));
-});
-
-test('design: summary increment count must match the graph', () => {
   assert.ok(codes(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3')).includes('summary-label'));
-});
-
-test('design: increment details require a rollback boundary', () => {
   assert.ok(codes(DESIGN.replace('- Rollback boundary: revert I02\n', '')).includes('missing-increment-field'));
+  assert.ok(codes(DESIGN.replace('## Final Integration\n', '## Finale\n')).includes('missing-section'));
 });
 
 test('design: unknown execution states are rejected', () => {
   assert.ok(codes(DESIGN.replace('| I02 | ready |', '| I02 | pending |')).includes('execution-status'));
-});
-
-test('design: final integration section is required', () => {
-  assert.ok(codes(DESIGN.replace('## Final Integration\n', '## Finale\n')).includes('missing-section'));
+  assert.ok(codes(DESIGN.replace('Next Action: implement:I02\n', '')).includes('execution-status'));
+  assert.ok(codes(DESIGN.replace('| I02 | ready | implement:I02 |', '| I02 | ready | implement:I02 |\n| I02 | ready | again |')).includes('execution-status'));
 });
 
 test('design: governed text excludes Execution Status and the resolution section', () => {
@@ -152,14 +142,6 @@ test('design: governed text excludes Execution Status and the resolution section
   assert.ok(!governed.includes('implement:I02'));
   assert.ok(!governed.includes('## Review Findings & Resolutions'));
   assert.ok(governed.includes('## Final Integration'));
-});
-
-test('design: Execution Status requires a Next Action', () => {
-  assert.ok(codes(DESIGN.replace('Next Action: implement:I02\n', '')).includes('execution-status'));
-});
-
-test('design: Execution Status rejects duplicate increment rows', () => {
-  assert.ok(codes(DESIGN.replace('| I02 | ready | implement:I02 |', '| I02 | ready | implement:I02 |\n| I02 | ready | again |')).includes('execution-status'));
 });
 
 test('design-section-order: old order fails and new order passes', () => {
@@ -188,13 +170,6 @@ test('journal design admission rejects malformed objectives and dependency graph
     { ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] },
     { ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] },
     { ...design, increments: [rows[1]!] },
-  ];
-  for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
-});
-
-test('journal design admission rejects malformed increment behaviour', () => {
-  const rows = design.increments;
-  const invalid = [
     { ...design, increments: [{ ...rows[0]!, behaviour: undefined as never }, rows[1]!] },
     { ...design, increments: [{ ...rows[0]!, behaviour: ['I01 outcome', 4] as never }, rows[1]!] },
   ];
@@ -228,12 +203,6 @@ test('designScopeGrew compares validation case-insensitively', () => {
 });
 
 const layeredDesign = () => DESIGN.replace(/## Approach[\s\S]*?(?=## Alternatives)/, '## Approach\nREQ-1 importer\n\n');
-test('design: summary box without TL;DR lints clean and parses', () => {
-  const result = parseDesign(DESIGN);
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(asParsedDesign(result.design), result.design);
-});
-
 test('design summary: Parent rejects invalid pins', () => {
   assert.ok(parseDesign(layeredDesign()).ok);
   for (const parent of [
@@ -245,8 +214,6 @@ test('design summary: Parent rejects invalid pins', () => {
     assert.ok(codes(layeredDesign().replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label'), parent);
   }
 });
-test('design approach requires REQ reference', () => assert.ok(codes(layeredDesign().replace('REQ-1 importer', 'Importer')).includes('missing-requirement-ref')));
-test('design approach precedes alternatives', () => assert.ok(codes(layeredDesign().replace('## Approach\nREQ-1 importer\n\n', '').replace('## Alternatives & Decisions\nChosen.', '## Alternatives & Decisions\nChosen.\n\n## Approach\nREQ-1 importer')).includes('section-order')));
 
 const hash = `sha256:${'a'.repeat(64)}`;
 const binding = { path: 'importer.design.md', revision: hash, increment: 'I01', contract: { Outcome: 'First behavior' }, paths: ['src/a.ts'] };

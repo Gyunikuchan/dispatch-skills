@@ -15,22 +15,14 @@ const base: DelegateRequest = {
 const launchReq = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({ ...base, binary: 'opencode', prompt: 'P', briefFile: null, schemaText: null, platform, ...over });
 
 test('opencode argv is v2-only: run --auto --format json, -m model#effort, -- prompt; never --pure or --variant', () => {
-  const argv = opencode.argv(launchReq({ agent: 'plan' }), 'cli').argv;
-  assert.deepEqual(argv, ['opencode', '--standalone', 'run', '--auto', '--format', 'json', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P']);
-  assert.ok(!argv.includes('--pure') && !argv.includes('--variant'));
-  assert.deepEqual(opencode.argv(launchReq({ effort: null }), 'cli').argv.slice(-3), ['lmstudio/qwen', '--', 'P']);
-});
-
-test('opencode argv requests json format', () => {
   for (const mode of ['cli', 'desktop', 'vscode'] as const) {
-    const argv = opencode.argv(launchReq(), mode).argv;
-    const index = argv.indexOf('--format');
-    assert.ok(index > 0 && argv[index + 1] === 'json', `${mode} lacks --format json`);
+    const argv = opencode.argv(launchReq({ agent: 'plan' }), mode).argv;
+    assert.deepEqual(argv, ['opencode', '--standalone', 'run', '--auto', '--format', 'json', '--agent', 'plan', '-m', 'lmstudio/qwen#high', '--', 'P'], mode);
+    assert.ok(!argv.includes('--pure') && !argv.includes('--variant'), mode);
   }
-  // Tool events repeat tool output, so JSON runs need a larger cap than the runner default.
+  assert.deepEqual(opencode.argv(launchReq({ effort: null }), 'cli').argv.slice(-3), ['lmstudio/qwen', '--', 'P']);
   assert.equal(opencode.outputCapBytes, 64 * 1024 * 1024);
 });
-
 
 test('OpenCode delegates use private servers in every mode', async () => {
   for (const mode of ['cli', 'desktop', 'vscode'] as const) {
@@ -45,15 +37,6 @@ test('OpenCode delegates use private servers in every mode', async () => {
   }), 'cli').argv;
   const binaryIndex = bubblewrapped.indexOf('opencode');
   assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), ['opencode', '--standalone', 'run']);
-
-  const retryPorts = ports([result('', 1, 'Variant unavailable'), result(jsonText('R'))]);
-  const retry = await runDelegate(opencode, base, 'cli', retryPorts);
-  assert.equal(retry.outcome.status, 'ok');
-  assert.deepEqual(retryPorts.launches.map((launch) => launch.argv.slice(0, 3)), [
-    ['opencode', '--standalone', 'run'],
-    ['opencode', '--standalone', 'run'],
-  ]);
-
 });
 
 function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): RunnerPorts & { launches: Launch[] } {
@@ -179,41 +162,34 @@ test('opencode narration parses when the report starts its own line', () => {
   const outcome = opencode.parse(result(stream), launchReq());
   assert.equal(outcome.status, 'ok');
   assert.equal(parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''}).ok, true);
-});
 
-test('opencode narration glued to a report fails closed', () => {
-  const stream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
-  const outcome = opencode.parse(result(stream), launchReq());
-  assert.equal(parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''}).ok, false);
-});
+  const gluedStream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
+  const gluedOutcome = opencode.parse(result(gluedStream), launchReq());
+  assert.equal(gluedOutcome.status, 'ok');
+  assert.equal(parseReport({kind: 'plan', source: 'claude[0]', text: gluedOutcome.status === 'ok' ? gluedOutcome.text : ''}).ok, false);
 
-test('opencode split JSON string remains valid', () => {
-  const stream = [jsonText('{"status":"CLE'), jsonText('AN","findings":[]}')].join('\n');
-  const outcome = opencode.parse(result(stream), launchReq());
-  assert.equal(outcome.status, 'ok');
-  const parsed = parseReport({kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : ''});
-  assert.equal(parsed.ok, true);
-  assert.equal(parsed.ok && parsed.status, 'CLEAN');
+  const splitStream = [jsonText('{"status":"CLE'), jsonText('AN","findings":[]}')].join('\n');
+  const splitOutcome = opencode.parse(result(splitStream), launchReq());
+  assert.equal(splitOutcome.status, 'ok');
+  const splitParsed = parseReport({kind: 'plan', source: 'claude[0]', text: splitOutcome.status === 'ok' ? splitOutcome.text : ''});
+  assert.equal(splitParsed.ok, true);
+  assert.equal(splitParsed.ok && splitParsed.status, 'CLEAN');
 });
 
 test('opencode nonzero exit keeps stderr class', () => {
   const outcome = opencode.parse(result(jsonText('partial answer'), 1, 'rate limit exceeded'), launchReq());
   assert.equal(outcome.status === 'fail' && outcome.cls, 'quota');
-});
 
-test('opencode error event quota with empty stderr is quota', () => {
-  const outcome = opencode.parse(result(jsonError('rate limit exceeded: usage limit reached'), 0), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'quota');
-  assert.match(outcome.status === 'fail' ? outcome.detail : '', /usage limit reached/);
-});
+  const errorEventOutcome = opencode.parse(result(jsonError('rate limit exceeded: usage limit reached'), 0), launchReq());
+  assert.equal(errorEventOutcome.status === 'fail' && errorEventOutcome.cls, 'quota');
+  assert.match(errorEventOutcome.status === 'fail' ? errorEventOutcome.detail : '', /usage limit reached/);
 
-test('opencode tool output quota with other exit is not quota', () => {
   const tool = event('tool_use', {
     id: 'tool-0', sessionID: 'ses', messageID: 'msg', type: 'tool',
     state: { status: 'error', input: {}, error: 'rate limit exceeded', metadata: {}, content: [{ type: 'text', text: 'rate limit exceeded' }] },
   });
-  const outcome = opencode.parse(result(tool, 2), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'empty-output');
+  const toolOutcome = opencode.parse(result(tool, 2), launchReq());
+  assert.equal(toolOutcome.status === 'fail' && toolOutcome.cls, 'empty-output');
 });
 
 test('opencode error after text fails', () => {

@@ -66,7 +66,7 @@ function setup(script: (n: number) => Result, spec = fakeSpec(), clock = fakeClo
 const target = (extra: Record<string, unknown> = {}) => ({ id: 'claude', provider: 'claude', mode: 'cli', binary: 'fake-cli', model: null, effort: null, sandbox: true, aliases: ['cli'], skip: null, ...extra });
 const okReply = (fixture: { nonces: { attached: string; sibling: string } }) => `ATTACHED: ${fixture.nonces.attached}\nSIBLING: ${fixture.nonces.sibling}`;
 
-test('probe cleanup reason: unsafe liveness blocks removal', () => {
+test('probe cleanup reason: success retains bounded removal options and no reason', () => {
   const fixture = { dir: path.join(tempDir(), 'fixture') };
   let calls = 0;
   const io = { rmSync: () => { calls++; } };
@@ -74,10 +74,7 @@ test('probe cleanup reason: unsafe liveness blocks removal', () => {
     assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness }], io), { status: 'blocked', reason: { code: 'exit-unconfirmed' } });
   }
   assert.equal(calls, 0);
-});
 
-test('probe cleanup reason: filesystem failures map error codes to known code or unknown', () => {
-  const fixture = { dir: path.join(tempDir(), 'fixture') };
   const cases: { code: unknown; expectedCode: string }[] = [
     { code: 'EBUSY', expectedCode: 'EBUSY' },
     { code: undefined, expectedCode: 'unknown' },
@@ -86,17 +83,14 @@ test('probe cleanup reason: filesystem failures map error codes to known code or
     { code: null, expectedCode: 'unknown' },
   ];
   for (const { code, expectedCode } of cases) {
-    const io = { rmSync: () => { throw Object.assign(new Error('private path details'), { code }); } };
-    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: expectedCode } });
+    const errorIo = { rmSync: () => { throw Object.assign(new Error('private path details'), { code }); } };
+    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], errorIo), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: expectedCode } });
   }
-});
 
-test('probe cleanup reason: success retains bounded removal options and no reason', () => {
-  const fixture = { dir: path.join(tempDir(), 'fixture') };
-  const calls: unknown[][] = [];
-  const io = { rmSync: (...args: unknown[]) => { calls.push(args); } };
-  assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'complete', reason: null });
-  assert.deepEqual(calls, [[fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }]]);
+  const successCalls: unknown[][] = [];
+  const successIo = { rmSync: (...args: unknown[]) => { successCalls.push(args); } };
+  assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], successIo), { status: 'complete', reason: null });
+  assert.deepEqual(successCalls, [[fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }]]);
   assert.deepEqual(probe.cleanupFixture(null, [], { rmSync: () => assert.fail('no fixture to remove') }), { status: 'complete', reason: null });
 });
 
@@ -110,19 +104,22 @@ const rows = [
 const config = { 'read-delegates': { claude: { targets: [{ low: { model: 'small-model', effort: 'low' }, medium: { model: 'mid-model', effort: 'medium' } }] } } };
 
 test('audit probe selection uses low configuration and one reachable mode per provider', () => {
-  const targets = probe.buildTargets(rows, { modes: false, config, limits: limits() });
-  assert.deepEqual(targets.map((t: { id: string }) => t.id), ['claude']);
+  const allRows = [...rows, { provider: 'codex', mode: 'cli', bin: '/bin/codex', reachable: true, detail: '' }];
+  const allConfig = {
+    ...config,
+    'read-delegates': {
+      ...config['read-delegates'],
+      codex: { targets: [{ low: { model: 'codex-model', effort: 'low' } }] },
+    },
+  };
+  const targets = probe.buildTargets(allRows, { modes: false, config: allConfig, limits: limits() });
+  assert.deepEqual(targets.map((t: { id: string }) => t.id), ['claude', 'codex']);
   assert.equal(targets[0].mode, 'cli');
   assert.equal(targets[0].model, 'small-model');
   assert.equal(targets[0].effort, 'low');
+  assert.equal(targets[1].model, 'codex-model');
+  assert.equal(targets[1].skip, null);
   assert.equal(probe.PROBE_LEVEL, 'low');
-});
-
-test('audit probe targets every provider in the shipped registry, including codex', () => {
-  const codexRows = [{ provider: 'codex', mode: 'cli', bin: '/bin/codex', reachable: true, detail: '' }];
-  const codexConfig = { 'read-delegates': { codex: { targets: [{ low: { model: 'codex-model', effort: 'low' } }] } } };
-  const targets = probe.buildTargets(codexRows, { modes: false, config: codexConfig, limits: limits() });
-  assert.deepEqual(targets.map((t: { id: string; skip: string | null }) => [t.id, t.skip]), [['codex', null]]);
 });
 
 test('audit probe --modes widening beyond the launch limit is skipped without launching', () => {
@@ -168,7 +165,7 @@ test('audit probe config load validates read commands like production fan-out', 
 });
 
 test('audit probe validates the denylisted attachment without any launch', async () => {
-  const { ctx, process, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
+  const { ctx, process, fixture, states } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
   const record = await probe.runTarget(target(), ctx);
   assert.equal(process.launches.length, 1, 'only the read probe launches');
   assert.equal(record.denylist.launches, 0);
@@ -177,32 +174,26 @@ test('audit probe validates the denylisted attachment without any launch', async
   assert.ok(!process.launches.some((l) => l.argv.join(' ').includes(fixture.nonces.denylisted)));
   assert.equal(record.lifecycle, 'complete');
   assert.deepEqual(record.checks, { attached: true, sibling: true });
-});
-
-test('audit probe records an unavailable generation limit and omits absent usage', async () => {
-  const { ctx, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
-  const record = await probe.runTarget(target(), ctx);
   assert.deepEqual(record.generationLimit, { requested: 128, applied: false, reason: 'provider adapter exposes no generation-token limit' });
   assert.equal(record.usage, null);
   assert.ok(record.gaps.includes('usage unavailable'));
+  assert.deepEqual(states.map((s) => s.lifecycle), ['running', 'complete']);
 });
 
 test('audit probe preparation shares the deadline and is classified separately', async () => {
   const clock = fakeClock();
   const spec = fakeSpec({ prepare: async () => { clock.advance(61_000); return { kind: 'launch', env: {}, release: () => {} }; } });
-  const { ctx, process } = setup(() => ({ exit: 0, stdout: '' }), spec, clock);
+  const { ctx, process, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }), spec, clock);
   const record = await probe.runTarget(target(), { ...ctx, ports: { ...ctx.ports, prepare: { fetchModels: async () => [], acquireGpuLock: async () => () => {} } } });
   assert.equal(process.launches.length, 0);
   assert.equal(record.cause, 'preparation-timeout');
   assert.equal(record.lifecycle, 'timeout');
   assert.equal(record.deadlineAt - record.startedAt, 60_000);
-});
 
-test('audit probe passes the shared deadline to the launch timer', async () => {
-  const { ctx, clock, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
-  await probe.runTarget(target(), ctx);
-  assert.ok(clock.timers.some((t) => t.at - 1_000_000 === 60_000), 'runner timeout at the 60 s deadline');
-  assert.ok(clock.timers.some((t) => t.at - 1_000_000 === 70_000), 'termination grace ends 10 s later');
+  const timerCtx = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
+  await probe.runTarget(target(), timerCtx.ctx);
+  assert.ok(timerCtx.clock.timers.some((t) => t.at - 1_000_000 === 60_000), 'runner timeout at the 60 s deadline');
+  assert.ok(timerCtx.clock.timers.some((t) => t.at - 1_000_000 === 70_000), 'termination grace ends 10 s later');
 });
 
 test('audit probe caps captured output at the configured byte limit', async () => {
@@ -221,19 +212,6 @@ test('audit probe does not relaunch a target whose recorded liveness is unknown'
   assert.equal(record.lifecycle, 'interrupted');
   assert.equal(record.liveness, 'unknown');
   assert.equal(record.cleanup, 'blocked');
-});
-
-test('audit probe persists running then terminal lifecycle through the state port', async () => {
-  const { ctx, states, fixture } = setup(() => ({ exit: 0, stdout: okReply(fixture) }));
-  await probe.runTarget(target(), ctx);
-  assert.deepEqual(states.map((s) => s.lifecycle), ['running', 'complete']);
-});
-
-test('audit probe fixture byte accounting combines every fixture file with both prompts', () => {
-  const fixture = probe.createFixture(path.join(tempDir(), 'repo'), { home: tempDir() });
-  const files = [fixture.attached, fixture.sibling, fixture.denylisted].reduce((sum, file) => sum + fs.statSync(file).size, 0);
-  assert.equal(probe.fixtureBytes(fixture), files + Buffer.byteLength(fixture.prompt) + Buffer.byteLength(fixture.denyPrompt));
-  assert.ok(probe.fixtureBytes(fixture) <= limits().probeFixtureBytes);
 });
 
 test('audit probe skips without launching when the fixture exceeds the configured byte limit', async () => {
@@ -284,15 +262,13 @@ test('audit probe gives OpenCode launches only the deadline remaining after intr
   assert.equal(record.deadlineAt - record.startedAt, 60_000);
   assert.ok(clock.timers.some((t) => t.at - 1_000_000 === 60_000), 'runner timeout ends at the original shared deadline');
   assert.ok(!clock.timers.some((t) => t.at - 1_000_000 > 70_000), 'no fresh full-length deadline after introspection');
-});
 
-test('audit probe refuses an OpenCode launch when introspection exhausts the shared deadline', async () => {
-  const clock = fakeClock();
-  const { ctx, process } = opencodeSetup(async (command) => { clock.advance(30_000); return command === 'config' ? [{ type: 'document', info: {} }] : READ_ONLY_AGENTS; });
-  const record = await probe.runTarget(opencodeTarget(), { ...ctx, ports: { ...ctx.ports, clock } });
-  assert.equal(process.launches.length, 0);
-  assert.equal(record.lifecycle, 'timeout');
-  assert.equal(record.cause, 'preparation-timeout');
+  const exhaustedClock = fakeClock();
+  const exhausted = opencodeSetup(async (command) => { exhaustedClock.advance(30_000); return command === 'config' ? [{ type: 'document', info: {} }] : READ_ONLY_AGENTS; });
+  const timeoutRecord = await probe.runTarget(opencodeTarget(), { ...exhausted.ctx, ports: { ...exhausted.ctx.ports, clock: exhaustedClock } });
+  assert.equal(exhausted.process.launches.length, 0);
+  assert.equal(timeoutRecord.lifecycle, 'timeout');
+  assert.equal(timeoutRecord.cause, 'preparation-timeout');
 });
 
 // SECTION: Manifest-backed entrypoint

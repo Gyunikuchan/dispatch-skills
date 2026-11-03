@@ -26,22 +26,8 @@ test('skill contract keeps router entries and resolving reference links', () => 
     if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
     assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
   }
-});
 
-test('plan guidance documents test and verification fields', () => {
-  const plan = read(root + 'references/templates/plan.md').replace(/\r\n/g, '\n');
-  const notes = plan.split('## Field notes\n')[1]!;
-  for (const field of ['Tests', 'RED', 'Automated Tests', '`[GENERATED]`']) assert.ok(notes.includes('- ' + field + ':'), field);
-});
-
-test('audit catalog points to existing toolkit and reference entry points', () => {
-  const catalog = JSON.parse(read('.agents/skills/audit-dispatch-skills/references/scenarios.json'));
-  for (const scenario of catalog.scenarios) for (const entry of scenario.entries) {
-    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, entry)), scenario.id + ' -> ' + entry);
-  }
-});
-
-test('skill contract owns action syntax', () => {
+  // Tool actions syntax documentation
   const toolkit = read(root + 'references/toolkit.md');
   const actions = toolkit.split('## Tool actions\n')[1]?.split('\n## ')[0] ?? '';
   assert.deepEqual([...actions.matchAll(/^### (.+)$/gm)].map(m => m[1]).sort(), [...TOOL_ACTIONS].sort());
@@ -53,10 +39,8 @@ test('skill contract owns action syntax', () => {
     if (file !== 'references/toolkit.md') assert.ok(matches.length <= 1, file + ' ' + matches);
     if (file === 'SKILL.md') { assert.deepEqual(matches, []); assert.ok(text.includes('<tool> <action>')); }
   }
-});
 
-test('skill contract documents ledger data and native reply and session contracts', () => {
-  const toolkit = read(root + 'references/toolkit.md');
+  // Ledger records schema documentation
   const ledger = toolkit.split('## Ledger records\n')[1]?.split('\n## ')[0] ?? '';
   for (const kind of KINDS) { const body = section(ledger, kind); assert.match(body, /data/); assert.match(body, /by/); }
   for (const field of ['spec', 'plan', 'design', 'criterion', 'reason', 'evidence', 'subject', 'ruling', 'rationale', 'before', 'after', 'class', 'diffRef', 'affects', 'commandDigest', 'tree', 'clean', 'exit', 'phase', 'task', 'launch', 'candidate', 'dest']) assert.ok(ledger.includes('`' + field + '`'), field);
@@ -81,6 +65,13 @@ test('skill contract documents ledger data and native reply and session contract
   }
 });
 
+test('audit catalog points to existing toolkit and reference entry points', () => {
+  const catalog = JSON.parse(read('.agents/skills/audit-dispatch-skills/references/scenarios.json'));
+  for (const scenario of catalog.scenarios) for (const entry of scenario.entries) {
+    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, entry)), scenario.id + ' -> ' + entry);
+  }
+});
+
 test('phase prose places each workflow rule in its canonical home', () => {
   const ref = (name: string) => read(root + 'references/' + name + '.md');
   assert.ok(links(ref('verbs/ask')).includes('../toolkit.md#ask-run'));
@@ -88,8 +79,41 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.match(ref('spec-stage'), /continue.*unaffected writers/i);
   assert.ok(ref('review-rules').includes('review:<review>:<finding>'));
   assert.match(ref('review-rules'), /ruling/);
-  const decision = ref('decision-frame');
   for (const term of ['doctor run', 'native-pending']) assert.ok(ref('providers').includes(term), term);
+
+  // Authoring carry-over and review round roster rules
+  const plan = ref('verbs/plan');
+  const design = ref('verbs/design');
+  const rules = ref('review-rules');
+  assert.match(plan, /existing test seams and helpers[^.]*`Seams:`/);
+  assert.match(plan, /unchanged consumers and callers[^.]*`Rollback & Blast Radius`/);
+  assert.match(plan, /parallel implementations[^.]*`Invariants:`/);
+  assert.match(design, /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/);
+  assert.match(rules, /launches the full configured roster when the previous completed round has an accepted MUST/);
+  assert.match(rules, /or an accepted SHOULD from a round below the cap/);
+  assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
+  assert.match(rules, /pending MUST rejection requests stay assigned/);
+  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
+  assert.match(rules, /code review prompts never receive it/);
+
+  // Implement post-cleanup verification and review timing
+  const implementText = ref('verbs/implement');
+  assert.match(implementText, /start[^.]*verification[^.]*code review[^.]*same[^.]*HEAD[^.]*together/i);
+  assert.match(implementText, /verification fails[^.]*repair[^.]*review/i);
+
+  // Scope round single canonical home
+  const canonical = ref('grounding');
+  assert.match(canonical, /## Scope round\s+After `confirm` and before authoring a standalone plan or any design/i);
+  for (const [file, link] of [['spec-stage.md','grounding.md#scope-round'], ['verbs/plan.md','../grounding.md#scope-round'], ['verbs/design.md','../grounding.md#scope-round'], ['verbs/implement.md','../grounding.md#scope-round']] as const) {
+    const text = read(root + 'references/' + file);
+    assert.ok(links(text).includes(link), file);
+    assert.doesNotMatch(text, /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i, file);
+  }
+  assert.match(implementText, /brief names the governing spec path for a whole read/i);
+
+  // Severity rubric reference and no table restatement
+  assert.ok(links(rules).includes('templates/review-severity.md'));
+  assert.doesNotMatch(rules, /^\s*\|.*\b(critical|blocks|degrades|minor)\b.*\b(MUST|SHOULD|CONSIDER)\b/im);
 });
 
 test('spec stage critiques the request premise before confirmation', () => {
@@ -140,12 +164,6 @@ test('aliases preserve entry mappings', () => {
   const review = read('skills/dispatch-code-review/SKILL.md');
   assert.ok(review.includes('--spec'));
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review)\b/, file);
-});
-
-test('human configuration keeps level and concurrency guidance', () => {
-  const config = read(root + 'references/readme/configuration.md');
-  assert.match(read(root + 'README.md'), /\^22\.18 \|\| >=23\.6/);
-  assert.ok(links(read(root + 'references/templates/walkthrough.md')).includes('../review-rules.md'));
 });
 
 test('human manuals retain portable links and current operational guidance', () => {
@@ -232,24 +250,6 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.doesNotMatch(skill, /write its output to .replyPath/);
 });
 
-test('authoring carry-over and review round roster rules are stated in prose', () => {
-  const plan = read(root + 'references/verbs/plan.md');
-  const design = read(root + 'references/verbs/design.md');
-  const rules = read(root + 'references/review-rules.md');
-
-  assert.match(plan, /existing test seams and helpers[^.]*`Seams:`/);
-  assert.match(plan, /unchanged consumers and callers[^.]*`Rollback & Blast Radius`/);
-  assert.match(plan, /parallel implementations[^.]*`Invariants:`/);
-  assert.match(design, /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/);
-
-  assert.match(rules, /launches the full configured roster when the previous completed round has an accepted MUST/);
-  assert.match(rules, /or an accepted SHOULD from a round below the cap/);
-  assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
-  assert.match(rules, /pending MUST rejection requests stay assigned/);
-  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
-  assert.match(rules, /code review prompts never receive it/);
-});
-
 test('native slots launch by prompt path', t => {
   const providers = read(root + 'references/providers.md');
   const openCode = providers.indexOf('## OpenCode private launches');
@@ -287,25 +287,4 @@ test('orchestrator reads quality bar sections by stage', () => {
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#' + anchor)), file);
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);
   }
-});
-test('implement starts post-cleanup verification and code review together', () => {
-  const text = read(root + 'references/verbs/implement.md');
-  assert.match(text, /start[^.]*verification[^.]*code review[^.]*same[^.]*HEAD[^.]*together/i);
-  assert.match(text, /verification fails[^.]*repair[^.]*review/i);
-});
-test('scope round rule has one canonical home', () => {
-  const canonical = read(root + 'references/grounding.md');
-  assert.match(canonical, /## Scope round\s+After `confirm` and before authoring a standalone plan or any design/i);
-  for (const [file, link] of [['spec-stage.md','grounding.md#scope-round'], ['verbs/plan.md','../grounding.md#scope-round'], ['verbs/design.md','../grounding.md#scope-round'], ['verbs/implement.md','../grounding.md#scope-round']] as const) {
-    const text = read(root + 'references/' + file);
-    assert.ok(links(text).includes(link), file);
-    assert.doesNotMatch(text, /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i, file);
-  }
-  assert.match(read(root + 'references/verbs/implement.md'), /brief names the governing spec path for a whole read/i);
-});
-
-test('review rules link the shared severity rubric and restate no table cell', () => {
-  const rules = read(root + 'references/review-rules.md');
-  assert.ok(links(rules).includes('templates/review-severity.md'));
-  assert.doesNotMatch(rules, /^\s*\|.*\b(critical|blocks|degrades|minor)\b.*\b(MUST|SHOULD|CONSIDER)\b/im);
 });

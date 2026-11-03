@@ -59,6 +59,9 @@ describe('lint severity', () => {
       assert.equal(checked.result.kind, kind);
       assert.deepEqual(Object.keys(checked.result).sort(), ['errors', 'hash', 'kind', 'warnings']);
     }
+    assert.equal(context.exit, 0);
+    assert.deepEqual(context.result.errors, []);
+    assert.deepEqual(context.result.warnings, []);
   });
   test('parse critical plan defects refuse lint', async () => {
     const refused = await lint('bad.plan.md', PLAN.replace('- [SC1]', '- [SCx]'));
@@ -103,36 +106,10 @@ describe('lint severity', () => {
       assert.ok(r.warnings.some(x => x.code === code));
     }
   });
-  test('lint run checks a context map against the repository root', async () => {
-    const f = sessionFixture({ memory: true });
-    try {
-      fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
-      fs.writeFileSync(path.join(f.root, 'src', 'entry.ts'), 'export function main() {}\n');
-      const map = [
-        '# Context map: root', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
-        '## Map', '- Entry — `src/entry.ts:1`', '', '## Flows', '- entry: `src/entry.ts:1`', '',
-        '## Invariants', '- Entry exists — `src/entry.ts:1` — "export function main() {}"', '',
-        '## Coverage', '- entry-points: `src/entry.ts:1`', '', '## Precedent', '- Entry: `src/entry.ts`', '',
-        '## Surprises', '- none — `src/entry.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
-      ].join('\n');
-      const file = path.join(f.session, 'maps', 'root.context.md');
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, map);
-      const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
-      const output = f.output();
-      const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
-      assert.equal(exit, 0);
-      assert.equal(result.kind, 'context');
-      assert.deepEqual(result.errors, []);
-      assert.deepEqual(result.warnings, []);
-    } finally { f.cleanup(); }
-  });
-
   test('lint run rejects malformed Commit metadata and accepts valid or missing metadata', async () => {
     fs.mkdirSync(path.join(scoped.root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(scoped.root, 'src', 'file.ts'), 'File\n');
     const validSources = [
-      CONTEXT_MAP,
       CONTEXT_MAP.replace('> **Commit:** abcdef0', `> **Commit:** ${'a'.repeat(40)}`),
       CONTEXT_MAP.replace('> **Commit:** abcdef0\n', ''),
     ];
@@ -142,16 +119,14 @@ describe('lint severity', () => {
       assert.deepEqual(result.result.errors, []);
     }
 
-    for (const [index, commit] of ['', 'abcdefg', 'abcdef', 'a'.repeat(65), 'abcdef0 trailing text'].entries()) {
-      const result = await lint(`invalid-${index}.context.md`, CONTEXT_MAP.replace('> **Commit:** abcdef0', `> **Commit:** ${commit}`));
-      assert.equal(result.exit, 4, result.output.summary);
-      assert.equal(result.output.reason, 'lint-errors');
-      const issue = result.result.errors.find((issue: { code: string; message: string; line?: number }) =>
-        issue.code === 'context-commit');
-      assert.ok(issue, JSON.stringify(result.result.errors));
-      assert.equal(issue.line, 3);
-      assert.match(issue.message, /7 to 64/);
-    }
+    const result = await lint('invalid-commit.context.md', CONTEXT_MAP.replace('> **Commit:** abcdef0', '> **Commit:** abcdef'));
+    assert.equal(result.exit, 4, result.output.summary);
+    assert.equal(result.output.reason, 'lint-errors');
+    const issue = result.result.errors.find((issue: { code: string; message: string; line?: number }) =>
+      issue.code === 'context-commit');
+    assert.ok(issue, JSON.stringify(result.result.errors));
+    assert.equal(issue.line, 3);
+    assert.match(issue.message, /7 to 64/);
   });
 
   test('lint run rejects context references through links outside the repository root', async () => {

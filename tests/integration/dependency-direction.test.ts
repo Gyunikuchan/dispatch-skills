@@ -108,28 +108,18 @@ describe('toolkit import boundary', () => {
         assert.equal(errors.length, 1, `${layer}: ${type || 'value'}`);
         assert.match(errors[0]!, /outside the shipped layers; use a surviving owner/);
       }
-    }
-  });
-  test('shipped layers allow external packages and builtins', () => {
-    for (const layer of ['toolkit', 'lib']) {
       for (const specifier of ['node:fs', 'typescript/unstable/ast']) {
         assert.deepEqual(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]), []);
       }
     }
-  });
-  test('toolkit refuses invalid layers', () => {
     for (const [specifier, type] of [['../invalid/types.ts', 'type '], ['../forbidden/interpreter.ts', '']]) {
       const errors = checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' ' + type + '{ X } from ' + JSON.stringify(specifier) + ';')]);
       assert.equal(errors.length, 1, specifier);
       assert.match(errors[0]!, /toolkit/);
     }
-  });
-  test('toolkit allows portable services and its own domain', () => {
     for (const specifier of ['./domain/plan.ts', '../providers/types.ts', '../lib/session.ts', '../policy/roster.ts']) {
       assert.deepEqual(checkDependencies([file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';')]), []);
     }
-  });
-  test('shared layers allow only type imports from the two toolkit type modules', () => {
     for (const layer of ['policy', 'providers', 'lib']) {
       for (const specifier of ['../toolkit/types.ts', '../toolkit/domain/types.ts']) {
         assert.deepEqual(checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from ' + JSON.stringify(specifier) + ';')]), []);
@@ -140,15 +130,12 @@ describe('toolkit import boundary', () => {
   });
 });
 
-test('purity checks ignore performance in strings and comments', () => {
+test('purity checks reject direct, computed, and captured performance identifiers', () => {
   assert.deepEqual(checkDependencies([file(`${SCRIPTS}policy/example.ts`,
     `const family = 'performance';`,
     '// ' + 'performance' + '.now() is an example only',
     `/* performance['now']() is example text */`,
   )]), []);
-});
-
-test('purity checks reject direct, computed, and captured performance identifiers', () => {
   const errors = checkDependencies([
     file(`${SCRIPTS}policy/direct.ts`, 'performance' + '.now();'),
     file(`${SCRIPTS}policy/computed.ts`, "performance['now']();"),

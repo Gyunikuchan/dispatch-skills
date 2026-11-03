@@ -18,19 +18,6 @@ const relocatedFrom = (body: string) => /Run artifacts[^:]*: `([^`]+)`/.exec(bod
 
 // SECTION: Tooling imports and artifacts
 
-test('audit baseline imports and writes current TypeScript test and metrics artifacts', async () => {
-  const audit = await baselineModule();
-  const f = fixture();
-  try {
-    let command = ''; let selected: readonly string[] = [];
-    const runTests = (root: string) => audit.runTests(root, (cmd: string, args: readonly string[]) => { command = cmd; selected = args; return { stdout: '✔ All 1 test(s) passed', stderr: '', status: 0 }; });
-    await audit.main({ root: f.repo, argv, runTests, buildMetrics: fakeMetrics });
-    const work = path.join(f.repo, WORK);
-    for (const name of ['git-status.txt', 'content-snapshot.json', 'tests.txt', 'metrics.md', 'manifest.json']) assert.ok(fs.existsSync(path.join(work, name)), name);
-    assert.equal(command, 'npm'); assert.deepEqual(selected, ['test']);
-  } finally { f.cleanup(); }
-});
-
 test('audit probe imports current provider and config APIs and publishes discovery artifacts', async () => {
   const audit = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
   const f = fixture();
@@ -62,26 +49,31 @@ test('audit lifecycle baseline runs the aggregate suite once and resume reuses i
   const audit = await baselineModule();
   const f = fixture();
   try {
-    const { calls, runTests } = counted(); const options = { root: f.repo, argv, runTests, buildMetrics: fakeMetrics };
+    let command = ''; let selected: readonly string[] = []; let runs = 0;
+    const runTests = (root: string) => {
+      runs++;
+      return audit.runTests(root, (cmd: string, args: readonly string[]) => {
+        command = cmd; selected = args;
+        return { stdout: '✔ All 1 test(s) passed', stderr: '', status: 0 };
+      });
+    };
+    const options = { root: f.repo, argv, runTests, buildMetrics: fakeMetrics };
     await audit.main(options);
+    const work = path.join(f.repo, WORK);
+    for (const name of ['git-status.txt', 'content-snapshot.json', 'tests.txt', 'metrics.md', 'manifest.json']) {
+      assert.ok(fs.existsSync(path.join(work, name)), name);
+    }
+    assert.equal(command, 'npm'); assert.deepEqual(selected, ['test']);
+    assert.equal(runs, 1);
+    assert.equal(fs.readFileSync(path.join(work, 'tests.txt'), 'utf8'), '✔ All 1 test(s) passed');
     await audit.main({ ...options, argv: [...argv, '--resume'] });
-    assert.equal(calls.runs, 1);
-    assert.equal(fs.readFileSync(path.join(f.repo, WORK, 'tests.txt'), 'utf8'), 'generation 1');
-    const manifest = JSON.parse(fs.readFileSync(path.join(f.repo, WORK, 'manifest.json'), 'utf8'));
+    assert.equal(runs, 1);
+    const manifest = JSON.parse(fs.readFileSync(path.join(work, 'manifest.json'), 'utf8'));
     assert.equal(manifest.baseline.status, 'complete'); assert.equal(manifest.budgets.lead.baselineTestRuns, 1);
     assert.equal(manifest.revision, f.git('rev-parse', 'HEAD').trim());
-    await assert.rejects(audit.main({ ...options, argv: [...argv, '--force'] }), /--force.*fresh run/i);
-  } finally { f.cleanup(); }
-});
-
-test('audit lifecycle rejects a colliding run id without replacing the existing baseline', async () => {
-  const audit = await baselineModule();
-  const f = fixture();
-  try {
-    const { calls, runTests } = counted(); const options = { root: f.repo, argv, runTests, buildMetrics: fakeMetrics };
-    await audit.main(options);
     await assert.rejects(audit.main(options), /already reserved.*new --run id/i);
-    assert.equal(calls.runs, 1); assert.equal(fs.readFileSync(path.join(f.repo, WORK, 'tests.txt'), 'utf8'), 'generation 1');
+    assert.equal(runs, 1);
+    await assert.rejects(audit.main({ ...options, argv: [...argv, '--force'] }), /--force.*fresh run/i);
   } finally { f.cleanup(); }
 });
 
@@ -234,24 +226,24 @@ test('audit lifecycle finalize interrupted after publication completes the repor
     assert.equal(manifest.relocation.phase, 'published'); assert.equal(manifest.relocation.integrity, 'unchanged');
     relocated = manifest.relocation.destination;
     audit.main({ root: f.repo, argv }); audit.main({ root: f.repo, argv });
-    const body = fs.readFileSync(report, 'utf8');
+    let body = fs.readFileSync(report, 'utf8');
     assert.equal(footers(body), 1); assert.equal(relocatedFrom(body), relocated!.split(path.sep).join('/'));
     assert.match(body, /Repo integrity: unchanged/); assert.equal(fs.existsSync(work), false);
-  } finally { if (relocated) fs.rmSync(relocated, { recursive: true, force: true }); f.cleanup(); }
-});
 
-test('audit lifecycle finalize interrupted after source removal keeps the single authoritative footer on retry', async () => {
-  const baseline = await baselineModule(); const audit = await finalizeModule();
-  const f = fixture(); let relocated: string | undefined;
-  try {
-    await baseline.main({ root: f.repo, argv, ...counted(), buildMetrics: fakeMetrics });
-    const work = path.join(f.repo, WORK), report = path.join(f.repo, REPORT); fs.writeFileSync(report, '# audit');
+    // Source removal interruption verification
+    const run2Argv = ['node', 'audit', '--run', '2026-10-01-0637'];
+    const work2 = '.scratch/audits/2026-10-01-0637-work';
+    const report2 = '.scratch/audits/2026-10-01-0637-audit.md';
+    await baseline.main({ root: f.repo, argv: run2Argv, ...counted(), buildMetrics: fakeMetrics });
+    fs.writeFileSync(path.join(f.repo, report2), '# audit');
     const removeDir = (dir: string) => { fs.rmSync(dir, { recursive: true, force: true }); throw new Error('interrupted after removal'); };
-    assert.throws(() => audit.main({ root: f.repo, argv, removeDir }), /interrupted after removal/);
-    assert.equal(fs.existsSync(work), false);
-    audit.main({ root: f.repo, argv });
-    const body = fs.readFileSync(report, 'utf8'); relocated = relocatedFrom(body);
-    assert.equal(footers(body), 1); assert.ok(relocated && fs.existsSync(path.join(relocated, 'manifest.json')));
+    assert.throws(() => audit.main({ root: f.repo, argv: run2Argv, removeDir }), /interrupted after removal/);
+    assert.equal(fs.existsSync(path.join(f.repo, work2)), false);
+    audit.main({ root: f.repo, argv: run2Argv });
+    body = fs.readFileSync(path.join(f.repo, report2), 'utf8');
+    const relocated2 = relocatedFrom(body);
+    assert.equal(footers(body), 1); assert.ok(relocated2 && fs.existsSync(path.join(relocated2, 'manifest.json')));
     assert.match(body, /Repo integrity: unchanged/); assert.doesNotMatch(body, /Run artifacts[^:]*: none/);
+    if (relocated2) fs.rmSync(relocated2, { recursive: true, force: true });
   } finally { if (relocated) fs.rmSync(relocated, { recursive: true, force: true }); f.cleanup(); }
 });

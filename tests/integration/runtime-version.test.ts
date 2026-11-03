@@ -23,9 +23,6 @@ test('legacy JavaScript and nested packages identify the runtime rule and correc
     'runtime rule: skills/dispatch/scripts/guard.mjs is .mjs; shipped code is TypeScript run by type stripping, so rename it to .ts',
     'runtime rule: skills/dispatch/package.json is a nested package.json; .ts resolve as ESM through the root package.json, so delete it',
   ]);
-});
-
-test('the external sample manifest is allowed but nested child manifests are rejected', () => {
   assert.deepEqual(checkRuntimeVersion([{ path: 'docs/evaluations/samples/textstats/package.json', text: '{}' }]), []);
   assert.equal(checkRuntimeVersion([{ path: 'docs/evaluations/samples/textstats/src/package.json', text: '{}' }]).length, 1);
 });

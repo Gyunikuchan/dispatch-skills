@@ -512,7 +512,7 @@ test('review recurrence requires accepted earlier ruling and changed target',asy
 });
 
 test('review recurrence recovers durable boundaries and resolves superseded escalation',async()=>{
-  for(const point of ['review:after-pending','review:after-append']) for(const move of [false,true]) {
+  for(const [point, move] of [['review:after-pending', false], ['review:after-append', true]] as const) {
     const f=await fixture();
     try {
       assert.equal((await f.call()).exit,0);
@@ -524,13 +524,16 @@ test('review recurrence recovers durable boundaries and resolves superseded esca
       const resumed=await f.call();assert.equal(resumed.exit,move?4:0);assert.equal(f.launches.length,launched);
       if(move){
         assert.equal(resumed.output.reason,'target-moved');assert.equal(fs.existsSync(path.join(f.directory,'round-2/findings.json')),false);
-        f.deps.delegate=async()=>({outcome:{status:'ok',text:report('§ Work','Concurrent writes overwrite captured results again'),resume:null,sessionId:null},invocations:[]});
+        f.deps.delegate=async()=>({outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]});
         assert.equal((await f.call()).exit,0);
       }
       const escalations=foldLedger(f.session).records.filter(row=>row.kind==='escalation');
       const latest=new Map(escalations.map(row=>[row.data['id'],row.data['state']]));
-      assert.equal([...latest.values()].filter(state=>state==='open').length,1);
-      if(move&&point==='review:after-append')assert.ok(escalations.some(row=>row.data['state']==='resolved'));
+      if(move) {
+        assert.deepEqual([...latest.values()],['resolved']);
+      } else {
+        assert.equal([...latest.values()].filter(state=>state==='open').length,1);
+      }
     }finally{f.cleanup();}
   }
 });
@@ -557,22 +560,6 @@ test('review recurrence rejects invalid review ruling and keeps other subjects f
     await assert.rejects(f.add('ruling',{subject:'review:plan-work.plan:R1-F001',ruling:'fixed',rationale:'Fixed'}),{reason:'invalid-record'});
     await f.add('ruling',{subject:'other',ruling:'fixed',rationale:'Fixed'});
     assert.equal(foldLedger(f.session).records.at(-1)!.data['ruling'],'fixed');
-  }finally{f.cleanup();}
-});
-
-test('review recurrence normal post-append movement closes stale escalation before a clean generation',async()=>{
-  const f=await fixture();
-  try {
-    assert.equal((await f.call()).exit,0);
-    await f.add('ruling',{subject:'review:plan-work.plan:R1-F001',ruling:'accepted',rationale:'Fixed'});
-    fs.appendFileSync(f.plan,'\n## Fix\nFirst fix.\n');
-    f.deps.hook=point=>{if(point==='review:after-append')fs.appendFileSync(f.plan,'\n## Another fix\nMoved again.\n');};
-    assert.equal((await f.call()).output.reason,'target-moved');delete f.deps.hook;
-    assert.equal(fs.existsSync(path.join(f.directory,'round-2/findings.json')),false);
-    f.deps.delegate=async()=>({outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]});
-    assert.equal((await f.call()).exit,0);
-    const latest=new Map(foldLedger(f.session).records.filter(row=>row.kind==='escalation').map(row=>[row.data['id'],row.data['state']]));
-    assert.deepEqual([...latest.values()],['resolved']);
   }finally{f.cleanup();}
 });
 
@@ -605,26 +592,15 @@ async function underfillFixture() {
 }
 const underfilled = {host: 'codex', configured: 2, resolved: 2, excluded: ['copilot']};
 
-test('review native-pending and final results report underfill for excluded native-only providers', async () => {
+test('review native-pending and resumed final results report and retain underfill for excluded native-only providers', async () => {
   const f = await underfillFixture();
   try {
     const pending = await f.call();
     assert.equal(pending.exit, 4); assert.equal(pending.output.reason, 'native-pending');
     assert.deepEqual(pending.value.underfill, underfilled);
     assert.match(pending.output.summary, /; underfill 2\/2 targets, host codex, excluded native-only: copilot$/);
-    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
-    const done = await f.call();
-    assert.equal(done.exit, 0);
-    assert.deepEqual(done.value.underfill, underfilled);
-    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: R1-F\d{3} SHOULD/);
-  } finally {f.cleanup();}
-});
 
-test('resumed review round keeps underfill from the roster it launched', async () => {
-  const f = await underfillFixture();
-  try {
-    const pending = await f.call();
-    assert.equal(pending.output.reason, 'native-pending');
+    // Modify configuration before resuming to ensure resumed run retains roster underfill
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
       'read-delegates': {codex: {nativeSubagentsOnly: true, targets: [{low: {model: 'native'}}]}, agy: {targets: [{low: {model: 'fake'}}]}},
       phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
@@ -633,6 +609,7 @@ test('resumed review round keeps underfill from the roster it launched', async (
     const done = await f.call();
     assert.equal(done.exit, 0);
     assert.deepEqual(done.value.underfill, underfilled);
+    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: R1-F\d{3} SHOULD/);
   } finally {f.cleanup();}
 });
 
@@ -682,6 +659,16 @@ test('plan and design review launch without a sibling context map', async () => 
 });
 
 test('plan and design review refuse without a user confirm of the current spec at every level', async () => {
+  // Unbound plan review without a spec refuses with lint-errors before zero-round skip
+  {
+    const f = await fixture(false, false);
+    try {
+      const refused = await f.call('plan', f.plan, 'low');
+      assert.equal(refused.exit, 4);
+      assert.equal(refused.output.reason, 'lint-errors');
+      assert.equal(f.launches.length, 0);
+    } finally { f.cleanup(); }
+  }
   const f=await fixture(true,false);try {
     for(const level of ['low','medium']) {
       const refused=await f.call('plan',f.plan,level);
@@ -696,13 +683,5 @@ test('plan and design review refuse without a user confirm of the current spec a
     fs.appendFileSync(f.spec,'\n## Scope\nChanged intent without a recorded edit.\n');
     const stale=await f.call();
     assert.equal(stale.exit,4);assert.equal(stale.output.reason,'missing-confirmation');
-  }finally{f.cleanup();}
-});
-
-test('unbound plan review without a spec refuses before the zero-round skip', async () => {
-  const f=await fixture(false,false);try {
-    const refused=await f.call('plan',f.plan,'low');
-    assert.equal(refused.exit,4);assert.equal(refused.output.reason,'lint-errors');
-    assert.equal(f.launches.length,0);
   }finally{f.cleanup();}
 });

@@ -33,9 +33,13 @@ test('audit report batch blocks cross-group dependencies but selects independent
   assert.match(out, /Blocked.*A-1.*A-2/); assert.match(out, /# Batch: A-2/);
 });
 test('audit report batch detects cycles and oversized groups without splitting them', () => {
-  const { root, file } = report(finding('A-1') + finding('A-2'));
+  const { root, file } = report(finding('A-1') + finding('A-2') + finding('A-3'));
   recordTriage(root, file, 'A-1', { dependsOn: ['A-2'] }); recordTriage(root, file, 'A-2', { dependsOn: ['A-1'] });
-  assert.match(captured(() => status.cmdBatch(root, file, ['batch'])), /cycle/i); recordTriage(root, file, 'A-2');
+  const cycleOut = captured(() => status.cmdBatch(root, file, ['batch']));
+  assert.match(cycleOut, /cycle/i);
+  assert.match(cycleOut, /Blocked accepted items: A-1, A-2/);
+  assert.match(cycleOut, /Needs triage or decision: A-3/);
+  recordTriage(root, file, 'A-2');
   assert.match(captured(() => status.cmdBatch(root, file, ['batch', '--size', '1'])), /exceeds.*1/i);
   assert.match(captured(() => status.cmdBatch(root, file, ['batch'])), /# Batch: A-2, A-1/);
 });
@@ -58,9 +62,4 @@ test('audit report batch legacy dispatched notes require an explicit tree inspec
   recordTriage(root, file, 'A-1', { legacyInspection: 'Checked current source; fix absent.' });
   assert.match(captured(() => status.cmdBatch(root, file, ['batch'])), /# Batch: A-1/);
 });
-test('audit report batch distinguishes blocked accepted items from missing triage', () => {
-  const { root, file } = report(finding('A-1') + finding('A-2') + finding('A-3'));
-  recordTriage(root, file, 'A-1', { dependsOn: ['A-2'] }); recordTriage(root, file, 'A-2', { dependsOn: ['A-1'] });
-  const out = captured(() => status.cmdBatch(root, file, ['batch']));
-  assert.match(out, /Blocked accepted items: A-1, A-2/); assert.match(out, /Needs triage or decision: A-3/);
-});
+

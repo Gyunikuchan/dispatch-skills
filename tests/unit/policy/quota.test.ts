@@ -29,6 +29,8 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
     assert.equal(decide(observation.observedAt + H).skipped, false);
     assert.equal(decide(observation.observedAt - 1).skipped, false);
     assert.equal(decide(Number.NaN).skipped, false);
+    const earlier = { ...observation, observedAt: 3 * H + 1 };
+    assert.equal(decide(4 * H, [observation, earlier]).expiresAt, earlier.observedAt + H);
   });
 
   test('changed generation and invalid evidence cannot suppress', () => {
@@ -39,10 +41,5 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
     assert.equal(decide(4 * H, [observation], [{ ...marker, generation: '00000000-0000-4000-8000-000000000002' }]).skipped, false);
     assert.equal(decide(4 * H, [observation], [{ ...marker, extra: 'x'.repeat(8192) }]).skipped, false);
     assert.equal(decide(4 * H, [observation], []).skipped, false);
-  });
-
-  test('later failures cannot extend the first observation cooldown', () => {
-    const earlier = { ...observation, observedAt: 3 * H + 1 };
-    assert.equal(decide(4 * H, [observation, earlier]).expiresAt, earlier.observedAt + H);
   });
 });
