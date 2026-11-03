@@ -13,10 +13,19 @@ test('toolkit stays within the structural size budgets', () => {
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
   // NOTE: 11,800 covers review-loop diagnostics, host usage adapters and tables, and severity derivation.
-  assert.ok(lines <= 11800, `driver TS LOC ${lines} exceeds 11800`);
-  assert.ok(KINDS.length <= 14, `ledger kinds ${KINDS.length} exceeds 14`);
+  assert.ok(
+    lines <= 11800,
+    `driver TS LOC ${lines} exceeds 11800 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+  );
+  assert.ok(
+    KINDS.length <= 14,
+    `ledger kinds ${KINDS.length} exceeds 14 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+  );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  assert.ok(bytes <= 4352, `SKILL.md bytes ${bytes} exceeds 4352`);
+  assert.ok(
+    bytes <= 4352,
+    `SKILL.md bytes ${bytes} exceeds 4352 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+  );
 });
 
 test('ledger authority is limited to approval, exceptions and user-selected levels', () => {
