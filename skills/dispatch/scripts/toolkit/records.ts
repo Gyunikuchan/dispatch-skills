@@ -107,6 +107,15 @@ const integrations: Record<string, Record<string, Rule>> = {
   closed: { reason: text },
 };
 
+// SECTION: Coverage decisions
+const COVERAGE_SLOT = '[A-Za-z0-9_-]+\\[\\d+\\]';
+/** The only summaries a `coverage:` escalation may carry: `accept: <slot>[, <slot>]*` or `grant: <reason>`. */
+export function coverageDecision(summary: unknown): {accept: string[]} | {grant: string} | null {
+  const text = String(summary), accept = new RegExp(`^accept: (${COVERAGE_SLOT}(?:, ${COVERAGE_SLOT})*)$`).exec(text)?.[1]?.split(', ');
+  if (accept) return new Set(accept).size === accept.length ? {accept} : null;
+  return /^grant: \S/.test(text) ? {grant: text.slice(7)} : null;
+}
+
 export function validateRecord(input: unknown, stored = false): RecordInput | LedgerRecord {
   const envelope: Record<string, Rule> = {
     kind: choice(...KINDS), by: choice('user', 'orchestrator', 'tool'),
@@ -150,6 +159,12 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
       const review = id.slice('ceiling:'.length, id.lastIndexOf(':'));
       if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a defer resolution');
     }
+  }
+  if (value.kind === 'escalation' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('coverage:')) {
+    if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'coverage decision requires by user and non-blank quote');
+    if (!/^coverage:[^:\s]+:[^:\s]+$/.test(value.data['id'])) invalid('data.id', 'coverage:<review>:<key>');
+    if (value.data['state'] !== 'resolved') invalid('data.state', 'resolved');
+    if (!coverageDecision(value.data['summary'])) invalid('data.summary', 'accept: <slot>[, <slot>]* with unique name[index] slots, or grant: <reason>');
   }
   if (!stored && ['approval', 'confirm', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');

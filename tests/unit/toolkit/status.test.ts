@@ -194,3 +194,26 @@ test('status budget reflects rulings after completion', async () => {
     assert.deepEqual(await budget(), { cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 1, state: 'allowed' });
   } finally { f.cleanup(); }
 });
+
+test('status reports coverage admission for open and unreadable slots', async () => {
+  const f = sessionFixture();
+  try {
+    const review = 'code-integration', directory = path.join(f.session, '.state/reviews', review, 'round-1');
+    const write = (file: string, value: unknown) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
+    const roster = ['codex[0]', 'opencode[1]'].map((slot, index) => ({ slot, provider: 'codex', index, reserve: false }));
+    write(path.join(directory, 'round.json'), { round: 1, generation: 1, cap: 1, scope: 'Full review', startSeq: 0, spec: { path: '/spec.md', hash: 'sha256:' + 'a'.repeat(64) }, target: { base: 'b', head: 'h' }, roster });
+    write(path.join(directory, 'gen-1/slots/opencode[1].json'), { slot: 'opencode[1]', state: 'done', text: 'report' });
+    write(path.join(directory, 'gen-1/slots/codex[0].json'), { slot: 'codex[0]', state: 'failed', cls: 'timeout', reason: 'slow' });
+    write(path.join(directory, 'findings.json'), { review, round: 1, cap: 1, findings: [] });
+    const budget = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[review];
+    };
+    // An entry-less failure cannot be ordered, so coverage is unreadable but status still answers.
+    assert.deepEqual(await budget(), { cap: 1, ceiling: 3, nextRound: 2, asOfSeq: 0, state: 'requires-continuation', coverage: { state: 'unreadable' } });
+    write(path.join(directory, 'gen-1/attempts.json'), [{ slot: 'codex[0]', seq: 0, wholeTarget: true, outcome: 'timeout' }]);
+    assert.deepEqual(await budget(), { cap: 1, ceiling: 3, nextRound: 2, asOfSeq: 0, state: 'allowed',
+      coverage: { state: 'readable', open: ['codex[0]'], decision: 'rerun', use: 'free' } });
+  } finally { f.cleanup(); }
+});

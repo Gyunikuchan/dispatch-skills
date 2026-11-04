@@ -218,3 +218,36 @@ test('downgraded finding: a downgraded row appears in attention and in the findi
     assert.ok(findings.includes('| R1-F002 | 1 | SHOULD | — | Accepted |'), findings);
   }
 });
+
+// SECTION: Coverage
+
+const coverage = (overrides: Record<string, unknown> = {}) => ({
+  targets: ['codex[0]', 'opencode[1]', 'claude[2]', 'agy[3]'], completed: ['claude[2]', 'agy[3]'], open: [], overridden: [], coverageRounds: [],
+  freeUsed: false, unusedGrant: false, incomplete: null, decision: 'none', ...overrides,
+});
+const findings = (rendered: string) => section(rendered, '## Review Findings & Resolutions', '## Appendix');
+
+test('walkthrough reports coverage open slots, majority reduction, overrides with quotes and coverage rounds', () => {
+  const majority = findings(renderWalkthrough(view({
+    reviewRounds: [{ review: 'code-integration', round: 1, findings: 0, path: '.state/reviews/code-integration/round-1/findings.json' }],
+    coverage: coverage({
+      targets: ['codex[0]', 'opencode[1]', 'claude[2]'], completed: ['opencode[1]', 'claude[2]'], open: ['codex[0]'], coverageRounds: [2, 3], decision: 'majority',
+    }),
+  })));
+  assert.match(majority, /^- Round 1 \(code-integration\): 0 findings — \[findings\]\(.+\)\n\n- Open coverage slots: codex\[0\]; reduced coverage accepted under the majority rule \(2 of 3 target slots completed\)$/m);
+  assert.match(majority, /^- Coverage rounds: 2, 3$/m);
+
+  const overridden = findings(renderWalkthrough(view({
+    coverage: coverage({ open: ['agy[3]'], overridden: [{ slot: 'codex[0]', quote: 'ship it | <!-- x -->', seq: 9 }], coverageRounds: [2], decision: 'user' }),
+  })));
+  assert.match(overridden, /^- Open coverage slots: agy\[3\]$/m);
+  assert.doesNotMatch(overridden, /majority/);
+  assert.match(overridden, /^- Coverage override: codex\[0\] at seq 9; user quote: ship it \| &lt;!-- x --&gt;$/m);
+});
+
+test('walkthrough reports coverage unreadable state and nothing when no slot failed', () => {
+  assert.match(findings(renderWalkthrough(view({ coverage: 'unreadable' }))), /^- Coverage state unreadable$/m);
+  const plain = renderWalkthrough(view());
+  assert.equal(renderWalkthrough(view({ coverage: coverage() })), plain);
+  assert.doesNotMatch(plain, /overage/);
+});

@@ -1,4 +1,5 @@
 import { neutralizeComments } from './domain/sanitize.ts';
+import type { CoverageState } from './coverage.ts';
 import type { CriterionStatus } from './evidence.ts';
 import { renderFindingsSection, type RoundLink } from './review-findings.ts';
 import type { ReviewFix } from './records.ts';
@@ -50,6 +51,7 @@ export type WalkthroughView = {
   }[];
   reviewRounds: readonly RoundLink[];
   reviewFixes?: readonly ReviewFixReport[];
+  coverage?: CoverageState | 'unreadable';
   reviewedCodeBaseline?: string;
   /** Criteria whose tests the cleanup commit removed keep evidence verified at `from`. */
   testCleanup?: { from: string; removed: readonly string[]; deleted: number; merged: number };
@@ -143,6 +145,16 @@ function reviewFocus(view: WalkthroughView): string[] {
   return lines;
 }
 
+function coverageLines(state: WalkthroughView['coverage']): string[] {
+  if (!state) return [];
+  const lines = state === 'unreadable' ? ['- Coverage state unreadable'] : [
+    ...(state.open.length ? [`- Open coverage slots: ${state.open.map(line).join(', ')}${state.decision === 'majority' ? `; reduced coverage accepted under the majority rule (${state.completed.length} of ${state.targets.length} target slots completed)` : ''}`] : []),
+    ...state.overridden.map((item) => `- Coverage override: ${line(item.slot)} at seq ${item.seq}; user quote: ${line(item.quote)}`),
+    ...(state.coverageRounds.length ? [`- Coverage rounds: ${state.coverageRounds.join(', ')}`] : []),
+  ];
+  return lines.length ? ['', ...lines] : [];
+}
+
 export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string {
   const statuses = view.statuses;
   const criteria = statuses.filter((row) => row.criterion !== 'contract');
@@ -227,7 +239,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
       : `source ${line(view.delivered.source)} · branch ${line(view.delivered.branch)} · ref ${line(view.delivered.ref)}`;
   out.push(
     '## Deviations & Follow-ups', '', ...(deviations.length || followUps.length ? [...deviations, ...followUps] : ['None.']), '',
-    '## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), '',
+    '## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), ...coverageLines(view.coverage), '',
     '## Appendix', '', '<details>', '', '<summary>Audit records</summary>', '',
     '### Provenance', '',
     `- Spec: ${line(view.specPath)} · ${hashPrefix(view.specHash)}`,

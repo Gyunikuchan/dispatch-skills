@@ -9,6 +9,8 @@ import {writerStates} from './writers.ts';
 import {integrationRecord} from './integration.ts';
 import {gitOk,headTree,testedTree} from './git.ts';
 import {admission,type ReviewBudget} from './findings.ts';
+import {applicableReviewIds} from './confirmations.ts';
+import {readManifest} from '../lib/session.ts';
 
 export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps) {
   const fold = foldLedger(session);
@@ -23,7 +25,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
   const root = path.join(session, '.state/reviews'), reviews: Record<string, ReviewBudget> = {};
   for (const entry of fs.existsSync(root) ? fs.readdirSync(root, {withFileTypes: true}) : []) {
     if (!entry.isDirectory()) continue;
-    const {budget, rounds} = admission(session, fold, entry.name, 0);
+    const {budget, rounds} = admission(session, fold, entry.name, 0, applicableReviewIds(readManifest(session), fold).get(entry.name));
     if (rounds) reviews[entry.name] = budget;
   }
   let sections: object = {};

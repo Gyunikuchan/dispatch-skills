@@ -71,7 +71,7 @@ export function captureIntegrationReview(r:Awaited<ReturnType<typeof toolkitRepo
  const dir=path.join(r.session,'.state/reviews/code-integration/round-'+round);fs.mkdirSync(path.join(dir,'gen-1/slots'),{recursive:true});
  const hashes=currentHashes(r.root,latest(foldLedger(r.session),'bind'));
  const base=foldLedger(r.session).records.find(x=>x.data['phase']==='opened')!.data['base'];
- fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify({round,startSeq:foldLedger(r.session).lastSeq,generation:1,cap:3,roster:[{slot:'reviewer'},{slot:'unused-reserve',reserve:true}],scope:'Full review',artifacts:hashes,spec:{hash:hashes.spec},target:{base,head:r.git(['rev-parse','HEAD'],r.integration)}}));
+ fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify({round,startSeq:foldLedger(r.session).lastSeq,generation:1,cap:3,roster:[{slot:'reviewer'},{slot:'unused-reserve',reserve:true}],scope:'Full review',artifacts:hashes,spec:{path:path.join(r.root,'work.spec.md'),hash:hashes.spec},target:{base,head:r.git(['rev-parse','HEAD'],r.integration)}}));
  fs.writeFileSync(path.join(dir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
  fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'code-integration',round,failed:[],findings}));return dir;
 }

@@ -22,8 +22,9 @@ import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
 import { clipBytes, summaryWithItems, ToolError } from './output.ts';
 import { redGaps } from './red.ts';
-import { loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
+import { applicableReviewIds, loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection } from './review-findings.ts';
+import { coverageState } from './coverage.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import type { BlockedAttempt } from './fanout.ts';
 import type { LedgerRecord } from './records.ts';
@@ -32,7 +33,7 @@ import type { LedgerRecord } from './records.ts';
 const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string};
+type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'};
 function atomic(file: string, value: unknown) {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
@@ -222,8 +223,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
 
+  // Coverage applies to the integration review alone; every admission caller passes the same predicate.
+  const applies = review === 'code-integration' ? applicableReviewIds(manifest, fold).get(review) : undefined;
   return withLockFile(path.join(directory, 'claim'), 'review', deps, 0, async () => {
-    const {budget: admitted, rounds} = admission(session, foldLedger(session), review, cap), n = admitted.nextRound, cap1 = admitted.cap;
+    const {budget: admitted, rounds} = admission(session, foldLedger(session), review, cap, applies), n = admitted.nextRound, cap1 = admitted.cap;
     // Computed once after the slots exist: every return path reports the same blocked state.
     let blockedState: BlockedState | undefined;
     const blockedStateOf = (): BlockedState => blockedState ??= (() => {
@@ -245,6 +248,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       });
       throw new ToolError(4, 'review-ceiling', 'Review reached ceiling ' + admitted.ceiling + '; resolve the review escalation before another round');
     }
+    if (admitted.coverage?.state === 'unreadable') throw new ToolError(4, 'coverage-required', 'Cannot establish coverage for ' + review);
+    // NOTE: a started all-failed round has no findings.json and counts as neither complete nor incomplete, so its reuse skips the new-round decision.
+    if (admitted.state === 'requires-coverage-decision') throw new ToolError(4, 'coverage-decision', 'Coverage stays open for ' + (admitted.coverage?.state === 'readable' ? admitted.coverage.open.join(', ') : review) + '; ask the user to accept reduced coverage (user escalation coverage:' + review + ':<key>, summary "accept: <slot>[, <slot>]")' + (n > admitted.ceiling ? '; no round fits within ceiling ' + admitted.ceiling : ' or grant one more coverage round (summary "grant: <reason>")') + ', with their quote');
     // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
     const existingRound = read<Round>(path.join(directory, 'round-' + n, 'round.json'));
     if (!cap && !existingRound && !rejectionStates().some(state => state.state === 'pending'))
@@ -275,16 +281,22 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
 
     // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
     const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.md$/, '.context.md'));
-    function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean } {
+    const savedSlot = (name: string) => [...confirmationRounds.flatMap(value => value.metadata.roster), ...(round?.roster ?? [])].find(slot => slot.slot === name);
+    function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean; coverage?: 'open' | 'full' } {
       const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
       const target = previous?.metadata.roster.find(slot => !slot.reserve), rulings = rulingRows();
       const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
         && (effective(finding, rulings) === 'MUST' || (effective(finding, rulings) === 'SHOULD' && n - 1 < cap1)));
+      // Open coverage replaces the narrowed slot, and a decisive finding keeps the full roster; both run at whole-target scope.
+      const open = review === 'code-integration' ? coverageState(session, foldLedger(session), review, applies).open : [];
+      if (open.length && n > 1) return {targets: target && !decisive ? open.flatMap(name => { const slot = savedSlot(name); return slot ? [{...slot, reserve: false}] : []; }) : roster.targets, narrowed: false, coverage: target && !decisive ? 'open' : 'full'};
       return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
     }
     async function start(generation: number, captured: Capture): Promise<Round> {
+      const {targets, narrowed, coverage} = replacement();
       let scope = 'Full review', changedPaths = captured.changed;
-      if (n > 1) {
+      if (coverage) scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as {base: string}).base}..${label(captured.target)}`;
+      else if (n > 1) {
         const previous = priorTargets[n - 1]!;
         changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])) : [];
         const changed = kind === 'code' ? 'changed paths: ' + changedPaths.join(', ') : changedHeadings(fs.readFileSync(path.join(directory, 'round-' + (n - 1), 'target.snapshot.md'), 'utf8'), captured.source!).join(', ');
@@ -294,19 +306,18 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
       // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
-      const {targets, narrowed} = replacement();
       if (narrowed) scope = scope.replace('(full)', '(narrowed)');
       const turnPaths = kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
       const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
-      const slots=[...targets,...roster.reserves];
+      const slots=[...targets,...roster.reserves.filter(reserve=>!targets.some(slot=>slot.slot===reserve.slot))];
       for(const request of requests)for(const source of request.sourceSlots)if(!slots.some(slot=>slot.slot===source && !slot.reserve)) {
-        const saved=confirmationRounds.flatMap(round=>round.metadata.roster).find(slot=>slot.slot===source);
+        const saved=savedSlot(source);
         if(!saved)throw new ToolError(4,'review-confirmation-required','Missing original reviewer slot '+source);
         const existing=slots.findIndex(slot=>slot.slot===source);if(existing>=0)slots.splice(existing,1);
         slots.push({...saved,reserve:false});
       }
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
-      const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{})};
+      const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{}),...(coverage?{coverage}:{}),...(admitted.coverage?.state==='readable'&&admitted.coverage.use?{coverageUse:admitted.coverage.use}:{})};
       if (!slots.some(entry => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
@@ -361,7 +372,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const cls = parsed.failure.kind === 'uncovered-scope' || parsed.failure.kind === 'loose-locus' ? 'refusal' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
-      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session}, deps);
+      // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
+      const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(dir, 'gen-' + round!.generation, 'attempts.json');
+        atomic(file, [...(read<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
+      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed}, deps);
       const captured = await capture();
       if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
@@ -369,7 +383,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
         return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + (notice ? '; ' + notice : '') + underfillNote(round)};
       }
-      if (!replies.some(reply => reply.state === 'done')) {
+      // An all-failed open-only or narrowed integration round finalizes as used, so its open slots get a whole-target rerun; a full-roster round keeps its number.
+      if (!replies.some(reply => reply.state === 'done') && round.coverage !== 'open' && !(review === 'code-integration' && /^Re-review round \d+ \(narrowed\)/.test(round.scope))) {
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
         throw new ToolError(2, 'review-failed', (notice ? notice + '; ' : '') + 'Every review slot failed' + underfillNote(round));
       }
@@ -447,7 +462,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       : null;
     const state = blockedStateOf(), blockedSummary = blockedNotice(state.blocked, state.blockers);
     // Advisory only: reporting a boundary opens no escalation and grants no round.
-    const {budget} = admission(session, foldLedger(session), review, cap);
+    const {budget} = admission(session, foldLedger(session), review, cap, applies);
     return {
       ok: true, exit: 0,
       value: {

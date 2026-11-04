@@ -253,3 +253,120 @@ test('toolkit code review refuses an empty worktree diff before launching voices
     f.cleanup();
   }
 });
+
+// SECTION: Coverage rounds over real integration Git state
+
+const PROVIDERS = ['claude', 'codex', 'opencode'];
+const MUST_FINDING = {status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'The file returns an invalid result', requiredChange: 'Return the expected result'}]};
+async function coverageRepo(rounds: number) {
+  const f = await toolkitRepo();
+  f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'skill', {'read-delegates': Object.fromEntries(PROVIDERS.map(provider => [provider, {targets: [{low: {model: 'fake'}}]}])),
+    phases: {'code-review': {targets: {low: 3}, rounds: {low: rounds}}}});
+  f.deps.liveness = Object.fromEntries(PROVIDERS.map(provider => [provider, true])); f.deps.orchestrator = null; f.deps.modes = () => ['cli'] as never;
+  const failing = new Set<string>(), replies = new Map<string, object>(), calls: {provider: string; prompt: string}[] = [];
+  f.deps.delegate = async (provider, request) => {
+    calls.push({provider, prompt: fs.readFileSync(request.promptPath, 'utf8')});
+    if (failing.has(provider)) return {outcome: {status: 'fail', cls: 'auth', detail: 'denied'}, invocations: []};
+    return {outcome: {status: 'ok', text: JSON.stringify(replies.get(provider) ?? CLEAN), resume: null, sessionId: null}, invocations: []};
+  };
+  await f.level('low'); await f.approve();
+  const made = await f.run(['worktree', 'create', 'T1']); assert.equal(made.exit, 0, JSON.stringify(made.output));
+  fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'first\n');
+  assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0); assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
+  const review = () => f.run(['review', 'run', 'integration', '--kind', 'code']);
+  const dir = (n: number) => path.join(f.session, '.state/reviews/code-integration/round-' + n);
+  const round = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'round.json'), 'utf8'));
+  const findings = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'findings.json'), 'utf8'));
+  const attempts = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'gen-1/attempts.json'), 'utf8')) as {slot: string; seq: number; wholeTarget: boolean}[];
+  const targets = (n: number) => round(n).roster.filter((slot: {reserve: boolean}) => !slot.reserve).map((slot: {slot: string}) => slot.slot).sort();
+  const accept = (id: string) => appendRecord(f.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-' + id, data: {subject: 'review:code-integration:' + id, ruling: 'accepted', rationale: 'Fix accepted'}}, f.deps);
+  return {f, failing, replies, calls, review, dir, round, findings, attempts, targets, accept};
+}
+
+test('open slot rerun selects whole-target scope and leaves narrowing unchanged once nothing is open', async () => {
+  const t = await coverageRepo(4); try {
+    t.failing.add('claude');
+    const first = await t.review(); assert.equal(first.exit, 0, JSON.stringify(first.output));
+    assert.deepEqual(t.findings(1).failed.map((reply: {slot: string}) => reply.slot), ['claude[0]']);
+    t.failing.clear(); t.calls.length = 0;
+    const second = await t.review(); assert.equal(second.exit, 0, JSON.stringify(second.output));
+    const metadata = t.round(2);
+    assert.equal(metadata.coverage, 'open'); assert.equal(metadata.coverageUse, undefined);
+    assert.deepEqual(t.targets(2), ['claude[0]']);
+    assert.equal(metadata.scope, `Re-review round 2 (coverage) — changed paths: src/file.ts; comparison: ${metadata.target.base}..${metadata.target.head}`);
+    assert.deepEqual(t.calls.map(call => call.provider), ['claude']); assert.ok(t.calls[0]!.prompt.includes(metadata.scope));
+    const third = await t.review(); assert.equal(third.exit, 0, JSON.stringify(third.output));
+    assert.match(t.round(3).scope, /^Re-review round 3 \(narrowed\)/); assert.equal(t.round(3).coverage, undefined);
+  } finally { t.f.cleanup(); }
+});
+
+test('open slot rerun selects whole-target scope with the full roster after a decisive finding', async () => {
+  const t = await coverageRepo(4); try {
+    t.failing.add('claude'); t.replies.set('codex', MUST_FINDING);
+    assert.equal((await t.review()).exit, 0); await t.accept('R1-F001');
+    t.failing.clear(); t.replies.delete('codex'); t.calls.length = 0;
+    const second = await t.review(); assert.equal(second.exit, 0, JSON.stringify(second.output));
+    assert.equal(t.round(2).coverage, 'full'); assert.deepEqual(t.targets(2), ['claude[0]', 'codex[0]', 'opencode[0]']);
+    assert.match(t.round(2).scope, /^Re-review round 2 \(coverage\) — changed paths: src\/file\.ts; comparison: /);
+    assert.deepEqual(t.calls.map(call => call.provider).sort(), PROVIDERS);
+  } finally { t.f.cleanup(); }
+});
+
+test('coverage round follows an all-failed narrowed round at whole-target scope', async () => {
+  const t = await coverageRepo(4); try {
+    assert.equal((await t.review()).exit, 0);
+    const narrowed = t.targets(1)[0]!, provider = narrowed.replace(/\[\d+\]$/, '');
+    t.failing.add(provider);
+    const second = await t.review(); assert.equal(second.exit, 0, JSON.stringify(second.output));
+    assert.match(t.round(2).scope, /^Re-review round 2 \(narrowed\)/); assert.deepEqual(t.findings(2).failed.map((reply: {slot: string}) => reply.slot), [narrowed]);
+    t.failing.clear();
+    const third = await t.review(); assert.equal(third.exit, 0, JSON.stringify(third.output));
+    assert.equal(t.round(3).coverage, 'open'); assert.deepEqual(t.targets(3), [narrowed]);
+  } finally { t.f.cleanup(); }
+});
+
+test('coverage round past the cap counts an all-failed open-only round as used and stops for a user decision', async () => {
+  const t = await coverageRepo(1); try {
+    t.failing.add('claude'); t.failing.add('codex');
+    assert.equal((await t.review()).exit, 0);
+    const used = await t.review(); assert.equal(used.exit, 0, JSON.stringify(used.output));
+    assert.equal(t.round(2).coverageUse, 'free'); assert.deepEqual(t.targets(2), ['claude[0]', 'codex[0]']);
+    assert.equal(used.value.round, 2); assert.equal(t.findings(2).failed.length, 2);
+    const stopped = await t.review();
+    assert.equal(stopped.output.reason, 'coverage-decision'); assert.match(stopped.output.summary, /accept[\s\S]*grant/);
+    assert.equal(fs.existsSync(path.join(t.dir(3), 'round.json')), false);
+    t.failing.clear();
+    await appendRecord(t.f.session, {kind: 'escalation', by: 'user', quote: 'one more try', key: 'coverage:code-integration:1', data: {id: 'coverage:code-integration:1', state: 'resolved', summary: 'grant: provider restored'}}, t.f.deps);
+    const granted = await t.review(); assert.equal(granted.exit, 0, JSON.stringify(granted.output));
+    assert.equal(t.round(3).coverageUse, 'grant'); assert.equal(t.round(3).coverage, 'open');
+    assert.equal((await t.review()).output.reason, 'round-cap', 'the grant is consumed and nothing is left open');
+  } finally { t.f.cleanup(); }
+});
+
+test('coverage round accepted MUST past a used coverage round runs the full roster with no grant', async () => {
+  const t = await coverageRepo(1); try {
+    t.failing.add('claude'); t.failing.add('codex');
+    assert.equal((await t.review()).exit, 0);
+    t.failing.delete('claude'); t.replies.set('claude', MUST_FINDING);
+    assert.equal((await t.review()).exit, 0); assert.equal(t.round(2).coverageUse, 'free'); await t.accept('R2-F001');
+    t.failing.clear(); t.replies.clear();
+    const third = await t.review(); assert.equal(third.exit, 0, JSON.stringify(third.output));
+    assert.equal(t.round(3).coverage, 'full'); assert.equal(t.round(3).coverageUse, undefined);
+  } finally { t.f.cleanup(); }
+});
+
+test('coverage round full-roster all-failed reuses its number and keeps every failure through retry and native resume', async () => {
+  const t = await coverageRepo(1); try {
+    for (const provider of PROVIDERS) t.failing.add(provider);
+    assert.equal((await t.review()).output.reason, 'review-failed');
+    assert.equal(t.attempts(1).length, 3); assert.deepEqual(t.attempts(1).map(entry => entry.slot).sort(), ['claude[0]', 'codex[0]', 'opencode[0]']);
+    assert.equal((await t.review()).output.reason, 'review-failed'); assert.equal(t.attempts(1).length, 6);
+    assert.equal(fs.existsSync(path.join(t.dir(1), 'findings.json')), false); assert.equal(fs.existsSync(path.join(t.dir(2), 'round.json')), false);
+    t.f.deps.orchestrator = {platform: 'claude', model: 'native'} as typeof t.f.deps.orchestrator;
+    const pending = await t.review(); assert.equal(pending.output.reason, 'native-pending'); assert.equal(t.attempts(1).length, 8);
+    fs.writeFileSync(pending.value.pending[0].replyPath, JSON.stringify(CLEAN));
+    const resumed = await t.review(); assert.equal(resumed.exit, 0, JSON.stringify(resumed.output));
+    assert.equal(resumed.value.round, 1); assert.equal(t.findings(1).failed.length, 2); assert.equal(t.attempts(1).length, 10);
+    assert.ok(t.attempts(1).every(entry => entry.wholeTarget && Number.isSafeInteger(entry.seq)));
+  } finally { t.f.cleanup(); }
+});

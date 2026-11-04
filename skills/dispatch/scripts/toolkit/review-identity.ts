@@ -9,6 +9,7 @@ import { stableValue } from './domain/stable-value.ts';
 import { parseReport } from './domain/report.ts';
 import { effectiveSeverity } from './domain/severity.ts';
 import { reviewFixFromCommit } from './integrate.ts';
+import { coverageState } from './coverage.ts';
 import type { ReviewFix } from './records.ts';
 import { gitOk } from './git.ts';
 import { ToolError } from './output.ts';
@@ -71,24 +72,29 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       round.target?.base!==base ||
       (!equal(round.artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind'))) ||
       round.spec?.hash!==round.artifacts?.spec) ||
-      ! /^(?:Full review|Re-review round \d+ \((?:full|narrowed)\))/i.test(round.scope??'') ||
+      ! /^(?:Full review|Re-review round \d+ \((?:full|narrowed|coverage)\))/i.test(round.scope??'') ||
       !Number.isSafeInteger(round.round) || round.round!==Number(last.dir.slice(last.dir.lastIndexOf('round-')+6)) ||
       !Number.isSafeInteger(round.generation) || round.generation<1 ||
       !Number.isSafeInteger(round.startSeq) || round.startSeq<0 ||
       !Array.isArray(round.roster) ||
       !round.roster.length ||
       !Array.isArray(findings.findings) ||
-      !Array.isArray(findings.failed) ||
-      findings.failed.length)refuse('review-required');
+      !Array.isArray(findings.failed))refuse('review-required');
+  // Coverage replaces the last-round failure check: majority or overridden slots pass; rerun, user and unreadable state refuse.
+  let coverage;
+  try {coverage=coverageState(ctx.session,fold,'code-integration',applicableReviewIds(ctx.manifest,fold).get('code-integration'));}
+  catch(error) {if(error instanceof ToolError && error.reason==='coverage-required')refuse('review-required');throw error;}
+  if(coverage.decision==='rerun'||coverage.decision==='user')refuse('review-required');
+  const covered=new Set([...coverage.open,...coverage.overridden.map(item=>item.slot)]);
   const files:unknown[]=[];
   const targets=round.roster.filter((slot:any)=>!slot.reserve);
   if(!targets.length)refuse('review-required');
   for(const slot of targets) {
     const saved=reviewRead(()=>JSON.parse(fs.readFileSync(path.join(last.dir,'gen-'+round.generation,'slots',slot.slot+'.json'),'utf8')));
     if(saved.slot!==slot.slot ||
-      saved.state!=='done' ||
-      !parseReport({kind:'code',source:slot.slot,text:saved.text}).ok)refuse('review-required');files.push(saved);
+      !(saved.state==='done'?parseReport({kind:'code',source:slot.slot,text:saved.text}).ok:saved.state==='failed'&&covered.has(slot.slot)))refuse('review-required');files.push(saved);
   }
+  if(!files.some((saved:any)=>saved.state==='done'))refuse('review-required');
   const escalations=new Map<string,string>();for(const r of fold.records)if(r.kind==='escalation')escalations.set(r.data['id'],r.data['state']);
   if([...escalations.values()].includes('open'))refuse('review-required');
   const all=rounds.flatMap(r=>r?.findings.findings??[]);

@@ -193,6 +193,31 @@ test('ceiling resolution requires user quote', () => {
   assert.doesNotThrow(() => validateRecord(recordWithTarget('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
 });
 
+test('coverage override records require a quoted user decision in the exact summary grammar', () => {
+  const id = 'coverage:code-integration:1';
+  const record = (overrides: object = {}, data: object = {}) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: id,
+    data: {id, state: 'resolved', summary: 'accept: codex[0], opencode[1]', ...data}, ...overrides});
+  assert.doesNotThrow(() => validateRecord(record()));
+  assert.doesNotThrow(() => validateRecord(record({}, {summary: 'accept: codex[0]'})));
+  assert.doesNotThrow(() => validateRecord(record({}, {summary: 'grant: provider restored'})));
+  for (const by of ['orchestrator', 'tool']) assert.throws(() => validateRecord(record({by})), {reason: 'user-only'}, by);
+  for (const quote of [' ', '']) assert.throws(() => validateRecord(record({quote})), {reason: 'user-only'});
+  const {quote, ...unquoted} = record();
+  assert.throws(() => validateRecord(unquoted), {reason: 'user-only'});
+  const refused = (value: object, field: RegExp) => assert.throws(() => validateRecord(value), (error) => {
+    const failure = error as Error & {reason: string};
+    assert.equal(failure.reason, 'invalid-record');
+    assert.match(failure.message, field);
+    return true;
+  });
+  refused(record({}, {state: 'open'}), /data\.state/);
+  for (const summary of ['accept:', 'accept: codex', 'accept: codex[0],opencode[1]', 'accept: codex[0], codex[0]', 'accept: codex[0], ', 'Accept: codex[0]',
+    'accept codex[0]', ' accept: codex[0]', 'grant:', 'grant: ', 'grant:reason', 'defer: later', 're-author: split'])
+    refused(record({}, {summary}), /data\.summary/);
+  for (const bad of ['coverage:code-integration', 'coverage::1', 'coverage:code-integration:'])
+    refused(record({}, {id: bad}), /data\.id/);
+});
+
 const correction = (data: object, extra: object = {}) => ({
   kind: 'ruling', by: 'orchestrator', key: 'correction',
   data: {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'impact: the gate surfaces it', ...data}, ...extra,

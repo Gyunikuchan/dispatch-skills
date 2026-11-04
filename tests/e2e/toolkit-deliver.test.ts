@@ -387,3 +387,72 @@ describe('toolkit delivery and cleanup',()=>{
     }finally{r.cleanup();}
   });
 });
+
+// SECTION: coverage gate over saved code-integration rounds
+const [A,B,C,D]=['codex[0]','opencode[1]','claude[2]','agy[3]'];
+type RoundInput={n:number;roster:string[];done?:string[];failed?:string[];coverage?:'open'|'full';generation?:number;unfinished?:boolean;
+ // Failure entries per generation; the current generation defaults to one entry per failed slot.
+ attempts?:Record<number,{slot:string;seq:number}[]>};
+// Writes a round as `review run` leaves it, replacing any earlier copy of the same number.
+function coverageRound(r:Repo,input:RoundInput){
+ const dir=path.join(r.session,'.state/reviews/code-integration/round-'+input.n),generation=input.generation??1,write=(file:string,value:unknown)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(value));};
+ fs.rmSync(dir,{recursive:true,force:true});
+ const records=foldLedger(r.session),base=records.records.find(x=>x.data['phase']==='opened')!.data['base'],seq=records.lastSeq;
+ write(path.join(dir,'round.json'),{round:input.n,generation,cap:3,level:'low',startSeq:0,scope:input.n===1?'Full review':'Re-review round '+input.n+' (coverage) — changed paths: src/file.ts',
+  spec:{path:path.join(r.root,'work.spec.md'),hash:'sha256:'+'a'.repeat(64)},target:{base,head:r.git(['rev-parse','HEAD'],r.integration)},
+  roster:input.roster.map(slot=>({slot,provider:'codex',index:0,reserve:false})),...(input.coverage?{coverage:input.coverage}:{})});
+ for(const slot of input.done??[])write(path.join(dir,'gen-'+generation,'slots',slot+'.json'),{slot,state:'done',text:'{"status":"CLEAN","findings":[]}'});
+ for(const slot of input.failed??[])write(path.join(dir,'gen-'+generation,'slots',slot+'.json'),{slot,state:'failed',cls:'timeout',reason:'slow'});
+ const entries:Record<number,{slot:string;seq:number}[]>={[generation]:(input.failed??[]).map(slot=>({slot,seq})),...input.attempts};
+ for(const [gen,list] of Object.entries(entries))write(path.join(dir,'gen-'+gen,'attempts.json'),list.map(item=>({wholeTarget:true,outcome:'timeout',...item})));
+ if(!input.unfinished)write(path.join(dir,'findings.json'),{review:'code-integration',round:input.n,findings:[],failed:input.failed??[]});
+ return dir;
+}
+const userCoverage=(r:Repo,summary:string,quote:string)=>appendRecord(r.session,{kind:'escalation',by:'user',quote,key:'coverage:code-integration:'+foldLedger(r.session).lastSeq,data:{id:'coverage:code-integration:'+foldLedger(r.session).lastSeq,state:'resolved',summary}},r.deps);
+// A refusal must leave the caller and the ledger untouched.
+async function refused(r:Repo,expected:RegExp){
+ const before=caller(r),bytes=fs.readFileSync(path.join(r.root,'src/file.ts')),result=await r.run(['worktree','deliver']);
+ assert.equal(result.exit,4,JSON.stringify(result));assert.equal(result.output.reason,'coverage-required');assert.match(result.output.summary,expected);
+ assert.deepEqual(caller(r),before);assert.deepEqual(fs.readFileSync(path.join(r.root,'src/file.ts')),bytes);assert.equal(rows(r,'deliver-started').length,0);assert.equal(rows(r,'delivered').length,0);
+}
+describe('deliver coverage gate',()=>{
+ it('deliver coverage gate refuses open slots, a user decision, an incomplete round and unreadable state',async()=>{const {r}=await prepared();try{
+  // A slot with no whole-target rerun after its failure.
+  coverageRound(r,{n:1,roster:[A,B,C,D],done:[C,D],failed:[A,B]});
+  await refused(r,/codex\[0\].*opencode\[1\]/);
+  // Rerun failed again with half of the targets completed: only the user can proceed.
+  coverageRound(r,{n:2,roster:[A,B],failed:[A,B],coverage:'open'});
+  await refused(r,/codex\[0\].*opencode\[1\].*accept reduced coverage.*one more coverage round/);
+  // A failed slot file without a failure entry cannot be trusted.
+  coverageRound(r,{n:2,roster:[A,B],failed:[A,B],coverage:'open'});
+  fs.rmSync(path.join(r.session,'.state/reviews/code-integration/round-2/gen-1/attempts.json'));
+  await refused(r,/Cannot establish coverage.*round-2/);
+  fs.rmSync(path.join(r.session,'.state/reviews/code-integration/round-2'),{recursive:true});
+  // A round still in flight can still publish a failure.
+  coverageRound(r,{n:1,roster:[A,B],done:[A],unfinished:true});
+  await refused(r,/round 1 is incomplete/);
+ }finally{r.cleanup();}});
+ it('deliver coverage gate continues when a majority completed after the rerun',async()=>{const {r}=await prepared();try{
+  coverageRound(r,{n:1,roster:[A,B,C],done:[B,C],failed:[A]});
+  coverageRound(r,{n:2,roster:[A],failed:[A],coverage:'open'});
+  const result=await r.run(['worktree','deliver']);assert.equal(result.exit,0,JSON.stringify(result));assert.equal(result.value.delivered,true);assert.equal(rows(r,'delivered').length,1);
+ }finally{r.cleanup();}});
+ it('deliver coverage gate honours an override until a later failure reopens the slot',async()=>{const {r}=await prepared();try{
+  coverageRound(r,{n:1,roster:[A,B],done:[B],failed:[A]});
+  await userCoverage(r,'accept: '+A,'ship without codex');
+  // The rerun fails after the override while the other slot is still in flight.
+  coverageRound(r,{n:2,roster:[A,B],coverage:'full',unfinished:true,failed:[A]});
+  await refused(r,/codex\[0\]/);
+  // A target-moved retry keeps the superseded generation's failure while its slots are pending.
+  coverageRound(r,{n:2,roster:[A,B],coverage:'full',unfinished:true,generation:2,attempts:{1:[{slot:A,seq:foldLedger(r.session).lastSeq}]}});
+  await refused(r,/codex\[0\]/);
+  // Without the later failure the override covers the slot.
+  fs.rmSync(path.join(r.session,'.state/reviews/code-integration/round-2'),{recursive:true});
+  const result=await r.run(['worktree','deliver']);assert.equal(result.exit,0,JSON.stringify(result));assert.equal(result.value.delivered,true);
+ }finally{r.cleanup();}});
+ it('deliver coverage gate leaves a started delivery to existing recovery',async()=>{const {r}=await prepared();try{
+  const crash=await r.run(['worktree','deliver'],p=>{if(p==='deliver:after-started')throw Error('injected');});assert.equal(crash.exit,2);assert.equal(rows(r,'deliver-started').length,1);
+  coverageRound(r,{n:1,roster:[A,B,C],done:[B,C],failed:[A]});
+  const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.equal(retry.value.delivered,true);
+ }finally{r.cleanup();}});
+});

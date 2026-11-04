@@ -301,7 +301,7 @@ test('report render fills review focus and visuals from ledger and design',async
   await appendRecord(f.session,{kind:'bind',by:'tool',key:'bind:report:design',data:{spec:'brief.spec.md',plan:'report.plan.md',design:'parent.design.md'}},f.deps);
   await appendRecord(f.session,{kind:'focus',by:'orchestrator',key:'focus:report',data:{bullets:[{text:'Inspect the delivered retry boundary.',evidence:'evidence/retry-boundary.md'}]}},f.deps);
   const priorReview=path.join(f.session,'.state/reviews/review-alpha/round-1');
-  writeJson(path.join(priorReview,'round.json'),{round:1,generation:1,cap:3,roster:[]});
+  writeJson(path.join(priorReview,'round.json'),{round:1,generation:1,cap:3,spec:{path:'/work.spec.md',hash:'x'},target:{base:'c'.repeat(40),head:'d'.repeat(40)},roster:[]});
   writeJson(path.join(priorReview,'findings.json'),{review:'review-alpha',round:1,findings:[{id:'R1-F001',severity:'SHOULD'},{id:'R1-F002',severity:'SHOULD'}],failed:[]});
   await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-prior-should',data:{subject:'review:review-alpha:R1-F001',ruling:'rejected',rationale:'The change is not needed'}},f.deps);
   await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'defer-prior-should',data:{subject:'review:review-alpha:R1-F002',ruling:'deferred',rationale:'More evidence is needed'}},f.deps);
@@ -311,7 +311,7 @@ test('report render fills review focus and visuals from ledger and design',async
   const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline};
   const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');
   const finding={id:'R3-F001',severity:'SHOULD',category:'correctness',locus:'src/task-1.ts:L1',defect:'The assertion is wrong',requiredChange:'Correct the assertion',sources:['reviewer'],scope:'in',fix:{paths:['src/task-1.ts','src/shared.ts'],dependencies:[],verification:[]}};
-  writeJson(path.join(reviewDir,'round.json'),{round:3,generation:1,cap:3,startSeq:fold.lastSeq,target:{base:'c'.repeat(40),head:baseline},scope:'Full review',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
+  writeJson(path.join(reviewDir,'round.json'),{round:3,generation:1,cap:3,startSeq:fold.lastSeq,target:{base:'c'.repeat(40),head:baseline},scope:'Full review',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
   writeJson(path.join(reviewDir,'findings.json'),{review:'code-integration',round:3,findings:[finding],failed:[]});
   writeJson(path.join(reviewDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'FINDINGS',findings:[{impact:'degrades',trigger:'realistic',locus:'src/task-1.ts:L1',tag:'correctness',defect:finding.defect,requiredChange:finding.requiredChange}]})});
   await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-bounded-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed'}},f.deps);
@@ -345,12 +345,31 @@ test('report render fills review focus and visuals from ledger and design',async
   assert.ok(appendix.includes(`Plan: report.plan.md · sha256:${hashes.plan!.slice(7,19)}`));
   assert.ok(!appendix.includes('Review Fixes'));
   const nextDir=path.join(f.session,'.state/reviews/code-integration/round-4');
-  writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
+  writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
   writeJson(path.join(nextDir,'findings.json'),{review:'code-integration',round:4,findings:[],failed:[]});
   writeJson(path.join(nextDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'CLEAN',findings:[]})});
   const reviewed=await invoke(f,'report','render');assert.equal(reviewed.exit,0);
   const reviewedValue=JSON.parse(fs.readFileSync(reviewed.output.path!,'utf8'));
   assert.deepEqual(reviewedValue.reviewFixes,[]);
   assert.doesNotMatch(fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8'),/Code Review Corrections/);
+ }finally{f.cleanup();}
+});
+
+test('walkthrough reports coverage unreadable state and open slots beside review-fix records',async()=>{
+ const f=await fixture(1);try{
+  await completeFixture(f);
+  const reviewFix={review:'code-integration',round:1,generation:1,findings:['R1-F001'],from:'c'.repeat(40)};
+  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit:'d'.repeat(40),reason:'repair accepted SHOULD',reviewFix}},f.deps);
+  const dir=path.join(f.session,'.state/reviews/code-integration/round-1'),slots=path.join(dir,'gen-1/slots');
+  writeJson(path.join(dir,'round.json'),{round:1,generation:1,cap:3,startSeq:0,scope:'Full review',target:{base:'c'.repeat(40),head:HEAD},spec:{path:path.join(f.root,'brief.spec.md'),hash:'sha256:'+'a'.repeat(64)},roster:[{slot:'codex[0]',reserve:false},{slot:'opencode[1]',reserve:false}]});
+  writeJson(path.join(dir,'findings.json'),{review:'code-integration',round:1,findings:[],failed:[]});
+  writeJson(path.join(slots,'opencode[1].json'),{slot:'opencode[1]',state:'done',text:'{}'});
+  writeJson(path.join(slots,'codex[0].json'),{slot:'codex[0]',state:'failed',cls:'timeout',reason:'slow'});
+  const render=async()=>{const result=await invoke(f,'report','render');assert.equal(result.exit,0,result.output.summary);return fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');};
+  // A failed slot file with no failure entry cannot be trusted, yet the report still renders.
+  const unreadable=await render();
+  assert.match(unreadable,/^- Coverage state unreadable$/m);assert.match(unreadable,/R1-F001/);
+  writeJson(path.join(dir,'gen-1/attempts.json'),[{slot:'codex[0]',seq:1,wholeTarget:true,outcome:'timeout'}]);
+  assert.match(await render(),/^- Open coverage slots: codex\[0\]$/m);
  }finally{f.cleanup();}
 });

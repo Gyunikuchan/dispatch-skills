@@ -315,3 +315,18 @@ test('reserve attempts carry target slot', async () => {
     assert.equal(f.launches.find(launch=>launch.provider==='copilot')?.request.targetSlot,'claude[0]');
   } finally {f.cleanup();}
 });
+
+test('coverage round failure evidence is written before the failed slot file, including retries', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f=sessionFixture({memory:true});try {
+    f.script('claude','good',{status:'fail',cls:'auth',detail:'unavailable'});f.script('agy','good','answer');
+    const dir=path.join(f.session,'coverage'),file=path.join(dir,'slots','claude[0].json'),seen:string[]=[];
+    const input={dir,slots:[slot('claude'),slot('agy')],prompt:'question',validate,quota,
+      onFailed:(name:string,outcome:{cls:string})=>{seen.push(name+':'+outcome.cls+':'+fs.existsSync(file));}};
+    const first=await fanOut(input,f.deps);
+    assert.deepEqual(first.map(reply=>reply.state),['failed','done']);
+    assert.deepEqual(seen,['claude[0]:auth:false']);
+    await fanOut(input,f.deps);
+    assert.deepEqual(seen,['claude[0]:auth:false','claude[0]:auth:true'],'a retry reports again before it overwrites the saved failure');
+  }finally{f.cleanup();}
+});

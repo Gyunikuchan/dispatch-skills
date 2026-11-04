@@ -19,6 +19,7 @@ import type { LedgerRecord, ReviewFix } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
 
 import { loadRejections, applicableReviewIds, type RejectionState } from './confirmations.ts';
+import { coverageState } from './coverage.ts';
 type Current = { headTree: string; testedTree: string };
 type ReviewFixReport = {
   commit: string;
@@ -48,6 +49,7 @@ type Snapshot = {
   integrated: number;
   rejectionConfirmations: RejectionState[];
   confirmationError: string | undefined;
+  coverage: WalkthroughView['coverage'];
   reviewedCodeBaseline: string | undefined;
   reviewFixes: ReviewFixReport[];
   testCleanup: WalkthroughView['testCleanup'];
@@ -145,11 +147,14 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   let rejectionConfirmations:RejectionState[]=[],confirmationError:string|undefined;
   try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
+  let coverage:WalkthroughView['coverage'];
+  try {coverage=coverageState(ctx.session,fold,'code-integration',applicableReviewIds(ctx.manifest,fold).get('code-integration'));}
+  catch(error) {if(!(error instanceof ToolError && error.reason==='coverage-required'))throw error;coverage='unreadable';}
   return {
     fold, bind, plan, planPath, planHash, planStem, specPath, specHash,
     risk,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
-    integrated: integrated.size,rejectionConfirmations,confirmationError,reviewedCodeBaseline,reviewFixes,
+    integrated: integrated.size,rejectionConfirmations,confirmationError,coverage,reviewedCodeBaseline,reviewFixes,
     testCleanup: cleanupRecord ? {from:cleanupRecord.data['from'],removed:cleanupRecord.data['removed'],deleted:cleanupRecord.data['deleted'],merged:cleanupRecord.data['merged']} : undefined,
   };
 }
@@ -264,6 +269,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     reviewRows: review.rows,
     reviewRounds: review.rounds,
     reviewFixes: snapshot.reviewFixes,
+    ...(snapshot.coverage ? { coverage: snapshot.coverage } : {}),
     ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
     ...(snapshot.testCleanup ? { testCleanup: snapshot.testCleanup } : {}),
   };

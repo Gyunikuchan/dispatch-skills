@@ -6,6 +6,8 @@ import type { SlotOutcome } from './fanout.ts';
 import type { LedgerRecord, RecordInput } from './records.ts';
 import { effectiveSeverity } from './domain/severity.ts';
 import type { Fold } from './ledger.ts';
+import { coverageState, type CoverageApplies, type CoverageDecision, type CoverageState } from './coverage.ts';
+import { ToolError } from './output.ts';
 import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
 export type ReviewTarget = string | {base: string; head: string};
 export type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
@@ -98,9 +100,12 @@ function ceilingState(records: readonly LedgerRecord[], review: string, cap1: nu
   const ceiling = cap1 + 2 + 2 * grants.size;
   return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
 }
-export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open'};
+export type BudgetCoverage =
+  | {state: 'readable'; open: string[]; decision: CoverageDecision; use?: 'free' | 'grant'}
+  | {state: 'unreadable'};
+export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open' | 'requires-coverage-decision'; coverage?: BudgetCoverage};
 /** The single admission policy: launch refuses by `state`; status and summaries only report it, opening and granting nothing. */
-export function admission(session: string, fold: Fold, review: string, cap: number): {budget: ReviewBudget; rounds: number} {
+export function admission(session: string, fold: Fold, review: string, cap: number, applies?: CoverageApplies): {budget: ReviewBudget; rounds: number} {
   const directory = path.join(session, '.state/reviews', review), file = (round: number, name: string) => path.join(directory, 'round-' + round, name);
   const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
   const last = numbers.at(-1) ?? 0, completed = last > 0 && fs.existsSync(file(last, 'findings.json')), n = completed ? last + 1 : last || 1;
@@ -113,9 +118,33 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
   }));
   const past = completed && n > ceiling.ceiling;
   // Defer grants no rounds; a pending MUST rejection keeps its confirmation round.
-  const state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
+  let state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
     : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending)) ? 'requires-continuation'
     : past && !ceiling.deferred ? 'requires-ceiling-resolution' : 'allowed';
-  return {budget: {cap: cap1, ceiling: ceiling.ceiling, nextRound: n, asOfSeq: fold.lastSeq, state}, rounds: numbers.length};
+  // SECTION: Coverage rows (code-integration only); escalation, ceiling and accepted-MUST rules stay first.
+  let coverage: BudgetCoverage | undefined, use: 'free' | 'grant' | undefined, folded: CoverageState | undefined;
+  if (review === 'code-integration') {
+    try { folded = coverageState(session, fold, review, applies); }
+    catch (error) { if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error; coverage = {state: 'unreadable'}; }
+  }
+  if (folded) {
+    const saved = folded.incomplete === n ? read<{coverageUse?: 'free' | 'grant'}>(file(n, 'round.json'))?.coverageUse : undefined;
+    if ((state === 'allowed' || state === 'requires-continuation') && !past) {
+      if (saved) {state = 'allowed'; use = saved;}
+      else if (!fixed && !pending && folded.open.length && n !== last) {
+        const grant = folded.unusedGrant ? 'grant' as const : undefined;
+        if (folded.decision === 'user') [state, use] = grant ? ['allowed', grant] : ['requires-coverage-decision', undefined];
+        else if (n <= cap1) state = 'allowed';
+        else if (!folded.freeUsed) [state, use] = ['allowed', 'free'];
+        else if (grant) [state, use] = ['allowed', grant];
+        else if (folded.decision === 'rerun') state = 'requires-coverage-decision';
+      }
+    }
+    // NOTE: past the ceiling no round can run, so only the user's accept can settle a slot that delivery refuses.
+    else if (state === 'requires-continuation' && past && folded.open.length && folded.decision !== 'majority') state = 'requires-coverage-decision';
+    if (folded.open.length || folded.incomplete !== null) coverage = {state: 'readable', open: folded.open, decision: folded.decision, ...(use ? {use} : {})};
+  }
+  return {budget: {cap: cap1, ceiling: ceiling.ceiling, nextRound: n, asOfSeq: fold.lastSeq, state, ...(coverage ? {coverage} : {})}, rounds: numbers.length};
 }
-export const renderBudget = (budget: ReviewBudget) => `next round ${budget.nextRound} ${budget.state} (cap ${budget.cap}, ceiling ${budget.ceiling})`;
+export const renderBudget = (budget: ReviewBudget) => `next round ${budget.nextRound} ${budget.state} (cap ${budget.cap}, ceiling ${budget.ceiling})`
+  + (!budget.coverage ? '' : budget.coverage.state === 'unreadable' ? '; coverage unreadable' : `; coverage ${budget.coverage.decision}, open: ${budget.coverage.open.join(', ') || 'none'}`);

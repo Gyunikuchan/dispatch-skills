@@ -12,6 +12,8 @@ const overlaps=(p:string,q:string)=>p===q||p.startsWith(q+'/')||q.startsWith(p+'
 const chunks=<T>(items:T[],size=100)=>Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
 
 import { loadRejections, applicableReviewIds } from './confirmations.ts';
+import { coverageState } from './coverage.ts';
+import { admission } from './findings.ts';
 export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','deliver takes no task');
   return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
@@ -58,6 +60,11 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const entries=await entriesOf(),paths=entries.map(e=>e.path);
     const started=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='deliver-started'&&r.data['dest'].path===dest.path&&r.data['dest'].branch===dest.branch);
     if(started&&(started.data['source']!==source||started.data['from']!==from))blocked('Unfinished delivery has a different source or caller base');
+    // A started delivery recovers under existing rules; a new one needs settled coverage before any caller write.
+    if(!started){const applies=applicableReviewIds(ctx.manifest,tx.fold).get('code-integration'),c=coverageState(ctx.session,tx.fold,'code-integration',applies);
+      // The message follows launch admission, which can stop a rerun for a user decision once the coverage round is used.
+      const budget=c.open.length?admission(ctx.session,tx.fold,'code-integration',0,applies).budget:null,user=budget?.state==='requires-coverage-decision';
+      if(c.decision==='rerun'||c.decision==='user')refuse('coverage-required','Review coverage: '+(c.open.length?'open slots '+c.open.join(', ')+(user?'; needs a user decision: accept reduced coverage'+(budget!.nextRound>budget!.ceiling?'':' or grant one more coverage round'):'; rerun them'):'round '+c.incomplete+' is incomplete'));}
     const retained=await git(ctx.deps,cwd,['rev-parse','--verify','--quiet',ref],{GIT_OPTIONAL_LOCKS:'0'});
     if(retained.exit===0&&retained.stdout.trim()!==source)blocked('Delivered-source ref points to a different commit');
     const zero='0'.repeat(source.length);

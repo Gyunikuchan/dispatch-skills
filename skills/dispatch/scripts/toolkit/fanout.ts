@@ -31,6 +31,7 @@ type FanOutInput = {
   /** Active session directory; forwarded so the delegate guard can exempt its artifacts. */
   sessionRoot?: string;
   quota?: ReturnType<typeof quotaSnapshot>;
+  onFailed?: (slot: string, outcome: Extract<SlotOutcome, {state: 'failed'}>) => void;
 };
 
 export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Level, deps: CliDeps): Roster {
@@ -114,6 +115,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     promptPath: path.join(input.dir, 'prompts', name(slot.slot) + '.md'),
     replyPath: path.join(input.dir, 'replies', name(slot.slot) + '.md')};};
   const save = async (slot: RosterSlot, outcome: SlotOutcome) => {
+    if (outcome.state === 'failed') input.onFailed?.(outcome.slot, outcome);
     atomic(fileOf(slot), outcome);
     emit(slot,{kind:'slot',state:outcome.state,...(outcome.state==='failed'?{cls:outcome.cls}:{})});
     await deps.hook?.('fanout:after-slot');
