@@ -2,7 +2,7 @@
 
 Rules for one unit writer optimising one packet. The packet lists files, line counts, durations, slow tests, and duplicate or merge candidates. Candidates are leads; inspect the tests before changing them.
 
-The canonical behavioral test bar lives in the [code section of the quality bar](../../../../skills/dispatch/references/templates/quality-bar.md#code). Apply it to new, changed, and retained tests. Use `AGENTS.md` § Code Comments for comment and `// SECTION:` conventions.
+The canonical behavioral test bar lives in the [testing section of the quality bar](../../../../skills/dispatch/references/templates/quality-bar.md#testing). Apply it to new, changed, and retained tests. Use `AGENTS.md` § Code Comments for comment and `// SECTION:` conventions.
 
 ## Scope and file splitting
 
@@ -71,7 +71,7 @@ The names in examples must resolve in the inventories for a real run. These reco
 
 ## Deletion and retention judgment
 
-Aggressively challenge every test's right to exist under the high-value test bar. Retained tests must defend a plausible severe defect (consumer contract breakage, state corruption, data loss, security violations, or broken protocol transitions) distinct from static types or adjacent tests. Delete or merge any test that cannot articulate this defense. Coverage percentages never justify durable retention or gate deletion.
+Aggressively challenge every test's right to exist under the high-value test bar. Retain a test only if it passes every [retention gate](../../../../skills/dispatch/references/templates/quality-bar.md#testing); delete or merge the rest. Coverage percentages never justify durable retention or gate deletion.
 
 Assign each `delete` and `merge` action to one category from the closed set defined under [Evidence records](#evidence-records). Prune tests matching the five concrete anti-patterns below:
 

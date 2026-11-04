@@ -325,7 +325,7 @@ test('orchestrator reads quality bar sections by stage', () => {
   const implementLinks = links(read(root + 'references/verbs/implement.md'));
   for (const anchor of ['rulings-and-fix-scope', 'review-provenance-and-applicability']) assert.ok(implementLinks.includes('../review-rules.md#' + anchor));
   for (const guide of ['../spec-stage.md', 'plan.md', 'design.md']) assert.ok(implementLinks.includes(guide), guide);
-  for (const [file, anchor] of [['spec-stage.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code']]) {
+  for (const [file, anchor] of [['spec-stage.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code'], ['verbs/plan.md','testing'], ['verbs/implement.md','testing'], ['verbs/review.md','testing']]) {
     const text = read(root + 'references/' + file);
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#' + anchor)), file);
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);

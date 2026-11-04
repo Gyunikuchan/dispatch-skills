@@ -107,7 +107,7 @@ Explain non-obvious rationale (e.g. quirks, non-obvious invariants, architectura
 - **Brief sizing:** Use `node scripts/brief-size.ts <brief-file> [<brief-file> ...]` to report UTF-8 bytes (not token estimates). Store output in `.scratch/` and link in handoff.
 - **Test layers:** Toolkit tests verify tool results, ledgers, and rendered sections. Real Git and subprocess flows belong in `tests/e2e/`.
 - **Fixtures:** Keep unit fixtures in memory; use physical storage only when verifying filesystem behavior or byte output, preserving per-file timing budgets.
-- **Quality bar:** Apply [quality-bar.md § Code](skills/dispatch/references/templates/quality-bar.md#code) for test behavior, naming, and retention.
+- **Quality bar:** Apply [quality-bar.md § Testing](skills/dispatch/references/templates/quality-bar.md#testing) for test behavior, naming, and retention.
 - **Toolkit changes:** List callers with CodeGraph; test every caller family, including failures after each durable boundary.
 - **Hash-tracked changes:** When editing hash-tracked skill files, list them in `[GENERATED] skills/dispatch/skill-hashes.json`, run `npm run hashes`, then rerun `npm test`.
 

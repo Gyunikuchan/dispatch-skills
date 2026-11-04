@@ -198,8 +198,6 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   for (const rule of ['WCAG accessibility', 'POLA', 'Keep the existing format of rendered output unless a recorded user decision changes it.', 'state non-goals', 'State system-wide invariants that hold within and across increments', 'spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege', 'Map trust boundaries and least privilege', 'missing indexes', 'closed handles and resource closure', 'breaking changes', "Hyrum's law", 'semver', 'expand/contract migrations', 'rollback', 'version skew with graceful degradation', 'affected callers', 'persisted schemas and serialized formats', 'portability across OS, shell, path, and encoding', 'deployment and runtime operation', 'observability through logs, metrics, and traces', 'actionable diagnostics', 'configuration, and a kill switch']) assert.ok(section('shared').includes(rule), rule);
   assert.ok(section('code').includes('- **spec**'));
   for (const rule of ['- Artifact layout:', 'At a Glance', 'State each visible fact once; a summary must add a distinct view, not restate a later visible section.', 'A visible summary may restate collapsed `<details>` detail.', 'Keep task and increment behaviour visible before `<details>`', 'Keep machine fields outside callouts, prefer point form, and retain every required field.', '[!NOTE]', '[!IMPORTANT]']) assert.ok(section('spec').includes(rule), rule);
-  assert.ok(section('plan').includes('assess test coupling, duplicate seam coverage'));
-  for (const rule of ['fail RED for the right reason', 'Prefer FIRST (deterministic, isolated) tests and preserve meaningful failures.', 'static checks do not guarantee runtime authorization or state transitions', 'name its consumer, failure and protection', 'Plan observable values, used errors, readable state, external payloads, prohibited/duplicate effects or invariants', 'mutation-style break-it checks', 'Retain multiple layers only for distinct failures', 'Coverage never justifies retention; resolve required-contract uncertainty before deletion', 'Self-derived expectations, source restatements and assertions on test-created data do not establish runtime behavior unless that artifact is the contract.', 'If brittle mocks, broad unrelated fixtures or costly infrastructure outweigh regression value, use the closest executable or review evidence and record the limit.']) assert.ok(qualityBar(quality, 'plan').includes(rule), rule);
   const explorer = readFileSync(new URL('explorer-brief.md', root), 'utf8');
   for (const rule of ['Surprises', 'Not covered', '## Questions', '## Coverage checklist', '## Map, budget and output']) assert.ok(explorer.includes(rule), rule);
   // Evidence rule: one shared home, reached by every consumer, linked from the explorer, stack neutral.
@@ -275,7 +273,7 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   assert.ok(rules.includes('For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).'));
 
   // Single-sourced judging rules
-  assert.deepEqual([...quality.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'plan', 'design']);
+  assert.deepEqual([...quality.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['shared', 'spec', 'code', 'testing', 'plan', 'design']);
   const adjacentRule = 'Report concrete existing-code defects encountered in the selected target or during that required inspection';
   assert.equal(frame.split(adjacentRule).length - 1, 1);
   assert.doesNotMatch(quality, /Adjacent findings|nearest plan|nearest design/);
@@ -302,7 +300,7 @@ test('templates: test cleanup brief keeps the placeholders the orchestrator fill
   assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
   assert.ok(brief.includes('git diff <base>..HEAD'));
   assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
-  assert.ok(brief.includes('quality-bar.md#code'));
+  assert.ok(brief.includes('quality-bar.md#testing'));
 });
 
 const LEAN_ANCHORS = [

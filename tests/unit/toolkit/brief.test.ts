@@ -266,7 +266,7 @@ describe('writer brief', () => {
       assert.doesNotMatch(command, /[$%]/);
       const quality = getQuality(f.deps.skillRoot);
       assert.equal(brief.split('## Quality\n\n' + qualityCriteria(quality, 'writer')).length - 1, 1);
-      for (const name of ['shared', 'code']) {
+      for (const name of ['shared', 'code', 'testing']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
         assert.ok(brief.includes(body));
       }

@@ -107,9 +107,9 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
 
 export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer';
 export const qualitySections = {
-  code: ['shared', 'code'],
-  writer: ['shared', 'code'],
-  plan: ['shared', 'spec', 'plan'],
+  code: ['shared', 'code', 'testing'],
+  writer: ['shared', 'code', 'testing'],
+  plan: ['shared', 'spec', 'plan', 'testing'],
   design: ['shared', 'spec', 'design'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
 

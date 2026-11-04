@@ -117,8 +117,9 @@ const reviewKinds = ['code', 'plan', 'design'] as const;
 const familyOrder = {
   shared: ['intent', 'maintainability', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'operability', 'usability'],
   spec: ['spec'],
-  code: ['spec', 'testing'],
-  plan: ['architecture', 'decomposition', 'testing'],
+  code: ['spec'],
+  testing: ['testing'],
+  plan: ['architecture', 'decomposition'],
   design: ['architecture', 'testing', 'decomposition'],
 } as const;
 const tagOrder = {
@@ -270,7 +271,8 @@ test('quality selection: every review contains each selected rule once and exclu
   const sectionMarkers = [
     ['shared', 'gold-plating'],
     ['spec', 'IEEE 29148 quality'],
-    ['code', 'Implementation tests drive TDD'],
+    ['code', 'Treat ambiguous or contradictory governing text'],
+    ['testing', 'Unique kill'],
     ['plan', 'INVEST task sizing'],
     ['design', 'Weigh alternatives'],
   ] as const;
@@ -285,9 +287,9 @@ test('quality selection: every review contains each selected rule once and exclu
 });
 
 test('quality selection rejects missing, empty, duplicate sections and invalid consumers', () => {
-  const expected = { code: ['shared', 'code'], writer: ['shared', 'code'], plan: ['shared', 'spec', 'plan'], design: ['shared', 'spec', 'design'] };
+  const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'] };
   assert.deepEqual(qualitySections, expected);
-  const sections = ['shared', 'spec', 'code', 'plan', 'design'];
+  const sections = ['shared', 'spec', 'code', 'testing', 'plan', 'design'];
   const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
   for (const [consumer, selected] of Object.entries(expected)) {
     assert.equal(qualityBar(bar, consumer as QualityConsumer), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);
@@ -298,7 +300,7 @@ test('quality selection rejects missing, empty, duplicate sections and invalid c
   }
   assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code'), /declares section "shared" twice/);
   for (const consumer of ['ask', '__proto__', 'toString']) assert.throws(() => qualityBar(bar, consumer as QualityConsumer), { message: `Unknown quality consumer: ${consumer}` });
-  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal', 'code'), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal');
+  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal\n## testing\nproof', 'code'), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal\n\nproof');
 });
 
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
@@ -316,25 +318,6 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 });
 
 // SECTION: Durable test bar and plan-free naming
-
-test('quality selection: reviews hold tests to the two-tier bar', () => {
-  for (const kind of ['code', 'plan'] as const) {
-    const text = ruleText(kind);
-    assert.ok(text.includes('Apply one two-tier bar.'), kind);
-    assert.ok(text.includes('Retained tests are the executable spec of a current consumer contract that is severe if broken or non-obvious'), kind);
-    if (kind === 'plan') {
-      const prompt = flat(kind);
-      for (const term of [
-        '`<skills-dir>/dispatch/references/templates/plan.md#field-notes`',
-        'test selectors and named-test matching',
-        'treat any violation as a defect',
-      ]) assert.ok(prompt.includes(term), `${kind}: ${term}`);
-    }
-  }
-  assert.ok(ruleText('code').includes('Implementation tests drive TDD: each fails RED for the right reason'));
-  const text = flat('code');
-  for (const term of ['name tests, describe blocks, test files, comments, section headers, and fixtures for behavior', 'never reference plan artifacts such as criterion, task, or finding IDs, plan paths, or session paths']) assert.ok(text.includes(term), term);
-});
 
 test('quality selection keeps artifact finding loci in review kind blocks', () => {
   const bar = read(templates, 'quality-bar.md');

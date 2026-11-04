@@ -10,7 +10,7 @@ metadata:
 
 You, the lead, make the `tests/` suite faster and higher-signal while preserving required behavior and baseline failures. Deterministic scripts measure; native writers refactor one unit each and provide positive retention and action evidence; you own the baseline, scheduling, checks, the move pass, the gate and the handoff.
 
-**Objective**: fewer reported leaf tests and lower suite wall time, with a green suite and durable tests that meet the [high-value bar](../../../skills/dispatch/references/templates/quality-bar.md#code). Coverage is informational implementation feedback. Report measured leaf-test and suite-duration deltas separately from ledger-derived scenario, case, and setup savings. Report unmet objectives explicitly.
+**Objective**: fewer reported leaf tests and lower suite wall time, with a green suite and durable tests that meet the [high-value bar](../../../skills/dispatch/references/templates/quality-bar.md#testing). Coverage is informational implementation feedback. Report measured leaf-test and suite-duration deltas separately from ledger-derived scenario, case, and setup savings. Report unmet objectives explicitly.
 
 Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start; `<work>` is `.scratch/optimise-tests/<run>`. `<skill>` is the directory holding this `SKILL.md`:
 
