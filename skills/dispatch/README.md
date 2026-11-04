@@ -1,6 +1,6 @@
 # Dispatch
 
-Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; read delegates do not make production changes.
+Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; read delegates do not make production changes. Dispatch makes your host agent an orchestrator that dispatches work to native subagents and delegates, so work is done cheaper, faster and better.
 
 Dispatch can answer a focused question, help shape a design or plan, review existing work, or carry an approved change through implementation and verification.
 
@@ -17,11 +17,11 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 ## How Dispatch works
 
-Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
+Your current agent is the **host agent**. It acts as your deputy: it routes heavy reading to explorer subagents, low-risk routine tasks to utility subagents, planned changes to writers and independent opinions to read delegates. It checks their evidence against the repository and decides what to do with their findings.
 
 A typical run:
 
-1. **Understand the request.** Dispatch explores the relevant code first, using native explorer agents when `explore-subagents` is configured. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
+1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's `explore-subagents` entry, else its lowest `write-subagents` entry; with neither, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
 2. **Ground the scope, then write and review.** After you confirm the spec, Dispatch grounds the confirmed scope before authoring a standalone plan or design. It then writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
 3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
 4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
@@ -30,7 +30,7 @@ The level can go up during a run if the work proves harder, but never down. Ques
 
 ```mermaid
 flowchart TD
-    User(["👤 Your request"]) --> Ground["🔍 Explore the codebase<br/>(explorer agents if configured)"]
+    User(["👤 Your request"]) --> Ground["🔍 Explore the codebase<br/>(explorer subagents)"]
     Ground --> Spec["📄 Clarify and write the spec"]
     Spec --> ScopeGround["🔍 Ground confirmed scope"]
     ScopeGround --> Artifact["📝 Write plan or design"]
@@ -134,12 +134,12 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 
 | Setting | Controls |
 |---|---|
-| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; adds one retro turn per run when on |
+| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; when on, adds at most one utility subagent launch per verb handoff, only when the host agent has observations |
 | `write-concurrency` | Maximum number of implementation task writers running at once |
 | `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
-| `explore-subagents` | Optional native explorers for grounding and research |
+| `explore-subagents` | Optional native explorers for research and grounding; utility subagents use the same entry. Without one, both use the lowest `write-subagents` entry |
 | `phases` | Optional review breadth and round limits |
 
 The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.

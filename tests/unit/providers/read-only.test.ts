@@ -42,6 +42,23 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
   assert.deepEqual(SPECS.opencode.argv(request(true), 'cli').argv.slice(0, 7), ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--ro-bind', '/']);
 });
 
+test('claude delegates cannot launch subagents', () => {
+  for (const mode of MODE_IDS) {
+    for (const sandbox of [true, false]) {
+      const argv = SPECS.claude.argv(request(sandbox), mode).argv;
+      const denied: string[] = [];
+      let inList = false;
+      for (const arg of argv) {
+        if (arg.startsWith('--')) inList = arg === '--disallowedTools';
+        else if (inList) denied.push(arg);
+      }
+      for (const tool of ['Agent', 'Task']) assert.ok(denied.includes(tool), `${mode}/${String(sandbox)} does not disallow ${tool}`);
+      assert.ok(!argv.some((arg) => /^Task[A-Z]/.test(arg)), `${mode}/${String(sandbox)} disallows a task-list tool`);
+    }
+  }
+  for (const tool of ['Agent', 'Task']) assert.ok(SPECS.claude.readOnlyFlags.includes(tool), `read-only flags lack ${tool}`);
+});
+
 test('claude allowlists configured read commands as prefix Bash rules', () => {
   const argv = SPECS.claude.argv({ ...request(true), readCommands: ['codegraph explore'] }, 'cli').argv;
   const index = argv.indexOf('Bash(codegraph explore*)');

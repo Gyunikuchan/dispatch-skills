@@ -14,7 +14,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
-| `explore-subagents` | Optional | One native explorer entry per platform; also supplies test cleanup model and effort |
+| `explore-subagents` | Optional | One native entry per platform for explorer and utility subagents; without it, both use the lowest `write-subagents` entry |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 | `read-commands` | Optional | Host read commands, such as a code-index query, that read delegates may run |
 
@@ -76,7 +76,7 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup"
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
+Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. Its `utility` field gives the one model and effort per platform that explorer and utility subagents use: the `explore-subagents` entry, else the lowest `write-subagents` entry. A platform with neither has no `utility` entry. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
 
 If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
 
@@ -88,11 +88,11 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
-`explore-subagents` configures native, read-only explorers for grounding and general codebase or web research. The configured explorer is expected to use a cheaper model than the host agent, so token-heavy reading can stay out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; explorer choices do not depend on run level. Every explorer launch uses the platform entry. Test cleanup can reuse its model and effort for a native cleanup writer; see the [implementation rule](../verbs/implement.md). Independent topics can run in parallel; follow-ups answer inline ([follow-up explorers](../grounding.md#follow-up-explorers)).
+`explore-subagents` configures native explorers for grounding, research and triage, and the utility subagents that do low-risk routine tasks such as test cleanup and the diagnostics retrospective. Use a cheaper model than the host agent, so token-heavy reading stays out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; the choice does not depend on run level. Without an entry, explorer work runs read-only on the lowest `write-subagents` entry for that platform, and utility subagents use the same entry. When neither exists, the host agent does the work itself. Independent topics can run in parallel, and the host agent can continue a subagent for a related follow-up ([routing](../../SKILL.md#routing)).
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Only Claude has a command allowlist; other providers already permit commands their sandbox allows.
-- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes; missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
+- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes. At each verb handoff with observations, the host agent launches at most one utility subagent to merge its notes; without observations, it launches nothing. Missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
 
 ## Provider-specific settings
 

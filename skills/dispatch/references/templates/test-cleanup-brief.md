@@ -2,8 +2,6 @@
 
 Work only in `{{integrationPath}}`. Edit only test files (tests, fixtures, helpers). Change no production code, docs or plan artifacts. Run no Git write commands (add, stash, commit, checkout, reset, restore); run no dispatch toolkit. Follow applicable host rules; a stricter one wins.
 
-For any delegation already permitted by the assignment, use available host controls to request fresh context without parent conversation history. If unsupported or unverifiable, continue and report the limitation through existing reporting channels. Give each new child a self-contained brief with this launch instruction; preserve required reply schemas.
-
 ## Objective
 
 Reduce test growth from this run. Delete, merge or rewrite lower-value tests so the suite keeps only protection that the [retained-test bar](quality-bar.md#code) requires.

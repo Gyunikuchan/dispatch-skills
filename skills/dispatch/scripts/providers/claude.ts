@@ -14,6 +14,8 @@ export const READ_ONLY_ALLOWED_TOOLS = [
   'Bash(npm ls*)', 'TodoWrite',
 ] as const;
 export const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
+/** Current CLI versions name the subagent control `Agent`; older versions know only `Task`. */
+export const DISALLOWED_SUBAGENT_TOOLS = ['Agent', 'Task'] as const;
 export const SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: true } });
 
 const MODEL_NOT_FOUND = /selected model|model\b[^\n]*\bnot found/i;
@@ -55,7 +57,7 @@ export const claude: ProviderSpec = {
     { id: 'vscode', candidates: (env) => ['.vscode', '.vscode-insiders', '.vscode-server', '.cursor'].map((dir) =>
       join(env, env.home, dir, 'extensions', 'anthropic.claude-code-*', 'resources', 'native-binary', `claude${exe(env)}`)) },
   ],
-  readOnlyFlags: ['--permission-mode', 'plan', '--disallowedTools', ...DISALLOWED_WRITE_TOOLS],
+  readOnlyFlags: ['--permission-mode', 'plan', '--disallowedTools', ...DISALLOWED_WRITE_TOOLS, ...DISALLOWED_SUBAGENT_TOOLS],
   sandbox: {
     flags: ['--settings', SANDBOX_SETTINGS],
     inactive: /Sandbox disabled[^\n]*not active/i,
@@ -77,7 +79,7 @@ export const claude: ProviderSpec = {
     if (req.sandbox) argv.push('--settings', SANDBOX_SETTINGS);
     for (const tool of READ_ONLY_ALLOWED_TOOLS) argv.push('--allowedTools', tool);
     for (const command of req.readCommands ?? []) argv.push('--allowedTools', `Bash(${command}*)`);
-    argv.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS);
+    argv.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS, ...DISALLOWED_SUBAGENT_TOOLS);
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },
   parse(out): RunOutcome {

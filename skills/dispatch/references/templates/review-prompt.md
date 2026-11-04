@@ -25,7 +25,7 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground. A reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.
-For any delegation already permitted by the assignment, use available host controls to request fresh context without parent conversation history. If unsupported or unverifiable, continue and report the limitation through existing reporting channels. Give each new child a self-contained brief with this launch instruction; preserve required reply schemas.
+Read directly; launch no subagents.
 Verification evidence comes from the orchestrator; run no test or build commands.
 Adhere to the host rule files that the quality section's discovery rule finds.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.

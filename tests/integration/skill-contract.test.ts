@@ -214,9 +214,7 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
 
   assert.match(grounding, /landscape/i);
   assert.match(grounding, /load-bearing/i);
-  assert.match(grounding, /any step.*ask/i);
   assert.match(grounding, /live explorer/i);
-  assert.match(grounding, /Reviewers are not continued/);
   assert.match(grounding, /each design increment plan/i);
   assert.match(grounding, /cited range/i);
   assert.ok(grounding.includes('providers.md#native-slots'));
@@ -245,15 +243,60 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.doesNotMatch(reviewPrompt, /A native reviewer/);
   assert.match(writerBrief, /own cache or index/i);
   const skill = read(root + 'SKILL.md');
-  assert.ok(skill.includes('references/grounding.md#follow-up-explorers'));
   assert.ok(skill.includes('references/providers.md#native-slots'));
   assert.doesNotMatch(skill, /write its output to .replyPath/);
+});
+
+test('root skill routes work and guards orchestrator context', () => {
+  const skill = read(root + 'SKILL.md');
+  const definition = skill.indexOf("You are the orchestrator: the user's deputy, who middle-manages dispatched agents, whether native subagents or provider delegates");
+  assert.ok(definition >= 0 && definition < skill.indexOf('## Tool loop'), 'orchestrator definition precedes the tool loop');
+  const block = (heading: string) => skill.split('## ' + heading + '\n')[1]?.split('\n## ')[0] ?? '';
+  const routing = block('Routing');
+  const rows = routing.split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Work')).map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
+  const route = (work: string) => rows.find(([cell]) => cell!.includes(work))?.[1];
+  for (const [work, target] of [
+    ['log and verify triage', 'Explorer subagent (read-only)'], ['grounding maps', 'Explorer subagent (read-only)'],
+    ['Test cleanup', 'Utility subagent'], ['retro', 'Utility subagent'], ['mechanical fixes', 'Utility subagent'],
+    ['Plan tasks', 'Writer at run level'], ['Differentiated review or ask voices', 'Delegate or native slot'],
+    ['Decisions, rulings, ledger, user gates', 'Orchestrator'], ['submitted-change inspection', 'Orchestrator'],
+  ] as const) assert.equal(route(work), target, work);
+  assert.equal(rows.length, 5, 'five routes');
+  assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
+  for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'A configured launch failure is a blocker, not a fallback trigger', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
+  const guard = block('Context guard');
+  for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 500 lines', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
+  const launch = block('Launch and continue');
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'A follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree']) assert.ok(launch.includes(phrase), phrase);
+  assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
+  assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
+  const glossary = read(root + 'references/glossary.md');
+  assert.match(glossary, /^\| utility subagent \|[^\n]*\| lowest subagent \|$/m);
+});
+
+test('references keep branch detail and use the utility entry', () => {
+  const ref = (name: string) => read(root + 'references/' + name + '.md');
+  const skill = read(root + 'SKILL.md');
+  for (const heading of ['## Routing', '## Launch and continue']) assert.match(skill, new RegExp('^' + heading + '$', 'm'), heading);
+  const grounding = ref('grounding');
+  assert.doesNotMatch(grounding, /^## Follow-up explorers$/m);
+  assert.ok(links(grounding).includes('../SKILL.md#routing'));
+  assert.match(grounding, /`utility`/);
+  for (const file of ['grounding', 'spec-stage']) assert.doesNotMatch(ref(file), /follow-up explorers/i, file);
+  const providers = ref('providers');
+  assert.doesNotMatch(providers, /^## Subagent context$/m);
+  assert.ok(links(providers).includes('../SKILL.md#launch-and-continue'));
+  assert.ok(links(ref('verbs/ask')).includes('../../SKILL.md#routing'));
+  const step6 = ref('verbs/implement').split('\n6. ')[1]?.split('\n7. ')[0] ?? '';
+  assert.doesNotMatch(step6, /--level low/);
+  assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on doctor's `utility` host entry/);
+  assert.match(step6, /runs only its edited test files/);
 });
 
 test('native slots launch by prompt path', t => {
   const providers = read(root + 'references/providers.md');
   const openCode = providers.indexOf('## OpenCode private launches');
-  for (const heading of ['Subagent context', 'Native slots', 'Shared provider controls', 'Quota']) {
+  for (const heading of ['Native slots', 'Shared provider controls', 'Quota']) {
     const position = providers.indexOf('## ' + heading);
     assert.ok(position >= 0 && openCode >= 0 && position < openCode, heading);
   }

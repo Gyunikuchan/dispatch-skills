@@ -2,14 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_CANDIDATES, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
-import { resolveLevel } from '../policy/roster.ts';
+import { resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-type Resolved = { models: string[]; effort: string | null };
-type ExplorerConfig = { model: string | string[]; effort?: string };
 
 export function doctorReport(session: string, skillRoot: string, requested?: unknown) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
@@ -19,28 +17,19 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const integrity = checkIntegrity(skillRoot);
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [];
-  const writers: Record<string, Resolved> = {};
-  const explorers: Record<string, Resolved> = {};
+  const writers: Record<string, ResolvedSubagent> = {};
+  const explorers: Record<string, ResolvedSubagent> = {};
+  let utility: Record<string, ResolvedSubagent> = {};
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
     problems = validateConfig(loaded.config);
     if (!problems.length) {
-      const table = loaded.config['write-subagents'] as Record<string, Partial<Record<Level, { model: string | string[]; effort?: string }>>>;
-      for (const [platform, levels] of Object.entries(table)) {
-        const entry = resolveLevel(levels, level)!;
-        writers[platform] = {
-          models: typeof entry.model === 'string' ? [entry.model] : entry.model,
-          effort: entry.effort ?? null,
-        };
-      }
-      const explorerTable = loaded.config['explore-subagents'] as Record<string, ExplorerConfig>;
-      for (const [platform, entry] of Object.entries(explorerTable)) {
-        explorers[platform] = {
-          models: typeof entry.model === 'string' ? [entry.model] : entry.model,
-          effort: entry.effort ?? null,
-        };
-      }
+      const writerTable = loaded.config['write-subagents'] as Record<string, LevelMap<SubagentEntry>>;
+      for (const [platform, levels] of Object.entries(writerTable)) writers[platform] = resolveSubagent(resolveLevel(levels, level)!);
+      const explorerTable = loaded.config['explore-subagents'] as Record<string, SubagentEntry>;
+      for (const [platform, entry] of Object.entries(explorerTable)) explorers[platform] = resolveSubagent(entry);
+      utility = resolveUtility(explorerTable, writerTable);
     }
   } catch (error) {
     problems = [error instanceof Error ? error.message : String(error)];
@@ -48,6 +37,6 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const reason = integrity.status === 'drift' ? 'integrity-drift' : problems.length ? 'config-invalid' : undefined;
   return {
     ok: reason === undefined, ...(reason ? { reason } : {}), integrity,
-    config: { path: configPath, problems }, level, writers, explorers,
+    config: { path: configPath, problems }, level, writers, explorers, utility,
   };
 }

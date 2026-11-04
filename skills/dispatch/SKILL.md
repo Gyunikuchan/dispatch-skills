@@ -5,6 +5,8 @@ description: Multi-agent planning, review, implementation. Use only when explici
 
 # Dispatch
 
+You are the orchestrator: the user's deputy, who middle-manages dispatched agents, whether native subagents or provider delegates, to deliver the work cheaper, faster and better.
+
 ## Invocation
 
 Parse `[level] [(pins)] [verb:] argument`; default `ask`. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
@@ -28,16 +30,38 @@ For each call read its action section in the [toolkit contract](references/toolk
 - `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve errors and findings; report the reviewed artifact and concerns; use the [Decision Frame](references/decision-frame.md) for applicable approval.
 - `implement`: resolve spec and plan; lint, review and obtain the approval tuple. Implement with native writers; verify integration, repair within scope and run [test cleanup](references/verbs/implement.md). Review exact HEAD under [review provenance](references/review-rules.md#review-provenance-and-applicability). Deliver after review and checks pass. After success, run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns and artifacts.
 
-Before every subagent launch, follow [Subagent context](references/providers.md). Handle `native-pending` under [native slots](references/providers.md#native-slots); retain handles until completion or blockers.
+Handle `native-pending` under [native slots](references/providers.md#native-slots). [Providers](references/providers.md) own provider controls.
+
+## Routing
+
+| Work | Route |
+|---|---|
+| Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps | Explorer subagent (read-only) |
+| Test cleanup, retro, map correction, mechanical fixes that a deterministic check confirms | Utility subagent |
+| Plan tasks | Writer at run level |
+| Differentiated review or ask voices | Delegate or native slot |
+| Decisions, rulings, ledger, user gates, spec and plan authoring, submitted-change inspection, `focus` bullets | Orchestrator |
+
+[Doctor](references/toolkit.md#doctor-run) `utility` gives one model and effort per platform: the `explore-subagents` entry, else the lowest `write-subagents` entry. Explorers and utility subagents use the host's entry exactly. Do explorer and utility work inline only when none resolves. A configured launch failure is a blocker, not a fallback trigger. An explorer writes nothing except an assigned map. A utility subagent runs on a write-capable agent type, edits only assigned paths and runs no Git write commands and no toolkit; state these limits in its brief and inspect its delta; the active verb's own rule decides any commit. Reviewers read directly and launch no explorers.
+
+## Context guard
+
+At every verb and for every raw source (files, logs, web, command output, result files, diffs), a launch has a cost. Stay inline for a known file, cited range, index query or small read. Use an explorer for about 5 files or 500 lines of expected reading, a long log or web research, with one explorer per independent topic in parallel. Require a distilled, cited reply; treat it as a claim and verify load-bearing claims at source. Orchestrator-row work stays with the orchestrator at any size; an explorer may locate material, but the orchestrator reads what it rules on. Explorers may research at any step, including `ask`. Run `ask` only on user request.
+
+## Launch and continue
+
+Request fresh context without parent history through the host's control; if unsupported or unverifiable, continue and report that once in the final handoff. Give a self-contained brief: objective, decisions, constraints, current state, next action and required evidence, with paths resolved for the recipient. A launch keeps required reply schemas, models, efforts and gates; these rules grant no write authority.
+
+Retain handles until the run ends or the host drops them. Continue a retained subagent when the answer depends on what it already read; it keeps its model, write boundary and reply rules for the launch deliverable. A follow-up answer returns inline and writes no file; it never rewrites `replyPath`, `reportPath` or an existing map. A continuation that assigns a new map path writes that map. Launch fresh for an unrelated topic or when the host cannot continue, after reconciling any prior launch. Never replace or duplicate work only for fresh context.
+- Native reviewer: an in-round clarification creates no finding and no rejection confirmation. Reviewers are not continued across rounds.
+- Writer: after its task is submitted it answers read-only. Two writers never share a worktree.
 
 ## Invariants and recovery
-
-Use native [follow-up explorers](references/grounding.md#follow-up-explorers) for parallel research; follow their output and source-verification rules. Run ask only on user request.
 
 Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium-or-higher briefs and integration.
 
 Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
-After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume unfinished work. Retain uncertain effects and handles until completion.
+After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume unfinished work. Retain uncertain effects until completion.
 
 For Dispatch changes, use [self-build](references/self-build.md).

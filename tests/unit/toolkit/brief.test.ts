@@ -374,3 +374,46 @@ test('writer brief keeps task behaviour and criterion fields from collapsed plan
     assert.equal(markdown.split(behaviour).length - 1, 1);
   } finally { f.cleanup(); }
 });
+
+test('writer brief states the host explorer model and effort or that none resolves', async () => {
+  const f = await fixture(false, PLAN);
+  const {skillRoot, orchestrator} = f.deps;
+  const skill = path.join(f.root, 'explorer-skill');
+  const templates = path.join(skill, 'references', 'templates');
+  fs.mkdirSync(templates, {recursive: true});
+  fs.writeFileSync(path.join(templates, 'writer-brief.md'), getWriterTemplate(skillRoot));
+  fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
+  const config = path.join(skill, 'config.jsonc');
+  const valid = JSON.stringify({
+    'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+    'explore-subagents': {'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium'}},
+    'write-subagents': {claude: {low: {model: 'claude-writer'}}, 'openai-codex': {medium: {model: 'codex-mid'}, high: {model: 'codex-high', effort: 'high'}}},
+  });
+  try {
+    await f.approve(); await f.launch();
+    f.deps.skillRoot = skill;
+    const render = async (host: string | null) => {
+      f.deps.orchestrator = host ? {platform: host as 'claude', model: null} : null;
+      const result = await f.call('high');
+      assert.equal(result.exit, 0, JSON.stringify(result.output));
+      const brief = fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
+      assert.match(brief, /stay read-only: no edits, no Git write commands and no toolkit/);
+      assert.ok(!brief.includes('delegation already permitted'), 'brief carries no delegation sentence');
+      return /Explorer subagent for this host: (.*?)\. For heavy reading/.exec(brief)?.[1];
+    };
+    fs.writeFileSync(config, valid);
+    assert.equal(await render('claude'), 'model `cheap-a` or `cheap-b`, effort `medium`');
+    assert.equal(await render('codex'), 'model `codex-mid`, no effort set');
+    for (const host of [null, 'copilot']) assert.equal(await render(host), 'none resolves', String(host));
+    fs.writeFileSync(config, '{"unknown":true}');
+    assert.equal(await render('claude'), 'none resolves');
+    fs.writeFileSync(config, '{');
+    assert.equal(await render('claude'), 'none resolves');
+    fs.unlinkSync(config);
+    assert.equal(await render('claude'), 'none resolves');
+  } finally {
+    f.deps.skillRoot = skillRoot;
+    f.deps.orchestrator = orchestrator;
+    f.cleanup();
+  }
+});

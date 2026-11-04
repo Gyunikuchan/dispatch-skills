@@ -98,6 +98,8 @@ test('assembles prompt matching golden per review kind', () => {
     assert.equal(prompt.split(standardsRule).length - 1, 1, `${kind}: standards rule`);
     assert.match(prompt, /A reviewer may run a host read tool that creates or updates only its own cache or index/);
     assert.doesNotMatch(prompt, /A native reviewer/);
+    assert.equal(prompt.split('Read directly; launch no subagents.').length - 1, 1, `${kind}: reviewer subagent bar`);
+    assert.doesNotMatch(prompt, /delegation already permitted/, kind);
     if (kind === 'code') {
       const against = read(templates, 'review-prompt-code.md').split(/^## against$/m)[1]!.split(/^## inspection$/m)[0]!;
       assert.ok(against.includes(reuseCitation));

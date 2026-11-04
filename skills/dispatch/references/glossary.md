@@ -2,9 +2,10 @@
 
 | Term | Meaning | Banned synonym |
 |---|---|---|
-| orchestrator | Host agent that coordinates tools and writers, verifies claims and acts as the user's deputy. | master agent |
+| orchestrator | Host agent that acts as the user's deputy: middle-manages native subagents and delegates, verifies claims and keeps decisions. | master agent |
 | subagent | Native worker launched by the host agent with bounded permissions. | slave agent, sub-agent |
-| explorer subagent | Native worker launched by the host agent for formal context-map grounding (writing its assigned map path) and ad-hoc exploration/distillation (writing no file). | read-only delegate |
+| explorer subagent | Read-only native worker for research, triage and distillation; writes only an assigned map. | read-only delegate |
+| utility subagent | Native worker for low-risk misc tasks on doctor's `utility` entry; edits only assigned paths. | lowest subagent |
 | delegate | Provider voice with read-only access. | |
 | writer | Native worker with explicit task paths in a private worktree. | |
 | **tool** | Deterministic CLI operation invoked by the orchestrator. | |

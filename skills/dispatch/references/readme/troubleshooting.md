@@ -44,14 +44,14 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup"
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, and explorers per platform. Explorer output does not vary with level. Doctor does not probe provider executables, authentication, native capacity or sandbox support; inspect provider launch failures for those limits.
+Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, explorers per platform, and the `utility` entry per platform that explorer and utility subagents use. Explorer and `utility` output do not vary with level. Doctor does not probe provider executables, authentication, native capacity or sandbox support; inspect provider launch failures for those limits.
 
 ## Common problems
 
 | Problem | What to do |
 |---|---|
 | No delegates are available | Add at least one entry to `read-delegates`. Confirm the provider CLI is installed and authenticated, and that a model is configured for the requested level. |
-| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see resolved writer and explorer models. |
+| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see resolved writer models and the `utility` entry for explorer and utility subagents. |
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that the plan is settled and required design approval is complete. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |
 | Review findings are reported but no files changed | Review applies accepted, fixable in-scope findings by default. No changes may mean that no fixable in-scope finding was accepted, opt-in findings were declined, or a fix failed before writing. Follow the decision and named log. Verification can fail after changes are written, so inspect the working tree. |
@@ -71,7 +71,7 @@ Host usage selects only the current host thread by `CLAUDE_CODE_SESSION_ID` or `
 
 Coverage can report `no adapter` for an unsupported host, `no host id` or `invalid host id` when the host session variable is missing or invalid, and `host id file missing` when its transcript is absent. Check the host environment and transcript availability, then render again. `invalid session start` means the session timestamp is invalid: inspect `manifest.json`. `transcript over size cap` skips a host file over 64 MiB of decoded content; compressed files can exceed this even when small on disk. Subagent files over that cap are noted. `read budget reached` means the 256 MiB total decoded read budget stopped collection; retained rows are partial. `too many candidates` also marks a bounded scan. `zstd unavailable` means the runtime cannot decompress a compressed rollout; use a runtime with `zlib.zstdDecompressSync`. `no usage records` can mean the transcript has no recognized usage in the window. `read-error:ENOENT`, `EACCES`, `EPERM`, `EBUSY`, `EMFILE` or `EUNKNOWN` indicates a read failure; check file availability, permissions and resource limits. Notes can also identify unparsed lines, unreadable files or unverified candidates. These limits do not change the workflow result.
 
-While diagnostics is on, follow the returned retrospective instructions at each verb's final handoff, before `report complete` or `diagnostics render`. A valid empty array records no observed friction; missing, unreadable, malformed and invalid input remain distinct collection states. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
+While diagnostics is on, follow the returned retrospective instructions at each verb's final handoff, before `report complete` or `diagnostics render`. A failed retro launch does not gate the workflow. A valid empty array records no observed friction; missing, unreadable, malformed and invalid input remain distinct collection states. Proposed fixes are unverified. Review `diagnostics.md` before sharing it; it is not uploaded automatically.
 
 Captures in `.state/diagnostics/` retain sanitized implementation version/content identity and effective configuration snapshots from collection time. Distinct snapshots remain separate; historical unknown identity stays unknown. Reports retain valid captures when others are discarded as corrupt or unreadable, and show partial or interrupted collection. No findings does not prove complete collection or absence of defects. Total storage loss can also prevent its failure marker from being stored and is unobservable.
 

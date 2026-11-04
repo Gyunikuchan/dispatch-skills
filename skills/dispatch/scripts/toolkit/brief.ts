@@ -7,6 +7,8 @@ import { qualityCriteria } from './domain/prompt.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
+import { loadConfig, validateConfig } from '../lib/config.ts';
+import { normalizeProvider, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
 
 function taskParts(source: string, selected: NonNullable<ReturnType<typeof selectTaskBrief>>) {
   const lines = source.split(/\r?\n/);
@@ -95,6 +97,19 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
   return lines.join('\n');
 }
 
+/** The host's utility entry as brief text; an undetected host or unusable config never refuses the render. */
+function explorerText(skillRoot: string, platform: string | undefined): string {
+  let entry: ResolvedSubagent | undefined;
+  try {
+    const {config} = loadConfig(skillRoot);
+    const tables = [config['explore-subagents'], config['write-subagents']] as [Record<string, SubagentEntry>, Record<string, LevelMap<SubagentEntry>>];
+    if (platform && !validateConfig(config).length) entry = resolveUtility(...tables)[normalizeProvider(platform)];
+  } catch { /* Missing or unparsable config resolves nothing. */ }
+  if (!entry) return 'none resolves';
+  const models = 'model ' + entry.models.map(model => '`' + model + '`').join(' or ');
+  return entry.effort ? models + ', effort `' + entry.effort + '`' : models + ', no effort set';
+}
+
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
   const task = ctx.args[0]!;
@@ -130,6 +145,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']), planHash: snapshot.hashes.plan!,
     design: bind.data['design'] ? 'Governing design: `' + path.resolve(ctx.manifest.repositoryRoot, bind.data['design']) + '` (governed hash ' + snapshot.hashes.design + ').' : '',
     shared: parsed.plan.sharedContext, section, criteria, quality,
+    explorer: explorerText(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform),
     reportPath, redLogDir, redCapture: renderRedCapture(selected, task, worktree, redLogDir),
     contracts: checks(parsed.plan).find(check => check.criterion === 'contract')!.commands.map(command => '- `' + command + '`').join('\n'),
   };

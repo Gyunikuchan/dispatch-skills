@@ -73,7 +73,7 @@ Dual-audience: Canonical documents serve both humans and agents. Keep outcome su
 
 ## Documentation Standards
 
-Integrate new prose into existing structure before adding text: rephrase, reorder, and remove redundant or obsolete material. Keep each rule in one canonical home. Apply progressive disclosure: inline essentials and link branch-specific detail. Use the fewest tokens that preserve meaning and execution.
+Integrate new prose into existing structure before adding text: rephrase, reorder, and remove redundant or obsolete material. Keep each rule in one canonical home. Apply progressive disclosure: inline essentials and link branch-specific detail. Keep a rule that every branch needs inline in `skills/dispatch/SKILL.md`, because a must-load file adds a tool call to each run; raise the `SKILL.md` byte budget when such rules need the room. Use the fewest tokens that preserve meaning and execution.
 
 - **Human documentation:** Explain concepts plainly around user tasks; provide realistic examples, setups, limits, and recovery steps. The root and dispatch READMEs serve as style examples, not rigid outlines.
 - **Agent-facing prose:** Applies to skills, prompts, templates, operational references, and script-emitted instructions. Follow [.agents/skills/writing-for-agents/SKILL.md](.agents/skills/writing-for-agents/SKILL.md). Prefer established industry-standard terms and high-density domain concepts (recruiting pretraining priors at minimal token cost) over verbose explanations. Define explicit triggers, sequence, boundaries, and checkable completion criteria. Include rationale only when it alters execution. Format skills with YAML frontmatter (`name`, `description`).
