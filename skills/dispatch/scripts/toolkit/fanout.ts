@@ -12,6 +12,7 @@ import type { ProviderId, RunOutcome } from '../providers/types.ts';
 import type { CliDeps } from './cli.ts';
 import type { RosterSlot } from './domain/types.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
+import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 
 const nativeReply = (replyPath: string) => `\n\n## Native reply\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
@@ -37,9 +38,14 @@ type FanOutInput = {
 export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Level, deps: CliDeps): Roster {
   const {config} = loadConfig(deps.skillRoot);
   const phases = config['phases'] as Record<string, PhasePolicy>;
-  return resolveRoster({level, readDelegates: config['read-delegates'] as Record<string, ReadDelegate>,
+  const roster = resolveRoster({level, readDelegates: config['read-delegates'] as Record<string, ReadDelegate>,
     orchestrator: deps.orchestrator, liveness: deps.liveness,
     ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
+  // Fail closed: without a host, native-only providers would drop and silently shrink coverage.
+  if (!deps.orchestrator && roster.underfill?.excluded.length) {
+    throw new ToolError(4, 'host-undetected', `No session host recorded; native-only providers excluded: ${roster.underfill.excluded.join(', ')}. Run session reactivate --session-dir <session> --host <platform>.`);
+  }
+  return roster;
 }
 
 export function underfillNote(roster: {underfill?: Underfill}): string {

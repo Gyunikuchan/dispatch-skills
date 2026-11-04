@@ -31,7 +31,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
       for (const key of ['v', 'run', 'reply', 'await', 'at']) assert.equal(Object.hasOwn(output, key), false, key);
       return output;
     };
-    const session = (await run(['session', 'init', '--objective', 'Toolkit delivery', '--session-id', 'toolkit-full-run'])).path;
+    const session = (await run(['session', 'init', '--objective', 'Toolkit delivery', '--session-id', 'toolkit-full-run', '--host', 'claude'])).path;
     const tool = async (args: string[]) => {
       const output = await run([...args, '--session', session]);
       return JSON.parse(fs.readFileSync(output.path, 'utf8'));

@@ -52,7 +52,7 @@
     },
     // Multiple targets under one provider are separate voices, not fallback models.
     "copilot": {
-      // Optional; defaults to false. true never runs this provider's CLI: when the orchestrator
+      // Optional; defaults to false. true never runs this provider's CLI: when the declared session host
       // is this platform, its native subagents serve these targets alongside the CLI wave;
       // otherwise the targets are skipped.
       "nativeSubagentsOnly": true,

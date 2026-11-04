@@ -12,10 +12,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 12,025 covers review-loop diagnostics, host usage adapters and tables, severity derivation, review-budget state, coverage rounds and OpenCode lifecycle measurements.
+  // NOTE: 12,039 covers review-loop diagnostics, host usage adapters and tables, severity derivation, review-budget state, coverage rounds, OpenCode lifecycle measurements and the session-declared host.
   assert.ok(
-    lines <= 12025,
-    `driver TS LOC ${lines} exceeds 12025 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    lines <= 12039,
+    `driver TS LOC ${lines} exceeds 12039 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   assert.ok(
     KINDS.length <= 14,

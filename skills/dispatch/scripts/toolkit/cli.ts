@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { currentPlatform, detectOrchestrator, type Orchestrator } from '../lib/platform.ts';
+import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
 import { createDiscovery } from '../providers/discovery.ts';
 import { SPECS } from '../providers/index.ts';
 import { runDelegate, type RunnerFs } from '../providers/runner.ts';
@@ -70,7 +70,7 @@ export function nodeDeps(): CliDeps {
     readPrefix(file,max){const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(max);return bytes.subarray(0,fs.readSync(fd,bytes)).toString('utf8');}finally{fs.closeSync(fd);}},
   };
   return {
-    modes, orchestrator:detectOrchestrator(key=>process.env[key]),
+    modes, orchestrator:null,
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
     async delegate(provider,request,mode) {
       // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
@@ -168,9 +168,9 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const value = queryLedger(foldLedger(session), { kind: values['kind'], key: values['key'], since: values['since'] });
     return { ok: true, value, summary: value.length + ' records; last ' + JSON.stringify(value.at(-1) ?? null), exit: 0 };
   },
-  'doctor run': async ({ session, values, args, deps }) => {
+  'doctor run': async ({ session, manifest, values, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'doctor takes only options');
-    const value = doctorReport(session, deps.skillRoot, values['level']);
+    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null);
     return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}) };
   },
   'status show': async ({ session, manifest, args, deps }) => {
@@ -219,6 +219,8 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   }
   const kind = typeof parsed.values['kind'] === 'string' ? parsed.values['kind']
     : parsed.positionals[2]?.endsWith('.plan.md') ? 'plan' : parsed.positionals[2]?.endsWith('.design.md') ? 'design' : undefined;
+  // A recorded host builds the orchestrator; a copy keeps the caller's deps unmodified.
+  deps = { ...deps, orchestrator: orchestratorFor(manifest.host, name => deps.env[name]) ?? deps.orchestrator };
   const observation = tool === 'report' || tool === 'diagnostics' ? undefined : observeTool(session, tool, action, kind, deps);
   let outcome: HandlerResult;
   try {

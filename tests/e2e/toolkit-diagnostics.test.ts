@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { toolkitRepo } from './helpers/toolkit-repo.ts';
-import { ORCHESTRATOR_MARKERS } from '../../skills/dispatch/scripts/lib/platform.ts';
 
 test('diagnostics stay observational across CLI recovery and report completion', async () => {
   const enabled = true;
@@ -19,10 +19,15 @@ test('diagnostics stay observational across CLI recovery and report completion',
         phases: { ask: { targets: { low: 1 }, rounds: { low: 1 } } },
       }));
       const env = { ...process.env };
-      for (const marker of Object.values(ORCHESTRATOR_MARKERS)) for (const key of [...marker.platform, ...marker.model]) delete env[key];
       for (const key of ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
-      env['CODEX_CLI'] = '1';
       const entry = path.join(skill, 'scripts/dispatch.ts');
+      // The host comes from `session init --host`; the fixture session predates it, so copy the recorded host over.
+      const init = spawnSync(process.execPath, [entry, 'session', 'init', '--objective', 'Declared host', '--session-id', 'declared-host', '--host', 'codex'], { cwd: f.root, env, encoding: 'utf8' });
+      assert.equal(init.status, 0, init.stderr + init.stdout);
+      const declared = JSON.parse(fs.readFileSync(path.join(JSON.parse(init.stdout).path, 'manifest.json'), 'utf8')).host;
+      assert.equal(declared, 'codex');
+      const manifestFile = path.join(f.session, 'manifest.json');
+      fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: declared }));
       const run = (args: string[], expected = 0) => {
         const child = f.spawned(args, entry, env);
         assert.equal(child.status, expected, child.stderr + child.stdout);

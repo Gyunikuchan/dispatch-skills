@@ -64,10 +64,10 @@ You need Node.js `^22.18 || >=23.6`, at least one supported provider CLI install
 
 For installation instructions, see the [repository README](../../README.md). Copy `config.sample.jsonc` beside the Dispatch skill as `config.local.jsonc` or `config.jsonc`, then replace example model names with ones available to you. The sample is not loaded automatically. If both files exist, `config.local.jsonc` takes precedence as a complete configuration; the files are not merged.
 
-From the repository root, check your setup with:
+From the repository root, check your setup, with `<platform>` set to your host (`claude`, `agy`, `copilot`, `opencode` or `codex`):
 
 ```bash
-node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
 node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 

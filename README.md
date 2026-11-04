@@ -54,10 +54,10 @@ npx skills add Gyunikuchan/dispatch-skills -s '*'
 npx skills add Gyunikuchan/dispatch-skills#<branch-or-tag> -s '*'
 ```
 
-Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it and keep only the models you want to use. Then check the setup:
+Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it and keep only the models you want to use. Then check the setup, with `<platform>` set to your host (`claude`, `agy`, `copilot`, `opencode` or `codex`):
 
 ```bash
-node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
 node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 

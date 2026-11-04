@@ -17,7 +17,7 @@ Read the selected phase first: [ask](references/verbs/ask.md), [design](referenc
 
 Report the level once set under [run level](references/spec-stage.md#run-level). Preserve configured models and efforts.
 
-Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Keep its session path and follow returned `instructions`. Reuse or refresh quota under [session commands](references/toolkit.md#session-commands).
+Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>" --host <platform>`, where `<platform>` is your current host (`claude`, `agy`, `copilot`, `opencode` or `codex`); `session reactivate` needs the same flag. Keep its session path and follow returned `instructions`. Reuse or refresh quota under [session commands](references/toolkit.md#session-commands).
 
 ## Tool loop
 

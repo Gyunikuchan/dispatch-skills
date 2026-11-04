@@ -72,7 +72,7 @@ Start with the sample's defaults. Increase breadth or rounds when the work needs
 From the Dispatch skill folder, run:
 
 ```bash
-node scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
@@ -99,7 +99,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 <details>
 <summary>Advanced provider settings</summary>
 
-- `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches your host platform. On other platforms, those targets are skipped.
+- `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches the host declared with `--host`. On other platforms, those targets are skipped.
 - OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
 - Doctor reports configured writer models without launching writers; it does not establish native capacity.
 

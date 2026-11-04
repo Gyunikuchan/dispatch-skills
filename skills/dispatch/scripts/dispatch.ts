@@ -4,8 +4,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseCommand, UsageError } from './lib/cli.ts';
 import { reprobeQuota } from './lib/quota-store.ts';
-import { findRepoRoot, initSession, platformSessionId, reactivateSession } from './lib/session.ts';
+import { findRepoRoot, initSession, platformSessionId, reactivateSession, recordHost } from './lib/session.ts';
 import { H } from './policy/quota.ts';
+import { normalizeProvider } from './policy/roster.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
 import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { capSummary } from './toolkit/output.ts';
@@ -41,9 +42,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
       print({ v: 1, action: 'quota-reprobe', key: result.key, appliesTo: 'future-waves' });
       return 0;
     }
+    const host = normalizeProvider(flag('host')!);
+    if (!isProviderId(host)) throw new UsageError(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
     const session = command.action === 'init'
       ? initSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
       : { path: reactivateSession(path.resolve(flag('session-dir')!), repo), reused: true };
+    recordHost(session.path, host);
     const diagnostics = diagnosticInstructions(deps.skillRoot).instructions;
     print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: session.path, reused: session.reused, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
     return 0;

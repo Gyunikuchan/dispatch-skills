@@ -633,14 +633,40 @@ test('review run summary lists first findings by severity', async () => {
   } finally { f.cleanup(); }
 });
 
-test('review with zero resolved targets reports underfill in the failure message', async () => {
+test('review refuses host-undetected without a recorded host when native-only providers would drop and otherwise keeps the undetected-host summary', async () => {
   const f = await underfillFixture();
   try {
     f.deps.orchestrator = null;
-    f.deps.delegate = async () => ({outcome: {status: 'fail', cls: 'config', detail: 'Invalid launch'}, invocations: []});
-    const zero = await f.call();
-    assert.equal(zero.exit, 2); assert.equal(zero.output.reason, 'review-failed');
-    assert.match(JSON.stringify(zero.output), /Every review slot failed; underfill \d\/2 targets, host undetected, excluded native-only: codex, copilot/);
+    const refused = await f.call();
+    assert.equal(refused.exit, 4); assert.equal(refused.output.reason, 'host-undetected');
+    assert.match(refused.output.summary, /codex, copilot/);
+    assert.match(refused.output.summary, /session reactivate --session-dir <session> --host <platform>/);
+    assert.equal(f.launches.length, 0);
+
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': {agy: {targets: [{low: {model: 'fake'}}]}},
+      phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}},
+    }));
+    const short = await f.call();
+    assert.equal(short.exit, 0, JSON.stringify(short.output));
+    assert.match(short.output.summary, /underfill 1\/2 targets, host undetected, excluded native-only: none/);
+  } finally {f.cleanup();}
+});
+
+test('review run reports native-pending for the recorded host when env carries no platform marker', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': {copilot: {nativeSubagentsOnly: true, targets: [{low: {model: 'native-a'}}, {low: {model: 'native-b'}}]}},
+      phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}},
+    }));
+    const manifestFile = path.join(f.session, 'manifest.json');
+    fs.writeFileSync(manifestFile, JSON.stringify({...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'copilot'}));
+    f.deps.orchestrator = null; f.deps.env = {};
+    const pending = await f.call();
+    assert.equal(pending.exit, 4, JSON.stringify(pending.output)); assert.equal(pending.output.reason, 'native-pending');
+    assert.equal(f.launches.length, 0);
+    assert.deepEqual(pending.value.pending.map((slot: {slot: string}) => slot.slot), ['copilot[0]', 'copilot[1]']);
   } finally {f.cleanup();}
 });
 

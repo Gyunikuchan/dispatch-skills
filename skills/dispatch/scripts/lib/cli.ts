@@ -1,5 +1,5 @@
 export class UsageError extends Error {}
-const FLAGS = ['objective', 'session-dir', 'session-id', 'provider', 'model', 'mode'];
+const FLAGS = ['objective', 'session-dir', 'session-id', 'provider', 'model', 'mode', 'host'];
 
 export function parseCommand(argv: readonly string[]): { action: string; flags: Record<string, string> } {
   const args = [...argv], command = args.shift();
@@ -20,10 +20,11 @@ export function parseCommand(argv: readonly string[]): { action: string; flags: 
   const need = (name: string) => { if (typeof out.flags[name] !== 'string') throw new UsageError(`--${name} is required`); };
   if (command === 'session') {
     if (out.action === 'init') need('objective'); else need('session-dir');
+    if (out.action !== 'quota-reprobe') need('host');
     const quotaFlags = ['provider', 'model', 'mode'];
     if (out.action === 'quota-reprobe') {
       need('provider'); need('mode');
-      if (positional || ['objective', 'session-id'].some((name) => out.flags[name] !== undefined)) throw new UsageError('quota-reprobe accepts only session-dir, provider, model, and mode');
+      if (positional || ['objective', 'session-id', 'host'].some((name) => out.flags[name] !== undefined)) throw new UsageError('quota-reprobe accepts only session-dir, provider, model, and mode');
       for (const name of quotaFlags) if (out.flags[name] !== undefined && !String(out.flags[name]).trim()) throw new UsageError(`--${name} requires a nonempty value`);
     } else if (quotaFlags.some((name) => out.flags[name] !== undefined)) throw new UsageError('provider, model, and mode are for quota-reprobe');
   }

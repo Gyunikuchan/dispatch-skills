@@ -158,3 +158,14 @@ test('ask summary reports underfill for native-only providers excluded for anoth
     assert.equal(refused.output.summary, 'ask requires a read delegate; underfill 0/1 targets, host claude, excluded native-only: copilot');
   } finally {f.cleanup();}
 });
+
+test('ask run refuses host-undetected without a recorded host when a native-only provider would drop', async () => {
+  const f = fixture(true); try {
+    f.deps.orchestrator = null;
+    const refused = await f.call();
+    assert.equal(refused.exit, 4);
+    assert.equal(refused.output.reason, 'host-undetected');
+    assert.match(refused.output.summary, /codex.*session reactivate --session-dir <session> --host <platform>/);
+    assert.equal(f.launches.length, 0);
+  } finally {f.cleanup();}
+});

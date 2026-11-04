@@ -130,3 +130,37 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
     assert.deepEqual(invalid.utility, {});
   } finally { f.cleanup(); }
 });
+
+test('doctor reports the session host and keeps it inside the capped summary', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    const entry = (name: string) => ({ low: { model: name + '-model-with-a-long-identifier', effort: 'low' } });
+    const platforms = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
+      'write-subagents': Object.fromEntries(platforms.map(name => [name, entry(name)])),
+      'explore-subagents': Object.fromEntries(platforms.map(name => [name, { model: name + '-explorer-with-a-long-identifier', effort: 'low' }])),
+    }));
+    const manifestFile = path.join(f.session, 'manifest.json');
+    const run = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['doctor', 'run', '--session', f.session], { ...f.deps, skillRoot: skill }), 0);
+      const out = f.output();
+      return { out, value: JSON.parse(fs.readFileSync(out.path!, 'utf8')) };
+    };
+    let { value } = await run();
+    assert.deepEqual(value.host, { platform: null, source: 'none' });
+    for (const host of ['github-copilot', 'toString']) {
+      fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host }));
+      assert.deepEqual((await run()).value.host, { platform: null, source: 'none' }, host);
+    }
+    fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'copilot' }));
+    const declared = await run();
+    assert.deepEqual(declared.value.host, { platform: 'copilot', source: 'declared' });
+    assert.ok(Buffer.byteLength(JSON.stringify(declared.value)) > 1024);
+    assert.ok(Buffer.byteLength(declared.out.summary) <= 1024);
+    assert.ok(declared.out.summary.includes('"host":{"platform":"copilot","source":"declared"}'));
+  } finally { f.cleanup(); }
+});

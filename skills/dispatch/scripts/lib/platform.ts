@@ -1,4 +1,4 @@
-// Platform facts and orchestrator detection.
+// Platform facts and the recorded-host orchestrator.
 // Pure over injected getters; `currentPlatform()` binds the real process.
 
 import fs from 'node:fs';
@@ -60,28 +60,20 @@ export function currentPlatform(): PlatformEnv {
   return platformFacts({ platform: process.platform, arch: process.arch, release: os.release(), home: os.homedir(), env, bubblewrap });
 }
 
-// SECTION: Orchestrator detection
+// SECTION: Orchestrator
 
-// NOTE: VSCODE_PID is ignored because ordinary VS Code terminals also set it.
-export const ORCHESTRATOR_MARKERS: Readonly<Record<ProviderKey, { platform: readonly string[]; model: readonly string[] }>> = {
-  agy: { platform: ['ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI'], model: ['ANTIGRAVITY_MODEL', 'GEMINI_MODEL'] },
-  claude: { platform: ['CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT'], model: ['CLAUDE_MODEL', 'ANTHROPIC_MODEL'] },
-  copilot: { platform: ['COPILOT_AGENT', 'COPILOT_CLI_SESSION_ID'], model: ['COPILOT_MODEL', 'GITHUB_COPILOT_MODEL'] },
-  opencode: { platform: ['OPENCODE_PORT', 'OPENCODE_AGENT'], model: ['OPENCODE_MODEL'] },
-  codex: { platform: ['CODEX_THREAD_ID', 'CODEX_CLI', 'CODEX_APP_SERVER'], model: ['CODEX_MODEL'] },
+// The host platform comes only from the session record; env supplies the model.
+const MODEL_ENV: Readonly<Record<ProviderKey, readonly string[]>> = {
+  agy: ['ANTIGRAVITY_MODEL', 'GEMINI_MODEL'], claude: ['CLAUDE_MODEL', 'ANTHROPIC_MODEL'], copilot: ['COPILOT_MODEL', 'GITHUB_COPILOT_MODEL'],
+  opencode: ['OPENCODE_MODEL'], codex: ['CODEX_MODEL'],
 };
-
-// Detection order: agy, claude, copilot, opencode, codex.
-const DETECTION_ORDER: readonly ProviderKey[] = ['agy', 'claude', 'copilot', 'opencode', 'codex'];
 
 export type Orchestrator = { platform: ProviderKey; model: string | null };
 
-/** The host platform from env markers, or null; `override` (`--orchestrator`) wins. */
-export function detectOrchestrator(env: EnvGet, override: { platform?: ProviderKey; model?: string } = {}): Orchestrator | null {
-  const platform = override.platform ?? DETECTION_ORDER.find((key) => ORCHESTRATOR_MARKERS[key].platform.some((name) => Boolean(env(name))));
-  if (platform === undefined) return null;
-  const model = override.model ?? ORCHESTRATOR_MARKERS[platform].model.map((name) => env(name)).find((value) => Boolean(value)) ?? null;
-  return { platform, model };
+/** The orchestrator for a recorded host, or null when the value is not a ProviderKey. */
+export function orchestratorFor(host: unknown, env: EnvGet): Orchestrator | null {
+  if (typeof host !== 'string' || !Object.hasOwn(MODEL_ENV, host)) return null;
+  return { platform: host as ProviderKey, model: MODEL_ENV[host as ProviderKey].map((name) => env(name)).find((value) => Boolean(value)) ?? null };
 }
 
 /** XDG base-dir overrides that are set; omitted entirely when none are. */

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_CANDIDATES, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
+import type { ProviderKey } from '../lib/platform.ts';
 import { resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
@@ -9,7 +10,7 @@ import type { Level } from './types.ts';
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
-export function doctorReport(session: string, skillRoot: string, requested?: unknown) {
+export function doctorReport(session: string, skillRoot: string, requested?: unknown, host: ProviderKey | null = null) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
     throw new ToolError(1, 'invalid-input', 'level must be low, medium, high, xhigh or max');
   }
@@ -36,7 +37,9 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   }
   const reason = integrity.status === 'drift' ? 'integrity-drift' : problems.length ? 'config-invalid' : undefined;
   return {
-    ok: reason === undefined, ...(reason ? { reason } : {}), integrity,
+    ok: reason === undefined, ...(reason ? { reason } : {}),
+    host: { platform: host, source: host ? 'declared' : 'none' },
+    integrity,
     config: { path: configPath, problems }, level, writers, explorers, utility,
   };
 }

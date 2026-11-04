@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { detectOrchestrator, platformFacts } from '../../../skills/dispatch/scripts/lib/platform.ts';
+import { orchestratorFor, platformFacts } from '../../../skills/dispatch/scripts/lib/platform.ts';
 
 const envOf = (values: Record<string, string>) => (name: string): string | undefined => values[name];
 
@@ -13,12 +13,11 @@ test('platform facts: os, WSL, bubblewrap, argv limit, PATH and PATHEXT', () => 
   assert.equal(platformFacts({ platform: 'darwin', arch: 'arm64', release: '', home: '/h', env: envOf({}), bubblewrap: true }).bubblewrap, false);
 });
 
-test('orchestrator detection from env markers, in priority order, with override', () => {
-  assert.equal(detectOrchestrator(envOf({})), null);
-  assert.deepEqual(detectOrchestrator(envOf({ CLAUDECODE: '1', ANTHROPIC_MODEL: 'opus' })), { platform: 'claude', model: 'opus' });
-  assert.deepEqual(detectOrchestrator(envOf({ CLAUDECODE: '1', GEMINI_CLI: '1' })), { platform: 'agy', model: null });
-  assert.deepEqual(detectOrchestrator(envOf({ CODEX_THREAD_ID: 't', CODEX_MODEL: 'gpt-5' })), { platform: 'codex', model: 'gpt-5' });
-  assert.deepEqual(detectOrchestrator(envOf({ VSCODE_PID: '1' })), null);
-  // An explicit --orchestrator demotes the env-detected platform.
-  assert.deepEqual(detectOrchestrator(envOf({ CLAUDECODE: '1' }), { platform: 'copilot', model: 'gpt-5' }), { platform: 'copilot', model: 'gpt-5' });
+test('orchestrator comes from the recorded host and that platform\'s model markers only', () => {
+  assert.equal(orchestratorFor(undefined, envOf({ CLAUDECODE: '1' })), null);
+  assert.deepEqual(orchestratorFor('copilot', envOf({ CLAUDECODE: '1', COPILOT_MODEL: 'gpt-5', ANTHROPIC_MODEL: 'opus' })), { platform: 'copilot', model: 'gpt-5' });
+  assert.deepEqual(orchestratorFor('claude', envOf({ ANTHROPIC_MODEL: 'opus' })), { platform: 'claude', model: 'opus' });
+  assert.deepEqual(orchestratorFor('codex', envOf({})), { platform: 'codex', model: null });
+  // A hand-edited manifest never yields a platform outside ProviderKey, including inherited object keys.
+  for (const host of ['unknown-x', 'github-copilot', '', 7, null, 'toString']) assert.equal(orchestratorFor(host, envOf({ CODEX_MODEL: 'x' })), null, String(host));
 });

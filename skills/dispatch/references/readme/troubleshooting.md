@@ -29,7 +29,7 @@ Keep the session folder throughout recovery. A new approval or revised plan does
 Ask your host agent to inspect the saved run before resuming it. A compatible driver fix can preserve completed work. For manual recovery, run from the skill folder:
 
 ```text
-node scripts/dispatch.ts session reactivate --session-dir <session>
+node scripts/dispatch.ts session reactivate --session-dir <session> --host <platform>
 node scripts/dispatch.ts status show --session <session>
 ```
 
@@ -40,7 +40,7 @@ Read the returned status result, reconcile retained writers and integration stat
 From the Dispatch skill folder:
 
 ```bash
-node scripts/dispatch.ts session init --objective "Check Dispatch setup"
+node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
@@ -51,7 +51,8 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 | Problem | What to do |
 |---|---|
 | No delegates are available | Add at least one entry to `read-delegates`. Confirm the provider CLI is installed and authenticated, and that a model is configured for the requested level. |
-| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see resolved writer models and the `utility` entry for explorer and utility subagents. |
+| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see the declared host, resolved writer models and the `utility` entry for explorer and utility subagents. |
+| Fewer reviewers than configured, or review or ask refuses `host-undetected` | A native-only provider needs a declared host. Run `session reactivate --session-dir <session> --host <platform>` with your current platform, then rerun. Doctor shows `host`. |
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that the plan is settled and required design approval is complete. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |
 | Review findings are reported but no files changed | Review applies accepted, fixable in-scope findings by default. No changes may mean that no fixable in-scope finding was accepted, opt-in findings were declined, or a fix failed before writing. Follow the decision and named log. Verification can fail after changes are written, so inspect the working tree. |

@@ -21,6 +21,7 @@ const WIN = process.platform === 'win32';
 export type Manifest = {
   schemaVersion: 1; folderName: string; sessionId: string; safeSessionId: string; repositoryRoot: string;
   sessionTitle: string; createdAt: string; lastUsedAt: string; location: Location;
+  host?: string; // canonical ProviderKey; absent before host declaration
 };
 
 // SECTION: Repository root
@@ -115,6 +116,11 @@ function matching(root: string, sessionId: string, repo: string): string[] {
 }
 
 // SECTION: Lifecycle
+
+/** Replaces the recorded orchestrator host; callers pass a validated canonical ProviderKey. */
+export function recordHost(sessionDir: string, host: string): void {
+  writeManifest(sessionDir, { ...readManifest(sessionDir), host });
+}
 
 export type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; tempRoot?: string; waitMs?: number };
 

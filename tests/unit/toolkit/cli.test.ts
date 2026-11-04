@@ -215,3 +215,36 @@ test('OpenCode inspection preserves an in-budget result when confirmed group set
     else assert.match(result.error??'',/effective-config-unverified: native introspection failed/);
   }
 });
+
+test('tool calls take the orchestrator from the recorded host and ignore env platform markers', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const manifestFile = path.join(f.session, 'manifest.json');
+    const setHost = (host: unknown) => fs.writeFileSync(manifestFile, JSON.stringify({...readManifest(f.session), host}));
+    const seen: unknown[] = [];
+    const base = {...f.deps, handler: async ({deps}: {deps: {orchestrator: unknown}}) => { seen.push(deps.orchestrator); return {ok: true, value: null, summary: 'seen', exit: 0 as const}; }};
+    const call = async (deps: typeof base) => { f.lines.length = 0; assert.equal(await main(['lint', 'run', 'x', '--session', f.session], deps), 0); };
+
+    setHost('copilot');
+    await call({...base, env: {CLAUDECODE: '1', COPILOT_MODEL: 'gpt-5'}});
+    assert.deepEqual(seen.pop(), {platform: 'copilot', model: 'gpt-5'});
+
+    // A recorded host replaces an injected orchestrator without mutating the caller's deps.
+    const injected = {...base, orchestrator: {platform: 'claude' as const, model: null}, env: {}};
+    await call(injected);
+    assert.deepEqual(seen.pop(), {platform: 'copilot', model: null});
+    assert.deepEqual(injected.orchestrator, {platform: 'claude', model: null});
+
+    // Absent or invalid stored hosts mean no host; env platform markers never fill it in.
+    for (const host of [undefined, 'github-copilot', 'toString', 3]) {
+      setHost(host);
+      await call({...base, env: {CODEX_THREAD_ID: 't', CLAUDECODE: '1'}});
+      assert.equal(seen.pop(), null, String(host));
+    }
+    await call({...injected, env: {CLAUDECODE: '1'}});
+    assert.deepEqual(seen.pop(), {platform: 'claude', model: null});
+
+    // The real process wiring starts without a host.
+    assert.equal(nodeDeps().orchestrator, null);
+  } finally { f.cleanup(); }
+});
