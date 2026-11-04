@@ -6,7 +6,7 @@ Review prompts carry the settled governing spec path and hash. Plan and design r
 
 ## Intent and findings
 
-Read the full result before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for governing-text defects and testing for missing verification. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts. Rate findings with the shared [severity rubric](templates/review-severity.md).
+Read the full result before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for governing-text defects and testing for missing verification. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts. Rate findings with the shared [severity rubric](templates/review-severity.md). Reject a maintainability or performance finding against a writer-reported shortcut after verifying its stated limit, citing the report, unless the expected load crosses that limit. A shortcut that removes a simplicity-floor protection is a defect, not a shortcut.
 
 A settled DEC may resolve an intent claim autonomously: cite it in the rationale. For changed intent, a new external dependency/runtime prerequisite or discarded work, use the [user gate](decision-frame.md#user-gate-boundaries). Record changed intent through [spec operation](spec-stage.md#revision-protocol).
 For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).

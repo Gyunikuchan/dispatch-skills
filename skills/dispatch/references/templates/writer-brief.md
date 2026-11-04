@@ -36,7 +36,7 @@ For agent-consumed documents, read authoring references named in Shared plan con
 
 ## Writer report
 
-Report changed files, commands/results, observed RED failures and concerns only to `{{reportPath}}`. Include the exact heading ## Observed RED failures. Put criterion or test-path attribution and log paths on plain-text lines directly below the heading. Do not add # or ## headings inside that section.
+Report changed files, commands/results, observed RED failures and concerns only to `{{reportPath}}`. List each deliberate shortcut under concerns as `Shortcut: <what>; limit: <limit>; upgrade when: <trigger>`. A shortcut never crosses the simplicity floor. Add a code comment for a limit only when a reader at that locus needs it to avoid misuse. Include the exact heading ## Observed RED failures. Put criterion or test-path attribution and log paths on plain-text lines directly below the heading. Do not add # or ## headings inside that section.
 
 ## Quality
 

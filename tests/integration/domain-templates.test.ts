@@ -304,3 +304,42 @@ test('templates: test cleanup brief keeps the placeholders the orchestrator fill
   assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
   assert.ok(brief.includes('quality-bar.md#code'));
 });
+
+const LEAN_ANCHORS = [
+  'Delete › reuse › stdlib or platform › installed dependency › new',
+  'never add a dependency for a few lines',
+  'Split by responsibility, never by length',
+  'A fix or remedy is the smallest change that removes the defect',
+  'prefer deletion; add no layer, config or dependency the defect does not need',
+  'Simplicity floor: simplification never removes',
+  'trust-boundary validation',
+  'data-loss guards',
+  'security or accessibility controls',
+  'requested behaviour',
+  'moved or merged code keeps its error handling and validation',
+  'Judge scale against the expected load',
+  'name the assumed load',
+];
+
+test('lean simplicity rules have one shared home reached by every quality consumer', () => {
+  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+  for (const anchor of LEAN_ANCHORS) {
+    assert.equal(count(quality, anchor), 1, `quality-bar: ${anchor}`);
+    for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.equal(count(qualityCriteria(quality, consumer), anchor), 1, `${consumer}: ${anchor}`);
+  }
+});
+
+test('deliberate shortcuts flow from writer report to walkthrough focus and review rulings', () => {
+  const refs = new URL('../../skills/dispatch/references/', import.meta.url);
+  const read = (name: string) => readFileSync(new URL(name, refs), 'utf8');
+  const writer = read('templates/writer-brief.md');
+  for (const anchor of ['List each deliberate shortcut under concerns as `Shortcut: <what>; limit: <limit>; upgrade when: <trigger>`.', 'A shortcut never crosses the simplicity floor.', 'Add a code comment for a limit only when']) assert.ok(writer.includes(anchor), anchor);
+  const implement = read('verbs/implement.md');
+  for (const anchor of ['Shortcut-only concerns need recording, not repair or escalation.', 'record them as focus bullets at any Risk', 'group shortcuts in one bullet that keeps each limit and trigger']) assert.ok(implement.includes(anchor), anchor);
+  const rules = read('review-rules.md');
+  for (const anchor of ['Reject a maintainability or performance finding against a writer-reported shortcut', 'unless the expected load crosses that limit', 'A shortcut that removes a simplicity-floor protection is a defect, not a shortcut.']) assert.ok(rules.includes(anchor), anchor);
+  const walk = (dir: URL): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(new URL(`${e.name}/`, dir)) : e.name.endsWith('.md') ? [readFileSync(new URL(e.name, dir), 'utf8')] : []);
+  const comment = 'Add a code comment for a limit only when';
+  assert.equal(walk(refs).reduce((n, text) => n + text.split(comment).length - 1, 0), 1);
+});
