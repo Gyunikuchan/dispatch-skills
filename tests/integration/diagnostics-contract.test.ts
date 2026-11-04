@@ -9,11 +9,10 @@ const read = (name: string) => fs.readFileSync(path.join(OVERLAY_ROOT, 'skills/d
 test('phase prose records bounded retro observations as a JSON array', () => {
   const instruction = read('references/diagnostics.md');
   assert.ok(Buffer.byteLength(instruction.replace(/\r?\n/g, '\r\n')) <= DIAGNOSTIC_LIMITS.instructionBytes);
-  assert.match(instruction, /give a utility subagent terse notes and this file's path to merge into the JSON array/);
-  assert.match(instruction, /When none resolves, merge them yourself/);
-  assert.match(instruction, /With no notes, launch nothing; if no file, write `\[\]`/);
+  assert.match(instruction, /merge your terse notes into the JSON array at `<session>\/\.state\/retro\.json` yourself/);
+  assert.match(instruction, /Without notes, add nothing; if no file, write `\[\]`/);
   assert.match(instruction, /Then you run `diagnostics render`/);
-  assert.match(instruction, /Collection or a failed launch is never a workflow gate/);
+  assert.match(instruction, /Collection or a failed merge is never a workflow gate/);
   assert.ok(instruction.includes('JSON array'));
   assert.ok(instruction.includes('<session>/.state/retro.json'));
   assert.ok(instruction.includes('{id,component,category,evidence,impact,proposedFix}'));

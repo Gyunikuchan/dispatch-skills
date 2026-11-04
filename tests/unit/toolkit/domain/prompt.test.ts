@@ -94,6 +94,7 @@ test('assembles prompt matching golden per review kind', () => {
     assert.equal(`${fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind])}\n`, read(golden, `${kind}.md`), kind);
     const prompt = fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind]);
     assert.match(prompt, /Read the whole spec/);
+    assert.doesNotMatch(prompt, /\]\(quality-bar\.md/, kind);
     assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
     assert.equal(prompt.split(standardsRule).length - 1, 1, `${kind}: standards rule`);
     assert.match(prompt, /A reviewer may run a host read tool that creates or updates only its own cache or index/);

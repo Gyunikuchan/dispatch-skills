@@ -13,8 +13,8 @@
  * - codex: https://developers.openai.com/codex/models
  */
 {
-  // Optional; true writes the session diagnostics.md retrospective, with at most one utility
-  // subagent launch per verb handoff when observations exist; false adds nothing.
+  // Optional; true writes the session diagnostics.md retrospective from host notes merged at
+  // each verb handoff, with no subagent launch; false adds nothing.
   // Changes take effect at the next mutating send.
   "diagnostics": false,
   // Optional; maximum concurrent implementation task writers (default 1).

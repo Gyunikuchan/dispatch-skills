@@ -12,7 +12,7 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 
 ### Review against
 - Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
+- Use the quality criteria below to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground. A reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.

@@ -12,7 +12,7 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 
 ### Review against
 - Governing targets: every spec REQ and DEC for a standalone plan; inherited acceptance criteria and applicable REQs for an increment plan, using the approved design's increment mapping to check remaining coverage.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
+- Use the quality criteria below to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 - The plan summary, success criteria and task graph.
 - Attached "Approved technical-design context": the governed increment contract and acceptance criteria.
 

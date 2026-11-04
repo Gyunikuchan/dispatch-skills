@@ -242,7 +242,6 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   // Plan review decomposition checks
   const planPrompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
   assert.match(quality, /^- \*\*decomposition\*\* — .*A task that consumes another's output without a prerequisite is a defect\. Treat contention on a shared write path as a defect only when neither a `Requires` ordering nor a justified `Overlap:` line covers it\. Shared port, cache, or output contention needs a prerequisite\./m);
-  assert.match(planPrompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
   assert.match(planPrompt, /The plan summary, success criteria and task graph/);
 
   // Searched equivalents and reuse checks
@@ -286,7 +285,6 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   for (const kind of ['plan', 'design']) {
     const prompt = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
     assert.doesNotMatch(prompt, /^## quality$/m);
-    assert.match(prompt, /Use the selected sections of the \[quality bar\]\(quality-bar\.md\) to judge those targets/);
     const tags = prompt.split('## tags')[1]!.split('## severity')[0]!;
     assert.ok(tags.includes('- `decomposition`'));
     assert.doesNotMatch(tags, /\u2014|findings/);

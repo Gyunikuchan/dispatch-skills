@@ -96,6 +96,13 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
   assert.match(rules, /code review prompts never receive it/);
 
+  // Review continuation and ceiling rules: one canonical home
+  for (const name of ['decision-frame', 'toolkit']) {
+    assert.doesNotMatch(ref(name), /round-1 cap plus 2|each grant 2 rounds/, name);
+    assert.ok(links(ref(name)).includes('review-rules.md#review-provenance-and-applicability'), name);
+  }
+  assert.ok(rules.includes('the round-1 cap + 2 + 2 per user-resolved grant'));
+
   // Implement post-cleanup verification and review timing
   const implementText = ref('verbs/implement');
   assert.match(implementText, /start[^.]*verification[^.]*code review[^.]*same[^.]*HEAD[^.]*together/i);
@@ -152,6 +159,9 @@ test('spec stage critiques the request premise before confirmation', () => {
   assert.match(confirm, /reply is both the decision and confirmation/i);
   assert.match(confirm, /no extra exchange/i);
   assert.match(confirm, /revision protocol/i);
+  assert.match(refine, /replaces grilling's closing shared-understanding confirmation, so ask no separate one/);
+  assert.match(confirm, /resume grilling for that branch/);
+  assert.match(confirm, /record no `edit` or `confirm` until the user accepts the repeated exchange/);
 });
 
 test('aliases preserve entry mappings', () => {
@@ -257,10 +267,11 @@ test('root skill routes work and guards orchestrator context', () => {
   const route = (work: string) => rows.find(([cell]) => cell!.includes(work))?.[1];
   for (const [work, target] of [
     ['log and verify triage', 'Explorer subagent (read-only)'], ['grounding maps', 'Explorer subagent (read-only)'],
-    ['Test cleanup', 'Utility subagent'], ['retro', 'Utility subagent'], ['mechanical fixes', 'Utility subagent'],
+    ['Test cleanup', 'Utility subagent'], ['mechanical fixes', 'Utility subagent'],
     ['Plan tasks', 'Writer at run level'], ['Differentiated review or ask voices', 'Delegate or native slot'],
     ['Decisions, rulings, ledger, user gates', 'Orchestrator'], ['submitted-change inspection', 'Orchestrator'],
   ] as const) assert.equal(route(work), target, work);
+  assert.equal(route('retro'), undefined);
   assert.equal(rows.length, 5, 'five routes');
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
   for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'A configured launch failure is a blocker, not a fallback trigger', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);

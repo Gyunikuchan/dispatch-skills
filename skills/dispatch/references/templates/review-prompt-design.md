@@ -22,7 +22,7 @@ Review the unimplemented architecture and its increments, each later delivered t
 ## against
 
 - Governing targets: every spec REQ and DEC, the design, and its per-increment acceptance criteria.
-- Use the selected sections of the [quality bar](quality-bar.md) to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
+- Use the quality criteria below to judge those targets. Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.
 
 ## inspection
 

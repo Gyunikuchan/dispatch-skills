@@ -37,7 +37,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 | Work | Route |
 |---|---|
 | Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps | Explorer subagent (read-only) |
-| Test cleanup, retro, map correction, mechanical fixes that a deterministic check confirms | Utility subagent |
+| Test cleanup, map correction, mechanical fixes that a deterministic check confirms | Utility subagent |
 | Plan tasks | Writer at run level |
 | Differentiated review or ask voices | Delegate or native slot |
 | Decisions, rulings, ledger, user gates, spec and plan authoring, submitted-change inspection, `focus` bullets | Orchestrator |

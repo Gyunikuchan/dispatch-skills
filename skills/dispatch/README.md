@@ -21,7 +21,7 @@ Your current agent is the **host agent**. It acts as your deputy: it routes heav
 
 A typical run:
 
-1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's `explore-subagents` entry, else its lowest `write-subagents` entry; with neither, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It writes a spec, confirms what it assumed, and recommends `plan` or `design`.
+1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's `explore-subagents` entry, else its lowest `write-subagents` entry; with neither, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that suggests an alternative only when it is materially better; without `grilling`, Dispatch presents the critique with the confirmation. It then writes the spec and, in the exchange that ends the questions, confirms what it assumed and recommends `plan` or `design`.
 2. **Ground the scope, then write and review.** After you confirm the spec, Dispatch grounds the confirmed scope before authoring a standalone plan or design. It then writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
 3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
 4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
@@ -134,7 +134,7 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 
 | Setting | Controls |
 |---|---|
-| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; when on, adds at most one utility subagent launch per verb handoff, only when the host agent has observations |
+| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; when on, the host agent merges its own notes at each verb handoff and launches no subagent |
 | `write-concurrency` | Maximum number of implementation task writers running at once |
 | `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
 | `read-delegates` | Models used for questions and reviews |

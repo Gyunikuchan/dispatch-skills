@@ -22,7 +22,7 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
   `intent`, and cite the decision in `defect`.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
-Judge quality using the selected sections of the [quality bar](quality-bar.md).
+Judge quality using the quality criteria below.
 Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`. Reuse searches do not count toward the target.
 Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`.
 

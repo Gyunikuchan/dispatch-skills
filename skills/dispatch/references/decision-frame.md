@@ -53,11 +53,11 @@ Separate observed limitations from claims needing investigation. Present evidenc
 
 Present the recurring finding, prior accepted fixes, inspected feasibility and remaining uncertainty. Recommend keeping, relaxing or splitting the requirement, with concrete alternatives. Intent changes follow [spec operation](spec-stage.md#revision-protocol).
 
-A `review-ceiling` refusal is the ceiling branch: MUST continuation reached the round-1 cap plus 2 rounds, plus 2 more rounds per granted resolution. Present the recurring findings, each prior accepted fix, and why that fix failed, verified against current artifacts. Recommend exactly one option from the evidence:
+A `review-ceiling` refusal is the ceiling branch of the [continuation rule](review-rules.md#review-provenance-and-applicability). Present the recurring findings, each prior accepted fix, and why that fix failed, verified against current artifacts. Recommend exactly one option from the evidence:
 
 - Re-author the artifact from current knowledge under a different approach.
 - Raise the level, or use a higher model or effort, for one more round.
 - Relax or split the failing requirement; intent changes follow [spec operation](spec-stage.md#revision-protocol).
 - Defer remaining accepted MUST findings as follow-ups. Offer this only for plan and design reviews, and only when no MUST rejection is pending.
 
-Record the user decision as a resolved ceiling escalation: `{kind: "escalation", by: "user", quote, key: "ceiling:<review>:<ceiling>:resolved", data: {id: "ceiling:<review>:<ceiling>", state: "resolved", summary: "<re-author|model-effort|relax-split|defer>: <evidence>"}}`. Re-author, model-effort and relax-split each grant 2 rounds. `defer` grants none: the next run above the ceiling refuses `round-cap`, while a pending MUST rejection keeps its confirmation round. The ledger refuses a ceiling resolution that is not user-authored and quoted, lacks an option prefix, or defers a code review.
+Record the user decision as a resolved ceiling escalation: `{kind: "escalation", by: "user", quote, key: "ceiling:<review>:<ceiling>:resolved", data: {id: "ceiling:<review>:<ceiling>", state: "resolved", summary: "<re-author|model-effort|relax-split|defer>: <evidence>"}}`. See the [escalation record](toolkit.md#escalation).
