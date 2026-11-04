@@ -15,6 +15,7 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 ## Rules
 
 - Apply the [shared](quality-bar.md#shared) criteria and the [testing](quality-bar.md#testing) section to each in-scope test: keep a test that passes every retention gate; delete or merge the rest by prune category; rewrite a weak oracle that guards a retained contract.
+- A merge or rename keeps every name a criterion `Verify` selects.
 - After edits, run only the test files you edited. Fix a test you broke; revert a deletion that you cannot justify.
 - Report a needed production change as a concern; do not make it.
 

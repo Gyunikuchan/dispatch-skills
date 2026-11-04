@@ -84,27 +84,13 @@ export function diversitySort<T>(candidates: readonly T[], key: (candidate: T) =
   return [...firsts, ...repeats];
 }
 
-/** Strips a provider prefix and a `-YYYYMMDD` suffix, lowercased. */
-export function normalizeModelId(model: string): string {
-  const id = model.trim();
-  return id.slice(id.lastIndexOf('/') + 1).replace(/-(?:20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))$/, '').toLowerCase();
-}
-
-export function isSameModel(candidate: string | readonly string[] | undefined, orchestratorModel: string | null): boolean {
-  if (!orchestratorModel || !candidate) return false;
-  const target = normalizeModelId(orchestratorModel);
-  if (!target) return false;
-  const models = typeof candidate === 'string' ? [candidate] : candidate;
-  return models.some((model) => normalizeModelId(model) === target);
-}
-
 // SECTION: Roster
 
 export type TargetEntry = { model?: string | readonly string[]; effort?: string };
 export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagentsOnly?: boolean; sandbox?: boolean };
 export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
 export type Overrides = { model?: string; effort?: string };
-export type Orchestrator = { platform: string; model: string | null };
+export type Orchestrator = { platform: string };
 
 export type RosterInput = {
   level: Level;
@@ -141,13 +127,12 @@ function candidates(input: RosterInput): Candidate[] {
   });
 }
 
-/** Alternatives first, then the orchestrator platform's other models, then its own model; each group diversity-sorted. */
+/** Alternatives first, then the orchestrator platform; each group diversity-sorted. */
 function demote(list: readonly Candidate[], orchestrator: Orchestrator | null, sort: boolean): Candidate[] {
   const group = (items: readonly Candidate[]) => (sort ? diversitySort(items, (item) => item.provider) : [...items]);
   if (!orchestrator) return group(list);
   const own = (item: Candidate) => item.provider === orchestrator.platform;
-  const same = (item: Candidate) => own(item) && isSameModel(item.model, orchestrator.model);
-  return [...group(list.filter((item) => !own(item))), ...group(list.filter((item) => own(item) && !same(item))), ...group(list.filter(same))];
+  return [...group(list.filter((item) => !own(item))), ...group(list.filter(own))];
 }
 
 /** `-m`/`-e` collapse each platform to its first candidate carrying the override. */

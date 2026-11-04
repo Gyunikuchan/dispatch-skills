@@ -11,7 +11,7 @@ const base: RosterInput = {
     agy: { targets: [{ low: { model: 'gemini-pro' } }] },
   },
   policy: { rounds: { low: 2 }, targets: { low: 3 } },
-  orchestrator: { platform: 'claude', model: 'claude-opus-20260101' },
+  orchestrator: { platform: 'claude' },
 };
 const slots = (roster: ReturnType<typeof resolveRoster>) => roster.targets.map((slot) => `${slot.slot}:${String(slot.model)}`);
 
@@ -38,10 +38,12 @@ test('grammar-pins: (a,b), (3), and (all) parse; count and all stand alone', () 
 
 // SECTION: Diversity and identity
 
-test('grammar-diversity-sort: every platform first once, orchestrator platform last, its own model last', () => {
+test('grammar-diversity-sort: every platform first once, orchestrator platform last in config order', () => {
   assert.deepEqual(diversitySort(['a1', 'a2', 'b1', 'c1', 'b2'], (item) => item[0]), ['a1', 'b1', 'c1', 'a2', 'b2']);
-  const roster = resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 'all' } } });
-  assert.deepEqual(slots(roster), ['codex[0]:gpt-5', 'agy[0]:gemini-pro', 'codex[1]:gpt-5-mini', 'claude[0]:claude-sonnet', 'claude[1]:claude-opus']);
+  // Wider host object, as the toolkit passes at runtime: the model must not affect ordering.
+  const host = { platform: 'claude', model: 'claude-opus-20260101' };
+  const roster = resolveRoster({ ...base, orchestrator: host, policy: { rounds: { low: 1 }, targets: { low: 'all' } } });
+  assert.deepEqual(slots(roster), ['codex[0]:gpt-5', 'agy[0]:gemini-pro', 'codex[1]:gpt-5-mini', 'claude[0]:claude-opus', 'claude[1]:claude-sonnet']);
 });
 
 test('grammar-target-identity: positional provider[index] slots; reserves follow targets', () => {
@@ -71,7 +73,7 @@ test('grammar-native-subagents-only: such platforms serve only as the orchestrat
   const policy = { rounds: { low: 1 }, targets: { low: 'all' as const } };
   const elsewhere = resolveRoster({ ...base, readDelegates, policy });
   assert.ok(!elsewhere.targets.some((slot) => slot.provider === 'copilot'));
-  const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot', model: null } });
+  const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot' } });
   assert.deepEqual(native.targets.filter((slot) => slot.provider === 'copilot').map((slot) => [slot.slot, slot.native]), [['copilot[0]', true]]);
 });
 
@@ -84,5 +86,5 @@ test('underfill-native-exclusion: native-only providers of another host are list
   assert.deepEqual(resolveRoster({ ...base, readDelegates, policy, orchestrator: null }).underfill, { host: null, configured: 'all', resolved: 5, excluded: ['copilot'] });
   assert.deepEqual(resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 9 } } }).underfill, { host: 'claude', configured: 9, resolved: 5, excluded: [] });
   assert.equal(resolveRoster(base).underfill, undefined);
-  assert.equal(resolveRoster({ ...base, readDelegates, orchestrator: { platform: 'copilot', model: null } }).underfill, undefined);
+  assert.equal(resolveRoster({ ...base, readDelegates, orchestrator: { platform: 'copilot' } }).underfill, undefined);
 });

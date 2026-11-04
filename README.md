@@ -10,7 +10,7 @@ Catch flawed assumptions before they become code. `dispatch-skills` turns the ag
 
 Most agent workflows ask one model to make the assumptions, do the work, and judge the result. Dispatch separates those roles:
 
-- **🎲 Independent model families.** Cross-platform reviewers are asked first, and your host platform and active model last, so shared blind spots are less likely to survive review. Each delegate runs in its native harness with its allowed tools.
+- **🎲 Independent model families.** Cross-platform reviewers are asked first, and your host platform last, so shared blind spots are less likely to survive review. Each delegate runs in its native harness with its allowed tools.
 - **💡 Review before implementation.** Designs and plans are reviewed too, so a missing migration surfaces in the plan instead of after hundreds of lines of code.
 - **⚖️ Evidence, not votes.** Reviewers cite `file:L<line>` or `§ plan section`, and your host agent checks each finding against the code and repository instructions. It rejects unsupported findings; one well-supported defect is enough to act on.
 - **⚡ Review before the PR.** Review uncommitted work in your terminal while its context is fresh. An automated loop can apply verified fixes and run the checks again.
