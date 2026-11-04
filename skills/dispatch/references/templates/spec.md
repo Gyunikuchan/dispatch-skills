@@ -57,7 +57,7 @@ The spec is the governing requirements and intent document. Put selected archite
 - Each REQ has at least one `- Acceptance:` bullet.
 - Summarizing drops no decision or constraint: keep every settled decision and constraint when you shorten the spec.
 - Discussion Record: include only dated, intent-settling exchanges that produced no DEC. Use `None.` when no qualifying exchange exists.
-- Decisions: present options as bullets or one table, never both. Keep a verbatim user quote in the DEC beside the choice.
+- Decisions: present options as bullets or one table, never both. Keep a verbatim user quote in the DEC beside a `(user)` choice.
 - Before `AUTHORED`, assess behavior, interfaces and data, failure and recovery, quality requirements, assumptions, and dependencies. Include only applicable content in existing sections; do not add headings or applicability tables.
 - Record spec-level assumptions under Constraints with the `(assumption)` tag. List a material unconfirmed assumption under Open Questions.
 - Acceptance bullets may use EARS form (`WHEN <trigger>, the system SHALL <response>`) where it improves verifiability. EARS is optional and unlinted.

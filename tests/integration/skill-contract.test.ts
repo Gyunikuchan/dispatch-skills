@@ -123,18 +123,25 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.doesNotMatch(rules, /^\s*\|.*\b(critical|blocks|degrades|minor)\b.*\b(MUST|SHOULD|CONSIDER)\b/im);
 });
 
+const stageParts = () => {
+  const stage = read(root + 'references/spec-stage.md');
+  return {
+    refine: stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '',
+    author: stage.split('3. **Author.**')[1]?.split('\n4. **Confirm.**')[0] ?? '',
+    confirm: stage.split('4. **Confirm.**')[1]?.split('\n\n## ')[0] ?? '',
+  };
+};
+
 test('spec stage critiques the request premise before confirmation', () => {
   const stage = read(root + 'references/spec-stage.md');
   const groundStep = stage.indexOf('1. **Ground.**');
   const refineStep = stage.indexOf('2. **Critique and refine.**');
   const authorStep = stage.indexOf('3. **Author.**');
   const confirmStep = stage.indexOf('4. **Confirm.**');
-  const refine = stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '';
-  const author = stage.split('3. **Author.**')[1]?.split('\n4. **Confirm.**')[0] ?? '';
-  const confirm = stage.split('4. **Confirm.**')[1]?.split('\n\n## ')[0] ?? '';
+  const {refine, author, confirm} = stageParts();
 
   assert.ok(groundStep >= 0 && refineStep > groundStep && authorStep > refineStep && confirmStep > authorStep, 'ground, critique, author and confirm in order');
-  assert.match(refine, /materially better/i);
+  assert.match(refine, /problem, scope and cost-and-risk[^.]*materially better/i);
   assert.match(refine, /not worse on intent/i);
   assert.match(refine, /in one line that the premise holds, with the reason/i);
   assert.match(refine, /after grounding[\s\S]*first-round/i);
@@ -160,8 +167,69 @@ test('spec stage critiques the request premise before confirmation', () => {
   assert.match(confirm, /no extra exchange/i);
   assert.match(confirm, /revision protocol/i);
   assert.match(refine, /replaces grilling's closing shared-understanding confirmation, so ask no separate one/);
-  assert.match(confirm, /resume grilling for that branch/);
   assert.match(confirm, /record no `edit` or `confirm` until the user accepts the repeated exchange/);
+});
+
+test('spec stage lays out grounded approaches', () => {
+  const {refine, author} = stageParts();
+  assert.match(refine, /two or three grounded approaches with trade-offs and one recommendation/i);
+  assert.match(refine, /drop approaches that work against the user's why or that existing work rules out/i);
+  assert.match(refine, /when one approach remains, say so and state why the others do not fit/i);
+  assert.match(refine, /differ in what the user sees[^.]*text sketch/i);
+  assert.match(refine, /raises the approach or asks about trade-offs[^.]*grilling question/i);
+  assert.match(refine, /only outcomes[^.]*stated default[^.]*override[^.]*Confirm/i);
+  assert.match(author, /approach set[\s\S]*DEC[\s\S]*Options[\s\S]*Rejected/i);
+  assert.match(author, /delegated default[^.]*`\(assumption\)`[^.]*no user quote/i);
+  assert.match(author, /override[^.]*updates that DEC with the user's actual quote/i);
+  const template = read(root + 'references/templates/spec.md');
+  assert.match(template, /verbatim user quote[^.\n]*`\(user\)`/i);
+});
+
+test('spec stage asks only build-changing questions', () => {
+  const {refine} = stageParts();
+  assert.match(refine, /only decisions that change scope, behavior or risk and that grounding cannot answer/i);
+  assert.match(refine, /other calls[^.]*`\(assumption\)`/i);
+  assert.match(refine, /never questions, and never ask process steps/i);
+  assert.match(refine, /A material unanswered question still blocks approval/);
+  assert.match(refine, /states no why and grounding cannot infer it/i);
+  assert.match(refine, /why[^.]*alone[^.]*first grilling round[^.]*no recommended answer/i);
+  assert.match(refine, /override[^.]*per-question recommendation[^.]*that one question/i);
+  assert.match(refine, /rest of the frontier, including approach options, follows in the next round/i);
+  assert.match(refine, /inferred why[^.]*`\(assumption\)`/i);
+});
+
+test('spec stage short path and self-check', () => {
+  const {refine, author, confirm} = stageParts();
+  assert.match(refine, /open the first user exchange[^.]*with a short restatement of the request[\s\S]*current behavior[\s\S]*what the change touches[\s\S]*verified Surprises/i);
+  assert.match(refine, /leaves no user decision open[^.]*no grilling round/i);
+  assert.match(refine, /at every level, except when the critique leaves no user decision open/i);
+  assert.match(refine, /Confirm carries the critique result, any approach default, stated and assumed intent and the verb recommendation/i);
+  assert.match(confirm, /when `grilling` was unavailable or asked no round/i);
+  assert.match(confirm, /approach default, a self-check answer or a corrected assumption/i);
+  assert.match(confirm, /opens a new decision in this fallback, follow the \[revision protocol\]\(#revision-protocol\) \(for a new decision, resume `grilling` for its branch first when the host provides it\), which records the new confirmation; otherwise:/i);
+  const lint = author.indexOf('Lint');
+  const check = author.search(/self-check/i);
+  const relint = author.search(/lint (?:again|passes again)/i);
+  assert.ok(lint >= 0 && check > lint && relint > check, 'self-check after lint, re-lint after it');
+  assert.match(author, /plan author/i);
+  assert.match(author, /answered by chat or grounding \(fill in\)[\s\S]*minor[^.]*`\(assumption\)`[\s\S]*ask[^.]*in Confirm, most important first/i);
+  assert.match(author, /before Confirm/i);
+});
+
+test('spec stage docs describe approach options', () => {
+  const stage = read(root + 'references/spec-stage.md');
+  const docs = {
+    readme: read(root + 'README.md'),
+    concepts: read(root + 'references/readme/concepts.md'),
+    adr: read('docs/decisions/0014-ground-first-intent-and-evidence-based-level.md'),
+  };
+  for (const [name, text] of Object.entries({...docs, stage})) {
+    if (name !== 'stage') assert.match(text, /approach options?[^.]*recommend|recommend[^.]*approach options?/i, name);
+    for (const sentence of text.split(/\.\s/).filter((s) => /alternative only when[^.]*materially better/i.test(s))) {
+      assert.match(sentence, /problem, scope and cost|other lenses/i, name + ': materially-better filter names its lenses');
+    }
+  }
+  assert.match(docs.adr, /brainstorming[^.]*rejected as a whole[\s\S]*adopts[^.]*approach options[^.]*question admission[^.]*short path[^.]*self-check/i);
 });
 
 test('aliases preserve entry mappings', () => {
