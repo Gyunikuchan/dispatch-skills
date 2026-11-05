@@ -9,6 +9,7 @@ const load = () => import('../../.agents/skills/audit-dispatch-skills/scripts/sc
 
 const VERBS = ['ask', 'design', 'plan', 'review', 'implement'] as const;
 const VERB_CLASSES = ['normal', 'decision', 'recovery'];
+const AUTHORING_CLASSES = ['contradiction', 'rule-home', 'disclosure-flow'];
 const BOUNDARIES = ['design-to-plan', 'plan-to-implement', 'review-to-fix', 'interruption-to-resume'];
 const ENTRY = 'skills/dispatch/SKILL.md';
 const RUN = '2026-10-07-1200';
@@ -25,6 +26,7 @@ function catalog(extra: Entry[] = []) {
   for (const verb of VERBS) for (const cls of VERB_CLASSES) scenarios.push(entry(verb, cls, 'a', verb === 'review' ? { kind: 'code' } : {}));
   scenarios.push(entry('review', 'decision', 'b', { kind: 'design' }), entry('review', 'recovery', 'b', { kind: 'plan' }));
   for (const cls of BOUNDARIES) scenarios.push(entry('shared', cls));
+  for (const cls of AUTHORING_CLASSES) scenarios.push(entry('authoring', cls));
   return { version: 1, scenarios: [...scenarios, ...extra] };
 }
 const exists = () => true;
@@ -48,15 +50,16 @@ test('recovery-contract: bundled scenarios preserve work and enforce current rec
   assert.doesNotMatch(scope.trigger, /pre-write assessment/);
 });
 
-test('audit scenarios default selection covers five verbs with three classes and the four shared boundaries', async () => {
+test('audit scenarios default selection covers five verbs, the shared boundaries and the three authoring classes', async () => {
   const { selectScenarios } = await load();
   const selection = selectScenarios({ catalog: catalog(), exists });
-  assert.deepEqual(selection.scopes.map((s) => s.scope), [...VERBS, 'shared']);
+  assert.deepEqual(selection.scopes.map((s) => s.scope), [...VERBS, 'shared', 'authoring']);
   for (const verb of VERBS) assert.deepEqual(scopeOf(selection, verb)?.scenarios.map((s) => s.class), VERB_CLASSES);
   assert.deepEqual(scopeOf(selection, 'shared')?.scenarios.map((s) => s.class), BOUNDARIES);
+  assert.deepEqual(scopeOf(selection, 'authoring')?.scenarios.map((s) => s.class), AUTHORING_CLASSES);
   assert.equal(selection.partial, false);
   assert.deepEqual(selection.gaps, []);
-  assert.equal(selection.selected.length, 19);
+  assert.equal(selection.selected.length, 22);
 });
 
 test('audit scenarios review selection spreads code, design and plan targets', async () => {
@@ -98,7 +101,7 @@ test('audit scenarios explicit narrowing selects only named scopes and labels th
   const selection = selectScenarios({ catalog: catalog([entry('plan', 'decision', 'b')]), exists, scope: { scopes: ['plan'], scenarios: ['plan-decision-b'] } });
   assert.deepEqual(selection.scopes.map((s) => s.scope), ['plan']);
   assert.equal(selection.partial, true);
-  for (const omitted of ['ask', 'design', 'review', 'implement', 'shared']) assert.ok(selection.gaps.some((g) => g.includes(omitted)), omitted);
+  for (const omitted of ['ask', 'design', 'review', 'implement', 'shared', 'authoring']) assert.ok(selection.gaps.some((g) => g.includes(omitted)), omitted);
   assert.deepEqual(selection.selected, ['plan-decision-b']);
   assert.ok(selection.gaps.includes('scope plan class normal not selected (user-narrowed run)'));
   const decision = selection.scopes[0]?.scenarios.find((s) => s.class === 'decision');
@@ -108,7 +111,7 @@ test('audit scenarios explicit narrowing selects only named scopes and labels th
   const scenarioOnly = selectScenarios({ catalog: catalog([entry('plan', 'decision', 'b')]), exists, scope: { scenarios: ['plan-decision-b', 'shared-review-to-fix-a'] } });
   assert.equal(scenarioOnly.partial, true);
   assert.deepEqual(scenarioOnly.selected, ['plan-decision-b', 'shared-review-to-fix-a']);
-  for (const omitted of ['ask', 'design', 'review', 'implement']) assert.ok(scenarioOnly.gaps.includes(`scope ${omitted} not selected (user-narrowed run)`), omitted);
+  for (const omitted of ['ask', 'design', 'review', 'implement', 'authoring']) assert.ok(scenarioOnly.gaps.includes(`scope ${omitted} not selected (user-narrowed run)`), omitted);
   for (const cls of ['normal', 'recovery']) assert.ok(scenarioOnly.gaps.includes(`scope plan class ${cls} not selected (user-narrowed run)`), cls);
   for (const cls of ['design-to-plan', 'plan-to-implement', 'interruption-to-resume']) assert.ok(scenarioOnly.gaps.includes(`scope shared class ${cls} not selected (user-narrowed run)`), cls);
 });
@@ -127,11 +130,13 @@ test('audit scenarios reject an invalid catalog', async () => {
 test('audit scenarios packets point to shared evidence and the scope reference without copying sources', async () => {
   const { selectScenarios, buildPackets } = await load();
   const packets = buildPackets(selectScenarios({ catalog: catalog(), exists }), { runId: RUN });
-  assert.equal(packets.length, 6);
+  assert.equal(packets.length, 7);
   const plan = packets.find((p) => p.scope === 'plan');
   const shared = packets.find((p) => p.scope === 'shared');
+  const authoring = packets.find((p) => p.scope === 'authoring');
   assert.match(plan?.reference ?? '', /references\/walkthrough\.md$/);
   assert.match(shared?.reference ?? '', /references\/shared\.md$/);
+  assert.match(authoring?.reference ?? '', /references\/authoring\.md$/);
   assert.equal(plan?.findingsPath, `${WORK}/findings/plan.md`);
   assert.deepEqual(plan?.evidence, [`${WORK}/manifest.json`, `${WORK}/tests.txt`, `${WORK}/metrics.md`]);
   for (const scenario of plan?.scenarios ?? []) {
@@ -147,7 +152,7 @@ test('audit scenarios emitting packets writes one file per scope and records the
   reserveRun(workDir, { runId: RUN, revision: 'abc', config: loadAuditConfig() });
   const selection = selectScenarios({ catalog: catalog(), exists });
   emitPackets(workDir, selection, { runId: RUN });
-  for (const scope of [...VERBS, 'shared']) assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
+  for (const scope of [...VERBS, 'shared', 'authoring']) assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
   const manifest = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: string[] } };
   assert.deepEqual(manifest.scenarios?.selected, selection.selected);
   assert.equal(manifest.scopes['plan']?.lifecycle, 'pending');
@@ -174,7 +179,7 @@ test('audit scenarios interrupted packet emission publishes no selection and a r
   assert.equal(partial.scenarios, undefined);
   assert.deepEqual(partial.scopes, {});
   emitPackets(workDir, selection, { runId: RUN });
-  for (const scope of [...VERBS, 'shared']) assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
+  for (const scope of [...VERBS, 'shared', 'authoring']) assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
   const done = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: string[] } };
   assert.deepEqual(done.scenarios?.selected, selection.selected);
 });

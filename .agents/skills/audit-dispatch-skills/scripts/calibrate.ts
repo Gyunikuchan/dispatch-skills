@@ -43,11 +43,11 @@ export type ArmResult = {
 // ============================================================================
 
 export const ARMS: readonly Arm[] = ['old', 'new'];
-const DEFECT_CATEGORIES = ['ambiguity', 'handoff', 'efficiency', 'recovery'];
+const DEFECT_CATEGORIES = ['ambiguity', 'handoff', 'efficiency', 'recovery', 'contradiction'];
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const HIGH = new Set(['high', 'critical']);
-const CONTROLS = 2;
-const MIN_RECOVERED = 3;
+const CONTROLS = 3;
+const MIN_RECOVERED = 4;
 const USAGE_METRICS = ['inputTokens', 'outputTokens', 'toolCalls', 'wallSeconds'] as const;
 const SHA = /^[0-9a-f]{40}$/;
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

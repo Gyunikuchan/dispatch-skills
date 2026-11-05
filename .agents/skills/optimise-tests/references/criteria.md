@@ -23,8 +23,8 @@ Each test reference uses the repo-relative file path and exact reported test nam
 An action record has this shape:
 
 ```jsonl
-{"kind":"action","id":"A1","action":"rewrite","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects replay without changing the balance"}],"reason":"Replace the self-derived assertion with the replay error and unchanged balance checks."}
-{"kind":"retain","contract":"The transfer consumer rejects a repeated transaction without debiting the balance twice.","plausibleDefect":"A replay debits the account twice and corrupts its balance.","observableOutcome":"The caller receives the replay error and the account balance stays unchanged.","distinctContribution":"Covers durable replay protection after commit; static types cannot guarantee runtime transaction uniqueness.","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects replay without changing the balance"}]}
+{"kind":"action","id":"A1","action":"rewrite","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects replay without changing the balance"}],"reason":"Replace the self-derived assertion with the replay error and unchanged balance checks."}
+{"kind":"retain","contract":"The transfer consumer rejects a repeated transaction without debiting the balance twice.","plausibleDefect":"A replay debits the account twice and corrupts its balance.","observableOutcome":"The caller receives the replay error and the account balance stays unchanged.","distinctContribution":"Covers durable replay protection after commit; static types cannot guarantee runtime transaction uniqueness.","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects replay without changing the balance"}]}
 ```
 
 `action` is one of `delete`, `merge`, `add`, `rewrite`, `move`, or `split`. IDs are unique. Every record has `before`, `after`, and a nonblank `reason`; arrays may be empty only where the action allows it. `delete` and `merge` also require one `category` from this closed set:
@@ -50,7 +50,7 @@ No other category is valid.
 A retained-scenario record has this shape:
 
 ```json
-{"kind":"retain","contract":"The transfer consumer rejects a repeated transaction without debiting the balance twice.","plausibleDefect":"A replay debits the account twice and corrupts its balance.","observableOutcome":"The caller receives the replay error and the account balance stays unchanged.","distinctContribution":"Covers durable replay protection after commit; static types cannot guarantee runtime transaction uniqueness.","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects a duplicate transfer"}]}
+{"kind":"retain","contract":"The transfer consumer rejects a repeated transaction without debiting the balance twice.","plausibleDefect":"A replay debits the account twice and corrupts its balance.","observableOutcome":"The caller receives the replay error and the account balance stays unchanged.","distinctContribution":"Covers durable replay protection after commit; static types cannot guarantee runtime transaction uniqueness.","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects a duplicate transfer"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects a duplicate transfer"}]}
 ```
 
 All four explanations are required and nonblank. `after` must name at least one surviving test. Every baseline test must occur in an action or retained scenario, and every after test must occur in a retained scenario. A deleted or merged before test cannot also be retained. Keep each retained record positive: name the consumer contract, plausible severe failure, observable result, distinct contribution and why static checks do not already guarantee it. The lead judges these explanations; the gate validates their presence and mappings.
@@ -60,11 +60,11 @@ Related tests may share one retained-scenario record only when they exercise the
 These records show a hollow deletion without a replacement, a duplicate deletion whose survivor is retained, and a merge whose survivor is retained:
 
 ```jsonl
-{"kind":"action","id":"A2","action":"delete","before":[{"file":"tests/unit/config.test.ts","name":"returns the config it just built"}],"after":[],"reason":"The assertion compares the result with the same constructed value and protects no required behavior.","category":"self-derived-assertion"}
-{"kind":"action","id":"A3","action":"delete","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects replay before restart"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects transfer replay"}],"reason":"The survivor detects the same double-debit defect before and after restart.","category":"redundant-behavior"}
-{"kind":"action","id":"A4","action":"merge","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects negative amount"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"validates transfer amount boundaries"}],"reason":"Merge boundary checks into a single scenario asserting amount limits.","category":"redundant-behavior"}
-{"kind":"retain","contract":"The transfer consumer rejects replay without a second debit.","plausibleDefect":"A replay corrupts the balance with a second debit.","observableOutcome":"The caller receives the replay error and the balance stays unchanged.","distinctContribution":"Checks persisted deduplication across restart, which static types do not guarantee.","before":[{"file":"tests/unit/transfer.test.ts","name":"rejects transfer replay"}],"after":[{"file":"tests/unit/transfer.test.ts","name":"rejects transfer replay"}]}
-{"kind":"retain","contract":"The transfer consumer rejects amounts outside configured limits.","plausibleDefect":"Negative or zero amounts bypass validation and debit account.","observableOutcome":"Caller receives amount validation error and balance is untouched.","distinctContribution":"Verifies amount boundaries; static types cannot enforce positive numbers.","before":[],"after":[{"file":"tests/unit/transfer.test.ts","name":"validates transfer amount boundaries"}]}
+{"kind":"action","id":"A2","action":"delete","before":[{"file":"tests/unit/lib/config.test.ts","name":"returns the config it just built"}],"after":[],"reason":"The assertion compares the result with the same constructed value and protects no required behavior.","category":"self-derived-assertion"}
+{"kind":"action","id":"A3","action":"delete","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects replay before restart"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects transfer replay"}],"reason":"The survivor detects the same double-debit defect before and after restart.","category":"redundant-behavior"}
+{"kind":"action","id":"A4","action":"merge","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects negative amount"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"validates transfer amount boundaries"}],"reason":"Merge boundary checks into a single scenario asserting amount limits.","category":"redundant-behavior"}
+{"kind":"retain","contract":"The transfer consumer rejects replay without a second debit.","plausibleDefect":"A replay corrupts the balance with a second debit.","observableOutcome":"The caller receives the replay error and the balance stays unchanged.","distinctContribution":"Checks persisted deduplication across restart, which static types do not guarantee.","before":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects transfer replay"}],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"rejects transfer replay"}]}
+{"kind":"retain","contract":"The transfer consumer rejects amounts outside configured limits.","plausibleDefect":"Negative or zero amounts bypass validation and debit account.","observableOutcome":"Caller receives amount validation error and balance is untouched.","distinctContribution":"Verifies amount boundaries; static types cannot enforce positive numbers.","before":[],"after":[{"file":"tests/unit/toolkit/ledger.test.ts","name":"validates transfer amount boundaries"}]}
 ```
 
 The names in examples must resolve in the inventories for a real run. These records illustrate field use; the full ledger must classify every baseline and after test without contradictory outcomes. A `move` record proposes before and intended after references, but the lead applies the move and confirms its destination in the final inventory. If a required contract is uncertain, leave the test unchanged and report a blocker outside the ledger; resolve it before a successful gate run. Do not invent an `escalate` record.
@@ -91,7 +91,7 @@ Assign each `delete` and `merge` action to one category from the closed set defi
   ```
   Ledger record:
   ```jsonl
-  {"kind":"action","id":"D1","action":"delete","before":[{"file":"tests/unit/user.test.ts","name":"returns user object with string fields"}],"after":[],"reason":"Static types already guarantee User property shapes; test exercises no runtime boundary or validator.","category":"trivial-spec"}
+  {"kind":"action","id":"D1","action":"delete","before":[{"file":"tests/unit/toolkit/report.test.ts","name":"returns user object with string fields"}],"after":[],"reason":"Static types already guarantee User property shapes; test exercises no runtime boundary or validator.","category":"trivial-spec"}
   ```
 
 ### Anti-pattern 2: Parametric permutation sweeps
@@ -113,8 +113,8 @@ Assign each `delete` and `merge` action to one category from the closed set defi
   ```
   Ledger record:
   ```jsonl
-  {"kind":"action","id":"M1","action":"merge","before":[{"file":"tests/unit/slug.test.ts","name":"validates slug alpha"},{"file":"tests/unit/slug.test.ts","name":"validates slug bravo"},{"file":"tests/unit/slug.test.ts","name":"validates slug charlie"},{"file":"tests/unit/slug.test.ts","name":"validates slug delta"},{"file":"tests/unit/slug.test.ts","name":"validates slug echo"}],"after":[{"file":"tests/unit/slug.test.ts","name":"validates representative slug format and rejects empty input"}],"reason":"Consolidate repetitive slug permutation tests into representative format and empty boundary verification.","category":"redundant-behavior"}
-  {"kind":"retain","contract":"Validates alphanumeric slug strings and rejects empty inputs.","plausibleDefect":"RegEx parsing bug rejects valid slugs or accepts empty strings.","observableOutcome":"Returns true for valid slug inputs and false for empty string.","distinctContribution":"Guarantees valid slug formatting and empty boundary protection without permutation loop overhead.","before":[],"after":[{"file":"tests/unit/slug.test.ts","name":"validates representative slug format and rejects empty input"}]}
+  {"kind":"action","id":"M1","action":"merge","before":[{"file":"tests/unit/toolkit/brief.test.ts","name":"validates slug alpha"},{"file":"tests/unit/toolkit/brief.test.ts","name":"validates slug bravo"},{"file":"tests/unit/toolkit/brief.test.ts","name":"validates slug charlie"},{"file":"tests/unit/toolkit/brief.test.ts","name":"validates slug delta"},{"file":"tests/unit/toolkit/brief.test.ts","name":"validates slug echo"}],"after":[{"file":"tests/unit/toolkit/brief.test.ts","name":"validates representative slug format and rejects empty input"}],"reason":"Consolidate repetitive slug permutation tests into representative format and empty boundary verification.","category":"redundant-behavior"}
+  {"kind":"retain","contract":"Validates alphanumeric slug strings and rejects empty inputs.","plausibleDefect":"RegEx parsing bug rejects valid slugs or accepts empty strings.","observableOutcome":"Returns true for valid slug inputs and false for empty string.","distinctContribution":"Guarantees valid slug formatting and empty boundary protection without permutation loop overhead.","before":[],"after":[{"file":"tests/unit/toolkit/brief.test.ts","name":"validates representative slug format and rejects empty input"}]}
   ```
 
 ### Anti-pattern 3: Fragmented micro-tests
@@ -138,7 +138,7 @@ Assign each `delete` and `merge` action to one category from the closed set defi
   ```
   Ledger record:
   ```jsonl
-  {"kind":"action","id":"M2","action":"merge","before":[{"file":"tests/unit/parser.test.ts","name":"parses status"},{"file":"tests/unit/parser.test.ts","name":"parses body"},{"file":"tests/unit/parser.test.ts","name":"parses timestamp"}],"after":[{"file":"tests/unit/parser.test.ts","name":"parses full response payload"}],"reason":"Consolidate fragmented field assertions into a single scenario asserting the parsed response contract.","category":"redundant-behavior"}
+  {"kind":"action","id":"M2","action":"merge","before":[{"file":"tests/unit/toolkit/lint.test.ts","name":"parses status"},{"file":"tests/unit/toolkit/lint.test.ts","name":"parses body"},{"file":"tests/unit/toolkit/lint.test.ts","name":"parses timestamp"}],"after":[{"file":"tests/unit/toolkit/lint.test.ts","name":"parses full response payload"}],"reason":"Consolidate fragmented field assertions into a single scenario asserting the parsed response contract.","category":"redundant-behavior"}
   ```
 
 ### Anti-pattern 4: Implementation-coupled / mock assertions
@@ -163,7 +163,7 @@ Assign each `delete` and `merge` action to one category from the closed set defi
   ```
   Ledger record:
   ```jsonl
-  {"kind":"action","id":"D2","action":"delete","before":[{"file":"tests/unit/runner.test.ts","name":"calls internal logger spy"}],"after":[],"reason":"Asserts internal logger mock invocation count rather than observable execution outcome.","category":"implementation-coupled-assertion"}
+  {"kind":"action","id":"D2","action":"delete","before":[{"file":"tests/unit/providers/runner.test.ts","name":"calls internal logger spy"}],"after":[],"reason":"Asserts internal logger mock invocation count rather than observable execution outcome.","category":"implementation-coupled-assertion"}
   ```
 
 ### Anti-pattern 5: Heavy repeated setup
@@ -195,8 +195,8 @@ Assign each `delete` and `merge` action to one category from the closed set defi
   ```
   Ledger record:
   ```jsonl
-  {"kind":"action","id":"R2","action":"rewrite","before":[{"file":"tests/unit/git.test.ts","name":"reads commit message"}],"after":[{"file":"tests/unit/git.test.ts","name":"reads commit message with verified runner arguments"}],"reason":"Inject in-process runner asserting command arguments and cwd to preserve contract verification without physical subprocess spawning."}
-  {"kind":"retain","contract":"Issues git log with exact format options in repository directory and returns trimmed message.","plausibleDefect":"Wrong git arguments, missing cwd, or trimming error corrupts commit message retrieval.","observableOutcome":"Passes correct git arguments and cwd to runner and returns expected message string.","distinctContribution":"Verifies git command wiring and output processing without physical subprocess disk I/O.","before":[{"file":"tests/unit/git.test.ts","name":"reads commit message"}],"after":[{"file":"tests/unit/git.test.ts","name":"reads commit message with verified runner arguments"}]}
+  {"kind":"action","id":"R2","action":"rewrite","before":[{"file":"tests/unit/toolkit/coverage.test.ts","name":"reads commit message"}],"after":[{"file":"tests/unit/toolkit/coverage.test.ts","name":"reads commit message with verified runner arguments"}],"reason":"Inject in-process runner asserting command arguments and cwd to preserve contract verification without physical subprocess spawning."}
+  {"kind":"retain","contract":"Issues git log with exact format options in repository directory and returns trimmed message.","plausibleDefect":"Wrong git arguments, missing cwd, or trimming error corrupts commit message retrieval.","observableOutcome":"Passes correct git arguments and cwd to runner and returns expected message string.","distinctContribution":"Verifies git command wiring and output processing without physical subprocess disk I/O.","before":[{"file":"tests/unit/toolkit/coverage.test.ts","name":"reads commit message"}],"after":[{"file":"tests/unit/toolkit/coverage.test.ts","name":"reads commit message with verified runner arguments"}]}
   ```
 
 ## Proof and savings

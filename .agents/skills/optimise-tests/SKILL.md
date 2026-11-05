@@ -17,7 +17,7 @@ Paths are relative to the repo root. `<run>` is the current local time as `yyyy-
 | Host | `<skill>` | Unit writers |
 |---|---|---|
 | Antigravity | `.agents/skills/optimise-tests` | parallel subagents |
-| Claude Code | `.claude/skills/optimise-tests` | `Agent` tool (`general-purpose`), one call per packet |
+| Claude Code | `.claude/skills/optimise-tests` | `Agent` tool, one call per packet |
 | Copilot | `.github/skills/optimise-tests` | sequential, in your own context |
 | OpenCode | `.opencode/skill/optimise-tests` | `task` tool, one call per packet |
 | Codex | `.agents/skills/optimise-tests` | native subagents, one per packet |
@@ -40,7 +40,16 @@ It writes `<work>/before/inventory.json` (`totals`, `files`, `coverage`, `candid
 
 ## 2. Run unit writers
 
-Launch one native writer per packet, in parallel, at most `maxParallelWriters` at once; queue the rest and start the next as each returns. On a host without native subagents, process packets one at a time yourself. Brief each writer:
+Resolve models once per run, with `<platform>` the canonical host (`claude`, `agy`, `copilot`, `opencode`, `codex`):
+
+```bash
+node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "optimise-tests <run>" --host <platform>
+node <skills-dir>/dispatch/scripts/dispatch.ts doctor run --session <session> --level medium
+```
+
+Read the result file at the printed `path`. Apply the rules of [Dispatch routing](../../../skills/dispatch/SKILL.md#routing): `ok` false stops the run; no entry for the host means inline work, recorded as a coverage gap; an entry the host cannot launch is a blocker. Unit writers use the `utility` entry: launch on the first listed model the host accepts, at the listed effort.
+
+Launch one native writer per packet, in parallel, at most `maxParallelWriters` at once; queue the rest and start the next as each returns. When no `utility` entry resolves for the host, process packets one at a time yourself. Brief each writer:
 
 ```
 Optimise packet <id> of the dispatch-skills test suite. Read <skill>/references/criteria.md and follow it.

@@ -6,12 +6,12 @@ import { tempDir } from '../helpers/fake-ports.ts';
 
 import { load, ARMS, SETTINGS, NOW, readBrief, type Json, fixture, defects, controls, prepared, ids, high } from '../helpers/audit-calibration.ts';
 
-test('audit calibration fixture curates four categorized defects and two controls with verified excerpts', async () => {
+test('audit calibration fixture curates five categorized defects and three controls with verified excerpts', async () => {
   const { validateFixture } = await load();
   const f = fixture();
   validateFixture(f as never);
-  assert.deepEqual(defects(f).map((c: Json) => c['category']).sort(), ['ambiguity', 'efficiency', 'handoff', 'recovery']);
-  assert.equal(controls(f).length, 2);
+  assert.deepEqual(defects(f).map((c: Json) => c['category']).sort(), ['ambiguity', 'contradiction', 'efficiency', 'handoff', 'recovery']);
+  assert.equal(controls(f).length, 3);
   assert.ok(high(f).length >= 1);
 });
 

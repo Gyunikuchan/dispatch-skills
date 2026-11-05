@@ -74,6 +74,15 @@
       "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/toolkit/domain/plan.ts"]
     },
     {
+      "id": "plan-decision-spec-stage",
+      "scope": "plan",
+      "class": "decision",
+      "trigger": "User gives an objective with no approved spec, so plan starts at the spec stage.",
+      "expectedOutcome": "The spec is grounded in the repository, critiqued, and any material ambiguity is put to the user through grilling, or through the Confirm exchange when grilling is unavailable; the user confirms the spec before the plan builds on it.",
+      "startingState": "clean checkout, objective only",
+      "entries": ["skills/dispatch/references/spec-stage.md", "skills/dispatch/references/grounding.md", "skills/dispatch/SKILL.md"]
+    },
+    {
       "id": "plan-recovery-unmet-prerequisite",
       "scope": "plan",
       "class": "recovery",
@@ -132,6 +141,15 @@
       "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/writer-brief.md", "skills/dispatch/scripts/toolkit/integrate.ts"]
     },
     {
+      "id": "implement-normal-explorer-and-cleanup-routing",
+      "scope": "implement",
+      "class": "normal",
+      "trigger": "An approved plan needs explorer reads and a post-integration test cleanup.",
+      "expectedOutcome": "Explorer and utility subagents launch on doctor's utility entry with their write limits stated; test cleanup runs after integrated checks and before code review, and its report is checked before commit.",
+      "startingState": "approved plan, clean checkout, doctor utility entry",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/implement.md"]
+    },
+    {
       "id": "implement-decision-scope-amendment",
       "scope": "implement",
       "class": "decision",
@@ -184,6 +202,33 @@
       "expectedOutcome": "Ownership, handles, and journal state transfer without duplicate effects or lost evidence.",
       "startingState": "interrupted run with a journal and lock",
       "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/scripts/toolkit/ledger.ts", "skills/dispatch/scripts/toolkit/lock.ts", "skills/dispatch/scripts/toolkit/status.ts"]
+    },
+    {
+      "id": "authoring-contradiction-cross-file",
+      "scope": "authoring",
+      "class": "contradiction",
+      "trigger": "An agent follows a rule stated in one agent-facing file and meets a conflicting statement of it in another.",
+      "expectedOutcome": "Every rule stated in more than one place agrees on trigger, sequence, limit and owner; any disagreement is a defect citing both locations.",
+      "startingState": "clean checkout",
+      "entries": ["AGENTS.md", "skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/self-build.md", "skills/dispatch/references/decision-frame.md", ".agents/skills/audit-dispatch-skills/SKILL.md", ".agents/skills/audit-dispatch-skills-fix/SKILL.md", ".agents/skills/optimise-tests/SKILL.md"]
+    },
+    {
+      "id": "authoring-rule-home-single-source",
+      "scope": "authoring",
+      "class": "rule-home",
+      "trigger": "A maintainer or agent looks for the canonical home of a repeated rule (routing, review, scope, handoff, verification).",
+      "expectedOutcome": "Each rule has one canonical home; other files link to it, and a restated rule carries a reason to stay inline.",
+      "startingState": "clean checkout",
+      "entries": ["AGENTS.md", "skills/dispatch/SKILL.md", "skills/dispatch/references/review-rules.md", "skills/dispatch/references/providers.md", "skills/dispatch/references/toolkit.md", ".agents/skills/audit-dispatch-skills/SKILL.md", ".agents/skills/audit-dispatch-skills-fix/SKILL.md", ".agents/skills/optimise-tests/SKILL.md"]
+    },
+    {
+      "id": "authoring-disclosure-flow-load-path",
+      "scope": "authoring",
+      "class": "disclosure-flow",
+      "trigger": "An agent starts a verb and loads instructions in the order the skills direct.",
+      "expectedOutcome": "Always-loaded text holds only what every branch needs; branch detail loads on demand through links; each step has one next action and a checkable completion criterion.",
+      "startingState": "clean checkout",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/verbs/design.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/references/verbs/review.md", "skills/dispatch/references/verbs/implement.md", ".agents/skills/writing-for-agents/SKILL.md"]
     }
   ]
 }

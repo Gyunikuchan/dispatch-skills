@@ -24,14 +24,14 @@ The command writes `- **Triage**: <single-line JSON>` and derives the status. Ex
 ```json
 {
   "ruling": "accept",
-  "evidence": "Current revision frame drops parser defects; initial author frame retains them.",
-  "impact": "The author needs an extra journal read to repair the revision.",
-  "recommendation": "Retain code, line and message in the retry frame; verify replay.",
+  "evidence": "Current revision input drops parser defects; initial author input retains them.",
+  "impact": "The author needs an extra ledger read to repair the revision.",
+  "recommendation": "Retain code, line and message in the retry input; verify replay.",
   "group": "revision-diagnostics",
   "priority": "medium",
-  "affectedPaths": ["skills/dispatch/scripts/machines/design-revision.ts"],
+  "affectedPaths": ["skills/dispatch/scripts/toolkit/review.ts"],
   "dependsOn": [],
-  "verification": ["A retry-frame test retains concrete diagnostics; replay emits the same frame."]
+  "verification": ["A retry-input test retains concrete diagnostics; replay emits the same input."]
 }
 ```
 
@@ -68,12 +68,12 @@ Each member receives the same `- **Execution**: <single-line JSON>`. The command
 
 | Phase | Evidence to inspect | Added field |
 |---|---|---|
-| planned | Authored plan, exact membership and scope | plan |
-| plan-reviewed | Completed Dispatch plan review and settled plan | planReview |
-| implemented | Direct implementation, criterion coverage and passing Verify commands | implementation |
-| code-reviewed | Completed Dispatch code review, adjudicated findings and post-fix verification | codeReview |
+| planned | Dispatch plan, exact membership and scope | plan |
+| plan-reviewed | Dispatch plan review results and settled plan | planReview |
+| implemented | Dispatch walkthrough, criterion coverage and passing Verify commands | implementation |
+| code-reviewed | Dispatch code review results, adjudicated findings and post-fix verification | codeReview |
 
-Fields are paths to evidence **files**, not directories. A plan's inline review section or a retained Dispatch frame/journal can provide planReview; a test/criterion evidence note supplies implementation; a code review report or terminal frame supplies codeReview. The nonblank `evidence` summary must describe actual results and limitations. Record unsupported claims as open concerns, not passes.
+Fields are paths to evidence **files**, not directories. A plan's inline review section or the session's plan review results can provide planReview; the walkthrough or a criterion evidence note supplies implementation; the code review results file supplies codeReview. The nonblank `evidence` summary must describe actual results and limitations. Record unsupported claims as open concerns, not passes.
 
 Advance one phase at a time or repeat the current phase. Retain batchId, membership and prior artifact paths; omitted prior fields are carried forward. Each referenced file must exist and resolve inside the repository root. Use forward-slash repository-relative paths without traversal. Planned members must equal the complete accepted open group and have settled dependencies. Batch IDs are not reused. Triage is frozen while Execution is active.
 
@@ -85,13 +85,15 @@ Only one unfinished batch can be active. A first planned checkpoint is rejected 
 
 ## Recovery
 
+Before advancing any checkpoint, reconcile with `status show --session <session>` for the batch's retained Dispatch session.
+
 | Last recorded phase | Next action |
 |---|---|
 | No Execution | Inspect legacy dispatched notes and any work created before checkpointing; triage before planning |
-| planned | Reattach the retained plan run or review that exact plan |
-| plan-reviewed | Check for unrecorded edits/tests, then implement the settled plan directly |
-| implemented | Review the actual batch changes; retain implementation and test evidence |
-| code-reviewed | Check current artifacts and verification freshness, then mark verified members fixed |
+| planned | Reconcile the session; reattach its run or review that exact plan |
+| plan-reviewed | Reconcile the session; check for unrecorded edits/tests, then resume implementation in the same run |
+| implemented | Reconcile the session; review the actual batch changes; retain implementation and test evidence |
+| code-reviewed | Reconcile the session; check current artifacts and verification freshness, then mark verified members fixed |
 | Abandoned history only | Inspect retained work and revised intent, then re-triage |
 
-Record a failed command, incomplete review, unavailable provider or blocker in the status note/evidence artifact at the last completed phase. A failure does not advance the checkpoint. Dispatch's journal governs its own run recovery; the report governs which remediation phase remains. Reattach handles/runs before starting replacements. Concurrent-report-change errors require reloading and rechecking; rejected metadata commands leave the report unchanged.
+Record a failed command, incomplete review, unavailable provider or blocker in the status note/evidence artifact at the last completed phase. A failure does not advance the checkpoint. Dispatch's session ledger governs its own run recovery; the report governs which remediation phase remains. Reattach handles/runs before starting replacements. Concurrent-report-change errors require reloading and rechecking; rejected metadata commands leave the report unchanged.

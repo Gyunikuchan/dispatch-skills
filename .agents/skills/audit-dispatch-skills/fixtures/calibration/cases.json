@@ -32,6 +32,10 @@
         {
           "path": ".agents/skills/audit-dispatch-skills/references/shared.md",
           "blob": null
+        },
+        {
+          "path": ".agents/skills/audit-dispatch-skills/references/authoring.md",
+          "blob": null
         }
       ]
     }
@@ -202,6 +206,39 @@
       }
     },
     {
+      "id": "defect-readme-no-commit",
+      "kind": "defect",
+      "category": "contradiction",
+      "severity": "medium",
+      "source": {
+        "commit": "e475433fd6e2169d2025c69deab088bbb5fbabd1",
+        "parent": "56f4718aa154820ceb0ce018c00cb959e5836f26"
+      },
+      "scenario": "implement: a user reads the README safety section to learn whether Dispatch ever commits, then the toolkit reference for the worktree actions available after a direct accepted fix.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/README.md",
+          "commit": "56f4718aa154820ceb0ce018c00cb959e5836f26",
+          "blob": "291251c157e096b3cc0163ca8428cbe5c9d43f97",
+          "lines": "136",
+          "sha256": "sha256:70a6fe8705a2b716d8501638e1c5668a0d3e0cd8adcf41d6b808b204922e2505",
+          "text": "- Dispatch does not commit, push, or open a pull request.\n"
+        },
+        {
+          "path": "skills/dispatch/references/toolkit.md",
+          "commit": "56f4718aa154820ceb0ce018c00cb959e5836f26",
+          "blob": "2836d8eea5506e225707872d6cc02304af497b75",
+          "lines": "55-56",
+          "sha256": "sha256:330aef679f9dcd6a219eb9c13b7368d8bc33faa2b379648bf7cb84da604c0f11",
+          "text": "Arguments: `worktree commit --session <session> --reason <reason>`.\nResult path: integration fix commit and reason; use after direct accepted fixes.\n"
+        }
+      ],
+      "answer": {
+        "rootCause": "Contradiction between two prose homes: the README states Dispatch does not commit, while the toolkit reference defines `worktree commit`, which creates an integration fix commit. A reader following the README concludes the action cannot exist.",
+        "fixRationale": "Fix e475433 repairs the README drift so the commit claim matches the toolkit action."
+      }
+    },
+    {
       "id": "control-alias-one-way",
       "kind": "control",
       "category": "control",
@@ -245,6 +282,37 @@
       ],
       "answer": {
         "intent": "Rejecting pre-task journals forces an explicit restart instead of a silent migration; the repository drops legacy support by default. Not a recovery defect."
+      }
+    },
+    {
+      "id": "control-no-duplication-exception",
+      "kind": "control",
+      "category": "control",
+      "source": {
+        "commit": "6ecffbd210d3f5999c210d0b79e8ffd37254eb52",
+        "parent": null
+      },
+      "scenario": "plan: an auditor sweeps the quality bar for rules that conflict about repeating content between visible sections and collapsed details.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/references/templates/quality-bar.md",
+          "commit": "6ecffbd210d3f5999c210d0b79e8ffd37254eb52",
+          "blob": "5dbcdfd8a36596573039748d95571c302ed1592f",
+          "lines": "18",
+          "sha256": "sha256:e04911ee153d6490c9c91723aa55d1f52d29d3a183dbeee95e9525a20a6c34a9",
+          "text": "- **usability** — Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line. State each visible fact once; a summary must add a distinct view, not restate a later visible section. A visible summary may restate collapsed `<details>` detail. Keep task and increment behaviour visible before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field.\n"
+        },
+        {
+          "path": "skills/dispatch/references/templates/quality-bar.md",
+          "commit": "6ecffbd210d3f5999c210d0b79e8ffd37254eb52",
+          "blob": "5dbcdfd8a36596573039748d95571c302ed1592f",
+          "lines": "34",
+          "sha256": "sha256:23e59f77a0aa8e98b7138635c43219a4a1c43b51aa026c2c31df20d463a835ab",
+          "text": "Reject decorative or stale visuals and visuals that duplicate visible prose, tables or other visuals. Restating content found only in collapsed `<details>` is not duplication, because human readers skip those blocks; a visual that disagrees with that content is stale. A repeated visual or required table needs to reveal new structure, such as parallel lanes or a critical path. Add no fixed count. Give each diagram a one-line text summary; tables and code/data blocks need none. Put orientation visuals in At a Glance and section visuals beside their prose.\n"
+        }
+      ],
+      "answer": {
+        "intent": "The no-duplication rule for visible content deliberately exempts content found only in collapsed details, because human readers skip those blocks. The two statements form one rule with its exception, not a contradiction."
       }
     }
   ]

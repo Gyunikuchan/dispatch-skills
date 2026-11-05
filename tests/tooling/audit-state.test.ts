@@ -27,7 +27,7 @@ const manifestText = (workDir: string) => fs.readFileSync(path.join(workDir, 'ma
 test('audit lifecycle config loads versioned defaults and rejects unknown keys and non-positive limits', () => {
   const loaded = config();
   assert.equal(loaded.version, 1);
-  assert.equal(loaded.limits.scopes, 6); assert.equal(loaded.limits.baselineTestRuns, 1); assert.equal(loaded.limits.focusedReproductions, 3);
+  assert.equal(loaded.limits.scopes, 7); assert.equal(loaded.limits.baselineTestRuns, 1); assert.equal(loaded.limits.focusedReproductions, 3);
   const dir = tempDir(), write = (value: unknown) => { const file = path.join(dir, `${Math.random()}.json`); fs.writeFileSync(file, JSON.stringify(value)); return file; };
   const valid = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8')) as { version: number; limits: Record<string, number> };
   assert.throws(() => loadAuditConfig(write({ ...valid, extra: true })), /unknown key.*extra/i);

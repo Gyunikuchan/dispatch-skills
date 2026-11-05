@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { finding, opportunity, report, captured, recordTriage, recordProgress, artifact, unchanged, status } from '../helpers/audit-report.ts';
 
-test('audit report progress requires reviewed direct delivery before fixed status', () => {
+test('audit report progress requires reviewed delivery before fixed status', () => {
   const { root, file } = report(finding('A-1'), opportunity());
   recordTriage(root, file, 'A-1'); recordTriage(root, file, 'O-1', { selection: { by: 'user', quote: 'Select O-1.' } });
   const base = { batchId: 'batch-1', plan: artifact(root, 'batch.plan.md'), evidence: 'Plan defines scope and verification.' };

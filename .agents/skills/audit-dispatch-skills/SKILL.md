@@ -8,19 +8,19 @@ metadata:
 
 # Audit Dispatch Skills
 
-A **report-only**, static audit of the `dispatch-skills` repository. Six scope auditors trace concrete scenarios (one per verb: `ask`, `design`, `plan`, `review`, `implement`; plus `shared` for cross-verb contracts) and return **claims**. You, the lead, own the baseline, scenario selection, scheduling, probe handles, verification, the report and finalization. Complete Dispatch flows are never executed; production diagnostics supply observed behavior. Fixes happen in a later task the user chooses.
+A **report-only**, static audit of the `dispatch-skills` repository. Seven scope auditors trace concrete scenarios (one per verb: `ask`, `design`, `plan`, `review`, `implement`; `shared` for cross-verb contracts; `authoring` for contradictions, duplicate rule homes and disclosure and flow in agent-facing prose) and return **claims**. You, the lead, own the baseline, scenario selection, scheduling, probe handles, verification, the report and finalization. Complete Dispatch flows are never executed; production diagnostics supply observed behavior. Fixes happen in a later task the user chooses.
 
 **Objective**: a verified, self-contained report of where Dispatch fails to carry users to their intended outcomes, or does so at avoidable cost, with coverage and its gaps stated honestly.
 
 Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start. `<skill>` is the directory holding this `SKILL.md`:
 
-| Host | `<skill>` | Backgrounding a command | Scope auditors |
+| Host | `<skill>` | Backgrounding a command | Subagent launch |
 |---|---|---|---|
 | Antigravity | `.agents/skills/audit-dispatch-skills` | run the command with `&` | parallel subagents |
-| Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool (`general-purpose`), one call per scope |
+| Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool, one call per subagent |
 | Copilot | `.github/skills/audit-dispatch-skills` | run the command with `&` | sequential, in your own context |
-| OpenCode | `.opencode/skill/audit-dispatch-skills` | run the command with `&` | `task` tool, one call per scope |
-| Codex | `.agents/skills/audit-dispatch-skills` | start once and retain the command session handle | native subagents, one per scope |
+| OpenCode | `.opencode/skill/audit-dispatch-skills` | run the command with `&` | `task` tool, one call per subagent |
+| Codex | `.agents/skills/audit-dispatch-skills` | start once and retain the command session handle | one native subagent per call |
 
 **Containment**: every working file lives under `.scratch/audits/<run>-work/`; the report is `.scratch/audits/<run>-audit.md`. Step 7 relocates the work directory to OS temp. A run that stops early keeps it in place; resume with `--resume` and reuse every recorded artifact.
 
@@ -60,9 +60,25 @@ Run it **backgrounded** and keep its handle; the redirection is the only capture
 
 **Done when:** the probe is running and its handle is recorded.
 
+## Subagent models
+
+Resolve once per run, before step 4, with `<platform>` the canonical host (`claude`, `agy`, `copilot`, `opencode`, `codex`):
+
+```bash
+node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "audit-dispatch-skills <run>" --host <platform>
+node <skills-dir>/dispatch/scripts/dispatch.ts doctor run --session <session> --level medium
+```
+
+Read the result file at the printed `path`, not the stdout summary. Apply the rules of [Dispatch routing](../../../skills/dispatch/SKILL.md#routing): `ok` false stops the run; no entry for the host means inline work, recorded as a coverage gap; an entry the host cannot launch is a blocker. Launch a role on the first listed model the host accepts, at the listed effort.
+
+| Role | Doctor field |
+|---|---|
+| Scope auditors (step 4) | `writers` |
+| Lead verification explorers (step 5) | `utility` |
+
 ## 4. Run scope auditors
 
-Launch each scope as a fresh native agent that can write files, using available slots and reserving your own; queue the rest. No auditor launches further agents. Brief each one:
+Launch each scope as a fresh native agent that can write files on the `writers` model and effort that doctor lists (see Subagent models), using available slots and reserving your own; queue the rest. No auditor launches further agents. Brief each one:
 
 ```
 Audit scope <scope> of the dispatch-skills repo. Read <skill>/<packet.reference> and follow it.
@@ -70,7 +86,7 @@ Packet: .scratch/audits/<run>-work/packets/<scope>.json (scenarios, evidence, fi
 Write only <packet.findingsPath>. Return terminal status, counts, gaps and the findings path.
 ```
 
-Pass the packet only; leave your suspected findings and implementation excerpts out so traces stay independent. Record each handle and lifecycle in the manifest. On a host without native agents, run the scopes yourself one at a time and record `reduced independence: sequential lead execution` as a coverage gap.
+Pass the packet only; leave your suspected findings and implementation excerpts out so traces stay independent. Record each handle and lifecycle in the manifest. When no `writers` entry resolves for the host, run the scopes yourself one at a time and record `reduced independence: sequential lead execution` as a coverage gap.
 
 When a scope returns, its file must exist and follow [findings.md](references/findings.md). A missing or malformed file gets **one** repair follow-up naming the defect; the shared scope's follow-up also carries any verb `Handoff` lines for its boundaries. After that, mark the scope `partial` with its gaps and verify late observations yourself rather than relaunching.
 
@@ -80,7 +96,7 @@ When a scope returns, its file must exist and follow [findings.md](references/fi
 
 Wait for the probe: its manifest lifecycle is terminal (`complete`, `skipped`, `failed`, `timeout`); quote `probe-stdout.txt` for any `failed`. A failed or skipped provider never blocks static reporting; its cause goes into the platform section, and a reproducible adapter defect becomes a claim.
 
-For every claim in every findings file:
+Send multi-file reading for claims to `utility` explorers (read-only; each returns cited claims and writes no file); you keep every ruling. For every claim in every findings file:
 
 1. **Dedupe** by root cause; keep every source scope and the highest severity the evidence supports.
 2. **Verify** against the cited current source, the expected outcome from step 1 and counterevidence. Confirmed → `Verified`; contradicted → refuted with the evidence; settled only by an environment you lack, or by medium/low confidence that is not directly established → `Unverified` plus what would settle it.

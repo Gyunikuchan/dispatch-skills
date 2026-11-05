@@ -8,21 +8,21 @@ test('audit calibration evaluates recovery thresholds and high-severity requirem
     const lowFirst = ids(defects(f)).filter((id) => !high(f).includes(id));
     return ids(defects(f)).filter((id) => id !== lowFirst[0]);
   });
-  assert.equal(passSummary.arms.new.recovered.length, 3);
+  assert.equal(passSummary.arms.new.recovered.length, 4);
   assert.equal(passSummary.arms.new.pass, true);
   assert.equal(passSummary.pass, true);
 
   const missHighSummary = await scored((f) => ids(defects(f)).filter((id) => id !== high(f)[0]));
-  assert.equal(missHighSummary.arms.new.recovered.length, 3);
+  assert.equal(missHighSummary.arms.new.recovered.length, 4);
   assert.deepEqual(missHighSummary.arms.new.highMissed, [high(fixture())[0]]);
   assert.equal(missHighSummary.pass, false);
 
   const lowCountSummary = await scored((f) => high(f).slice(0, 2));
-  assert.ok(lowCountSummary.arms.new.recovered.length < 3);
+  assert.ok(lowCountSummary.arms.new.recovered.length < 4);
   assert.equal(lowCountSummary.pass, false);
 
   const controlSummary = await scored((f) => ids(defects(f)), { controlDefect: true });
-  assert.equal(controlSummary.arms.new.controlFalseDefects.length, 2);
+  assert.equal(controlSummary.arms.new.controlFalseDefects.length, 3);
   assert.equal(controlSummary.pass, false);
 
   const f = fixture();

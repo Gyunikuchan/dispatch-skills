@@ -46,7 +46,7 @@ One file per scope at `.scratch/audits/<run>-work/findings/<scope-id>.md`. You r
 
 ## Defect or opportunity
 
-A **defect** is behaviour that contradicts a governing source (contract, test, documented intent) on a traced path: cite that source. Anything else that would make a scenario cheaper, faster or clearer is an **opportunity**: it carries no severity and stays out of the fix run. When the governing source is ambiguous, record an opportunity that names the ambiguity.
+A **defect** is behaviour that contradicts a governing source (contract, test, documented intent) on a traced path: cite that source. Anything else that would make a scenario cheaper, faster or clearer is an **opportunity**: it carries no severity and stays out of the fix run. When the governing source is ambiguous, record an opportunity that names the ambiguity. Exception: a directly evidenced contradiction between two agent-facing statements stays a defect citing both locations, and names the intent or authority decision its fix needs.
 
 ## Evidence type and confidence
 

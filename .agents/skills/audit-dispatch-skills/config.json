@@ -1,7 +1,7 @@
 {
   "version": 1,
   "limits": {
-    "scopes": 6,
+    "scopes": 7,
     "scenariosPerVerb": 3,
     "sharedBoundaries": 4,
     "branchExpansionsPerScope": 2,

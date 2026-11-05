@@ -6,7 +6,7 @@ You audit one Dispatch verb (`ask`, `design`, `plan`, `review` or `implement`) b
 
 **Constraints**:
 
-- Static only: read and trace. Running `dispatch.ts start`/`send` or any live provider flow is out of bounds; so is launching another agent.
+- Static only: read and trace. Running a Dispatch session or toolkit action, or any live provider flow is out of bounds; so is launching another agent.
 - Write only your packet's `findingsPath`, in the format of [findings.md](findings.md).
 - Budget: your packet's run manifest holds the effective limits (`scopeToolCalls`, `scopeMinutes`, `branchExpansionsPerScope`). Count as you go.
 
@@ -34,7 +34,7 @@ You audit one Dispatch verb (`ask`, `design`, `plan`, `review` or `implement`) b
 ## Branch expansion and stopping
 
 - A side branch outside your packet costs one **branch expansion**; past the limit, list it under `Handoff` as a remaining lead.
-- Cross-verb, routing, provider, permission or recovery-ownership concerns belong to the shared scope: one `Handoff` line each, then continue.
+- Cross-verb, routing, provider, permission or recovery-ownership concerns belong to the shared scope: one `Handoff` line each, then continue. A concern your packet scenario names in its `trigger` or `expectedOutcome` stays in this trace.
 - At the tool-call or minute limit, stop at the next row boundary, mark unfinished scenarios `gap — budget exhausted`, and write the file. A written partial file beats an unwritten complete one.
 - A repair request from the lead (missing or malformed output) gets one pass: fix the named defect in your file only.
 

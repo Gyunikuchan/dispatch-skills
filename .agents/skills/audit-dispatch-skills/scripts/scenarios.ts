@@ -3,7 +3,7 @@
 /**
  * @file scenarios.ts
  * @description Deterministic scenario selection for the static audit: validates the catalog, picks one variant per
- * mandatory class for five verb scopes and the shared scope, and emits per-scope packets into the run work directory.
+ * mandatory class for five verb scopes, the shared scope and the authoring scope (seven in all), and emits per-scope packets into the run work directory.
  *
  * Usage: node <skill>/scripts/scenarios.ts --run <yyyy-mm-dd-hhmm> [--scopes plan,review] [--scenarios <id,id>]
  *          [--risk <risk.json>] [--prior <coverage.json>]
@@ -54,8 +54,11 @@ export const VERB_SCOPES = ['ask', 'design', 'plan', 'review', 'implement'] as c
 export const SCOPE_CLASSES: Record<string, readonly string[]> = {
   ...Object.fromEntries(VERB_SCOPES.map((verb) => [verb, ['normal', 'decision', 'recovery']])),
   shared: ['design-to-plan', 'plan-to-implement', 'review-to-fix', 'interruption-to-resume'],
+  authoring: ['contradiction', 'rule-home', 'disclosure-flow'],
 };
 const SCOPES = Object.keys(SCOPE_CLASSES);
+// Verb scopes share the walkthrough brief; the cross-verb and prose-sweep scopes each have their own.
+const REFERENCES: Record<string, string> = { shared: 'references/shared.md', authoring: 'references/authoring.md' };
 const REVIEW_KINDS = ['code', 'design', 'plan'];
 const RISK_WEIGHT: Record<RiskLead['kind'], number> = { defect: 3, change: 2, diagnostic: 1 };
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -176,7 +179,7 @@ export function buildPackets(selection: Selection, options: { runId: string }): 
     runId: options.runId,
     partial: selection.partial,
     // Relative to the skill directory, which differs per host.
-    reference: scope === 'shared' ? 'references/shared.md' : 'references/walkthrough.md',
+    reference: REFERENCES[scope] ?? 'references/walkthrough.md',
     findingsPath: `${work}/findings/${scope}.md`,
     evidence: [`${work}/manifest.json`, `${work}/tests.txt`, `${work}/metrics.md`],
     scenarios,

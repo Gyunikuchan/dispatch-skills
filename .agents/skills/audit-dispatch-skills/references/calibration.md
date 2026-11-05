@@ -1,15 +1,15 @@
 # Calibration
 
-Read this only when asked to calibrate the audit or accept an audit-brief rewrite. Calibration measures whether the briefs find real defects without condemning intended behavior. It is a separate, static run on six curated cases, not a Dispatch audit and not a live Dispatch flow.
+Read this only when asked to calibrate the audit or accept an audit-brief rewrite. Calibration measures whether the briefs find real defects without condemning intended behavior. It is a separate, static run on eight curated cases, not a Dispatch audit and not a live Dispatch flow.
 
-**Objective**: for each arm (`old` = audit briefs at the recorded baseline commit, `new` = current briefs), fixed claims for all six cases in `<skill>/fixtures/calibration/cases.json`, scored by root cause against the answer keys, with usage reported as measured or unavailable.
+**Objective**: for each arm (`old` = audit briefs at the recorded baseline commit, `new` = current briefs), fixed claims for all eight cases in `<skill>/fixtures/calibration/cases.json`, scored by root cause against the answer keys, with usage reported as measured or unavailable.
 
 ## Scope overrides
 
 In both arms, calibration scope replaces the brief's ordinary scope:
 
 - Audit only the assigned case packet: its scenario and excerpts, plus repository files at the excerpt's `commit` when a contract needs one more dependency. Ignore directory, whole-audit, baseline, scenario-selection and report steps in either brief.
-- Never run provider probes, `dispatch.ts start`/`send`, nested auditors, or tests. A packet whose `constraints` you cannot honor is a failed case, not a reason to widen scope.
+- Never run provider probes, `dispatch.ts` `ask run` or `review run`, nested auditors, or tests. A packet whose `constraints` you cannot honor is a failed case, not a reason to widen scope.
 - Never read the fixture, `git log`/`git show` of later commits, or the fix commit. File access cannot enforce this; record any exposure in the case output rather than claiming blinding.
 
 Old-arm adaptation: give the old auditor every path in `briefs.old` from the baseline (`git show <briefs.old.commit>:<path>`; blobs are in the packet; `broad.md` and `deep.md` were removed later), with the overrides above. This is a scoped comparison, not a full old-audit benchmark; say so in the report.
@@ -44,9 +44,9 @@ Old-arm adaptation: give the old auditor every path in `briefs.old` from the bas
 
 ## Acceptance (C7)
 
-The `new` arm passes only when it recovers at least three of four defects, misses no high/critical defect, verifies no defect against either control, has results for all six cases, and every `defect` claim is supported. `summary.pass` reflects the `new` arm; `old` is comparison only.
+The `new` arm passes only when it recovers at least four of five defects, misses no high/critical defect, verifies no defect against any of the three controls, has results for all eight cases, and every `defect` claim is supported. `summary.pass` reflects the `new` arm; `old` is comparison only.
 
-On failure, record it and revise the briefs within the bounded work; never relabel, swap or drop cases. Any rerun needs a recorded rationale and remaining budget. Six cases support calibration, not statistical reliability claims.
+On failure, record it and revise the briefs within the bounded work; never relabel, swap or drop cases. Any rerun needs a recorded rationale and remaining budget. Eight cases (five defects, three controls) support calibration, not statistical reliability claims.
 
 ## Report
 

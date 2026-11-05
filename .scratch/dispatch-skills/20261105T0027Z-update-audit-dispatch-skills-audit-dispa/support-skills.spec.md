@@ -26,6 +26,7 @@
 - The scenario catalog has scopes ask, design, plan, review, implement and shared only; no scenario covers the spec stage, grounding, or explorer/utility routing.
 - No scope, criterion or calibration case targets rule contradictions, duplicate rule homes or `writing-for-agents` conformance; `scripts/check-terms.ts` and `scripts/generate-hashes.ts` do not scan `.agents/`.
 - The fix skill forbids `/dispatch implement` because a batch can modify the active flow; the self-build procedure (`skills/dispatch/references/self-build.md`, required by `AGENTS.md`) runs a frozen controller copy, which removes that hazard.
+- Dispatch delivers verified source as unstaged caller changes with no caller commit, and later work starts from caller HEAD (`skills/dispatch/references/toolkit.md` worktree deliver). `session init` returns the same folder for one host chat unless `--session-id` differs (`skills/dispatch/scripts/lib/session.ts`).
 - Tests pin these skills: `tests/tooling/audit-*.test.ts`, `tests/tooling/optimise-tests.test.ts`, `tests/e2e/audit-*.test.ts`.
 
 ## Requirements
@@ -42,7 +43,7 @@ Subagent roles use these tiers: audit scope auditors use `writers` at `medium`; 
 ### REQ-3 — Authoring-quality audit scope
 The audit adds a scope that sweeps agent-facing prose (`skills/dispatch/**`, `AGENTS.md`, and the support skills) for rule contradictions, one rule kept in two homes, `writing-for-agents` violations, and other skill-authoring optimizations such as progressive disclosure and streamlined flow.
 - Acceptance: `references/scenarios.json` and the scope brief define the new scope with its axes; contradictions and duplicate rule homes are defects that cite both conflicting locations; disclosure and flow improvements are opportunities.
-- Acceptance: the calibration fixture gains at least one seeded-contradiction defect case and one control case, and calibration tests pass.
+- Acceptance: the calibration fixture gains at least one historical contradiction defect case, with both conflicting excerpts from one real parent commit, and one control case, and calibration tests pass.
 
 ### REQ-4 — Current Dispatch coverage
 The audit scenario catalog and briefs match current Dispatch.
@@ -52,6 +53,7 @@ The audit scenario catalog and briefs match current Dispatch.
 ### REQ-5 — Fix skill delivers through Dispatch implement
 `audit-dispatch-skills-fix` delivers each batch with `/dispatch implement` under the fixed-controller self-build procedure instead of direct lead implementation.
 - Acceptance: the skill no longer forbids Dispatch implement; it names self-build and maps its `planned`, `plan-reviewed`, `implemented` and `code-reviewed` checkpoints to Dispatch implement evidence.
+- Acceptance: each batch runs in its own Dispatch session through `session init --session-id`; after delivery the skill stops until the batch is committed, and commits itself only when the invocation authorized that.
 - Acceptance: `status.mjs` checkpoint handling and its tests stay consistent with the new flow.
 
 ### REQ-6 — Green verification
@@ -123,6 +125,17 @@ The audit scenario catalog and briefs match current Dispatch.
 - User quote: "yes to all"
 - Rationale: smallest change; the authoring scope already adds one auditor.
 - Rejected: dedicated scope (extra auditor cost).
+
+### DEC-6 — Fix batch boundary
+- Context: delivery leaves a batch unstaged, so the next batch would start without it and refuse overlapping paths.
+- Options:
+  - Stop per batch for a commit, with one Dispatch session per batch.
+  - One Dispatch run per pass, with all ready groups as tasks.
+  - Keep direct edits, reversing DEC-3.
+- Choice: stop per batch (user)
+- User quote: "Stop per batch (Recommended)"
+- Rationale: keeps DEC-3 and per-batch review at the cost of one user step per batch.
+- Rejected: one run per pass (larger blast radius, `status.mjs` changes); direct edits (host-model cost stays).
 
 ## Discussion Record
 None.
