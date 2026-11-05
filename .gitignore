@@ -8,4 +8,4 @@ dist/
 
 !.scratch/dispatch-skills/
 skills/dispatch/config.jsonc
-# skills/dispatch/config.local.jsonc
+skills/dispatch/config.local.jsonc
