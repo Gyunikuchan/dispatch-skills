@@ -59,7 +59,7 @@ export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest
   if (env['OPENCODE_CONFIG_CONTENT']) throw new Error('effective-config-unverified: inline config propagation requires an explicit user choice');
   const deadline = Date.now() + budgetMs;
   return async (command) => {
-    const remaining = Math.min(5000, deadline - Date.now());
+    const remaining = Math.min(10000, deadline - Date.now());
     if (remaining <= 0) throw new Error('effective-config-unverified: opencode-lifecycle-timeout: preparation deadline expired');
     const started = Date.now();
     let outcome: LifecycleStep['outcome'] = 'ok';

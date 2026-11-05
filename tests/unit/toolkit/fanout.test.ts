@@ -330,3 +330,15 @@ test('coverage round failure evidence is written before the failed slot file, in
     assert.deepEqual(seen,['claude[0]:auth:false','claude[0]:auth:true'],'a retry reports again before it overwrites the saved failure');
   }finally{f.cleanup();}
 });
+
+test('underfill names the sandbox gap through resolveSlots and the note', async () => {
+  const {resolveSlots,underfillNote}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f=sessionFixture({memory:true});try{
+    const skillRoot=path.join(f.root,'skill');fs.mkdirSync(skillRoot);
+    fs.writeFileSync(path.join(skillRoot,'config.jsonc'),JSON.stringify({'read-delegates':{opencode:{targets:[{medium:{}}]},codex:{targets:[{medium:{}}]}},phases:{'plan-review':{targets:{medium:1},rounds:{medium:1}}}}));
+    f.deps.skillRoot=skillRoot;f.deps.orchestrator={platform:'claude',model:null};f.deps.sandboxSupported={opencode:false};
+    const roster=resolveSlots('plan','medium',f.deps);
+    assert.deepEqual(roster.targets.map(item=>item.slot),['codex[0]']);assert.deepEqual(roster.reserves,[]);
+    assert.equal(underfillNote(roster),'; underfill 1/1 targets, host claude, excluded native-only: none, sandbox unsupported: opencode');
+  }finally{f.cleanup();}
+});

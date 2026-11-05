@@ -71,7 +71,7 @@ function taskId(ctx: HandlerContext) {
   const id=ctx.args[0]!;
   const plan=loadPlan(ctx.session,ctx.manifest);
   const paths=ownedPaths(plan,id);
-  return {id,paths,section:taskSection(plan,id)};
+  return {id,paths,section:taskSection(plan,id),prerequisites:plan.tasks.find(task=>task.id===id)!.prerequisites};
 }
 const result = (value: unknown): HandlerResult => ({ok:true,value,exit:0,summary:JSON.stringify(value)});
 function refuse(reason: string, message=reason): never { throw new ToolError(4,reason,message); }
@@ -79,7 +79,7 @@ export const candidateRef = (sid: string, task: string, launch: number) => 'refs
 export const abandonedRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/abandoned/'+task+'-'+launch;
 export const deliveredSourceRef=(session:string)=>'refs/dispatch/'+session+'/delivered-source';
 export async function create(ctx: HandlerContext): Promise<HandlerResult> {
-  const {id,section}=taskId(ctx);
+  const {id,section,prerequisites}=taskId(ctx);
   return withLedger(ctx.session,'worktree create',ctx.deps,async tx=>{
     const rows=launches(tx.fold,id); const previous=rows.at(-1);
     if(ctx.values['relaunch']) {
@@ -89,6 +89,10 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
       if(await gitOk(ctx.deps,cwd,['rev-parse','HEAD'])!==previous.record.data['base'].commit) refuse('submit-pending');
       await tx.append({kind:'writer',by:'tool',data:{phase:'launched',task:id,path:previous.record.data['path'],base:{...previous.record.data['base'],taskSection:section,seq:tx.fold.lastSeq}}});
       return result({task:id,launch:rows.length+1,path:previous.record.data['path'],relaunch:true});
+    }
+    if(!open(previous)) {
+      const pending=prerequisites.filter(task=>!tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='done' && r.data['task']===task));
+      if(pending.length) refuse('prerequisite-pending','Prerequisites not integrated: '+pending.join(', ')+'. Integrate them, then rerun worktree create '+id+'.');
     }
     const integration=await ensureIntegration(tx,ctx);
     if(previous?.finished && !completion(tx.fold,previous)) refuse('candidate-pending');
@@ -103,7 +107,10 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
     const listed=await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','list','--porcelain']);
     const registered=listed.split(/\r?\n/).filter(l=>l.startsWith('worktree ')).some(l=>path.resolve(l.slice(9))===cwd);
     let base: string;
-    if(registered && !tx.fold.records.some(r=>r.kind==='writer' && r.data['path']===relative)) base=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
+    if(registered && !tx.fold.records.some(r=>r.kind==='writer' && r.data['path']===relative)) {
+      base=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
+      for(const r of tx.fold.records) if(r.kind==='integrate' && r.data['phase']==='done' && prerequisites.includes(r.data['task']) && await gitOk(ctx.deps,cwd,['merge-base',r.data['commit'],base])!==r.data['commit']) refuse('stale-worktree','Unlaunched worktree '+relative+' predates prerequisite '+r.data['task']+'. Preserve any untracked or ignored files it holds, remove it, then rerun worktree create '+id+'.');
+    }
     else {
       base=await gitOk(ctx.deps,integration.path,['rev-parse','HEAD']);
       await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','add','--detach',cwd,base]);

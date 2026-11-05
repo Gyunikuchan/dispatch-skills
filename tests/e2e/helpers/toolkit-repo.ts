@@ -47,6 +47,8 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   fs.mkdirSync(session);
   fs.writeFileSync(path.join(session,'manifest.json'),JSON.stringify({schemaVersion:1,folderName:path.basename(session),sessionId:'test',safeSessionId:'test',repositoryRoot:root}));
   const deps = nodeDeps();
+  // These tests stub `delegate`, so rosters must not depend on the host sandbox.
+  delete deps.sandboxSupported;
   await appendRecord(session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},deps);
   const bound=currentHashes(root,latest(foldLedger(session),'bind'));
   await appendRecord(session,{kind:'confirm',by:'user',quote:'confirmed',key:'confirm',data:{spec:bound.spec}},deps);

@@ -7,6 +7,7 @@ import { appendRecord, foldLedger } from '../../skills/dispatch/scripts/toolkit/
 const records = (r: Awaited<ReturnType<typeof toolkitRepo>>) => foldLedger(r.session).records.filter(x=>x.kind==='writer');
 const launchPath = (r: Awaited<ReturnType<typeof toolkitRepo>>) => path.resolve(r.session,records(r).findLast(x=>x.data['phase']==='launched')!.data['path']);
 const crash = (point: string) => (p: string) => { if(p===point) throw new Error('crash'); };
+const twoTaskPlan = (prerequisite: string) => planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | '+prerequisite+' | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] other\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: other\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n\n## Verification Plan');
 describe('toolkit writer worktrees', () => {
   it('creates records, refuses duplicate work, restores missing paths and uses fresh abandoned paths', async t => {
     const r=await toolkitRepo(); t.after(r.cleanup);
@@ -39,9 +40,51 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree','create','T1'])).exit,0);
     assert.notEqual(launchPath(r),cwd);
   });
+  it('refuses until prerequisites integrate and leaves no trace of the refusal', async t => {
+    const r=await toolkitRepo(twoTaskPlan('T1')); t.after(r.cleanup); await r.level();
+    const before=foldLedger(r.session).lastSeq;
+    const refused=await r.run(['worktree','create','T2']);
+    assert.equal(refused.exit,4,JSON.stringify(refused)); assert.equal(refused.output.reason,'prerequisite-pending',JSON.stringify(refused));
+    assert.match(refused.value.message,/\bT1\b/);
+    assert.equal(foldLedger(r.session).lastSeq,before);
+    assert.equal(fs.existsSync(r.integration),false);
+    assert.equal(fs.existsSync(path.join(r.session,'.state/worktrees/T2-1')),false);
+    assert.equal((await r.run(['worktree','create','T1'])).exit,0);
+    fs.writeFileSync(path.join(launchPath(r),'src/file.ts'),'integrated\n');
+    assert.equal((await r.run(['worktree','submit','T1'])).exit,0);
+    assert.equal((await r.run(['worktree','create','T2'])).output.reason,'prerequisite-pending');
+    assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
+    assert.equal((await r.run(['worktree','create','T2'])).exit,0);
+    assert.equal(fs.readFileSync(path.join(launchPath(r),'src/file.ts'),'utf8'),'integrated\n');
+  });
+  it('refuses until prerequisites integrate except relaunch or restore of an open launch', async t => {
+    const r=await toolkitRepo(twoTaskPlan('none')); t.after(r.cleanup);
+    assert.equal((await r.run(['worktree','create','T2'])).exit,0); const cwd=launchPath(r);
+    fs.writeFileSync(path.join(r.root,'work.plan.md'),twoTaskPlan('T1'));
+    const relaunched=await r.run(['worktree','create','T2','--relaunch']); assert.equal(relaunched.exit,0,JSON.stringify(relaunched));
+    fs.rmSync(cwd,{recursive:true,force:true});
+    const restored=await r.run(['worktree','create','T2']); assert.equal(restored.exit,0,JSON.stringify(restored));
+    assert.equal(restored.value.restored,true); assert.equal(fs.existsSync(cwd),true);
+  });
+  it('refuses to adopt a crash worktree that predates a prerequisite and keeps it until removed', async t => {
+    const r=await toolkitRepo(twoTaskPlan('none')); t.after(r.cleanup);
+    assert.equal((await r.run(['worktree','create','T2'],crash('create:after-add'))).exit,2);
+    const stale=path.join(r.session,'.state/worktrees/T2-1');
+    fs.writeFileSync(path.join(r.root,'work.plan.md'),twoTaskPlan('T1'));
+    await r.level();
+    assert.equal((await r.run(['worktree','create','T1'])).exit,0);
+    fs.writeFileSync(path.join(launchPath(r),'src/file.ts'),'integrated\n');
+    assert.equal((await r.run(['worktree','submit','T1'])).exit,0);
+    assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
+    const refused=await r.run(['worktree','create','T2']);
+    assert.equal(refused.exit,4,JSON.stringify(refused)); assert.equal(refused.output.reason,'stale-worktree',JSON.stringify(refused));
+    assert.match(refused.value.message,/untracked or ignored/); assert.equal(fs.existsSync(stale),true);
+    r.git(['worktree','remove',stale]);
+    assert.equal((await r.run(['worktree','create','T2'])).exit,0);
+    assert.equal(fs.readFileSync(path.join(stale,'src/file.ts'),'utf8'),'integrated\n');
+  });
   it('adopts only the predicted crash worktree despite other ledger records and launches', async t => {
-    const source=planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] other\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: other\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n\n## Verification Plan');
-    const r=await toolkitRepo(source); t.after(r.cleanup);
+    const r=await toolkitRepo(twoTaskPlan('none')); t.after(r.cleanup);
     assert.equal((await r.run(['worktree','create','T1'])).exit,0);
     assert.equal((await r.run(['worktree','abandon','T1','--reason','stop'])).exit,0);
     const interrupted=await r.run(['worktree','create','T1'],crash('create:after-add'));

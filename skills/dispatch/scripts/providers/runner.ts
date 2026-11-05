@@ -422,6 +422,10 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
 
 type Attempts = { invocations: Invocation[]; model: string | null; effort: string | null };
 
+/** True when a sandboxed request cannot run on this platform. */
+export const sandboxBlocked = (spec: ProviderSpec, sandbox: boolean, platform: PlatformEnv): boolean =>
+  sandbox && spec.sandbox !== undefined && !spec.sandbox.supported(platform);
+
 async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
   const { invocations } = track;
   const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null, steps?: LifecycleStep[]): DelegateRun => {
@@ -430,7 +434,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   };
   const deadline = ports.clock.now() + req.timeoutMs;
   const sandbox = req.sandbox && spec.sandbox !== undefined;
-  if (req.sandbox && spec.sandbox && !spec.sandbox.supported(ports.platform)) {
+  if (sandboxBlocked(spec, req.sandbox, ports.platform)) {
     return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
   }
   const session = sessionScope(req.sessionRoot, ports.fs);

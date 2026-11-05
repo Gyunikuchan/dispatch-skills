@@ -102,10 +102,12 @@ export type RosterInput = {
   orchestrator: Orchestrator | null;
   /** Unpinned selection keeps only live providers; absent means every provider is live. */
   liveness?: Readonly<Record<string, boolean>>;
+  /** Unpinned selection drops a sandboxed provider marked false; absent means every provider is supported. */
+  sandboxSupported?: Readonly<Record<string, boolean>>;
 };
 
-export type Underfill = { host: string | null; configured: number | 'all'; resolved: number; excluded: string[] };
-/** `underfill` is present when native-only providers were excluded or breadth fell short of a numeric configuration. */
+export type Underfill = { host: string | null; configured: number | 'all'; resolved: number; excluded: string[]; sandboxUnsupported?: string[] };
+/** `underfill` is present when native-only providers were excluded, sandbox-unsupported providers were dropped or breadth fell short of a numeric configuration. */
 export type Roster = { rounds: number; targets: readonly RosterSlot[]; reserves: readonly RosterSlot[]; underfill?: Underfill };
 
 type Candidate = Omit<RosterSlot, 'slot' | 'index' | 'reserve'>;
@@ -183,11 +185,15 @@ export function resolveRoster(input: RosterInput): Roster {
   }
   const explicit = pins !== null;
   const live = usable.filter((item) => explicit || input.liveness === undefined || input.liveness[item.provider] === true || item.native);
-  const ordered = collapse(demote(live, orchestrator, !explicit), input.overrides);
+  const blocked = (item: Candidate) => !explicit && !item.native && item.sandbox === true && input.sandboxSupported?.[item.provider] === false;
+  const ordered = collapse(demote(live.filter((item) => !blocked(item)), orchestrator, !explicit), input.overrides);
   const count = wanted === 'all' ? ordered.length : Math.min(wanted, ordered.length);
   const [targets = [], reserves = []] = identify(ordered.slice(0, count), ordered.slice(count));
   const excluded = [...new Set(all.filter((item) => item.native && item.provider !== orchestrator?.platform).map((item) => item.provider))];
   const short = wanted !== 'all' && count < wanted;
-  const underfill = excluded.length || short ? { host: orchestrator?.platform ?? null, configured: wanted, resolved: count, excluded } : undefined;
+  const sandboxUnsupported = [...new Set(live.filter(blocked).map((item) => item.provider))];
+  const underfill = excluded.length || short || sandboxUnsupported.length
+    ? { host: orchestrator?.platform ?? null, configured: wanted, resolved: count, excluded, ...(sandboxUnsupported.length ? { sandboxUnsupported } : {}) }
+    : undefined;
   return { rounds, targets, reserves, ...(underfill ? { underfill } : {}) };
 }

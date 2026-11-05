@@ -327,3 +327,60 @@ test('review budget keeps the saved cap when the level cap changes', async () =>
     assert.deepEqual(second.value.budget, {cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 2, state: 'requires-continuation'});
   } finally {f.cleanup();}
 });
+
+// SECTION: Loose-locus findings
+
+const LOOSE = 'A – T5 – Fix skill';
+const replyOf = (...items: readonly (readonly [string, string, string])[]) => JSON.stringify({status: 'FINDINGS', findings: items.flatMap(([locus, defect, severity]) => JSON.parse(report(locus, defect, severity)).findings)});
+const oneReviewerDelegate = (text: string): CliDeps['delegate'] => async provider =>
+  ({outcome: {status: 'ok', text: provider === 'agy' ? text : CLEAN, resume: null, sessionId: null}, invocations: []});
+
+test('round keeps a loose-locus finding: plan and code rounds finish done, list it first and count it', async () => {
+  for (const kind of ['plan', 'code'] as const) {
+    const f = await fixture();
+    try {
+      const valid = kind === 'plan' ? '§ Work' : 'src/a.ts:L3';
+      f.deps.delegate = oneReviewerDelegate(replyOf([LOOSE, 'Naming drifts here', 'CONSIDER'], [valid, 'Retries never stop', 'MUST'], [LOOSE, 'Writes get lost', 'MUST']));
+      if (kind === 'code') rangeGit(f, {feature: 'feature-1'}, {'main-id..feature-1': ['src/a.ts']});
+      const result = kind === 'plan' ? await f.call() : await f.call('code', 'main..feature', 'low');
+      assert.equal(result.exit, 0);
+      const marked = 'unresolved-locus: ' + LOOSE;
+      assert.deepEqual(result.value.unresolvedLoci, [{id: 'R1-F003', locus: marked}, {id: 'R1-F001', locus: marked}]);
+      assert.match(result.output.summary, /, 2 unresolved loci/);
+      assert.ok(result.output.summary.includes('first 3: R1-F003 MUST: ' + marked + ' — Writes get lost; R1-F001 CONSIDER: ' + marked + ' — Naming drifts here; R1-F002 MUST: Retries never stop'), result.output.summary);
+      const roundDir = path.dirname(result.value.path), saved = JSON.parse(fs.readFileSync(result.value.path, 'utf8'));
+      assert.deepEqual(saved.findings.map((finding: {id: string; locus: string; scope: string}) => [finding.id, finding.locus, finding.scope]), [['R1-F001', marked, 'in'], ['R1-F002', valid, 'in'], ['R1-F003', marked, 'in']]);
+      assert.deepEqual(saved.clusters.flatMap((cluster: {findings: string[]}) => cluster.findings).sort(), ['R1-F001', 'R1-F002', 'R1-F003']);
+      assert.deepEqual(saved.failed, []);
+      const roster = JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).roster as {slot: string; reserve: boolean}[];
+      for (const {slot} of roster.filter(entry => !entry.reserve)) assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/slots', slot + '.json'), 'utf8')).state, 'done', slot);
+    } finally {f.cleanup();}
+  }
+});
+
+test('round keeps a loose-locus finding: the result lists all six past the summary bound', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = oneReviewerDelegate(replyOf(...Array.from({length: 6}, (_, index) => ['loose ' + index, 'Defect number ' + index, 'SHOULD'] as const)));
+    const result = await f.call();
+    assert.equal(result.exit, 0);
+    assert.deepEqual(result.value.unresolvedLoci.map((entry: {locus: string}) => entry.locus), Array.from({length: 6}, (_, index) => 'unresolved-locus: loose ' + index));
+    assert.match(result.output.summary, /, 6 unresolved loci/);
+    assert.match(result.output.summary, /\+1 more in result/);
+  } finally {f.cleanup();}
+});
+
+test('round keeps a loose-locus finding: a repeat in a later round links to no earlier finding', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = oneReviewerDelegate(replyOf([LOOSE, 'Writes get lost', 'SHOULD']));
+    assert.equal((await f.call()).exit, 0);
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    const [finding] = JSON.parse(fs.readFileSync(second.value.path, 'utf8')).findings;
+    assert.equal(finding.recurrence, undefined);
+    assert.equal(finding.unresolved, undefined);
+  } finally {f.cleanup();}
+});

@@ -44,7 +44,7 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host 
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, explorers per platform, and the `utility` entry per platform that explorer and utility subagents use. Explorer and `utility` output do not vary with level. Doctor does not probe provider executables, authentication, native capacity or sandbox support; inspect provider launch failures for those limits.
+Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, explorers per platform, and the `utility` entry per platform that explorer and utility subagents use. Explorer and `utility` output do not vary with level. Doctor does not probe provider executables, authentication, native capacity or runtime sandbox activation; inspect provider launch failures for those limits.
 
 ## Common problems
 
@@ -56,7 +56,7 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that the plan is settled and required design approval is complete. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |
 | Review findings are reported but no files changed | Review applies accepted, fixable in-scope findings by default. No changes may mean that no fixable in-scope finding was accepted, opt-in findings were declined, or a fix failed before writing. Follow the decision and named log. Verification can fail after changes are written, so inspect the working tree. |
-| A provider reports sandbox problems | Follow the diagnostic to identify the provider and execution mode. Setting `sandbox: false` opts that provider out of OS isolation; read-only controls may still apply, but they do not provide the same boundary. |
+| A provider reports sandbox problems | An unpinned roster drops a provider whose sandbox cannot run on the host; see [sandboxing](configuration.md#sandboxing-and-provider-details). Otherwise, follow the diagnostic to identify the provider and execution mode. Setting `sandbox: false` opts that provider out of OS isolation; read-only controls may still apply, but they do not provide the same boundary. |
 | A verification step fails | Open the named log and follow the decision Dispatch presents. Keep the working tree and session folder so the failed check can be repaired or resumed. |
 | A run is interrupted | Continue in the same chat and follow its recovery prompt. Preserve the session folder; it contains the recorded progress and work needed to resume. |
 

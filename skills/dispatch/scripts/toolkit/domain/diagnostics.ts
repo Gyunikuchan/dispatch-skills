@@ -382,6 +382,15 @@ const FAILURE_FIXES: Record<string, readonly [string, string]> = {
 
 const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the delegate's last output and consider replacing the model or provider."] as const;
 
+// The domain layer cannot import cli.ts, so this table mirrors its handler map.
+const TOOL_MODULES: Readonly<Record<string, string>> = {
+  'ask run': 'ask', 'review run': 'review', 'diagnostics render': 'diagnostics', 'brief render': 'brief', 'verify run': 'verify', 'doctor run': 'doctor', 'status show': 'status', 'lint run': 'lint',
+  'report render': 'report', 'report complete': 'report', 'ledger append': 'ledger', 'ledger query': 'ledger',
+  'worktree integrate': 'integrate', 'worktree continue': 'integrate', 'worktree commit': 'integrate', 'worktree abort': 'integrate',
+  'worktree deliver': 'deliver', 'worktree close': 'deliver', 'worktree cleanup': 'deliver',
+  'worktree create': 'writers', 'worktree submit': 'writers', 'worktree abandon': 'writers',
+};
+
 /** Deterministic findings (H1–H5, H8, H9) for one run, in severity order. */
 
 export function heuristics(run: RunFacts): Finding[] {
@@ -462,8 +471,11 @@ export function heuristics(run: RunFacts): Finding[] {
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
     if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured uncached tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
   }
-  for (const [component, items] of groups(run.rejectedTools ?? [], (item) => item.cls === 'approval-stale' || item.cls === 'key-conflict' ? 'scripts/toolkit/ledger.ts' : 'scripts/toolkit/records.ts')) {
-    add('H8', 'correctness', component, `${plural(items.length, 'toolkit operation')} rejected (${tally(items.map((item) => item.tool + ' ' + item.action + ': ' + item.cls))}).`, 'Rejected operations can require another host turn.', 'Return the allowed input shape and current preconditions with the rejection.');
+  // One clear refusal is not a pattern.
+  const rejection = (item: { tool: string; action: string; cls: string }) => item.tool + ' ' + item.action + ': ' + item.cls;
+  const repeated = [...groups(run.rejectedTools ?? [], rejection).values()].filter((items) => items.length >= 2).flat();
+  for (const [component, items] of groups(repeated, (item) => `scripts/toolkit/${TOOL_MODULES[item.tool + ' ' + item.action] ?? 'cli'}.ts`)) {
+    add('H8', 'correctness', component, `${plural(items.length, 'toolkit operation')} rejected (${tally(items.map(rejection))}).`, 'Rejected operations can require another host turn.', 'Return the allowed input shape and current preconditions with the rejection.');
   }
   // One relaunch without a recorded cause is not a pattern.
   if ((run.relaunches ?? 0) >= 2) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches!,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');

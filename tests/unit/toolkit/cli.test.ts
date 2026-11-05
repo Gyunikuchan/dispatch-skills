@@ -165,7 +165,7 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
       const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
       await flush();
       if(['child-unconfirmed','killer-unconfirmed','timeout','spawn-failure'].includes(scenario)) {
-        t.mock.timers.tick(5000); await flush();
+        t.mock.timers.tick(10000); await flush();
         if(scenario==='spawn-failure')settle(result('spawn opencode ENOENT'));
         else {t.mock.timers.tick(1000); await flush();}
       }
@@ -247,4 +247,52 @@ test('tool calls take the orchestrator from the recorded host and ignore env pla
     // The real process wiring starts without a host.
     assert.equal(nodeDeps().orchestrator, null);
   } finally { f.cleanup(); }
+});
+
+test('blocked sandbox starts no introspection and returns the runner refusal', async (t) => {
+  t.mock.method(fs,'existsSync',()=>true);
+  t.mock.method(fs,'statSync',()=>({isFile:()=>true,mode:0o755}));
+  t.mock.method(fs,'readdirSync',()=>[]);
+  const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
+  // Neither OpenCode nor Claude has a delegate sandbox on native Windows.
+  Object.defineProperty(process,'platform',{...descriptor,value:'win32'});
+  t.after(()=>Object.defineProperty(process,'platform',descriptor));
+  const started:string[][]=[];
+  t.mock.method(nodeProcess,'start',(launch:{argv:string[]})=>{
+    started.push(launch.argv);
+    return {pid:50,done:Promise.resolve({exit:0,signal:null,stdout:'[]',stdoutPath:'/unused',stderrTail:'',durationMs:0,timedOut:false,truncated:false})};
+  });
+  const deps=nodeDeps();
+  const request:DelegateRequest={promptPath:'/prompt',model:null,effort:null,sandbox:true,schemaPath:null,resume:null,cwd:process.cwd(),timeoutMs:60000,agent:null,outputCapBytes:1000,attachments:[],logPath:'/unused',briefPath:'/unused'};
+  const run=await deps.delegate('opencode',request,'cli');
+  assert.deepEqual(started,[]);
+  assert.equal(run.outcome.status,'fail');
+  if(run.outcome.status==='fail')assert.equal(run.outcome.cls,'sandbox-unsupported');
+  assert.equal(run.invocations[0]?.launched,false);
+  assert.deepEqual(deps.sandboxSupported,{claude:false,agy:true,copilot:true,opencode:false,codex:true});
+});
+
+test('introspection allows 10000 ms per command and fails past it', async (t) => {
+  t.mock.timers.enable();
+  const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;
+  Object.defineProperty(process,'platform',{...descriptor,value:'linux'});
+  t.after(()=>Object.defineProperty(process,'platform',descriptor));
+  t.mock.method(fs,'unlinkSync',()=>{});
+  t.mock.method(nodeProcess as Required<typeof nodeProcess>,'settleGroup',async()=>true);
+  const result=(stdout:string,stderrTail=''):ProcessResult=>({exit:stderrTail?137:0,signal:null,stdout,stdoutPath:'/unused',stderrTail,durationMs:0,timedOut:false,truncated:false});
+  let finish!:(value:ProcessResult)=>void;
+  t.mock.method(nodeProcess,'start',()=>({pid:50,done:new Promise<ProcessResult>(resolve=>{finish=resolve;})}));
+  t.mock.method(nodeProcess,'signal',()=>finish(result('','killed')));
+  const request={cwd:process.cwd(),logPath:'/unused'} as DelegateRequest;
+  const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
+  const inspect=()=>nativeOpencodeIntrospection('opencode',request,{},60000)('config').then(value=>({value,error:''}),error=>({value:null,error:String(error)}));
+
+  const slow=inspect();
+  t.mock.timers.tick(9999);await flush();
+  finish(result('[]'));await flush();
+  assert.deepEqual(await slow,{value:[],error:''});
+
+  const hung=inspect();
+  t.mock.timers.tick(10000);await flush();
+  assert.match((await hung).error,/effective-config-unverified: opencode-lifecycle-timeout/);
 });

@@ -7,7 +7,7 @@ import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, 
 import { withLockFile } from './lock.ts';
 import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
-import { parseReport } from './domain/report.ts';
+import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
 import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
 import { parseIncrementGraph } from './domain/design.ts';
@@ -369,7 +369,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           const reason = sanitizeText(raw).slice(0, 200) || '(reason removed by sanitizer)';
           return {ok: false, cls: 'blocked', reason: 'blocked: ' + reason, blocked: {reason, reasonHash: crypto.createHash('sha256').update(raw).digest('hex')}};
         }
-        const cls = parsed.failure.kind === 'uncovered-scope' || parsed.failure.kind === 'loose-locus' ? 'refusal' : parsed.failure.kind;
+        const cls = parsed.failure.kind === 'uncovered-scope' ? 'refusal' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
@@ -461,6 +461,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       ? refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; })
       : null;
     const state = blockedStateOf(), blockedSummary = blockedNotice(state.blocked, state.blockers);
+    const bySeverity = ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity));
+    const unresolved = bySeverity.filter(finding => isUnresolvedLocus(finding.locus));
     // Advisory only: reporting a boundary opens no escalation and grants no round.
     const {budget} = admission(session, foldLedger(session), review, cap, applies);
     return {
@@ -471,10 +473,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
         ...(state.blockers.length ? { blockers: state.blockers } : {}),
         ...(round.underfill ? { underfill: round.underfill } : {}),
+        // The summary is bounded, so only this list names every marked finding.
+        ...(unresolved.length ? { unresolvedLoci: unresolved.map(({id, locus}) => ({id, locus})) } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
-        ['MUST', 'SHOULD', 'CONSIDER'].flatMap(severity => pending!.findings.filter(finding => finding.severity === severity)
-          .map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`))),
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
+        [...unresolved.map(finding => `${finding.id} ${finding.severity}: ${finding.locus} — ${finding.defect}`),
+          ...bySeverity.filter(finding => !isUnresolvedLocus(finding.locus)).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`)]),
     };
   });
 }

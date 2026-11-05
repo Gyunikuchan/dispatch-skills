@@ -164,3 +164,30 @@ test('doctor reports the session host and keeps it inside the capped summary', a
     assert.ok(declared.out.summary.includes('"host":{"platform":"copilot","source":"declared"}'));
   } finally { f.cleanup(); }
 });
+
+test('doctor lists sandbox removals only for delegates the live roster drops', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    const targets = [{ low: { model: 'reader' } }];
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
+    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+      'read-delegates': { opencode: { targets }, claude: { targets }, codex: { sandbox: false, targets }, copilot: { targets } },
+    }));
+    const run = async (sandboxSupported: Record<string, boolean> | undefined, liveness: Record<string, boolean>) => {
+      f.lines.length = 0;
+      await main(['doctor', 'run', '--session', f.session], { ...f.deps, skillRoot: skill, liveness, ...(sandboxSupported ? { sandboxSupported } : {}) });
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    };
+    const live = { opencode: true, claude: true, codex: true, copilot: true };
+    const unsupported = { opencode: false, claude: false, codex: false, copilot: true };
+    const report = await run(unsupported, live);
+    assert.deepEqual(report.sandboxRemoved, ['opencode', 'claude']);
+    assert.equal(report.ok, true);
+    assert.equal(report.reason, undefined);
+    assert.deepEqual((await run(unsupported, { ...live, opencode: false })).sandboxRemoved, ['claude']);
+    assert.deepEqual((await run(undefined, live)).sandboxRemoved, []);
+  } finally { f.cleanup(); }
+});

@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
 import { createDiscovery } from '../providers/discovery.ts';
 import { SPECS } from '../providers/index.ts';
-import { runDelegate, type RunnerFs } from '../providers/runner.ts';
+import { runDelegate, sandboxBlocked, type RunnerFs } from '../providers/runner.ts';
 import { nodeProcess } from '../providers/node-process.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
@@ -41,6 +41,7 @@ export type CliDeps = {
   modes: (provider: ProviderId) => readonly ModeId[];
   orchestrator: Orchestrator | null;
   liveness: Readonly<Record<string, boolean>>;
+  sandboxSupported?: Readonly<Record<string, boolean>>;
   run: (argv: string[], options: {cwd: string; env?: NodeJS.ProcessEnv; stdin?: string}) => Promise<{exit: number; stdout: string; stderr: string}>;
   hook?: (point: string) => Promise<void> | void;
   stdout: (line: string) => void;
@@ -72,6 +73,7 @@ export function nodeDeps(): CliDeps {
   return {
     modes, orchestrator:null,
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
+    sandboxSupported:Object.fromEntries(Object.entries(SPECS).map(([provider,spec])=>[provider,!sandboxBlocked(spec,true,platform)])),
     async delegate(provider,request,mode) {
       // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
       const steps:LifecycleStep[]=[];
@@ -83,7 +85,8 @@ export function nodeDeps(): CliDeps {
       if(!binary)return failedLaunch('not-found',provider+': missing '+mode);
       const deadline=Date.now()+request.timeoutMs;
       let resolved=request;
-      if(provider==='opencode'){
+      // A blocked sandbox skips introspection so the runner gate refuses before any process starts.
+      if(provider==='opencode'&&!sandboxBlocked(SPECS[provider],request.sandbox,platform)){
         try{resolved=await resolveEffectiveOpencodeLaunch(request,nativeOpencodeIntrospection(binary,request,process.env,request.timeoutMs,request.collectLifecycle?steps:undefined));}
         catch(error){const detail=String(error);return failedLaunch(/effective-config-unverified: opencode-lifecycle-timeout:/.test(detail)?'timeout':'config',detail);}
         if(resolved.readOnlyBestEffort)process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
@@ -170,7 +173,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   },
   'doctor run': async ({ session, manifest, values, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'doctor takes only options');
-    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null);
+    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null, deps.liveness, deps.sandboxSupported);
     return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}) };
   },
   'status show': async ({ session, manifest, args, deps }) => {

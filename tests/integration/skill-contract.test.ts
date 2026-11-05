@@ -410,3 +410,17 @@ test('orchestrator reads quality bar sections by stage', () => {
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);
   }
 });
+test('failed plan slot rule has one home', () => {
+  const rules = read(root + 'references/review-rules.md');
+  assert.match(section(rules, 'Failed-slot coverage'), /failed plan or design slot at the cap gets no extra round[^.]*\[Decision Frame\]\(decision-frame\.md\)[^.]*user decides/);
+  const implement = read(root + 'references/verbs/implement.md');
+  const step = (n: number) => implement.split('\n').find(line => line.startsWith(n + '. ')) ?? '';
+  assert.ok(links(step(1)).includes('../review-rules.md#failed-slot-coverage'));
+  assert.doesNotMatch(implement, /extra round|reduced coverage goes/);
+  assert.match(step(3), /`worktree create` refuses a task until its prerequisites have integrated; verify an integrated prerequisite before creating its dependents/);
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.ok(section(toolkit, 'worktree create').includes('prerequisite-pending'));
+  const removal = /unpinned roster drops a provider whose sandbox cannot run/;
+  assert.match(read(root + 'references/readme/configuration.md'), removal);
+  assert.match(read(root + 'references/readme/troubleshooting.md'), removal);
+});

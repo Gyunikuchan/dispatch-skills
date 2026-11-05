@@ -6,7 +6,7 @@ Review prompts carry the settled governing spec path and hash. Plan and design r
 
 ## Intent and findings
 
-Read the full result before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for governing-text defects and testing for missing verification. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts. Rate findings with the shared [severity rubric](templates/review-severity.md). Reject a maintainability or performance finding against a writer-reported shortcut after verifying its stated limit, citing the report, unless the expected load crosses that limit. A shortcut that removes a simplicity-floor protection is a defect, not a shortcut.
+Read the full result before adjudication. Check intent and spec findings first against REQs and DECs. Use spec for governing-text defects and testing for missing verification. Verify every claim against current source and governing outcomes; accept demonstrated defects regardless of vote counts. Locate a finding marked `unresolved-locus:` from its defect text before ruling; it never matches by location. Rate findings with the shared [severity rubric](templates/review-severity.md). Reject a maintainability or performance finding against a writer-reported shortcut after verifying its stated limit, citing the report, unless the expected load crosses that limit. A shortcut that removes a simplicity-floor protection is a defect, not a shortcut.
 
 A settled DEC may resolve an intent claim autonomously: cite it in the rationale. For changed intent, a new external dependency/runtime prerequisite or discarded work, use the [user gate](decision-frame.md#user-gate-boundaries). Record changed intent through [spec operation](spec-stage.md#revision-protocol).
 For an accepted unrequested-behaviour `intent` finding, the orchestrator removes the behaviour; keeping it changes intent and requires a recorded user quote through the [user gate](decision-frame.md#user-gate-boundaries).
@@ -23,7 +23,7 @@ For the final completed review round at or above the configured cap, apply accep
 
 ### Failed-slot coverage
 
-Applies to `code-integration` only. Plan, design and worktree reviews keep their current failed-slot handling. The toolkit derives coverage from saved rounds and user records; it writes nothing.
+Worktree reviews keep their failed-slot handling. A failed plan or design slot at the cap gets no extra round; its reduced coverage goes in the approval [Decision Frame](decision-frame.md), where the user decides. The rest of this section applies to `code-integration` only: the toolkit derives coverage from saved rounds and user records; it writes nothing.
 
 - **Open:** a logical slot that fails in any round is open, including when every slot of the round failed and no findings file exists. A later failure reopens a closed slot.
 - **Closed:** the slot, or its reserve or native substitute, completes a round at whole-target scope (`Full review` or `(coverage)`). A changed-path completion does not close it; a later round that omits the slot does not close it.

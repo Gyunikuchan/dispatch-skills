@@ -76,13 +76,13 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host 
 node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
 ```
 
-Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. Its `utility` field gives the one model and effort per platform that explorer and utility subagents use: the `explore-subagents` entry, else the lowest `write-subagents` entry. A platform with neither has no `utility` entry. It does not probe provider executables, authentication or sandbox support; provider launches expose those failures.
+Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. Its `utility` field gives the one model and effort per platform that explorer and utility subagents use: the `explore-subagents` entry, else the lowest `write-subagents` entry. A platform with neither has no `utility` entry. It does not probe provider executables, authentication or runtime sandbox activation; provider launches expose those failures.
 
 If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
 
 ## Sandboxing and provider details
 
-Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. If a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
+Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. An unpinned roster drops a provider whose sandbox cannot run on the host, and Doctor lists it in `sandboxRemoved`. If a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
 
 For Node.js requirements and supported provider CLIs, see the [repository README](../../../../README.md).
 

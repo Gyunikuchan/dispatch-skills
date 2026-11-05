@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
-import { collectFindings, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
+import { collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
 
 const finding = (overrides: Record<string, string> = {}) => ({
@@ -192,14 +192,65 @@ test('degenerate fences and large malformed replies stay bounded', () => {
   assert.ok(Date.now() - started < 2000, 'malformed replies exceeded budget');
 });
 
-test('delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope, loose locus', () => {
+test('delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope', () => {
   assert.equal(failure('   '), 'empty-output');
   assert.equal(failure("I'm unable to help with reviewing this."), 'refusal');
   assert.equal(failure('{"status":"FINDINGS","findings":[{"sev', true), 'truncated');
   assert.equal(failure('Looks fine to me.'), 'uncovered-scope');
   assert.equal(failure(report([finding()], 'CLEAN')), 'uncovered-scope');
-  assert.equal(failure(report([finding({ locus: 'src/fetch.ts' })])), 'loose-locus');
-  assert.equal(failure(report([finding({ locus: 'src/fetch.ts:L1-L9' })])), 'loose-locus');
+});
+
+const MARK = 'unresolved-locus: ';
+const planLocus = '§ Work';
+const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
+  const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
+  assert.ok(result.ok);
+  return result.findings.map(item => item.locus);
+};
+
+test('loose locus keeps findings: only the loose locus of a reply is marked, in every kind', () => {
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'A – T5 – Fix skill' }), finding({ locus: planLocus, defect: 'second defect' })]), [MARK + 'A – T5 – Fix skill', planLocus]);
+  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:L1-L9' }), finding({ defect: 'second defect' })]), [MARK + 'src/fetch.ts:L1-L9', 'src/fetch.ts:L12']);
+  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:12' })]), ['src/fetch.ts:L12']);
+});
+
+test('loose locus keeps findings: the marked text is sanitized, and an empty or non-string locus reports none', () => {
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: ' a\n\t<!-- b -->\u001b[31m c ' })]), [MARK + 'a &lt;!-- b --&gt; c']);
+  for (const locus of ['', '   ', 42, null, ['§ Work']]) assert.deepEqual(parsedLoci('plan', [{ ...finding(), locus }]), [MARK + '(none)'], JSON.stringify(locus));
+});
+
+test('loose locus keeps findings: clipping stays within 120 bytes, splits no character and merges no findings', () => {
+  const head = 'é'.repeat(100);
+  const loci = parsedLoci('plan', [finding({ locus: head + ' first' }), finding({ locus: head + ' second' })]);
+  assert.equal(loci.length, 2);
+  assert.equal(loci[0], loci[1]);
+  const shown = loci[0]!.slice(MARK.length);
+  assert.ok(Buffer.byteLength(shown) <= 120, shown);
+  assert.ok(shown.endsWith('é…'), shown);
+  assert.equal(parsedLoci('plan', [finding({ locus: 'same loose' }), finding({ locus: 'same loose' })]).length, 1);
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'a\nb' }), finding({ locus: 'a b' })]), [MARK + 'a b', MARK + 'a b']);
+});
+
+test('loose locus keeps findings: other malformed replies keep their failure class', () => {
+  const loose = { locus: 'src/fetch.ts' };
+  assert.equal(failure(report([finding(loose), finding({ impact: 'HIGH' })])), 'uncovered-scope');
+  assert.equal(failure(report([finding({ ...loose, defect: '' })])), 'uncovered-scope');
+  assert.equal(failure(report([finding(loose)], 'CLEAN')), 'uncovered-scope');
+  assert.equal(failure(report([finding(loose)]).slice(0, -12), true), 'truncated');
+});
+
+test('loose locus keeps findings: a marked finding never matches by location', () => {
+  const parse = (source: string) => {
+    const result = parseReport({ kind: 'plan', source, text: report([finding({ locus: 'A – T5' })]) });
+    assert.ok(result.ok);
+    return result.findings;
+  };
+  const findings = collectFindings(1, [...parse('codex[0]'), ...parse('claude[0]')]);
+  assert.deepEqual(findings.map(item => [item.dupOf ?? null, item.sources]), [[null, ['codex[0]']], [null, ['claude[0]']]]);
+  const key = { locus: MARK + 'A – T5', category: 'correctness', text: 'retry loop never terminates' };
+  assert.equal(matchFinding(key, key), false);
+  assert.equal(matchFinding(key, { ...key, locus: '§ Work' }), false);
+  assert.equal(matchFinding({ ...key, locus: '§ Work' }, { ...key, locus: '§ Work' }), true);
 });
 
 test('blocked json reports validate and sanitize reason', () => {
@@ -316,7 +367,6 @@ test('unknown tag does not mask other report failures', () => {
   assert.equal(failure(report([unknown({ defect: '<invoke name="x">' })])), 'uncovered-scope');
   const { defect: _defect, ...noDefect } = unknown();
   assert.equal(failure(report([noDefect])), 'uncovered-scope');
-  assert.equal(failure(report([unknown({ locus: 'src/fetch.ts' })])), 'loose-locus');
   assert.equal(failure(report([unknown()], 'CLEAN')), 'uncovered-scope');
   assert.equal(failure(report([finding(), unknown({ impact: 'HIGH' })])), 'uncovered-scope');
   const cut = report([unknown()]).slice(0, -12);
@@ -347,6 +397,7 @@ import {
   CATEGORIES, COMPONENTS, DIAGNOSTIC_LIMITS, formatDuration, heuristics, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts,
   type Finding, type InvocationFacts, type RunFacts, type Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
 
@@ -509,7 +560,7 @@ test('elapsed waits and partial usage remain explicit', () => {
   assert.doesNotMatch(quota.proposedFix, /each model has its own quota/);
 });
 
-test('H1 quota names model and fallback recoveries and H8 cites the rejecting module', () => {
+test('H1 quota names model and fallback recoveries', () => {
   const quotaFailure = (subject: string, slot: string, overrides: Partial<InvocationFacts> = {}) => invocation({
     provider: 'agy', model: 'gemini-4-argon', outcome: 'quota', subject, slot, attempt: 1, ...overrides,
   });
@@ -553,18 +604,39 @@ test('H1 quota names model and fallback recoveries and H8 cites the rejecting mo
   assert.match(unrecovered.evidence, /agy\/gemini-4-argon ×7/);
   assert.match(unrecovered.evidence, /0 recovered by fallback/);
 
-  const rejectedTools = [
-    { tool: 'ledger', action: 'append', cls: 'approval-stale' },
-    { tool: 'ledger', action: 'append', cls: 'key-conflict' },
-    { tool: 'ledger', action: 'append', cls: 'invalid-record' },
-  ];
-  const h8 = only(heuristics(facts({ rejectedTools })), 'H8');
-  const ledger = h8.find(item => item.component === 'scripts/toolkit/ledger.ts');
-  const records = h8.find(item => item.component === 'scripts/toolkit/records.ts');
-  assert.ok(ledger);
-  assert.match(ledger.evidence, /approval-stale ×1, ledger append: key-conflict ×1/);
-  assert.ok(records);
-  assert.match(records.evidence, /invalid-record ×1/);
+});
+
+const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
+const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
+
+test('H8 names the handling module of each repeated rejection and a fallback for unknown operations', () => {
+  const verify = assertShape(h8(rejections('verify', 'run', 'invalid-input'))[0], 'correctness');
+  assert.equal(verify.component, 'scripts/toolkit/verify.ts');
+  assert.match(verify.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
+
+  const unknown = assertShape(h8(rejections('record', 'append', 'invalid-record'))[0], 'correctness');
+  assert.equal(unknown.component, 'scripts/toolkit/cli.ts');
+  assert.match(unknown.evidence, /record append: invalid-record ×2/);
+
+  const grouped = h8([...rejections('ledger', 'append', 'approval-stale'), ...rejections('ledger', 'query', 'invalid-input'), ...rejections('worktree', 'create', 'invalid-input')]);
+  assert.deepEqual(grouped.map(item => item.component).sort(), ['scripts/toolkit/ledger.ts', 'scripts/toolkit/writers.ts']);
+  assert.match(grouped.find(item => item.component === 'scripts/toolkit/ledger.ts')!.evidence, /4 toolkit operations rejected \(ledger append: approval-stale ×2, ledger query: invalid-input ×2\)/);
+
+  for (const name of TOOL_ACTIONS) {
+    const [tool, action] = name.split(' ') as [string, string];
+    const finding = assertShape(h8(rejections(tool, action, 'invalid-input'))[0], 'correctness');
+    assert.notEqual(finding.component, 'scripts/toolkit/cli.ts', `${name} has a module`);
+  }
+});
+
+test('H8 ignores one-off rejections and counts only repeats of one tool, action and class', () => {
+  assert.deepEqual(h8(rejections('verify', 'run', 'invalid-input', 1)), []);
+  assert.equal(h8(rejections('verify', 'run', 'invalid-input')).length, 1);
+  assert.deepEqual(h8([...rejections('verify', 'run', 'invalid-input', 1), ...rejections('verify', 'run', 'user-only', 1)]), []);
+  assert.deepEqual(h8([...rejections('ledger', 'append', 'key-conflict', 1), ...rejections('ledger', 'query', 'key-conflict', 1)]), []);
+
+  const [mixed] = h8([...rejections('verify', 'run', 'invalid-input'), ...rejections('verify', 'run', 'user-only', 1)]);
+  assert.match(mixed!.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
 });
 
 test('diagnostics report: heuristic H1 fires for CLI failures', () => {

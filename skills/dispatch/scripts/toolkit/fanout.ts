@@ -39,7 +39,7 @@ export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Le
   const {config} = loadConfig(deps.skillRoot);
   const phases = config['phases'] as Record<string, PhasePolicy>;
   const roster = resolveRoster({level, readDelegates: config['read-delegates'] as Record<string, ReadDelegate>,
-    orchestrator: deps.orchestrator, liveness: deps.liveness,
+    orchestrator: deps.orchestrator, liveness: deps.liveness, ...(deps.sandboxSupported ? {sandboxSupported: deps.sandboxSupported} : {}),
     ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
   // Fail closed: without a host, native-only providers would drop and silently shrink coverage.
   if (!deps.orchestrator && roster.underfill?.excluded.length) {
@@ -51,7 +51,7 @@ export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Le
 export function underfillNote(roster: {underfill?: Underfill}): string {
   const u = roster.underfill;
   if (!u) return '';
-  return `; underfill ${u.resolved}/${u.configured} targets, host ${u.host ?? 'undetected'}, excluded native-only: ${u.excluded.join(', ') || 'none'}`;
+  return `; underfill ${u.resolved}/${u.configured} targets, host ${u.host ?? 'undetected'}, excluded native-only: ${u.excluded.join(', ') || 'none'}${u.sandboxUnsupported?.length ? `, sandbox unsupported: ${u.sandboxUnsupported.join(', ')}` : ''}`;
 }
 
 function sessionOf(directory: string): string {

@@ -88,3 +88,35 @@ test('underfill-native-exclusion: native-only providers of another host are list
   assert.equal(resolveRoster(base).underfill, undefined);
   assert.equal(resolveRoster({ ...base, readDelegates, orchestrator: { platform: 'copilot' } }).underfill, undefined);
 });
+
+// SECTION: Sandbox support
+
+test('sandbox-unsupported provider leaves targets and reserves unless opted out or pinned', () => {
+  const policy = { rounds: { low: 1 }, targets: { low: 2 } };
+  const ids = (roster: ReturnType<typeof resolveRoster>) => [roster.targets.map((slot) => slot.slot), roster.reserves.map((slot) => slot.slot)];
+  assert.deepEqual(ids(resolveRoster({ ...base, policy })), [['codex[0]', 'agy[0]'], ['codex[1]', 'claude[0]', 'claude[1]']]);
+  // The next candidate takes the slot, and an absent entry means supported.
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { codex: false } })), [['agy[0]', 'claude[0]'], ['claude[1]']]);
+  // The orchestrator's own platform has no exemption.
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { claude: false } })), [['codex[0]', 'agy[0]'], ['codex[1]']]);
+
+  const optedOut = { ...base.readDelegates, codex: { sandbox: false, targets: [{ low: { model: 'gpt-5' } }] } };
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, readDelegates: optedOut, sandboxSupported: { codex: false } })), [['codex[0]', 'agy[0]'], ['claude[0]', 'claude[1]']]);
+
+  const unsupported = { codex: false };
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: unsupported, pins: { kind: 'providers', keys: ['codex'] } })), [['codex[0]', 'codex[1]'], []]);
+  assert.equal(resolveRoster({ ...base, policy, sandboxSupported: unsupported, pins: { kind: 'all' } }).targets.filter((slot) => slot.provider === 'codex').length, 2);
+  assert.equal(resolveRoster({ ...base, policy, sandboxSupported: unsupported, pins: { kind: 'count', count: 5 } }).targets.filter((slot) => slot.provider === 'codex').length, 2);
+
+  // A native slot runs as the host's own subagent, so no provider sandbox applies.
+  const native = { copilot: { nativeSubagentsOnly: true, targets: [{ low: { model: 'gpt-4.1' } }] } };
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, readDelegates: native, orchestrator: { platform: 'copilot' }, sandboxSupported: { copilot: false } })), [['copilot[0]'], []]);
+});
+
+test('underfill names the sandbox gap once per provider and only when a provider left', () => {
+  const dropped = resolveRoster({ ...base, sandboxSupported: { codex: false } });
+  assert.deepEqual(dropped.underfill, { host: 'claude', configured: 3, resolved: 3, excluded: [], sandboxUnsupported: ['codex'] });
+  assert.deepEqual(resolveRoster({ ...base, sandboxSupported: { codex: false, claude: false } }).underfill, { host: 'claude', configured: 3, resolved: 1, excluded: [], sandboxUnsupported: ['claude', 'codex'] });
+  assert.equal(resolveRoster({ ...base, sandboxSupported: { codex: true } }).underfill, undefined);
+  assert.deepEqual(resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 9 } }, sandboxSupported: {} }).underfill, { host: 'claude', configured: 9, resolved: 5, excluded: [] });
+});

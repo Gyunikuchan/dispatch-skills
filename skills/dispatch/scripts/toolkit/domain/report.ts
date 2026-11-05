@@ -16,11 +16,7 @@ export const REVIEW_TAGS: ReadonlySet<string> = new Set([
   'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
 ]);
 
-const LOCUS: Readonly<Record<ReviewKind, { pattern: RegExp; description: string }>> = {
-  code: { pattern: CODE_LOCUS, description: '"<relative-file>:L<line>"' },
-  plan: { pattern: SECTION_LOCUS, description: '"§ <Plan heading>"' },
-  design: { pattern: SECTION_LOCUS, description: '"§ <Design heading>"' },
-};
+const LOCUS: Readonly<Record<ReviewKind, RegExp>> = { code: CODE_LOCUS, plan: SECTION_LOCUS, design: SECTION_LOCUS };
 
 const FINDING_FIELDS = ['defect', 'impact', 'locus', 'requiredChange', 'tag', 'trigger'];
 const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
@@ -32,6 +28,18 @@ export function normalizeLocus(kind: ReviewKind, locus: string): string {
     return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]+):([1-9]\d*)$/, '$1:L$2');
   }
   return trimmed.replace(/^§(?=\S)/, '§ ');
+}
+
+export const UNRESOLVED_LOCUS = 'unresolved-locus: ';
+const UNRESOLVED_LOCUS_BYTES = 120;
+export const isUnresolvedLocus = (locus: string): boolean => locus.startsWith(UNRESOLVED_LOCUS);
+
+/** Its 120-byte bound keeps the marked text visible inside a 200-byte summary item. */
+function unresolvedLocus(reported: unknown): string {
+  const text = (typeof reported === 'string' && sanitizeText(reported)) || '(none)';
+  if (Buffer.byteLength(text, 'utf8') <= UNRESOLVED_LOCUS_BYTES) return UNRESOLVED_LOCUS + text;
+  // NOTE: a byte cut can end inside a character, which decodes to one trailing U+FFFD.
+  return UNRESOLVED_LOCUS + Buffer.from(text, 'utf8').subarray(0, UNRESOLVED_LOCUS_BYTES - 3).toString('utf8').replace(/\uFFFD$/, '') + '…';
 }
 
 // SECTION: JSON extraction
@@ -94,7 +102,7 @@ export function extractJsonText(raw: string): string {
 
 // SECTION: Parse
 
-export type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope' | 'loose-locus';
+export type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope';
 export type ReportFailure = { kind: ReportFailureKind; detail: string };
 export type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
 export type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
@@ -109,9 +117,9 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
 /**
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
  * blocked (a `BLOCKED` report with a reason); uncovered scope (no structured `{status, findings}` review of the
- * requested scope); loose locus (a finding whose locus does not pin the kind's locus grammar). A truncated report that still parses is accepted. A nonempty
+ * requested scope). A truncated report that still parses is accepted. A nonempty
  * tag outside the shared vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
- * sanitized `originalTag`.
+ * sanitized `originalTag`. A locus outside the kind's grammar is also recovered: the finding keeps it marked with `UNRESOLVED_LOCUS`.
  */
 export function parseReport(input: ReportInput): ReportResult {
   const { kind, source } = input;
@@ -151,7 +159,7 @@ export function parseReport(input: ReportInput): ReportResult {
   }
   const findings: DraftFinding[] = [];
   const seen = new Set<string>();
-  const { pattern, description } = LOCUS[kind];
+  const pattern = LOCUS[kind];
   for (const [index, item] of items.entries()) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return fail('uncovered-scope', `finding ${index} must be a JSON object`);
     const finding = item as Record<string, unknown>;
@@ -171,7 +179,8 @@ export function parseReport(input: ReportInput): ReportResult {
     // Markup-inert by construction; the raw spelling stays only in the provider log.
     const originalTag = known ? undefined : normalizedTag.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
     if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
-    if (!nonEmpty(locus) || !pattern.test(normalizeLocus(kind, locus))) return fail('loose-locus', `finding ${index} locus must match ${description}`);
+    const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : '';
+    const resolved = pattern.test(normalizedLocus);
     // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
     if (!sanitizeText(defect) || !sanitizeText(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
     const draft: DraftFinding = {
@@ -179,15 +188,15 @@ export function parseReport(input: ReportInput): ReportResult {
       trigger: trigger as Trigger,
       severity: severityOf(impact as Impact, trigger as Trigger),
       category,
-      locus: normalizeLocus(kind, locus),
+      locus: resolved ? normalizedLocus : unresolvedLocus(locus),
       defect: sanitizeText(defect),
       requiredChange: sanitizeText(requiredChange),
       sources: [source],
       scope: category === 'adjacent' ? 'adjacent' : 'in',
       ...(originalTag === undefined ? {} : { originalTag }),
     };
-    // Raw tag, not the lossy sanitized one, so distinct unknown tags never collide.
-    const key = JSON.stringify([draft.severity, draft.locus, draft.category, draft.defect, draft.requiredChange, known ? null : normalizedTag]);
+    // Raw tag and unresolved locus, not their lossy sanitized forms, so distinct values never collide.
+    const key = JSON.stringify([draft.severity, resolved ? normalizedLocus : locus, draft.category, draft.defect, draft.requiredChange, known ? null : normalizedTag]);
     if (seen.has(key)) continue;
     seen.add(key);
     findings.push(draft);
@@ -221,8 +230,9 @@ export function similarity(a: string, b: string): number {
 
 export type MatchKey = { locus: string; category: string; text: string };
 
-/** Code loci: same path (case-folded when `caseInsensitive`) within ±MATCH_LINE_WINDOW lines; section loci: same heading. */
+/** Code loci: same path (case-folded when `caseInsensitive`) within ±MATCH_LINE_WINDOW lines; section loci: same heading; unresolved loci: never. */
 function sameLocation(a: string, b: string, caseInsensitive: boolean): boolean {
+  if (isUnresolvedLocus(a) || isUnresolvedLocus(b)) return false;
   const code = (locus: string) => /^(.+?):L(\d+)/.exec(locus.trim());
   const left = code(a);
   const right = code(b);
