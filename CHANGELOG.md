@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-05
+
+- Spec planning offers grounded approach options with explicit recommendations, and combines interview-style grilling and confirmation into a single user interaction.
+- Code and plan reviews derive severity directly from impact and trigger criteria, providing consistent ratings and clear downgrade or override records.
+- Uncompleted code review slots require whole-target coverage before delivery, ensuring thorough inspection across all review targets.
+- Native subagent routing is built directly into the root skill, pairing writers with platform utility explorers to reduce orchestrator context load.
+- Quality standards unify test expectations under objective retention gates (contract, defect, oracle, unique kill), keeping test suites fast and focused.
+- Faster, leaner execution with fewer round-trip exchanges, event-driven task waits without polling, and reduced prompt token overhead.
+
+
 ## [0.8.2] - 2026-11-01
 
 - A test cleanup stage runs after integrated checks and before the final code review. A low-cost writer deletes, merges or rewrites lower-value tests the run touched; `worktree commit --test-cleanup` records removed criteria and counts, and their pre-cleanup evidence stays valid.
