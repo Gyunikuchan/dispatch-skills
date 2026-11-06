@@ -609,7 +609,7 @@ test('review native-pending and resumed final results report and retain underfil
     const done = await f.call();
     assert.equal(done.exit, 0);
     assert.deepEqual(done.value.underfill, underfilled);
-    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: R1-F\d{3} SHOULD/);
+    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot, repository check unavailable: Unit tests must not spawn processes; first 1: R1-F\d{3} SHOULD/);
   } finally {f.cleanup();}
 });
 

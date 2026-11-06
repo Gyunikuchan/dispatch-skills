@@ -1,6 +1,6 @@
 # Dispatch
 
-Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; read delegates do not make production changes. Dispatch makes your host agent an orchestrator that dispatches work to native subagents and delegates, so work is done cheaper, faster and better.
+Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; CLI read delegates do not make production changes, and a native review voice writes only its reply file. Dispatch makes your host agent an orchestrator that dispatches work to native subagents and delegates, so work is done cheaper, faster and better.
 
 Dispatch can answer a focused question, help shape a design or plan, review existing work, or carry an approved change through implementation and verification.
 
@@ -146,7 +146,7 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 
 ## Safety and session files
 
-- Read delegates run read-only, without your credential environment variables, and in an OS sandbox where the provider supports it. `sandbox: false` turns the sandbox off for that provider.
+- CLI delegates run read-only, without your credential environment variables, and in an OS sandbox where the provider supports it. `sandbox: false` turns the sandbox off for that provider. A review voice on your host platform runs as a native subagent instead: it is write-capable, writes only its reply file by prompt rule, and the review round's change comparison lists any other checkout edit. The comparison excludes git-ignored files and session artifacts.
 - Production changes use a writer configured for the host platform after the plan settles.
 - Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.

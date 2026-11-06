@@ -87,7 +87,7 @@ export function diversitySort<T>(candidates: readonly T[], key: (candidate: T) =
 // SECTION: Roster
 
 export type TargetEntry = { model?: string | readonly string[]; effort?: string };
-export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagentsOnly?: boolean; sandbox?: boolean };
+export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagents?: boolean; nativeSubagentsOnly?: boolean; sandbox?: boolean };
 export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
 export type Overrides = { model?: string; effort?: string };
 export type Orchestrator = { platform: string };
@@ -161,6 +161,20 @@ function identify(targets: readonly Candidate[], reserves: readonly Candidate[])
     return { ...item, slot: id, index, reserve };
   };
   return [targets.map(slot(false)), reserves.map(slot(true))];
+}
+
+export function nativeFirstRoute(
+  provider: string,
+  readDelegates: Readonly<Record<string, ReadDelegate>>,
+  orchestrator: Orchestrator | null,
+): boolean {
+  if (!orchestrator) return false;
+  const host = normalizeProvider(orchestrator.platform);
+  if (normalizeProvider(provider) !== host) return false;
+  const delegate = Object.entries(readDelegates).find(([key]) => normalizeProvider(key) === host)?.[1];
+  if (delegate?.nativeSubagents === false) return false;
+  if (delegate?.nativeSubagentsOnly === true) return false;
+  return true;
 }
 
 export function resolveRoster(input: RosterInput): Roster {

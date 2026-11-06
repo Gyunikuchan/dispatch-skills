@@ -591,7 +591,7 @@ test('H1 quota names model and fallback recoveries', () => {
     invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'dddddddddddddddd', slot: 'agy[3]', attempt: 2 }),
     quotaFailure('eeeeeeeeeeeeeeee', 'agy[4]', { routingOutcome: 'stop' }),
     invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'eeeeeeeeeeeeeeee', slot: 'agy[4]', attempt: 2 }),
-    quotaFailure('ffffffffffffffff', 'agy[5]', { routingOutcome: 'native-fallback' }),
+    quotaFailure('ffffffffffffffff', 'agy[5]', { routingOutcome: 'stop' }),
     quotaFailure('gggggggggggggggg', 'agy[6]', { routingOutcome: 'next-model' }),
     invocation({ provider: 'claude', model: 'sonnet', outcome: 'timeout', subject: 'gggggggggggggggg', slot: 'agy[6]', attempt: 2 }),
     quotaFailure('hhhhhhhhhhhhhhhh', 'agy[7]', { routingOutcome: 'next-model' }),

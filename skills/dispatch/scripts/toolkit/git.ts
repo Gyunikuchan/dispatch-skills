@@ -10,6 +10,7 @@ export async function gitOk(deps: CliDeps, cwd: string, args: string[], env?: No
   return result.stdout.trim();
 }
 export const headTree = (deps: CliDeps, cwd: string) => gitOk(deps,cwd,['rev-parse','HEAD^{tree}']);
+export const splitPaths = (text: string) => text.split('\0').filter(Boolean);
 export async function testedTree(deps: CliDeps, session: string, cwd: string): Promise<string> {
   const directory=path.join(session,'.state/tmp'); fs.mkdirSync(directory,{recursive:true});
   const index=path.join(directory,randomUUID()+'.index');

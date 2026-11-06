@@ -45,7 +45,7 @@ without serving current use. Later optional root tables (`diagnostics`, `write-c
 `sandbox` lives on the provider wrapper, defaults to `true`, and can be set to `false`; it is
 accepted for Claude, Copilot, OpenCode, and Codex, but not `agy`. With `sandbox: true`, a provider
 that rejects or cannot activate its sandbox on the host fails the slot as `sandbox-unsupported`,
-and the cascade moves to reserves or native fallback; a delegate never reruns unsandboxed
+and the cascade moves to reserves, then `failed`; a delegate never reruns unsandboxed
 (ADR 0006 D28). Running without isolation requires an explicit `sandbox: false`. This favors least
 privilege over availability and makes every unsandboxed run a deliberate configuration choice.
 OpenCode's Bubblewrap follows the effective sandbox value.

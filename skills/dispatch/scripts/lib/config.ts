@@ -165,14 +165,17 @@ function checkLevelMap(where: string, value: unknown, problems: string[]): void 
 
 function checkReadProvider(where: string, value: unknown, provider: string, problems: string[]): void {
   const sandboxed = SANDBOXED.includes(provider);
-  const valid = sandboxed ? 'sandbox, nativeSubagentsOnly, targets' : 'nativeSubagentsOnly, targets';
+  const valid = sandboxed ? 'sandbox, nativeSubagents, nativeSubagentsOnly, targets' : 'nativeSubagents, nativeSubagentsOnly, targets';
   if (!isRecord(value)) { problems.push(`${where} must be an object with keys ${valid} (${HINT}).`); return; }
   for (const [key, field] of Object.entries(value)) {
     if (key === 'targets') continue;
-    if (key === 'nativeSubagentsOnly' || (key === 'sandbox' && sandboxed)) {
+    if (key === 'nativeSubagents' || key === 'nativeSubagentsOnly' || (key === 'sandbox' && sandboxed)) {
       if (typeof field !== 'boolean') problems.push(`${where}.${key} must be a boolean (${HINT}).`);
     } else if (key === 'sandbox') problems.push(`${where}.sandbox is not supported for ${provider}; remove it (${HINT}).`);
     else problems.push(`${where} has unrecognized key "${key}". Valid keys: ${valid} (${HINT}).`);
+  }
+  if (value['nativeSubagents'] === false && value['nativeSubagentsOnly'] === true) {
+    problems.push(`${where}.nativeSubagents cannot be false with nativeSubagentsOnly true (${HINT}).`);
   }
   const targets = value['targets'];
   if (!Array.isArray(targets) || !targets.length) { problems.push(`${where}.targets must be a non-empty array of level maps (${HINT}).`); return; }

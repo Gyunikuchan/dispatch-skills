@@ -6,7 +6,7 @@
 | subagent | Native worker launched by the host agent with bounded permissions. | slave agent, sub-agent |
 | explorer subagent | Read-only native worker for research, triage and distillation; writes only an assigned map. | read-only delegate |
 | utility subagent | Native worker for low-risk misc tasks on doctor's `utility` entry; edits only assigned paths. | lowest subagent |
-| delegate | Provider voice with read-only access. | |
+| delegate | Provider voice; CLI delegates have read-only access, native voices write only `replyPath`. | |
 | writer | Native worker with explicit task paths in a private worktree. | |
 | **tool** | Deterministic CLI operation invoked by the orchestrator. | |
 | **ledger** | Append-only record of approvals, edits, evidence, writers and integration. | |

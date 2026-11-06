@@ -216,6 +216,28 @@ test('corrected severity: rows reflect latest corrected severity rules across ac
 
 // SECTION: Budget summary
 
+test('native responder shows configured effort beside the model', () => {
+  const f = fixture();
+  try {
+    const review = 'plan-work.plan';
+    addRound(f.session, review, 1, [{id: 'R1-F001', severity: 'MUST', sources: ['claude[0]', 'agy[0]']}], [
+      {slot: 'claude[0]', provider: 'claude', model: ['a','b'], effort: 'high'},
+      {slot: 'agy[0]', provider: 'agy', model: ['target-model'], effort: 'low'},
+      {slot: 'codex[0]', provider: 'codex', model: ['reserve-model'], effort: 'xhigh', reserve: true},
+    ], 1);
+    addSlotOutcome(f.session, review, 1, 1, 'claude[0]', {
+      slot: 'claude[0]', state: 'done', text: 'finding',
+      responder: {slot: 'claude[0]', provider: 'claude', model: 'a', native: true, effort: 'high'},
+    });
+    addSlotOutcome(f.session, review, 1, 1, 'agy[0]', {
+      slot: 'agy[0]', state: 'done', text: 'reserve finding',
+      responder: {slot: 'agy[0]', provider: 'codex', model: 'reserve-model', native: true, effort: 'xhigh'},
+    });
+    const result = reviewRows(f.session, foldLedger(f.session), [], [review]);
+    assert.deepEqual(result.rows[0]!.sources, ['a/high', 'reserve-model/xhigh']);
+  } finally {f.cleanup();}
+});
+
 test('review summary refreshes budget from current ledger', () => {
   const f = fixture();
   try {

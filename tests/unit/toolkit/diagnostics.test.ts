@@ -56,16 +56,14 @@ test('diagnostics persist unlaunched failures and CLI fallback consequences inde
   cooldown.finish({ok:false,exit:2,reason:'ask-failed',summary:'failed',value:null});
   const skipped=sessionFacts(f.session,fold,'pending').invocations.find(i=>i.provider==='copilot');
   assert.equal(skipped?.outcome,'quota');assert.equal(skipped?.launched,false);assert.equal(skipped?.routingOutcome,'stop');assert.equal(skipped?.slotState,'failed');
-  f.deps.modes=()=>['cli'];f.deps.orchestrator={platform:'claude',model:null};
+  f.deps.modes=()=>['cli'];f.deps.orchestrator={platform:'agy',model:null};
   f.deps.delegate=async()=>({outcome:{status:'fail',cls:'auth',detail:'private'},invocations:[{provider:'claude',model:'model-a',effort:null,mode:'cli',launched:true,outcome:'auth',durationMs:10}]});
   const second=observeTool(f.session,'ask','run',undefined,f.deps)!;
   await fanOut({dir:path.join(f.session,'fallback'),slots:[rosterSlot('claude[0]','claude')],prompt:'question',validate:()=>({ok:true})},second.deps);
-  second.finish({ok:false,exit:4,reason:'native-pending',summary:'pending',value:null});
+  second.finish({ok:false,exit:2,reason:'ask-failed',summary:'failed',value:null});
   facts=sessionFacts(f.session,fold,'pending');
-  const cli=facts.invocations.find(i=>i.launched);assert.equal(cli?.routingOutcome,'native-fallback');assert.equal(cli?.slotState,'native');
-  assert.ok(facts.invocations.some(i=>i.surface==='native'&&i.subject===cli?.subject&&i.nativeState==='pending'));
-  assert.ok(facts.invocations.filter(i=>i.surface==='native').every(i=>i.slotState===undefined));
-  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/not-found.*routing stop.*slot failed.*not launched/);assert.match(report,/auth.*routing native-fallback.*slot native/);
+  const cli=facts.invocations.find(i=>i.launched);assert.equal(cli?.routingOutcome,'stop');assert.equal(cli?.slotState,'failed');
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/not-found.*routing stop.*slot failed.*not launched/);assert.match(report,/auth.*routing stop.*slot failed/);
  }finally{f.cleanup();}
 });
 
@@ -542,6 +540,26 @@ test('review yield renders per slot outcomes', async () => {
     assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| — \|$/m);
     assert.match(report, /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
     assert.match(report, /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
+  } finally { f.cleanup(); }
+});
+
+test('unconfigured native responder renders unavailable instead of the roster model', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    saveRound({
+      session: f.session, review: 'plan-null-model', round: 1,
+      roster: [rosterSlot('codex[0]', 'codex', {native: true, model: 'model-roster'})],
+      outcomes: [
+        {slot: 'codex[0]', state: 'done', text: 'ok', responder: {slot: 'codex[0]', provider: 'codex', model: null, native: true}},
+      ],
+    });
+    const fold = {records: [], lastSeq: 0, torn: null} as Fold;
+    const facts = sessionFacts(f.session, fold, 'complete');
+    const row = facts.invocations.find(i => i.slot === 'codex[0]');
+    assert.ok(row, 'the native invocation is reported');
+    assert.equal(row?.surface, 'native');
+    assert.equal(row?.provider, 'codex');
+    assert.equal(row?.model, 'unavailable', 'a null responder model never borrows the roster model: ' + JSON.stringify(row));
   } finally { f.cleanup(); }
 });
 

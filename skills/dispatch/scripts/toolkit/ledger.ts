@@ -12,6 +12,20 @@ export type Fold = { records: LedgerRecord[]; lastSeq: number; torn: Buffer | nu
 export type Hashes = Partial<Record<ArtifactKind, string | null>>;
 const ledgerPath = (session: string) => path.join(session, 'ledger.jsonl');
 
+// SECTION: repository report note keys
+// A closing or rerun decision names the report it acknowledges: an optional
+// trailing :<reportSeq> carries the covered report's asOfSeq, so two reports
+// under one reused round number close independently on distinct keys. A key
+// without the suffix keeps the legacy round-level meaning.
+export type RepositoryNoteKey = { kind: 'changes' | 'rerun'; review: string; round: number; reportSeq?: number };
+export function parseRepositoryNoteKey(key: string): RepositoryNoteKey | null {
+  let match = /^repository-changes:([^:\s]+):(\d+)(?::(\d+))?$/.exec(key);
+  if (match) return { kind: 'changes', review: match[1]!, round: Number(match[2]), ...(match[3] !== undefined ? { reportSeq: Number(match[3]) } : {}) };
+  match = /^repository-rerun:([^:\s]+):(\d+)(?::(\d+))?$/.exec(key);
+  if (match) return { kind: 'rerun', review: match[1]!, round: Number(match[2]), ...(match[3] !== undefined ? { reportSeq: Number(match[3]) } : {}) };
+  return null;
+}
+
 export function foldLedger(session: string): Fold {
   let bytes: Buffer;
   try {

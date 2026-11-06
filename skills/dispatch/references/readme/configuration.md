@@ -100,6 +100,7 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 <summary>Advanced provider settings</summary>
 
 - `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches the host declared with `--host`. On other platforms, those targets are skipped.
+- `nativeSubagents: false` keeps a provider's slots on the CLI even when the provider matches the session host. By default a review or ask voice on your host platform runs as a native subagent so you can watch it in the host UI: the first call returns its descriptor before any CLI launch, the next call runs the CLI wave alongside it, and a later call consumes its reply. A native voice that cannot complete falls back to its CLI cascade, then reserves, then `failed`, so a round that passes today still passes. Set the opt-out for providers whose code you do not trust a write-capable agent to read.
 - OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
 - Doctor reports configured writer models without launching writers; it does not establish native capacity.
 

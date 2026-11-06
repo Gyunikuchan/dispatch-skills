@@ -5,7 +5,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { fanOut, resolveSlots, underfillNote, type SlotOutcome, type Validation } from './fanout.ts';
+import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
@@ -14,8 +14,9 @@ import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
-import { admission, finalizeRound, read, renderBudget, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
-import { git, gitOk } from './git.ts';
+import { admission, finalizeRound, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
+import { git, gitOk, splitPaths } from './git.ts';
+import { captureCheckouts, compareCheckouts, type CheckoutBaselineFile } from './review-checkout.ts';
 import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
@@ -41,7 +42,142 @@ function atomic(file: string, value: unknown) {
 }
 const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
-const splitPaths = (text: string) => text.split('\0').filter(Boolean);
+
+// Compared directories are the round cwd, the repository root and, for a task
+// review, the launch worktree path resolved against the session, without duplicates.
+function comparedDirs(session: string, repositoryRoot: string, cwd: string, taskWorktree?: string): string[] {
+  const dirs = [path.resolve(cwd), path.resolve(repositoryRoot)];
+  if (taskWorktree) dirs.push(path.resolve(session, taskWorktree));
+  return [...new Set(dirs)];
+}
+
+function baselineFileFor(dir: string, generation: number): string {
+  return path.join(dir, 'gen-' + generation, 'checkout-baseline.json');
+}
+
+function checkoutReportFileFor(dir: string, generation: number): string {
+  return path.join(dir, 'gen-' + generation, 'checkout-report.json');
+}
+
+// Retries never overwrite an unacknowledged report: the first write of a
+// generation lands in checkout-report.json and every later write in the next
+// free checkout-report-<k>.json, so a restored path or a clean comparison
+// cannot erase an earlier report before a closing note exists.
+function checkoutReportAttemptFor(dir: string, generation: number): string {
+  const canonical = checkoutReportFileFor(dir, generation);
+  if (!fs.existsSync(canonical)) return canonical;
+  let attempt = 2;
+  while (fs.existsSync(path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json'))) attempt++;
+  return path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json');
+}
+
+function writeCheckoutReport(dir: string, generation: number, checkout: {repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState; asOfSeq?: number}): void {
+  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  atomic(checkoutReportAttemptFor(dir, generation), checkout);
+}
+
+// Durable per-generation evidence that a native voice launched, covering
+// every native descriptor (native-first, native-only, reserve substitutes).
+// fanout.json carries it; only nativeFirst selects the wave path.
+export function generationLaunchedNative(dir: string, generation: number): boolean {
+  try {
+    const fanout = JSON.parse(fs.readFileSync(path.join(dir, 'gen-' + generation, 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
+    return fanout.nativeFirst === true || fanout.nativeLaunched === true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
+function taskWorktreeOf(session: string, task: string): string | undefined {
+  try {
+    const fold = foldLedger(session);
+    const launch = launches(fold, task).findLast(launch => launch.finished);
+    return launch?.finished ? launch.record.data['path'] as string : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function comparedDirsFor(
+  session: string,
+  repositoryRoot: string,
+  cwd: string,
+  taskTarget: boolean,
+  requested: string,
+): { dirs: string[]; absentWorktree: boolean } {
+  const worktree = taskTarget ? taskWorktreeOf(session, requested) : undefined;
+  const dirs = comparedDirs(session, repositoryRoot, cwd, worktree);
+  const absentWorktree = !!worktree && !fs.existsSync(path.resolve(session, worktree));
+  return { dirs, absentWorktree };
+}
+
+async function writeBaselineIfMissing(
+  dir: string,
+  generation: number,
+  dirs: readonly string[],
+  sessionDir: string,
+  deps: import('./cli.ts').CliDeps,
+): Promise<void> {
+  const file = baselineFileFor(dir, generation);
+  if (fs.existsSync(file)) return;
+  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  try {
+    const baseline = await captureCheckouts(deps, dirs, sessionDir);
+    atomic(file, baseline);
+  } catch (error) {
+    atomic(file, {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)});
+  }
+}
+
+async function compareForRound(
+  dir: string,
+  generation: number,
+  dirs: readonly string[],
+  sessionDir: string,
+  absentWorktree: boolean,
+  deps: import('./cli.ts').CliDeps,
+): Promise<{ repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState }> {
+  // A round with no native voice runs no check: no baseline file means no Git
+  // commands without a launch flag. A missing baseline after a native launch
+  // means the capture was lost; an unreadable or malformed one cannot be
+  // trusted. Both report unavailable instead of silently skipping or failing
+  // recovery, so the round keeps its replies.
+  const file = baselineFileFor(dir, generation);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline unreadable: ' + (error instanceof Error ? error.message : String(error))}};
+    }
+    if (!generationLaunchedNative(dir, generation)) return {};
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline missing after native launch'}};
+  }
+  let baseline: CheckoutBaselineFile;
+  try {
+    baseline = JSON.parse(raw) as CheckoutBaselineFile;
+  } catch (error) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: ' + (error instanceof Error ? error.message : String(error))}};
+  }
+  // A corrupted baseline (JSON null or another non-object, or an object
+  // without checkouts) cannot be compared; report unavailable instead of
+  // throwing past the recovery contract.
+  if (baseline === null || typeof baseline !== 'object' || Array.isArray(baseline)) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkout baseline object'}};
+  }
+  if ((baseline as {state?: string}).state === 'unavailable') {
+    return {repositoryCheck: {state: 'unavailable', reason: (baseline as {reason?: string}).reason ?? 'checkout capture failed'}};
+  }
+  if (!Array.isArray((baseline as {checkouts?: unknown}).checkouts)) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkouts array'}};
+  }
+  if (absentWorktree) return {repositoryCheck: {state: 'unavailable', reason: 'Absent task worktree'}};
+  try {
+    return await compareCheckouts(deps, baseline, dirs, sessionDir);
+  } catch (error) {
+    return {repositoryCheck: {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)}};
+  }
+}
 
 // SECTION: Blocked attempts
 type BlockedEntry = {slot: string} & BlockedAttempt;
@@ -282,7 +418,39 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
     const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.md$/, '.context.md'));
     const savedSlot = (name: string) => [...confirmationRounds.flatMap(value => value.metadata.roster), ...(round?.roster ?? [])].find(slot => slot.slot === name);
+    function isRerunRound(): boolean {
+      if (n <= 1) return false;
+      const fold = foldLedger(session);
+      if (!repositoryRerunRounds(fold, review).includes(n - 1)) return false;
+      if (!rerunNotesFor(fold, review, n - 1).length) return false;
+      // The decision binds to the report it acknowledges: a stale decision
+      // for an earlier report under a reused number grants nothing for the
+      // current one.
+      if (!rerunGranted(session, fold, review, n - 1)) return false;
+      // The close decision binds to the actual report acknowledged: a later
+      // report under a reused round number still admits the rerun, including
+      // the equal-seq case with no intervening ledger record.
+      const seqs = reportSeqs(session, review, n - 1);
+      if (!seqs.length) return false;
+      if (isReportsClosed(fold, review, n - 1, seqs)) return false;
+      return true;
+    }
     function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean; coverage?: 'open' | 'full' } {
+      // A rerun note admits its named round + 1 at whole-target scope with every
+      // logical target of the named round on its current route. Earlier findings stay
+      // in `prior`; the next round uses normal targets.
+      if (isRerunRound()) {
+        const previous = confirmationRounds.find(value => value.metadata.round === n - 1);
+        const logical = previous?.metadata.roster.filter(slot => !slot.reserve) ?? [];
+        if (logical.length) return {targets: logical, narrowed: false};
+        // An all-failed named round has no findings and no confirmation
+        // round: its saved round.json keeps the roster for the same
+        // whole-target rerun, and its failed report stays open until that
+        // rerun finalizes.
+        const failedRound = read<Round>(path.join(directory, 'round-' + (n - 1), 'round.json'));
+        const failedLogical = failedRound?.roster.filter(slot => !slot.reserve) ?? [];
+        if (failedLogical.length) return {targets: failedLogical, narrowed: false};
+      }
       const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
       const target = previous?.metadata.roster.find(slot => !slot.reserve), rulings = rulingRows();
       const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
@@ -293,9 +461,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
     }
     async function start(generation: number, captured: Capture): Promise<Round> {
+      const rerun = isRerunRound();
       const {targets, narrowed, coverage} = replacement();
       let scope = 'Full review', changedPaths = captured.changed;
-      if (coverage) scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as {base: string}).base}..${label(captured.target)}`;
+      if (rerun && !coverage) {
+        const target = captured.target as {base?: string; head?: string};
+        const comparison = typeof captured.target === 'string' ? captured.target : target.base + '..' + label(captured.target);
+        scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison;
+      } else if (coverage) scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as {base: string}).base}..${label(captured.target)}`;
       else if (n > 1) {
         const previous = priorTargets[n - 1]!;
         changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])) : [];
@@ -329,6 +502,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const staffed = replacement().targets.some(slot => !slot.reserve)
         || rejectionStates().filter(state => state.state === 'pending').some(state => state.request.sourceSlots.some(source => confirmationRounds.some(round => round.metadata.roster.some(slot => slot.slot === source))));
       if (!staffed) throw new ToolError(4, 'level-unapproved', noReviewer());
+      const previousGeneration = round!.generation;
       const pending = read<Finalized>(pendingFile);
       if (pending) {
         await withLedger(session, 'review supersede', deps, async tx => {
@@ -340,7 +514,63 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         });
         fs.rmSync(pendingFile, {force: true});
       }
-      round = await start(round!.generation + 1, captured);
+      // Carry the baseline before publishing the new generation, so a crash
+      // cannot lose a change made before target movement. The copy publishes
+      // atomically (temp + rename, never the final path directly), and an
+      // existing destination is only kept when it parses. A predecessor that
+      // wrote no baseline and launched no native voice leaves the next
+      // generation without one, so a CLI-only superseded round runs no check;
+      // only a source that exists but cannot be read or copied becomes a
+      // durable unavailable marker. A launched predecessor with a missing
+      // baseline lost its required capture and carries unavailable instead.
+      const previousBaseline = baselineFileFor(dir, previousGeneration);
+      const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
+      try {
+        fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+        const nextValid = (() => {
+          try {
+            JSON.parse(fs.readFileSync(nextBaseline, 'utf8'));
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+        if (!nextValid) {
+          let previousRaw: string | undefined;
+          try {
+            previousRaw = fs.readFileSync(previousBaseline, 'utf8');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+              // Absent predecessor baseline with no launched native voice:
+              // no native voice ran there. A launched predecessor lost its
+              // required capture, so the next generation carries an
+              // unavailable marker instead of a fresh capture.
+              if (generationLaunchedNative(dir, previousGeneration)) {
+                atomic(nextBaseline, {state: 'unavailable', reason: 'checkout baseline missing after native launch in generation ' + previousGeneration});
+              }
+            } else {
+              atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+            }
+          }
+          if (previousRaw !== undefined) {
+            try {
+              atomic(nextBaseline, JSON.parse(previousRaw) as CheckoutBaselineFile);
+            } catch (error) {
+              atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+            }
+          }
+        }
+      } catch (error) {
+        try {
+          fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+          if (!fs.existsSync(nextBaseline)) atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+        } catch {
+          // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.
+        }
+      }
+      round = await start(previousGeneration + 1, captured);
+      // A change made before target movement reaches a later compare: a carried
+      // baseline also lists the target's own change, which the orchestrator explains.
     }
     const hadPending = fs.existsSync(pendingFile);
     if (!round) round = await start(1, current);
@@ -349,6 +579,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
     }
     let pending = read<Finalized>(pendingFile);
+    const ignoredFailureReports: string[] = [];
     if (!pending) {
       const bind = latest(foldLedger(session), 'bind');
       const requestsBySlot=new Map<string,RejectionRequest[]>();
@@ -375,18 +606,52 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
       const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(dir, 'gen-' + round!.generation, 'attempts.json');
         atomic(file, [...(read<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
-      const replies = await fanOut({dir: path.join(dir, 'gen-' + round.generation), slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed}, deps);
+      const fanoutDir = path.join(dir, 'gen-' + round.generation);
+      const rawFailed = ctx.values['native-failed'];
+      const rawHashes = (ctx.values as Record<string, unknown>)['native-failed-hash'];
+      const failedEntries = rawFailed === undefined ? [] : Array.isArray(rawFailed) ? rawFailed as string[] : [rawFailed as string];
+      const failedHashes = rawHashes === undefined ? [] : Array.isArray(rawHashes) ? rawHashes as string[] : [rawHashes as string];
+      const nativeFailures: NativeFailure[] = failedEntries.map((entry, index) => {
+        const eq = entry.indexOf('=');
+        return {attempt: entry.slice(0, eq), reason: entry.slice(eq + 1), reasonHash: failedHashes[index] ?? ''};
+      });
+      const replies = await fanOutComplete({dir: fanoutDir, slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed,
+        nativeFirstProviders: roster.nativeFirstProviders, nativeFailures,
+        onIgnoredReport: attempt => { ignoredFailureReports.push(attempt); }}, deps);
       const captured = await capture();
       if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
+      // fanOut never returns a fallback marker, so every native here is launchable.
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
       if (native.length) {
+        // A round that returns a native descriptor saves a baseline of each
+        // compared directory before native launch, keeping any existing file.
+        // Every native descriptor triggers the change check, including
+        // native-only voices, which run with the same write-capable boundary.
+        const {dirs: baselineDirs} = comparedDirsFor(session, manifest.repositoryRoot, current.cwd, taskTarget, requested);
+        await writeBaselineIfMissing(dir, round.generation, baselineDirs, session, deps);
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
-        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + (notice ? '; ' + notice : '') + underfillNote(round)};
+        const wave = cliWaveState(fanoutDir);
+        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + (notice ? '; ' + notice : '') + underfillNote(round)};
       }
+      // A capture or compare failure never blocks finalization: it keeps all
+      // replies and reports repositoryCheck. Runs after the existing same check,
+      // so target-moved wins.
+      const {dirs: compareDirs, absentWorktree} = comparedDirsFor(session, manifest.repositoryRoot, captured.cwd, taskTarget, requested);
+      const checkout = {...(await compareForRound(dir, round.generation, compareDirs, session, absentWorktree, deps)), asOfSeq: foldLedger(session).lastSeq};
       // An all-failed open-only or narrowed integration round finalizes as used, so its open slots get a whole-target rerun; a full-roster round keeps its number.
       if (!replies.some(reply => reply.state === 'done') && round.coverage !== 'open' && !(review === 'code-integration' && /^Re-review round \d+ \(narrowed\)/.test(round.scope))) {
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
-        throw new ToolError(2, 'review-failed', (notice ? notice + '; ' : '') + 'Every review slot failed' + underfillNote(round));
+        const changedPaths = (checkout.repositoryChanges ?? []).flatMap(entry => entry.paths).sort();
+        const changedSuffix = changedPaths.length ? '; repository changes: ' + changedPaths.join(', ') : '';
+        const checkSuffix = checkout.repositoryCheck ? '; repository check unavailable: ' + checkout.repositoryCheck.reason : '';
+        const ignoredSuffix = ignoredFailureReports.length ? '; ignored reports: ' + ignoredFailureReports.join(', ') : '';
+        const failedSummary = (notice ? notice + '; ' : '') + 'Every review slot failed' + underfillNote(round) + changedSuffix + checkSuffix + ignoredSuffix;
+        try {
+          writeCheckoutReport(dir, round.generation, checkout);
+        } catch (error) {
+          throw new ToolError(2, 'review-failed', failedSummary + '; checkout report unavailable: ' + (error instanceof Error ? error.message : String(error)));
+        }
+        throw new ToolError(2, 'review-failed', failedSummary);
       }
       const changedSince: Record<number, string[]> = {}, owners: Record<string, string[]> = {};
       if (kind === 'code' && requested === 'integration') {
@@ -395,7 +660,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         for (const task of plan.tasks) owners[task.id] = ownedPaths(plan, task.id);
       }
       pending = finalizeRound({review, round: n, generation: round.generation, cap: round.cap, level: round.level, startSeq: round.startSeq, replies,
-        prior, priorTargets, changedSince, owners, escalationRecords:foldLedger(session).records.filter(row=>row.kind==='escalation'),rulings: rulingRows(), kind, artifact, target: round.target,requests:round.requests ?? [],confirmationRounds,spec:round.spec,roster:round.roster});
+        prior, priorTargets, changedSince, owners, escalationRecords:foldLedger(session).records.filter(row=>row.kind==='escalation'),rulings: rulingRows(), kind, artifact, target: round.target,requests:round.requests ?? [],confirmationRounds,spec:round.spec,roster:round.roster,
+        ...(checkout.repositoryChanges ? {repositoryChanges: checkout.repositoryChanges} : {}),
+        ...(checkout.repositoryCheck ? {repositoryCheck: checkout.repositoryCheck} : {})});
+      try {
+        writeCheckoutReport(dir, round.generation, checkout);
+      } catch {
+        // Best effort; findings.json already carries the report.
+      }
       if (kind === 'code' && !gitTarget) {
         const plan = loadPlan(session, manifest), currentFold = foldLedger(session);
         const bind = latest(currentFold, 'bind')!;
@@ -444,7 +716,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           }
         }
       }
-      atomic(pendingFile, pending);
+      // The finalized findings copy carries the same durable report identity as
+      // the per-generation checkout report, so one per-report decision closes
+      // both copies.
+      atomic(pendingFile, {...pending, asOfSeq: checkout.asOfSeq});
       await deps.hook?.('review:after-pending');
     }
     if(round.rulingSnapshot!==rulingSnapshot()){await supersede(await capture());throw new ToolError(4,'target-moved','Review ruling moved during finalization');}
@@ -465,10 +740,16 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const unresolved = bySeverity.filter(finding => isUnresolvedLocus(finding.locus));
     // Advisory only: reporting a boundary opens no escalation and grants no round.
     const {budget} = admission(session, foldLedger(session), review, cap, applies);
+    const changedPaths = (pending.repositoryChanges ?? []).flatMap(entry => entry.paths).sort();
+    const changedSuffix = changedPaths.length ? `, repository changes: ${changedPaths.join(', ')}` : '';
+    const checkSuffix = pending.repositoryCheck ? `, repository check unavailable: ${pending.repositoryCheck.reason}` : '';
     return {
       ok: true, exit: 0,
       value: {
         path: file, review, round: n, budget,
+        ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}),
+        ...(pending.repositoryChanges ? {repositoryChanges: pending.repositoryChanges} : {}),
+        ...(pending.repositoryCheck ? {repositoryCheck: pending.repositoryCheck} : {}),
         ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
         ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
         ...(state.blockers.length ? { blockers: state.blockers } : {}),
@@ -476,7 +757,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         // The summary is bounded, so only this list names every marked finding.
         ...(unresolved.length ? { unresolvedLoci: unresolved.map(({id, locus}) => ({id, locus})) } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}${changedSuffix}${checkSuffix}`,
         [...unresolved.map(finding => `${finding.id} ${finding.severity}: ${finding.locus} — ${finding.defect}`),
           ...bySeverity.filter(finding => !isUnresolvedLocus(finding.locus)).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`)]),
     };

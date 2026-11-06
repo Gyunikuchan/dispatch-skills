@@ -9,8 +9,9 @@ import crypto from 'node:crypto';
 import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
 import { createDiscovery } from '../providers/discovery.ts';
 import { SPECS } from '../providers/index.ts';
-import { runDelegate, sandboxBlocked, type RunnerFs } from '../providers/runner.ts';
-import { nodeProcess } from '../providers/node-process.ts';
+import { runDelegate, sandboxBlocked } from '../providers/runner.ts';
+import { nodeProcess, nodeRunnerFs } from '../providers/node-process.ts';
+import { sanitizeText } from './domain/sanitize.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
@@ -63,13 +64,7 @@ export function nodeDeps(): CliDeps {
     executable(file) {try{return fs.statSync(file).isFile() && (platform.os === 'win32' || (fs.statSync(file).mode & 0o111)!==0);}catch{return false;}},
   });
   const modes = (provider:ProviderId) => SPECS[provider].modes.filter(mode=>discovery.resolve(provider,mode.id).status==='path').map(mode=>mode.id);
-  const runnerFs: RunnerFs = {
-    readText:file=>fs.readFileSync(file,'utf8'),writeText:(file,text)=>fs.writeFileSync(file,text,{mode:0o600}),
-    realpath:file=>{try{return fs.realpathSync(file);}catch{return null;}},
-    readdir:dir=>{try{return fs.readdirSync(dir);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return [];throw error;}},
-    size:file=>{try{const info=fs.statSync(file);return info.isFile()?info.size:null;}catch{return null;}},
-    readPrefix(file,max){const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(max);return bytes.subarray(0,fs.readSync(fd,bytes)).toString('utf8');}finally{fs.closeSync(fd);}},
-  };
+  const runnerFs = nodeRunnerFs;
   return {
     modes, orchestrator:null,
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
@@ -210,14 +205,46 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
       'test-cleanup': {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
+      'native-failed': {type: 'string', multiple: true},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
     if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
+    const nativeFailedRaw = parsed.values['native-failed'];
+    if (nativeFailedRaw !== undefined) {
+      const isReviewOrAsk = (tool === 'review' && action === 'run') || (tool === 'ask' && action === 'run');
+      if (!isReviewOrAsk) throw new ToolError(1, 'invalid-input', '--native-failed is only for review run and ask run');
+      const entries = Array.isArray(nativeFailedRaw) ? nativeFailedRaw : [nativeFailedRaw];
+      const sanitized: string[] = [];
+      const hashes: string[] = [];
+      for (const entry of entries) {
+        if (typeof entry !== 'string') throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+        const eq = entry.indexOf('=');
+        if (eq <= 0) throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+        const attempt = entry.slice(0, eq).trim();
+        const rawReason = entry.slice(eq + 1);
+        if (!attempt || !rawReason.trim()) throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+        const rawTrimmed = rawReason.trim();
+        // A BLOCKED reason hashes its extracted raw so a CLI report and a native reply share one identity.
+        if (rawTrimmed.startsWith('BLOCKED:')) {
+          const extracted = rawTrimmed.slice('BLOCKED:'.length).trim();
+          const reason = 'BLOCKED: ' + (sanitizeText(extracted).slice(0, 200) || '(reason removed by sanitizer)');
+          sanitized.push(`${attempt}=${reason}`);
+          hashes.push(crypto.createHash('sha256').update(extracted).digest('hex'));
+        } else {
+          const reason = sanitizeText(rawTrimmed).slice(0, 200) || '(reason removed by sanitizer)';
+          sanitized.push(`${attempt}=${reason}`);
+          hashes.push(crypto.createHash('sha256').update(rawTrimmed).digest('hex'));
+        }
+      }
+      parsed.values['native-failed'] = sanitized as never;
+      (parsed.values as Record<string, unknown>)['native-failed-hash'] = hashes;
+    }
     if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);
   } catch (error) {
+    if (error instanceof ToolError) return print({ ok: false, summary: error.message, path: null, reason: error.reason, exit: error.exit });
     return print({ ok: false, summary: error instanceof Error ? error.message : String(error), path: null, reason: 'usage', exit: 1 });
   }
   const kind = typeof parsed.values['kind'] === 'string' ? parsed.values['kind']

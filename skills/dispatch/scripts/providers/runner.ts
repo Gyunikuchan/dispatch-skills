@@ -153,7 +153,7 @@ export type RunnerFs = {
 export type AttachmentBlock = { text: string; notes: string[]; attachedFiles: string[]; usedBytes: number };
 
 /** Failed checkout discovery removes the exemption rather than failing open. */
-function sessionScope(sessionRoot: string | undefined, fs: RunnerFs): SessionScope {
+export function sessionScope(sessionRoot: string | undefined, fs: RunnerFs): SessionScope {
   if (sessionRoot === undefined) return {};
   const lexical = worktreeRoot(sessionRoot);
   let worktreeRoots: string[];

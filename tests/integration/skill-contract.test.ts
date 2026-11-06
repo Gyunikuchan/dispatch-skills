@@ -372,6 +372,23 @@ test('references keep branch detail and use the utility entry', () => {
   assert.match(step6, /runs only its edited test files/);
 });
 
+test('native voice launch order failure reports and change rules are documented', () => {
+  const providers = read(root + 'references/providers.md');
+  for (const term of [
+    '`cliWave: "pending"`', 'no retained handle', 'every retained handle finished or was reported',
+    'Stop a timed-out handle', '30-minute', '--native-failed', 'ordered model attempts', 'work in `cwd`',
+  ]) assert.ok(providers.includes(term), term);
+  const rules = read(root + 'references/review-rules.md');
+  for (const term of [
+    'repositoryChanges', 'unproven', 'repository-changes:', 'repository-rerun:', 'Decision Frame',
+  ]) assert.ok(rules.includes(term), term);
+  const toolkit = read(root + 'references/toolkit.md');
+  for (const term of [
+    '--native-failed', 'cliWave', 'repositoryChanges', 'openRepositoryChanges', 'checkout-report.json',
+  ]) assert.ok(toolkit.includes(term), term);
+  const ask = read(root + 'references/verbs/ask.md');
+  for (const term of ['`cliWave: "pending"`', '--native-failed']) assert.ok(ask.includes(term), term);
+});
 test('native slots launch by prompt path', t => {
   const providers = read(root + 'references/providers.md');
   const openCode = providers.indexOf('## OpenCode private launches');

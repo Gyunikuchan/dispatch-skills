@@ -28,6 +28,10 @@
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
+      // Optional; defaults to true. false keeps this provider's host-platform
+      // slots on the CLI: they run the CLI cascade directly, then reserves,
+      // then failed, with no native descriptor.
+      // "nativeSubagents": false,
       // Optional; defaults to true for sandboxed platforms.
       "sandbox": true,
       "targets": [

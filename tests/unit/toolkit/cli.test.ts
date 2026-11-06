@@ -1,6 +1,7 @@
 import { nativeOpencodeIntrospection } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
@@ -98,6 +99,24 @@ describe('toolkit CLI contract', () => {
       }), 2);
       assert.equal(f.output().reason, 'fault');
       assert.equal(f.output().path, null);
+    } finally { f.cleanup(); }
+  });
+  test('native-failed refuses malformed input and non-review tools', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const q = f.artifact('q.md', 'why');
+      for (const args of [
+        ['ask', 'run', q, '--session', f.session, '--native-failed', 'no-equals'],
+        ['review', 'run', 'worktree', '--session', f.session, '--native-failed', '=reason'],
+        ['review', 'run', 'worktree', '--session', f.session, '--native-failed', 'a#1='],
+      ]) {
+        f.lines.length = 0;
+        assert.equal(await main(args, f.deps), 1);
+        assert.equal(f.output().reason, 'invalid-input');
+      }
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', '--session', f.session, '--native-failed', 'a#1=nope'], f.deps), 1);
+      assert.equal(f.output().reason, 'invalid-input');
     } finally { f.cleanup(); }
   });
   test('ledger append accepts bom record', async () => {
@@ -295,4 +314,21 @@ test('introspection allows 10000 ms per command and fails past it', async (t) =>
   const hung=inspect();
   t.mock.timers.tick(10000);await flush();
   assert.match((await hung).error,/effective-config-unverified: opencode-lifecycle-timeout/);
+});
+
+test('an unreadable fanout record still counts as a native launch', async () => {
+  const {generationLaunchedNative} = await import('../../../skills/dispatch/scripts/toolkit/review.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'launch-'));
+  try {
+    const dir = path.join(root, 'round-1');
+    fs.mkdirSync(path.join(dir, 'gen-1'), {recursive: true});
+    assert.equal(generationLaunchedNative(dir, 1), false, 'a missing record means no native voice');
+    fs.writeFileSync(path.join(dir, 'gen-1', 'fanout.json'), JSON.stringify({nativeLaunched: true}));
+    assert.equal(generationLaunchedNative(dir, 1), true, 'a launched record stays launched');
+    fs.writeFileSync(path.join(dir, 'gen-1', 'fanout.json'), 'torn json{{{');
+    assert.equal(generationLaunchedNative(dir, 1), true, 'a torn record fails closed to launched');
+    fs.rmSync(path.join(dir, 'gen-1', 'fanout.json'));
+    fs.mkdirSync(path.join(dir, 'gen-1', 'fanout.json'));
+    assert.equal(generationLaunchedNative(dir, 1), true, 'an unreadable record fails closed to launched');
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });

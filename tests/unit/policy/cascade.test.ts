@@ -41,13 +41,12 @@ test('delegates-mode-cascade: only provider-declared classes advance the mode, r
 
 // SECTION: Reserves and substitution pool
 
-test('delegates-reserves: exhausted voices prefer reserves and use native fallback only on the orchestrator platform', () => {
-  assert.deepEqual(next('timeout', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: true }), { kind: 'reserve' });
-  assert.deepEqual(next('timeout', lastModel, agy, { orchestratorPlatform: 'agy', reserveAvailable: false }), { kind: 'native-fallback' });
-  assert.equal(next('timeout', lastModel, agy, { orchestratorPlatform: 'claude', reserveAvailable: false }).kind, 'terminal');
+test('delegates-reserves: exhausted voices prefer reserves then stop', () => {
+  assert.deepEqual(next('timeout', lastModel, agy, { reserveAvailable: true }), { kind: 'reserve' });
+  assert.equal(next('timeout', lastModel, agy, { reserveAvailable: false }).kind, 'terminal');
 });
 
-test('delegates-reserves-once: each reserve is consumed once per wave with recorded substitutions', () => {
+test('delegates-reserves-once: each reserve is consumed once per fan-out directory with recorded substitutions', () => {
   let pool = reservePool(['copilot[0]', 'opencode[0]']);
   const first = takeReserve(pool, 'agy[0]', 'timeout');
   pool = first.pool;

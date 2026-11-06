@@ -60,7 +60,7 @@ Retain handles until the run ends or the host drops them. Await completion notic
 
 Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium-or-higher briefs and integration.
 
-Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. Provider delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
+Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. CLI delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
 After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume unfinished work. Retain uncertain effects until completion.
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { diversitySort, parsePins, resolveLevel, resolveRoster, type RosterInput } from '../../../skills/dispatch/scripts/policy/roster.ts';
+import { diversitySort, nativeFirstRoute, parsePins, resolveLevel, resolveRoster, type ReadDelegate, type RosterInput } from '../../../skills/dispatch/scripts/policy/roster.ts';
 
 const base: RosterInput = {
   level: 'high',
@@ -75,6 +75,24 @@ test('grammar-native-subagents-only: such platforms serve only as the orchestrat
   assert.ok(!elsewhere.targets.some((slot) => slot.provider === 'copilot'));
   const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot' } });
   assert.deepEqual(native.targets.filter((slot) => slot.provider === 'copilot').map((slot) => [slot.slot, slot.native]), [['copilot[0]', true]]);
+});
+
+// SECTION: Native-first route
+
+test('native-first route runs a host delegate unless it opts out or stays native-only', () => {
+  const targets = [{ low: { model: 'm' } }];
+  const cases: Array<[string, string, Record<string, ReadDelegate>, { platform: string } | null, boolean]> = [
+    ['host default', 'claude', { claude: { targets } }, { platform: 'claude' }, true],
+    ['normalized key', 'claude', { 'Claude-Code': { targets } }, { platform: 'Claude-Code' }, true],
+    ['normalized host', 'Claude-Code', { 'Claude-Code': { targets } }, { platform: 'claude' }, true],
+    ['another provider', 'codex', { claude: { targets }, codex: { targets } }, { platform: 'claude' }, false],
+    ['no host', 'claude', { claude: { targets } }, null, false],
+    ['opt-out', 'claude', { claude: { nativeSubagents: false, targets } }, { platform: 'claude' }, false],
+    ['native-only', 'claude', { claude: { nativeSubagentsOnly: true, targets } }, { platform: 'claude' }, false],
+  ];
+  for (const [name, provider, readDelegates, orchestrator, expected] of cases) {
+    assert.equal(nativeFirstRoute(provider, readDelegates, orchestrator), expected, name);
+  }
 });
 
 // SECTION: Underfill

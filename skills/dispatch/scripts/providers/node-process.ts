@@ -4,8 +4,17 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { batchInvocation } from './runner.ts';
+import { batchInvocation, type RunnerFs } from './runner.ts';
 import type { Launch, ProcessPort, ProcessResult } from './types.ts';
+
+export const nodeRunnerFs: RunnerFs = {
+  readText: file => fs.readFileSync(file, 'utf8'),
+  writeText: (file, text) => fs.writeFileSync(file, text, {mode: 0o600}),
+  realpath: file => { try { return fs.realpathSync(file); } catch { return null; } },
+  readdir: dir => { try { return fs.readdirSync(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; } },
+  size: file => { try { const info = fs.statSync(file); return info.isFile() ? info.size : null; } catch { return null; } },
+  readPrefix(file, max) { const fd = fs.openSync(file, 'r'); try { const bytes = Buffer.alloc(max); return bytes.subarray(0, fs.readSync(fd, bytes)).toString('utf8'); } finally { fs.closeSync(fd); } },
+};
 
 const STDERR_TAIL = 4000;
 

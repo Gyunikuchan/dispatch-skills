@@ -24,15 +24,17 @@ const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
 const slotLabel = (round: ReviewRound, id: string): string => {
   const sourceSlot = round.roster.find(slot => slot.slot === id);
   const outcome = round.slots.find(slot => slot.slot === id);
-  const responder = outcome?.state === 'done' ? outcome.responder : undefined;
+  const responder = outcome?.state === 'done' ? outcome.responder as {slot: string; provider: string; model: string | null; native: boolean; effort?: string} | undefined : undefined;
   const physicalSlot = responder && round.roster.find(slot => slot.slot === responder.slot);
   const provider = responder?.provider || sourceSlot?.provider || 'provider unavailable';
   const model = typeof responder?.model === 'string' && responder.model.trim()
     ? responder.model
     : `unknown (${provider}/${responder?.slot ?? id})`;
-  const effort = responder?.native === false && physicalSlot?.provider === responder.provider && physicalSlot.native !== true
-    ? physicalSlot.effort
-    : undefined;
+  const effort = responder?.native === true
+    ? (typeof responder.effort === 'string' ? responder.effort : undefined)
+    : responder?.native === false && physicalSlot?.provider === responder.provider && (physicalSlot as {native?: boolean}).native !== true
+      ? (physicalSlot as {effort?: string}).effort
+      : undefined;
   return typeof effort === 'string' ? `${model}/${effort}` : model;
 };
 

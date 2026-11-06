@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
-import { fanOut, resolveSlots, underfillNote } from './fanout.ts';
+import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, type NativeFailure } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { ToolError } from './output.ts';
@@ -34,18 +34,30 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
     const dir = path.join(directory, 'attempt-' + attempt);
     const slots = resolveSlots('ask', selected as Level, deps);
     if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate' + underfillNote(slots));
-    const outcomes = await fanOut({dir, slots, prompt: askPrompt(question, ''), cwd: manifest.repositoryRoot, sessionRoot: session,
+    const rawFailed = values['native-failed'];
+    const rawHashes = (values as Record<string, unknown>)['native-failed-hash'];
+    const failedEntries = rawFailed === undefined ? [] : Array.isArray(rawFailed) ? rawFailed as string[] : [rawFailed as string];
+    const failedHashes = rawHashes === undefined ? [] : Array.isArray(rawHashes) ? rawHashes as string[] : [rawHashes as string];
+    const nativeFailures: NativeFailure[] = failedEntries.map((entry, index) => {
+      const eq = entry.indexOf('=');
+      return {attempt: entry.slice(0, eq), reason: entry.slice(eq + 1), reasonHash: failedHashes[index] ?? ''};
+    });
+    const ignoredFailureReports: string[] = [];
+    const outcomes = await fanOutComplete({dir, slots, prompt: askPrompt(question, ''), cwd: manifest.repositoryRoot, sessionRoot: session,
       validate(raw) {
         const text = sanitizeText(raw);
         return text ? {ok: true, text} : {ok: false, cls: 'empty-output', reason: 'empty sanitized answer'};
       },
+      nativeFirstProviders: slots.nativeFirstProviders, nativeFailures,
+      onIgnoredReport: attempt => { ignoredFailureReports.push(attempt); },
     }, deps);
     const answers = outcomes.flatMap(outcome => outcome.state === 'done' ? [{slot: outcome.slot,
-      provider: outcome.responder?.provider ?? slots.targets.find(slot => slot.slot === outcome.slot)!.provider,
+      provider: outcome.responder?.provider ?? slots.targets.find(slot => slot.slot === outcome.slot)?.provider ?? (outcome as unknown as {provider?: string}).provider ?? 'unknown',
       ...(outcome.responder ? {responder: outcome.responder} : {}), text: outcome.text}] : []);
     const failed = outcomes.filter(outcome => outcome.state === 'failed');
     const native = outcomes.filter(outcome => outcome.state === 'native');
-    const value = {answers, failed, native, ...(slots.underfill ? {underfill: slots.underfill} : {})};
+    const wave = cliWaveState(dir);
+    const value = {answers, failed, native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(slots.underfill ? {underfill: slots.underfill} : {})};
     const summary = `ask: ${answers.length} answers, ${failed.length} failed` + underfillNote(slots);
     if (native.length) return {ok: false, exit: 4, reason: 'native-pending', summary, value};
     if (!answers.length) return {ok: false, exit: 2, reason: 'ask-failed', summary, value};

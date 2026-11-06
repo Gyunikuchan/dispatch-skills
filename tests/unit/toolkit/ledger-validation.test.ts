@@ -242,3 +242,29 @@ test('severity correction refused: a lone dimension, an invalid value or a sever
     assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', ruling})), {reason: 'invalid-record'});
   assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', subject: 'plan:T1'})), {reason: 'invalid-record'});
 });
+
+test('checkout rerun notes require a quoted user decision while keep notes accept any author', () => {
+  const rerun = (overrides: object = {}) => ({kind: 'note', by: 'user', quote: 'Rerun the affected voices', key: 'repository-rerun:code-worktree-abc:1', data: {text: 'rerun'}, ...overrides});
+  assert.doesNotThrow(() => validateRecord(rerun()));
+  assert.throws(() => validateRecord(rerun({by: 'orchestrator'})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(rerun({by: 'tool'})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(rerun({quote: ' '})), {reason: 'user-only'});
+  assert.throws(() => validateRecord(rerun({quote: ''})), {reason: 'user-only'});
+  const keep = {kind: 'note', by: 'orchestrator', key: 'repository-changes:code-worktree-abc:1', data: {text: 'explained'}};
+  assert.doesNotThrow(() => validateRecord(keep));
+});
+
+// SECTION: Repository rerun and change note keys.
+
+test('rerun keys accept an optional report suffix while bad shapes refuse', () => {
+  const rerun = (key: string) => ({kind: 'note', by: 'user', quote: 'Rerun the affected voices', key, data: {text: 'rerun'}});
+  assert.doesNotThrow(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1')));
+  assert.doesNotThrow(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1:12')));
+  assert.throws(() => validateRecord(rerun('repository-rerun:code-worktree-abc')), {reason: 'invalid-record'});
+  assert.throws(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1:x')), {reason: 'invalid-record'});
+});
+
+test('repository change notes accept the review-round key with or without a report suffix', () => {
+  assert.doesNotThrow(() => validateRecord({kind: 'note', by: 'orchestrator', key: 'repository-changes:code-worktree-abc:1', data: {text: 'explained'}}));
+  assert.doesNotThrow(() => validateRecord({kind: 'note', by: 'user', quote: 'q', key: 'repository-changes:code-worktree-abc:1:99', data: {text: 'explained'}}));
+});

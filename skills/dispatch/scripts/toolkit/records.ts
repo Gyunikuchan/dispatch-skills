@@ -166,6 +166,10 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (value.data['state'] !== 'resolved') invalid('data.state', 'resolved');
     if (!coverageDecision(value.data['summary'])) invalid('data.summary', 'accept: <slot>[, <slot>]* with unique name[index] slots, or grant: <reason>');
   }
+  if (value.kind === 'note' && typeof value.key === 'string' && value.key.startsWith('repository-rerun:')) {
+    if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'repository rerun requires by user and non-blank quote');
+    if (!/^repository-rerun:[^:\s]+:\d+(?::\d+)?$/.test(value.key)) invalid('record.key', 'repository-rerun:<review>:<round>[:<reportSeq>]');
+  }
   if (!stored && ['approval', 'confirm', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');
   }

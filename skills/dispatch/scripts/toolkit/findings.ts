@@ -6,15 +6,19 @@ import type { SlotOutcome } from './fanout.ts';
 import type { LedgerRecord, RecordInput } from './records.ts';
 import { effectiveSeverity } from './domain/severity.ts';
 import type { Fold } from './ledger.ts';
+import { parseRepositoryNoteKey } from './ledger.ts';
 import { coverageState, type CoverageApplies, type CoverageDecision, type CoverageState } from './coverage.ts';
 import { ToolError } from './output.ts';
 import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
 export type ReviewTarget = string | {base: string; head: string};
 export type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
+export type RepositoryChange = { cwd: string; paths: string[] };
+export type RepositoryCheckState = { state: 'unavailable'; reason: string };
 export type FindingsValue = {
   review: string; round: number; cap: number; level: string; findings: ReviewedFinding[];
   clusters: {file: string; findings: string[]}[]; failed: Extract<SlotOutcome, {state: 'failed'}>[];
   confirmations?: RejectionReply[];
+  repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState;
 };
 export type Finalized = FindingsValue & {escalations: RecordInput[]};
 const key = (finding: Finding) => ({locus: finding.locus, category: finding.category, text: finding.defect + ' ' + finding.requiredChange});
@@ -25,6 +29,7 @@ export function finalizeRound(input: {
   owners?: Record<string, readonly string[]>; escalationRecords?: readonly LedgerRecord[]; rulings: readonly LedgerRecord[];
   kind: ReviewKind; artifact: string; target: ReviewTarget;
   requests?: readonly RejectionRequest[]; confirmationRounds?: readonly ConfirmationRound[]; spec?: {path:string;hash:string}; roster?: ConfirmationRound['metadata']['roster'];
+  repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState;
 }): Finalized {
   const confirmations: RejectionReply[] = [];
   const drafts = input.replies.flatMap(reply => {
@@ -71,7 +76,9 @@ export function finalizeRound(input: {
   }
   return {review: input.review, round: input.round, cap: input.cap, level: input.level, findings,
     clusters: [...clusters].map(([file, findings]) => ({file, findings})),
-    failed: input.replies.filter((reply): reply is Extract<SlotOutcome, {state: 'failed'}> => reply.state === 'failed'), confirmations, escalations};
+    failed: input.replies.filter((reply): reply is Extract<SlotOutcome, {state: 'failed'}> => reply.state === 'failed'), confirmations, escalations,
+    ...(input.repositoryChanges ? {repositoryChanges: input.repositoryChanges} : {}),
+    ...(input.repositoryCheck ? {repositoryCheck: input.repositoryCheck} : {})};
 }
 // SECTION: Review budget
 export function read<T>(file: string): T | null {
@@ -105,10 +112,163 @@ export type BudgetCoverage =
   | {state: 'unreadable'};
 export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open' | 'requires-coverage-decision'; coverage?: BudgetCoverage};
 /** The single admission policy: launch refuses by `state`; status and summaries only report it, opening and granting nothing. */
+// Every content report for a round with its durable identity: findings.json
+// first, then each generation in numeric order and each attempt file in
+// numeric order. A clean generation contributes no identity. A report without
+// a numeric asOfSeq keeps identity 0, so a legacy closing note still covers it.
+export type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState };
+export function contentReports(session: string, review: string, round: number): ReportContent[] {
+  const out: ReportContent[] = [];
+  const dir = path.join(session, '.state/reviews', review, 'round-' + round);
+  const findings = read<FindingsValue & {asOfSeq?: number; budget?: {asOfSeq?: number}}>(path.join(dir, 'findings.json'));
+  const findingsHas = (Array.isArray(findings?.repositoryChanges) && findings.repositoryChanges.length > 0) || !!findings?.repositoryCheck;
+  // The finalized findings copy carries the same durable identity as its
+  // per-generation checkout report: finalize persists asOfSeq into
+  // findings.json, so one per-report decision closes both copies. The budget
+  // fallback covers older and hand-written files.
+  const findingsSeq = typeof findings?.asOfSeq === 'number' ? findings.asOfSeq
+    : typeof findings?.budget?.asOfSeq === 'number' ? findings.budget.asOfSeq : 0;
+  if (findingsHas) out.push({ seq: findingsSeq,
+    ...(findings?.repositoryChanges ? {repositoryChanges: findings.repositoryChanges} : {}),
+    ...(findings?.repositoryCheck ? {repositoryCheck: findings.repositoryCheck} : {}) });
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return out;
+  }
+  const genNumber = (name: string): number => Number(name.slice(4));
+  for (const entry of entries.filter(name => /^gen-\d+$/.test(name)).sort((left, right) => genNumber(left) - genNumber(right))) {
+    for (const report of checkoutReportsFor(dir, entry)) {
+      const reportHas = (Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0) || !!report?.repositoryCheck;
+      if (!reportHas) continue;
+      out.push({ seq: typeof report?.asOfSeq === 'number' ? report.asOfSeq : 0,
+        ...(Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0 ? {repositoryChanges: report.repositoryChanges as RepositoryChange[]} : {}),
+        ...(report?.repositoryCheck ? {repositoryCheck: report.repositoryCheck as RepositoryCheckState} : {}) });
+    }
+  }
+  return out;
+}
+
+/** Numeric identities of every content report for a round, ascending. */
+export function reportSeqs(session: string, review: string, round: number): number[] {
+  return [...new Set(contentReports(session, review, round).map(report => report.seq))].sort((left, right) => left - right);
+}
+
+/** Closing decisions for a round: legacy keys and per-report suffixed keys alike. */
+export function closingNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq?: number}[] {
+  const out: {seq: number; reportSeq?: number}[] = [];
+  for (const row of fold.records) {
+    if (row.kind !== 'note' || typeof row.key !== 'string') continue;
+    const parsed = parseRepositoryNoteKey(row.key);
+    if (!parsed || parsed.kind !== 'changes' || parsed.review !== review || parsed.round !== round) continue;
+    out.push({seq: row.seq, ...(parsed.reportSeq !== undefined ? {reportSeq: parsed.reportSeq} : {})});
+  }
+  return out;
+}
+
+/** Quoted user rerun decisions for a round, legacy and suffixed. */
+export function rerunNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq?: number}[] {
+  const out: {seq: number; reportSeq?: number}[] = [];
+  for (const row of fold.records) {
+    if (row.kind !== 'note' || typeof row.key !== 'string') continue;
+    const parsed = parseRepositoryNoteKey(row.key);
+    if (!parsed || parsed.kind !== 'rerun' || parsed.review !== review || parsed.round !== round) continue;
+    if (row.by !== 'user' || !row.quote?.trim()) continue;
+    out.push({seq: row.seq, ...(parsed.reportSeq !== undefined ? {reportSeq: parsed.reportSeq} : {})});
+  }
+  return out;
+}
+
+// A legacy closing note covers every earlier report; a suffixed note covers
+// only its named report. Both need a strictly later note sequence, so an
+// equal-seq report under a reused number stays open.
+export function coversReport(note: {seq: number; reportSeq?: number}, seq: number): boolean {
+  if (note.reportSeq === undefined) return note.seq > seq;
+  return note.reportSeq === seq && note.seq > seq;
+}
+
+/** A round is closed only when every content report has a covering decision. */
+export function isReportsClosed(fold: Fold, review: string, round: number, seqs: readonly number[]): boolean {
+  if (!seqs.length) return false;
+  const notes = closingNotesFor(fold, review, round);
+  return seqs.every(seq => notes.some(note => coversReport(note, seq)));
+}
+
+// The report a rerun decision acknowledges: an explicit suffix, or the latest
+// report finalized at or before a legacy note (legacy keys carry no suffix,
+// so time binds them). A later report under the same number matches no stale
+// decision.
+export function rerunCoverSeq(session: string, review: string, round: number, note: {seq: number; reportSeq?: number}): number {
+  if (note.reportSeq !== undefined) return note.reportSeq;
+  let covered = 0;
+  for (const seq of reportSeqs(session, review, round)) if (seq <= note.seq) covered = Math.max(covered, seq);
+  return covered;
+}
+
+/** A rerun decision grants only the latest uncovered report of its round: a
+ * quoted or legacy decision for an earlier or already-closed report grants
+ * nothing for the still-open one. */
+export function rerunGranted(session: string, fold: Fold, review: string, round: number): boolean {
+  const seqs = reportSeqs(session, review, round);
+  if (!seqs.length) return false;
+  const notes = closingNotesFor(fold, review, round);
+  const uncovered = seqs.filter(seq => !notes.some(note => coversReport(note, seq)));
+  if (!uncovered.length) return false;
+  const current = Math.max(...uncovered);
+  return rerunNotesFor(fold, review, round).some(note => rerunCoverSeq(session, review, round, note) === current);
+}
+
+// Rerun admission counts legacy and per-report suffixed decisions alike: the
+// shared repository-note parser recognizes both key forms, so a documented
+// suffixed decision grants its round. The pre-gate stays because admission
+// and isRerunRound scope the grant to one named round before binding it to
+// the current report via rerunGranted.
+export function repositoryRerunRounds(fold: Fold, review: string): number[] {
+  const rounds: number[] = [];
+  for (const row of fold.records) {
+    if (row.kind !== 'note' || typeof row.key !== 'string') continue;
+    const parsed = parseRepositoryNoteKey(row.key);
+    if (!parsed || parsed.kind !== 'rerun' || parsed.review !== review) continue;
+    if (row.by !== 'user' || !row.quote?.trim()) continue;
+    rounds.push(parsed.round);
+  }
+  return rounds;
+}
+
+// Every unacknowledged report file of one generation: the first write lands in
+// checkout-report.json and each retry in checkout-report-<k>.json, so a later
+// clean comparison never erases an earlier report. Numeric attempt order.
+export type CheckoutReportRead = {repositoryChanges?: unknown; repositoryCheck?: unknown; asOfSeq?: number};
+export function checkoutReportsFor(dir: string, gen: string): CheckoutReportRead[] {
+  const attemptNumber = (file: string): number =>
+    file === 'checkout-report.json' ? 1 : Number(file.slice('checkout-report-'.length, -'.json'.length));
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(path.join(dir, gen));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return [];
+  }
+  return files
+    .filter(file => /^checkout-report(-\d+)?\.json$/.test(file))
+    .sort((left, right) => attemptNumber(left) - attemptNumber(right))
+    .map(file => read<CheckoutReportRead>(path.join(dir, gen, file)))
+    .filter((report): report is CheckoutReportRead => report !== null);
+}
+
 export function admission(session: string, fold: Fold, review: string, cap: number, applies?: CoverageApplies): {budget: ReviewBudget; rounds: number} {
   const directory = path.join(session, '.state/reviews', review), file = (round: number, name: string) => path.join(directory, 'round-' + round, name);
   const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
-  const last = numbers.at(-1) ?? 0, completed = last > 0 && fs.existsSync(file(last, 'findings.json')), n = completed ? last + 1 : last || 1;
+  const last = numbers.at(-1) ?? 0;
+  // An all-failed round has no findings.json but keeps its failed report: a
+  // quoted rerun note naming it completes its number, so the next call starts
+  // the authorized fresh whole-target rerun instead of retrying failed fan-out.
+  let completed = last > 0 && fs.existsSync(file(last, 'findings.json'));
+  if (!completed && last > 0 && repositoryRerunRounds(fold, review).includes(last)) {
+    const seqs = reportSeqs(session, review, last);
+    if (seqs.length && !isReportsClosed(fold, review, last, seqs) && rerunGranted(session, fold, review, last)) completed = true;
+  }
+  const n = completed ? last + 1 : last || 1;
   const cap1 = read<{cap: number}>(file(1, 'round.json'))?.cap ?? cap, ceiling = ceilingState(fold.records, review, cap1);
   const rulings = fold.records.filter(row => row.kind === 'ruling'), startSeq = read<{startSeq?: number}>(file(n - 1, 'round.json'))?.startSeq ?? 0;
   const rejections = loadRejections(session, fold, [review]), pending = rejections.some(state => state.state === 'pending');
@@ -121,6 +281,20 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
   let state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
     : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending)) ? 'requires-continuation'
     : past && !ceiling.deferred ? 'requires-ceiling-resolution' : 'allowed';
+  // A user rerun note admits its named round + 1 once above the cap and below the
+  // ceiling. Escalation and ceiling checks above stay first; other rounds keep no grant.
+  if (state === 'requires-continuation' && n > cap1 && n <= ceiling.ceiling) {
+    const reruns = repositoryRerunRounds(fold, review);
+    const seqs = reportSeqs(session, review, n - 1);
+    if (
+      reruns.includes(n - 1) &&
+      seqs.length > 0 &&
+      !isReportsClosed(fold, review, n - 1, seqs) &&
+      rerunGranted(session, fold, review, n - 1)
+    ) {
+      state = 'allowed';
+    }
+  }
   // SECTION: Coverage rows (code-integration only); escalation, ceiling and accepted-MUST rules stay first.
   let coverage: BudgetCoverage | undefined, use: 'free' | 'grant' | undefined, folded: CoverageState | undefined;
   if (review === 'code-integration') {

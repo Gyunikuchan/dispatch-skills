@@ -62,7 +62,7 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 
 ## Understand diagnostics coverage
 
-In `diagnostics.md`, `—` marks an unavailable value, not zero. Captured CLI attempts include execution and semantic validation outcomes, routing, duration and reported usage. Native slots show pending or completed status, including fallback; their timing and Dispatch-recorded slot usage remain unavailable. Claude Code and Codex host transcripts can measure native subagent tokens separately. Missing measurements do not establish full conversation totals.
+In `diagnostics.md`, `—` marks an unavailable value, not zero. Captured CLI attempts include execution and semantic validation outcomes, routing, duration and reported usage. Native slots show pending or completed status, including CLI fallback; their timing and Dispatch-recorded slot usage remain unavailable. Claude Code and Codex host transcripts can measure native subagent tokens separately. Missing measurements do not establish full conversation totals.
 
 When captured facts include estimates, `~` marks those figures. Measured totals exclude `~` figures. Summed tool-call durations can overlap; intervals can include work, pauses and scheduling and do not establish active reasoning time. Host reasoning time, user wait, Dispatch-recorded writer usage and work before enablement remain unavailable. Session-cumulative usage is excluded to avoid double counting.
 

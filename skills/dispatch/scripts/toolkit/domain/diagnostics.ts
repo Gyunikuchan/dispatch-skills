@@ -39,15 +39,15 @@ export type DiagnosticEvent = {
   subject: string; slot: string; provider?: string; model?: string; attempt: number; targetSlot?: string;
 } & (
   {kind:'validation'; outcome:string; surface:'cli'|'native'} |
-  {kind:'routing'; cls?:FailureClass; state:'next-model'|'next-mode'|'reserve'|'native-fallback'|'stop'} |
-  {kind:'native'; state:'pending'|'completed'|'invalid'; replay?: boolean} |
+  {kind:'routing'; cls?:FailureClass; state:'next-model'|'next-mode'|'reserve'|'stop'} |
+  {kind:'native'; state:'pending'|'completed'|'invalid'|'failed'; replay?: boolean} |
   {kind:'slot'; cls?:FailureClass; state:'done'|'native'|'failed'; replay?: boolean}
 );
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason;
   estimated?: boolean; tokens?: number; slot?: string; lifecycleSteps?: LifecycleStep[];
-  routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'; subject?: string; attempt?: number; targetSlot?: string;
+  routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
 
 /**
@@ -113,7 +113,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
   ...files('scripts/toolkit/host-usage', 'claude-code codex index read types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize severity spec stable-value types', '.ts'),
-  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations coverage deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-findings review-identity status types verify walkthrough writers', '.ts'),
+  ...files('scripts/toolkit', 'artifacts ask brief cli confirmations coverage deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-checkout review-findings review-identity status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
 ]);
 
@@ -258,10 +258,10 @@ function invocationOf(v: unknown): InvocationFacts[] {
     phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
     ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
     surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
-    ...opt('routingOutcome',(['next-model','next-mode','reserve','native-fallback','stop'] as const).find(x=>x===v['routingOutcome'])),
+    ...opt('routingOutcome',(['next-model','next-mode','reserve','stop'] as const).find(x=>x===v['routingOutcome'])),
     ...opt('slotState',(['done','native','failed'] as const).find(x=>x===v['slotState'])),
     ...opt('validationOutcome',token(v['validationOutcome'])),
-    ...opt('nativeState',(['pending','completed','invalid'] as const).find(x=>x===v['nativeState'])),
+    ...opt('nativeState',(['pending','completed','invalid','failed'] as const).find(x=>x===v['nativeState'])),
     ...opt('subject',match(/^[a-f0-9]{16}$/)(v['subject'])), ...opt('attempt',count(v['attempt'])),
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),

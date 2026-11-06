@@ -17,7 +17,7 @@ import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
 type SlotOutcome =
-  | {slot: string; state: 'done'; responder?: {slot: string; provider: string; model: string | null; native: boolean}}
+  | {slot: string; state: 'done'; responder?: {slot: string; provider: string; model: string | null; native: boolean; effort?: string}}
   | {slot: string; state: 'native'}
   | {slot: string; state: 'failed'; cls: string};
 type ReviewedFinding = {
@@ -97,12 +97,25 @@ export function readReviews(session: string): ReviewRound[] {
 
 function invocation(round: ReviewRound, slot: SlotOutcome): InvocationFacts {
   const target = round.roster.find(row => row.slot === slot['slot']);
+  const responder = slot['state'] === 'done' ? (slot as {responder?: {provider: string; model: string | null; native: boolean}}).responder : undefined;
+  const provider = responder?.provider ?? target?.provider ?? 'unavailable';
+  const responderModel = responder?.model;
+  const targetModel = typeof target?.model === 'string' ? target.model : Array.isArray((target as {model?: unknown})?.model) ? ((target as {model: readonly string[]}).model[0] ?? 'unavailable') : 'unavailable';
+  // A recorded responder names its own model: a null model means the reserve
+  // ran unconfigured, never the logical target's model. The target fallback
+  // applies only when no responder data exists.
+  const model = responder
+    ? (typeof responderModel === 'string' && responderModel.trim() ? responderModel : 'unavailable')
+    : targetModel;
+  const surface = slot['state'] === 'done'
+    ? (responder ? (responder.native ? 'native' as const : 'cli' as const) : (target?.native ? 'native' as const : 'cli' as const))
+    : slot['state'] === 'native' || (target as {native?: boolean})?.native ? 'native' as const : 'cli' as const;
   const base = {
     phase: round.review,
-    provider: target?.provider ?? 'unavailable',
-    model: typeof target?.model === 'string' ? target.model : 'unavailable',
+    provider,
+    model,
     launched: false,
-    surface: slot['state'] === 'native' || target?.native ? 'native' as const : 'cli' as const,
+    surface,
     slot: slot['slot'],
   };
   if (slot['state'] === 'done') return {...base, outcome: 'ok'};
@@ -306,7 +319,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     if(value.surface!=='native'){invocations.push(value);return;}
     const key=[value.subject??value.phase,value.slot??''].join('|');
     const previous=native.get(key);
-    const rank=(r:InvocationFacts)=>r.nativeState==='completed'?3:r.nativeState==='invalid'?2:1;
+    const rank=(r:InvocationFacts)=>r.nativeState==='completed'?3:r.nativeState==='invalid'||r.nativeState==='failed'?2:1;
     if(!previous||rank(value)>=rank(previous))native.set(key,value);
   };
   measured.flatMap(row=>row.invocations).forEach(add);
@@ -316,7 +329,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     const subject=hash(path.join(root,round.review,`round-${round.round}`,`gen-${round.generation}`));
     // A current semantic slot is authoritative, but never creates another CLI launch.
     const prior=[...native.values()].find(i=>i.subject===subject&&i.slot===slot['slot']);
-    add({...row,phase:reviewKeys.get(round.review)!,subject,attempt:prior?.attempt??0,nativeState:slot['state']==='done'?'completed':slot['state']==='native'?'pending':'invalid'});
+    add({...row,phase:reviewKeys.get(round.review)!,subject,attempt:prior?.attempt??0,nativeState:slot['state']==='done'?'completed':slot['state']==='native'?'pending':slot['state']==='failed'?'failed':'invalid'});
   }
   invocations.push(...native.values());
   let observations:unknown,retroState:RunFacts['retroState'];
