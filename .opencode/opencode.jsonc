@@ -1,22 +1,26 @@
 {
 	"$schema": "https://opencode.ai/config.json",
-	"providers": {
-		"lmstudio": {
-			"package": "aisdk:@ai-sdk/openai-compatible",
-			"name": "LM Studio Local",
-			"settings": {
-				"baseURL": "http://127.0.0.1:1234/v1",
-				"apiKey": "lm-studio"
-			},
-			"models": {
-				"qwen3.8-27b-ridge": {
-					"name": "Qwen 3.8 27B Local",
-					"limit": {
-						"context": 65536,
-						"output": 8192
-					}
-				}
-			}
-		}
-	}
+	"compaction": {
+		"auto": true,
+		"buffer": "70%"
+	},
+	// "providers": {
+	// 	"lmstudio": {
+	// 		"package": "aisdk:@ai-sdk/openai-compatible",
+	// 		"name": "LM Studio Local",
+	// 		"settings": {
+	// 			"baseURL": "http://127.0.0.1:1234/v1",
+	// 			"apiKey": "lm-studio"
+	// 		},
+	// 		"models": {
+	// 			"qwen3.8-27b-ridge": {
+	// 				"name": "Qwen 3.8 27B Local",
+	// 				"limit": {
+	// 					"context": 65536,
+	// 					"output": 8192
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 }
