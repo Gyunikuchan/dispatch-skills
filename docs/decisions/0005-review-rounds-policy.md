@@ -14,6 +14,8 @@ Use one review policy across plan, design and code review. Bound routine quality
 
 Require explicit source-slot or configured substitute confirmation for rejected MUST findings. Escalate repeated disagreement or recurring failed fixes rather than running an unbounded dispute loop. Resolve intent claims against governing spec evidence; unsettled intent remains a user decision under [ADR 0010](0010-canonical-session-intent.md#readers-and-review).
 
+The second opinion is required because the orchestrator that rejects a finding can repeat its own blind spot; unilateral closure would remove the only independent check on that ruling. When the target and spec are unchanged and only pending MUST rejections remain, the confirmation-only prompt keeps that check without paying for a redundant full re-review. Reviews use holistic whole-target voices across providers rather than diff-sliced micro-reviewers: each voice keeps cross-file architectural context, and slicing would multiply invocations across every provider without improving that context.
+
 ## Consequences
 
 A run can stop for a material decision instead of completing. Reviewer failure, missing confirmation and unreviewed fixes remain visible. Exact continuation, confirmation and escalation rules belong to the [review rules](../../skills/dispatch/references/review-rules.md), with tool behavior in the [toolkit contract](../../skills/dispatch/references/toolkit.md#review-run). The former SHOULD threshold, delta-only review scope and engine modes have been removed.

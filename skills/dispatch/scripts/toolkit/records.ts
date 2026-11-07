@@ -4,7 +4,7 @@ import { stableValue } from './domain/stable-value.ts';
 import { ToolError } from './output.ts';
 
 export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate', 'focus', 'confirm'] as const;
-export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; data: Record<string, any> };
+export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; batchEndSeq?: number; data: Record<string, any> };
 export type RecordInput = Omit<LedgerRecord, 'seq' | 'at' | 'key'> & { key?: string };
 export type ReviewFix = { review: string; round: number; generation: number; findings: string[]; from: string };
 type Rule = (value: unknown, field: string) => void;
@@ -124,9 +124,11 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
   if (stored) {
     envelope['seq'] = launch;
     envelope['at'] = text;
+    envelope['batchEndSeq'] = launch;
   }
-  object(input, envelope, stored ? ['quote'] : ['quote', 'key'], 'record');
+  object(input, envelope, stored ? ['quote', 'batchEndSeq'] : ['quote', 'key'], 'record');
   const value = input as LedgerRecord;
+  if (stored && value.batchEndSeq !== undefined && value.batchEndSeq < value.seq) invalid('batchEndSeq', 'a ledger seq at or after record.seq');
   let fields = shapes[value.kind];
   if (value.kind === 'writer' || value.kind === 'integrate') {
     const phases = value.kind === 'writer' ? writers : integrations;

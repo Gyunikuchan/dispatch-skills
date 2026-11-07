@@ -20,7 +20,7 @@ Refusals: invalid input/kind/revision, unreadable or conflicting spec, lint-erro
 
 When assigned rejection requests, each logical source slot must reply with `confirmations: [{requestId, decision: "agree"|"disagree", rationale}]`, with exactly those item fields and one nonblank rationale per request. Ordinary `status` and `findings` remain required. Missing, extra, duplicate or malformed replies fail validation. Results retain original finding/ruling identity, captured target/spec and physical responder. Old reports without confirmations remain valid only when no requests are assigned.
 
-Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. For a confirmed spec edit during standalone review that cannot be recorded in a validated bound edit chain, follow the [note fallback](#note). Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion. Worktree round counts are per HEAD commit; a new commit starts a new review.
+Plan/design target paths select artifacts. Code targets resolve in order: integration; a bound-plan task ID; worktree; `<a>..<b>`; `<rev>`. Without a bind, a task-like name resolves as a Git revision. Standalone review uses --spec or the bound spec and needs no plan. When a round `n > 1` runs with `!rerun`, `!coverage`, `!decisive` (no accepted `MUST` and no accepted `SHOULD` below `cap1` in the latest substantive round), `same(prevRound, captured)`, and `requests.length > 0`, `review run` labels the scope `(confirmation-only)` and staffs the assigned source slots plus reserves with the captured target revision identity; the compact confirmation prompt replaces the full review prompt. For a confirmed spec edit during standalone review that cannot be recorded in a validated bound edit chain, follow the [note fallback](#note). Worktree captures HEAD plus tracked/untracked changes through a temporary index, preserves HEAD blobs for tracked session paths, excludes all session changes and leaves the caller index and branch intact. Outside-repository sessions need no exclusion. Worktree round counts are per HEAD commit; a new commit starts a new review.
 
 ### report render
 
@@ -133,9 +133,9 @@ Refusals: unknown criterion, which names each unknown ID and the valid IDs; expl
 
 ### ledger append
 
-Arguments: `ledger append <record.json> --session <session>`. `<record.json>` is a file path, not inline JSON. A leading UTF-8 BOM in the record file is ignored.
-Result path: appended seq and deduped boolean. For a ruling of a bound plan/design review, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
-Refusals: unreadable JSON, invalid-record, missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
+Arguments: `ledger append <record.json> --session <session>`. `<record.json>` is a file path, not inline JSON, holding a single record object or a non-empty JSON array of record objects. A leading UTF-8 BOM in the record file is ignored.
+Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
+Refusals: unreadable JSON, invalid-record (including an empty array), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
 ### ledger query
 

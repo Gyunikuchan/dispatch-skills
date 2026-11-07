@@ -18,6 +18,8 @@ Each platform has one explorer configuration entry. Each grounding phase uses on
 
 An explicit run level stays in force. Otherwise, Dispatch proposes and records a level after it authors and lints the plan or design, before the first review. The review uses that level; the user confirms a proposed level with artifact approval after review. For a design, record the level before design review and carry it to increment plans. Review or implementation may raise it to `high` and record the change in the ledger, but it never decreases mid-run. `xhigh` and `max` remain user-selected. The level rubric and resolution order live in the [configuration guide](../../skills/dispatch/references/readme/configuration.md#understand-levels-and-pins).
 
+Pre-spec grounding and the post-confirm Scope Round stay separate stages, as do Spec and Plan. Spec refinement introduces requirements and decisions whose repository impact needs rigorous code-level verification before planning, so the Scope Round never collapses into spec authoring. Carrying forward only verified unchanged baseline entries keeps the map complete while freeing the explorer budget for new requirements, local seams, callers and `Not covered` items.
+
 The `brainstorming` skill was rejected as a whole because it repeats grounding, writes a foreign spec, and hands off to another planning flow. Dispatch adopts these upstream elements as spec-stage rules: approach options with a recommendation, text sketches, question admission, the open why question, the short path, grounded playback and the self-check. `grilling` adds clarification while Dispatch keeps canonical artifact ownership.
 
 ## Consequences

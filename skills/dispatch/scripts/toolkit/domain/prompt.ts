@@ -136,9 +136,14 @@ export function qualityCriteria(markdown: string, consumer: QualityConsumer, rot
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
   return qualitySections[consumer].map((section) => {
-    const body = sections.get(section);
+    let body = sections.get(section);
     if (body === undefined) throw new Error(`Missing quality section: ${section}`);
     if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
+    if (section === 'testing') {
+      const omit = consumer === 'writer' ? '- Prune:' : '- Writer focus';
+      body = body.split('\n').filter((line) => !line.startsWith(omit)).join('\n');
+      if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
+    }
     return rotateLines(body.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
   }).join('\n\n');
 }

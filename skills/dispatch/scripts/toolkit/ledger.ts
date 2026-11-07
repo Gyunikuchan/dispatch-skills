@@ -39,11 +39,14 @@ export function foldLedger(session: string): Fold {
   let offset = 0;
   let line = 0;
   let torn: Buffer | null = null;
+  let batch: LedgerRecord[] = [];
+  let batchStart = -1;
+  let batchEndSeq = 0;
   while (offset < bytes.length) {
     line++;
     const end = bytes.indexOf(10, offset);
     if (end === -1) {
-      torn = bytes.subarray(offset);
+      torn = bytes.subarray(batchStart >= 0 ? batchStart : offset);
       break;
     }
     let parsed: unknown;
@@ -51,21 +54,43 @@ export function foldLedger(session: string): Fold {
       parsed = JSON.parse(bytes.subarray(offset, end).toString('utf8'));
     } catch {
       if (end === bytes.length - 1) {
-        torn = bytes.subarray(offset);
+        torn = bytes.subarray(batchStart >= 0 ? batchStart : offset);
         break;
       }
       throw new ToolError(2, 'ledger-corrupt', 'invalid JSON at line ' + line);
     }
     try {
       const record = validateRecord(parsed, true) as LedgerRecord;
-      if (record.seq <= lastSeq) throw new Error('seq');
-      records.push(record);
-      lastSeq = record.seq;
+      const pendingSeq = batch.at(-1)?.seq ?? lastSeq;
+      if (record.seq <= pendingSeq) throw new Error('seq');
+      if (record.batchEndSeq !== undefined) {
+        if (!batch.length) {
+          batchStart = offset;
+          batchEndSeq = record.batchEndSeq;
+        } else if (record.batchEndSeq !== batchEndSeq) throw new Error('batch');
+        batch.push(record);
+        if (record.seq === batchEndSeq) {
+          for (const row of batch) {
+            const clean = { ...row };
+            delete clean.batchEndSeq;
+            records.push(clean);
+          }
+          lastSeq = record.seq;
+          batch = [];
+          batchStart = -1;
+          batchEndSeq = 0;
+        }
+      } else {
+        if (batch.length) throw new Error('batch');
+        records.push(record);
+        lastSeq = record.seq;
+      }
     } catch {
       throw new ToolError(2, 'ledger-corrupt', 'invalid record at line ' + line);
     }
     offset = end + 1;
   }
+  if (batch.length) torn = bytes.subarray(batchStart);
   return { records, lastSeq, torn };
 }
 
@@ -159,71 +184,163 @@ function checkCorrection(session: string, fold: Fold, data: Record<string, any>)
   if (unnamed.length) refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', '));
 }
 
+type PreparedRecord = { record: RecordInput; key: string } | { seq: number; deduped: true };
+
+function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRecord {
+  const record = validateRecord(input) as RecordInput;
+  const key = record.key ?? defaultKey(record);
+  const existing = fold.records.find(row => row.key === key);
+  if (existing) {
+    if (content(existing) !== content(record)) throw new ToolError(2, 'key-conflict', 'key ' + key + ' has different content');
+    return { seq: existing.seq, deduped: true };
+  }
+  if (record.kind === 'ruling') checkCorrection(session, fold, record.data);
+
+  const root = readManifest(session).repositoryRoot;
+  const bind = latest(fold, 'bind');
+  if (record.kind === 'bind') {
+    const realRoot = fs.realpathSync(root);
+    for (const [kind, file] of Object.entries(record.data)) {
+      const relative = file as string;
+      if (artifactKind(relative) !== kind) {
+        throw new ToolError(1, 'invalid-record', 'data.' + kind + ' must name a .' + kind + '.md file');
+      }
+      let contained = false;
+      try {
+        const target = fs.realpathSync(path.resolve(root, relative));
+        const remainder = path.relative(realRoot, target);
+        contained = remainder !== '..' && !remainder.startsWith('..' + path.sep) && !path.isAbsolute(remainder) && fs.statSync(target).isFile();
+      } catch { /* Missing or unreadable targets fail the same bind check. */ }
+      if (path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).includes('..') || !contained) {
+        throw new ToolError(1, 'invalid-record', 'data.' + kind + ' must name a contained existing file');
+      }
+    }
+  }
+  if (record.kind === 'approval') {
+    const hashes = currentHashes(root, bind);
+    const artifacts = Object.keys(bind?.data ?? {}).sort();
+    const approvedArtifacts = Object.keys(record.data).sort();
+    if (!bind || stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
+      !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed)) {
+      const current = Object.entries(hashes).map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`).join('; ');
+      throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''));
+    }
+  }
+  if (record.kind === 'edit' && !Object.hasOwn(bind?.data ?? {}, record.data['artifact'])) {
+    const boundKinds = Object.keys(bind?.data ?? {}).sort();
+    const boundSummary = boundKinds.length ? boundKinds.join(', ') : 'none';
+    throw new ToolError(1, 'invalid-record', `data.artifact "${record.data['artifact']}" is not bound; append a bind record that includes it first. Currently bound artifact kinds: ${boundSummary}.`);
+  }
+  return { record, key };
+}
+
+// Reopen by path so a truncation made through a different descriptor is durable; directory sync is best effort.
+function syncPath(file: string, directory = false): void {
+  let handle: number;
+  try { handle = fs.openSync(file, directory ? 'r' : 'r+'); }
+  catch { if (directory) return; handle = fs.openSync(file, 'a'); }
+  try { fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
+}
+
+function recoverTorn(session: string, fold: Fold): void {
+  if (!fold.torn) return;
+  const file = ledgerPath(session);
+  let n = 1;
+  while (fs.existsSync(path.join(session, 'ledger.torn-' + n + '.jsonl'))) n++;
+  fs.writeFileSync(path.join(session, 'ledger.torn-' + n + '.jsonl'), fold.torn, { flag: 'wx' });
+  fs.truncateSync(file, fs.statSync(file).size - fold.torn.length);
+  syncPath(file);
+  if (process.platform !== 'win32') syncPath(session, true);
+  fold.torn = null;
+}
+
+export type AppendResult = { seq: number; deduped: boolean; count?: number; results?: { seq: number; deduped: boolean }[] };
+export type AppendRecordsOptions = {
+  onCommit?: (fold: Fold) => void;
+  writeBatch?: (handle: number, buffer: Buffer, offset: number, length: number) => number;
+};
+
+// Body first without the final newline keeps an un-fsynced batch hidden from unlocked readers; the marker records its extent.
+function writeRecords(session: string, fold: Fold, toWrite: readonly LedgerRecord[], options?: AppendRecordsOptions): void {
+  const file = ledgerPath(session);
+  recoverTorn(session, fold);
+  const baseSize = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  const batchEndSeq = toWrite.at(-1)!.seq;
+  const fullBuf = Buffer.from(toWrite.map(record => JSON.stringify(toWrite.length > 1 ? { ...record, batchEndSeq } : record) + '\n').join(''), 'utf8');
+  const bodyBuf = fullBuf.subarray(0, fullBuf.length - 1);
+  const finalNewline = fullBuf.subarray(fullBuf.length - 1);
+  let handle: number | undefined;
+  try {
+    handle = fs.openSync(file, 'a');
+    let written = 0;
+    while (written < bodyBuf.length) {
+      const n = (options?.writeBatch ?? fs.writeSync)(handle, bodyBuf, written, bodyBuf.length - written);
+      if (n <= 0) throw new Error('short write');
+      written += n;
+    }
+    fs.fsyncSync(handle);
+    if (fs.writeSync(handle, finalNewline, 0, 1) !== 1) throw new Error('short write');
+    fs.fsyncSync(handle);
+  } catch (error) {
+    if (handle !== undefined) {
+      try { fs.closeSync(handle); } catch { /* Preserve the write failure. */ }
+      handle = undefined;
+    }
+    try {
+      fs.truncateSync(file, baseSize);
+      syncPath(file);
+      if (process.platform !== 'win32') syncPath(session, true);
+    } catch { /* Preserve the write failure; truncation is attempted by path first. */ }
+    throw error;
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
+  }
+}
+
 export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
 export async function appendRecord(session: string, input: unknown, deps: LockDeps): Promise<{ seq: number; deduped: boolean }> {
   return withLedger(session, 'ledger append', deps, tx => tx.append(input));
+}
+export async function appendRecords(session: string, input: unknown, deps: LockDeps, options?: AppendRecordsOptions): Promise<AppendResult> {
+  return withLedger(session, 'ledger append', deps, async ({ fold }) => {
+    const items = Array.isArray(input) ? input : [input];
+    if (Array.isArray(input) && items.length === 0) throw new ToolError(1, 'invalid-record', 'record batch must be a non-empty array');
+    const working: Fold = { records: [...fold.records], lastSeq: fold.lastSeq, torn: fold.torn };
+    const results: { seq: number; deduped: boolean }[] = [];
+    const toWrite: LedgerRecord[] = [];
+    for (const item of items) {
+      const prepared = prepareRecord(session, working, item);
+      if ('deduped' in prepared) {
+        results.push({ seq: prepared.seq, deduped: true });
+        continue;
+      }
+      const stored: LedgerRecord = { ...prepared.record, key: prepared.key, seq: working.lastSeq + 1, at: new Date(deps.clock()).toISOString() };
+      working.records.push(stored);
+      working.lastSeq = stored.seq;
+      toWrite.push(stored);
+      results.push({ seq: stored.seq, deduped: false });
+    }
+    if (toWrite.length) writeRecords(session, fold, toWrite, options);
+    fold.records = working.records;
+    fold.lastSeq = working.lastSeq;
+    options?.onCommit?.(fold);
+    return Array.isArray(input)
+      ? { seq: results.at(-1)!.seq, deduped: results.every(row => row.deduped), count: items.length, results }
+      : { seq: results[0]!.seq, deduped: results[0]!.deduped };
+  });
 }
 export async function withLedger<T>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
   return withLock(session, tool, deps, async broken => {
     const fold = foldLedger(session);
     const append = async (input: unknown) => {
-    const record = validateRecord(input) as RecordInput;
-    const key = record.key ?? defaultKey(record);
-    const existing = fold.records.find(row => row.key === key);
-    if (existing) {
-      if (content(existing) !== content(record)) throw new ToolError(2, 'key-conflict', 'key ' + key + ' has different content');
-      return { seq: existing.seq, deduped: true };
-    }
-    if (record.kind === 'ruling') checkCorrection(session, fold, record.data);
-
-    const root = readManifest(session).repositoryRoot;
-    const bind = latest(fold, 'bind');
-    if (record.kind === 'bind') {
-      const realRoot = fs.realpathSync(root);
-      for (const [kind, file] of Object.entries(record.data)) {
-        const relative = file as string;
-        if (artifactKind(relative) !== kind) {
-          throw new ToolError(1, 'invalid-record', 'data.' + kind + ' must name a .' + kind + '.md file');
-        }
-        let contained = false;
-        try {
-          const target = fs.realpathSync(path.resolve(root, relative));
-          const remainder = path.relative(realRoot, target);
-          contained = remainder !== '..' && !remainder.startsWith('..' + path.sep) && !path.isAbsolute(remainder) && fs.statSync(target).isFile();
-        } catch { /* Missing or unreadable targets fail the same bind check. */ }
-        if (path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).includes('..') || !contained) {
-          throw new ToolError(1, 'invalid-record', 'data.' + kind + ' must name a contained existing file');
-        }
-      }
-    }
-    if (record.kind === 'approval') {
-      const hashes = currentHashes(root, bind);
-      const artifacts = Object.keys(bind?.data ?? {}).sort();
-      const approvedArtifacts = Object.keys(record.data).sort();
-      if (!bind || stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
-        !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed)) {
-        const current = Object.entries(hashes).map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`).join('; ');
-        throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''));
-      }
-    }
-    if (record.kind === 'edit' && !Object.hasOwn(bind?.data ?? {}, record.data['artifact'])) {
-      const boundKinds = Object.keys(bind?.data ?? {}).sort();
-      const boundSummary = boundKinds.length ? boundKinds.join(', ') : 'none';
-      throw new ToolError(1, 'invalid-record', `data.artifact "${record.data['artifact']}" is not bound; append a bind record that includes it first. Currently bound artifact kinds: ${boundSummary}.`);
-    }
-
+    const prepared = prepareRecord(session, fold, input);
+    if ('deduped' in prepared) return { seq: prepared.seq, deduped: true };
     const file = ledgerPath(session);
-    if (fold.torn) {
-      let n = 1;
-      while (fs.existsSync(path.join(session, 'ledger.torn-' + n + '.jsonl'))) n++;
-      fs.writeFileSync(path.join(session, 'ledger.torn-' + n + '.jsonl'), fold.torn, { flag: 'wx' });
-      fs.truncateSync(file, fs.statSync(file).size - fold.torn.length);
-      fold.torn = null;
-    }
+    recoverTorn(session, fold);
     const handle = fs.openSync(file, 'a');
     try {
       const seq = fold.lastSeq + 1;
-      const stored = { ...record, key, seq, at: new Date(deps.clock()).toISOString() };
+      const stored = { ...prepared.record, key: prepared.key, seq, at: new Date(deps.clock()).toISOString() };
       fs.writeSync(handle, JSON.stringify(stored) + '\n');
       fs.fsyncSync(handle);
       fold.records.push(stored);

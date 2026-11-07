@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
+import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
 import type { DelegateRequest, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { main, nodeDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
@@ -12,6 +13,12 @@ import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+
+function useMemoryAtomicWrite(): () => void {
+  const writeAtomic = nodeLinkFs.writeAtomic;
+  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
+  return () => { nodeLinkFs.writeAtomic = writeAtomic; };
+}
 
 describe('toolkit CLI contract', () => {
   test('commit retries distinguish corrupt correction metadata from completed retries', async () => {
@@ -331,4 +338,66 @@ test('an unreadable fanout record still counts as a native launch', async () => 
     fs.mkdirSync(path.join(dir, 'gen-1', 'fanout.json'));
     assert.equal(generationLaunchedNative(dir, 1), true, 'an unreadable record fails closed to launched');
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+
+test('cli ledger append formats array summary and refreshes findings for new and deduplicated ruling batches', async () => {
+  const f = sessionFixture({memory:true});
+  const restoreAtomicWrite = useMemoryAtomicWrite();
+  try {
+    const spec = f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nKeep work recoverable.\n');
+    const plan = f.artifact('work.plan.md', '# Work\n\n## Review Findings & Resolutions\nDriver note.\n');
+    const relative = (file: string) => path.relative(f.root, file).split(path.sep).join('/');
+    const append = async (name: string, record: unknown) => {
+      const file = path.join(f.root, `${name}.json`);
+      fs.writeFileSync(file, JSON.stringify(record));
+      f.lines.length = 0;
+      const exit = await main(['ledger', 'append', file, '--session', f.session], f.deps);
+      const output = f.output();
+      const value = exit === 0 ? JSON.parse(fs.readFileSync(output.path!, 'utf8')) as Record<string, unknown> : null;
+      return {exit, output, value};
+    };
+
+    await append('bind', {kind:'bind', by:'orchestrator', key:'bind', data:{spec:relative(spec), plan:relative(plan)}});
+
+    const review = 'plan-work.plan';
+    const directory = path.join(f.session, '.state', 'reviews', review, 'round-1');
+    fs.mkdirSync(directory, {recursive:true});
+    fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({round:1, generation:1, cap:2, roster:[]}));
+    fs.writeFileSync(path.join(directory, 'findings.json'), JSON.stringify({review, round:1, findings:[
+      {id:'R1-F001', severity:'SHOULD'}, {id:'R1-F002', severity:'SHOULD'},
+    ]}));
+    const rulings = [
+      {kind:'ruling', by:'orchestrator', key:'ruling-F001', data:{subject:`review:${review}:R1-F001`, ruling:'accepted', rationale:'Fixed'}},
+      {kind:'ruling', by:'orchestrator', key:'ruling-F002', data:{subject:`review:${review}:R1-F002`, ruling:'deferred', rationale:'Later'}},
+    ];
+    const first = await append('rulings', rulings);
+    assert.equal(first.exit, 0);
+    assert.equal(first.output.summary, '2 records (last seq 3)');
+    assert.deepEqual({seq:first.value!['seq'], deduped:first.value!['deduped'], count:first.value!['count'], results:first.value!['results'], findingsSection:first.value!['findingsSection']}, {
+      seq:3, deduped:false, count:2, results:[{seq:2,deduped:false},{seq:3,deduped:false}], findingsSection:'updated',
+    });
+    assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 2 findings/);
+
+    const retried = await append('rulings', rulings);
+    assert.equal(retried.output.summary, '2 records (last seq 3, all deduped)');
+    assert.deepEqual({seq:retried.value!['seq'], deduped:retried.value!['deduped'], count:retried.value!['count'], results:retried.value!['results'], findingsSection:retried.value!['findingsSection']}, {
+      seq:3, deduped:true, count:2, results:[{seq:2,deduped:true},{seq:3,deduped:true}], findingsSection:'unchanged',
+    });
+
+    const acceptedF002 = {kind:'ruling', by:'orchestrator', key:'ruling-F002-accepted', data:{subject:`review:${review}:R1-F002`, ruling:'accepted', rationale:'Now fixed'}};
+    const mixed = await append('mixed', [rulings[0], acceptedF002]);
+    assert.equal(mixed.output.summary, '2 records (last seq 4)');
+    assert.deepEqual({seq:mixed.value!['seq'], deduped:mixed.value!['deduped'], count:mixed.value!['count'], results:mixed.value!['results'], findingsSection:mixed.value!['findingsSection']}, {
+      seq:4, deduped:false, count:2, results:[{seq:2,deduped:true},{seq:4,deduped:false}], findingsSection:'updated',
+    }, JSON.stringify(mixed.value));
+    assert.match(fs.readFileSync(plan, 'utf8'), /F002 \| 1 \| SHOULD \|[^|]*\| Accepted \|/);
+
+    const single = await append('single', {kind:'note', by:'orchestrator', key:'single-note', data:{text:'single'}});
+    assert.equal(single.output.summary, 'seq 5 appended');
+    assert.deepEqual({seq:single.value!['seq'], deduped:single.value!['deduped']}, {seq:5, deduped:false});
+    assert.equal('findingsSection' in single.value!, false);
+    const singleRetry = await append('single', {kind:'note', by:'orchestrator', key:'single-note', data:{text:'single'}});
+    assert.equal(singleRetry.output.summary, 'seq 5 deduped');
+    assert.deepEqual({seq:singleRetry.value!['seq'], deduped:singleRetry.value!['deduped']}, {seq:5, deduped:true});
+  } finally {restoreAtomicWrite(); f.cleanup();}
 });

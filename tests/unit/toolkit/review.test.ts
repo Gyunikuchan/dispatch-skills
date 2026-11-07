@@ -786,3 +786,269 @@ test('review budget matches admission after rulings and ceiling resolutions', as
     assert.ok(accepted.asOfSeq > fifth.value.budget.asOfSeq);
   } finally { f.cleanup(); }
 });
+
+// SECTION: Confirmation-only fast path
+
+const VALID_TASK_PLAN = ['# Work', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '## Proposed Changes', '### T1 — File', '#### [NEW] src/file.ts', '- Purpose: behavior.', '## Success Criteria', '- [SC1] Works', '  - Changes: src/file.ts', '  - Verify: `node check`', '  - Evidence: verify', '## Verification Plan', '### Automated Tests', '- `node contract`'].join('\n');
+const delegateSlots = (f: ReviewFixture) => f.launches.map(launch => launch.provider);
+const targetSlotIds = (metadata: {roster: {slot: string; reserve: boolean}[]}) =>
+  metadata.roster.filter(slot => !slot.reserve).map(slot => slot.slot);
+const reserveSlotIds = (metadata: {roster: {slot: string; reserve: boolean}[]}) =>
+  metadata.roster.filter(slot => slot.reserve).map(slot => slot.slot);
+const configureAssignable = (f: ReviewFixture) => configure(f, {'read-delegates': {
+  claude: {targets: [{low: {model: 'fake'}}]},
+  agy: {targets: [{low: {model: 'fake'}}]},
+  copilot: {targets: [{low: {model: 'fake'}}]},
+}});
+const rejectedMustRound = async (f: ReviewFixture, target: string, kind: 'plan' | 'code', level = 'medium') => {
+  f.deps.delegate = async (provider, request, mode) => {
+    f.launches.push({provider, request, mode});
+    const text = provider === 'agy' ? report(kind === 'code' ? 'src/file.ts:L1' : '§ Work', 'Writes are unbounded', 'MUST') : CLEAN;
+    return {outcome: {status: 'ok', text, resume: null, sessionId: null}, invocations: []};
+  };
+  const first = await f.call(kind, target, level);
+  assert.equal(first.exit, 0, JSON.stringify(first));
+  await f.add('ruling', {subject: 'review:' + first.value.review + ':R1-F001', ruling: 'rejected', rationale: 'The captured implementation bounds each write'});
+  return first;
+};
+const answerConfirmation = (f: ReviewFixture) => {
+  const reads: {provider: string; prompt: string}[] = [];
+  f.deps.delegate = async (provider, request, mode) => {
+    f.launches.push({provider, request, mode});
+    const prompt = fs.readFileSync(request.promptPath, 'utf8');
+    reads.push({provider, prompt});
+    const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+    const text = ids.length
+      ? JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'The captured evidence bounds each write'}))})
+      : CLEAN;
+    return {outcome: {status: 'ok', text, resume: null, sessionId: null}, invocations: []};
+  };
+  return reads;
+};
+const seedConfirmationRound = (f: ReviewFixture, round: number, metadata: Record<string, unknown>, findings: object[] = []) => {
+  const dir = path.join(f.directory, 'round-' + round);
+  fs.mkdirSync(dir, {recursive: true});
+  fs.writeFileSync(path.join(dir, 'round.json'), JSON.stringify({...metadata, round}));
+  fs.writeFileSync(path.join(dir, 'findings.json'), JSON.stringify({review: PLAN_REVIEW, round, cap: 2, level: 'medium', findings, clusters: [], failed: []}));
+  fs.writeFileSync(path.join(dir, 'target.snapshot.md'), fs.readFileSync(f.plan, 'utf8'));
+};
+const rewriteRound = (f: ReviewFixture, round: number, change: (metadata: Record<string, unknown>) => void) => {
+  const file = path.join(f.directory, 'round-' + round, 'round.json');
+  const metadata = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  change(metadata);
+  fs.writeFileSync(file, JSON.stringify(metadata));
+};
+
+test('unchanged target with pending MUST rejection runs confirmation-only prompt', async () => {
+  // Plan target: one source slot, reserves carried, focused prompt contents.
+  {
+    const f = await fixture();
+    try {
+      configureAssignable(f);
+      await rejectedMustRound(f, f.plan, 'plan');
+      const reads = answerConfirmation(f);
+      f.launches.length = 0;
+      const second = await f.call();
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      const round = f.read(2, 'round.json');
+      assert.match(round.scope, /^Re-review round 2 \(confirmation-only\) — comparison: sha256:[a-f0-9]+\.\.sha256:[a-f0-9]+$/);
+      assert.deepEqual(targetSlotIds(round), ['agy[0]']);
+      assert.deepEqual(reserveSlotIds(round), ['copilot[0]']);
+      assert.deepEqual(delegateSlots(f), ['agy']);
+      assert.equal(round.requests.length, 1);
+      assert.equal(f.read(2, 'findings.json').confirmations.length, 1);
+      const prompt = reads[0]!.prompt;
+      for (const expected of [
+        "Confirm or dispute the host's evidence-backed rejection of your earlier MUST finding(s) on this unchanged target.",
+        '- Spec Path: ' + round.spec.path,
+        '- Spec Hash: ' + round.spec.hash,
+        '- Target: ' + f.plan,
+        '- Target Revision: ' + round.target,
+        '- Checkout Path: ' + fs.realpathSync(f.root),
+        '- Plan: ' + f.plan,
+        '- Scope: ' + round.scope,
+        '- Finding: R1-F001',
+        '- Target: § Work',
+        '- Spec: ' + round.spec.path,
+        '- Original finding: Writes are unbounded',
+        '- Required change: Keep writes isolated until finalization',
+        '- Host rejection: The captured implementation bounds each write',
+        '{"status":"CLEAN","findings":[],"confirmations":[{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]}',
+      ]) assert.ok(prompt.includes(expected), expected);
+      assert.match(prompt, /read-only/i);
+      assert.match(prompt, /Do not edit/i);
+      assert.match(prompt, /Request ID: `[a-f0-9]{64}`/);
+      assert.doesNotMatch(prompt, /### Review against/);
+      assert.doesNotMatch(prompt, /Advisory Tool Turn Target/);
+    } finally { f.cleanup(); }
+  }
+
+  // Code revision-range target renders a base..head revision and the task context.
+  {
+    const f = await fixture();
+    try {
+      configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}}});
+      const base = 'a'.repeat(40), head = 'b'.repeat(40);
+      f.deps.run = async argv => {
+        if (argv[1] === 'rev-parse') return {exit: 0, stdout: argv.at(-1) === 'main^{commit}' ? base : head, stderr: ''};
+        if (argv[1] === 'diff') return {exit: 0, stdout: 'src/file.ts\0', stderr: ''};
+        return {exit: 0, stdout: '', stderr: ''};
+      };
+      await rejectedMustRound(f, 'main..feature', 'code', 'low');
+      const reads = answerConfirmation(f);
+      f.launches.length = 0;
+      const second = await f.call('code', 'main..feature', 'low');
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      const round = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', second.value.review, 'round-2', 'round.json'), 'utf8'));
+      assert.match(round.scope, /^Re-review round 2 \(confirmation-only\) — comparison: b{40}\.\.b{40}$/);
+      assert.deepEqual(targetSlotIds(round), ['agy[0]']);
+      const prompt = reads[0]!.prompt;
+      assert.ok(prompt.includes('- Target Revision: ' + base + '..' + head), prompt);
+      assert.match(prompt, /- Plan: .*work\.plan\.md/);
+      assert.match(prompt, /- Task: /);
+    } finally { f.cleanup(); }
+  }
+
+  // Integration and bound-plan task targets render a base..head revision.
+  for (const item of [
+    {target: 'integration', base: 'c'.repeat(40), head: 'd'.repeat(40), seed: async (f: ReviewFixture) => {
+      await f.add('integrate', {phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: 'c'.repeat(40), dest: {path: f.root, branch: 'main'}});
+      await f.add('integrate', {phase: 'done', task: 'T1', commit: 'd'.repeat(40)});
+    }},
+    {target: 'T1', base: 'e'.repeat(40), head: 'f'.repeat(40), seed: async (f: ReviewFixture) => {
+      await f.add('writer', {phase: 'launched', task: 'T1', path: '.state/worktrees/T1-1', base: {commit: 'e'.repeat(40), taskSection: 'sha256:' + '1'.repeat(64), seq: 1}});
+      await f.add('writer', {phase: 'finished', task: 'T1', launch: 1, candidate: 'f'.repeat(40)});
+    }},
+  ]) {
+    const f = await fixture();
+    try {
+      configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}}});
+      fs.writeFileSync(f.plan, VALID_TASK_PLAN);
+      await item.seed(f);
+      f.deps.run = async argv => ({exit: 0, stdout: argv[1] === 'diff' ? 'src/file.ts\0' : argv[1] === 'rev-parse' ? item.head : '', stderr: ''});
+      await rejectedMustRound(f, item.target, 'code', 'low');
+      const reads = answerConfirmation(f);
+      f.launches.length = 0;
+      const second = await f.call('code', item.target, 'low');
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      const round = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', second.value.review, 'round-2', 'round.json'), 'utf8'));
+      assert.match(round.scope, /^Re-review round 2 \(confirmation-only\)/);
+      assert.deepEqual(targetSlotIds(round), ['agy[0]']);
+      assert.ok(reads[0]!.prompt.includes('- Target Revision: ' + item.base + '..' + item.head));
+    } finally { f.cleanup(); }
+  }
+
+  // Accepted MUST or accepted SHOULD keeps the standard prompt and every target.
+  {
+    const f = await fixture();
+    try {
+      const accepted = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R1-F001', ruling: 'accepted', rationale: 'Resolution'});
+      const rejected = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R1-F002', ruling: 'rejected', rationale: 'Still broken'});
+      seedCompletedRound(f, 1, [seededFinding('R1-F001', 'MUST'), seededFinding('R1-F002', 'MUST')], JSON.stringify([['R1-F001', accepted.seq], ['R1-F002', rejected.seq]]), rejected.seq);
+      const reads = answerConfirmation(f);
+      const second = await f.call();
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      const round = f.read(2, 'round.json');
+      assert.match(round.scope, /^Re-review round 2 \(full\)/);
+      assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
+      assert.doesNotMatch(round.scope, /confirmation-only/);
+      assert.match(reads[0]!.prompt, /### Review against/);
+      assert.match(reads[0]!.prompt, /### Pending MUST rejection confirmation/);
+    } finally { f.cleanup(); }
+  }
+
+  // A later round after a confirmation-only round anchors decisive and targets to the substantive round.
+  {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, [seededFinding('R1-F001', 'SHOULD')]);
+      rewriteRound(f, 1, metadata => {metadata['cap'] = 3;});
+      const first = f.read(1, 'round.json');
+      seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R1-F001', ruling: 'accepted', rationale: 'Resolution'});
+      planDelegate(f, CLEAN);
+      const third = await f.call();
+      assert.equal(third.exit, 0, JSON.stringify(third));
+      const round = f.read(3, 'round.json');
+      assert.match(round.scope, /^Re-review round 3 \(full\)/);
+      assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
+    } finally { f.cleanup(); }
+  }
+
+  // A granted repository rerun after a confirmation-only round reruns every substantive slot.
+  {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, []);
+      rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+      const first = f.read(1, 'round.json');
+      seedConfirmationRound(f, 2, {...first, generation: 1, roster: [{slot: 'agy[0]', provider: 'agy', model: 'fake', index: 0, reserve: false}], scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+      const second = f.read(2, 'findings.json');
+      fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+      await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2', data: {text: 'Grant one rerun'}}, f.deps);
+      planDelegate(f, CLEAN);
+      const third = await f.call();
+      assert.equal(third.exit, 0, JSON.stringify(third));
+      const round = f.read(3, 'round.json');
+      assert.match(round.scope, /^Full review — changed paths: .*; comparison: /);
+      assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
+    } finally { f.cleanup(); }
+  }
+
+  // Missing original source slot refuses the round.
+  {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, [{...seededFinding('R1-F001', 'MUST'), sources: ['ghost[0]']}]);
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R1-F001', ruling: 'rejected', rationale: 'Still broken'});
+      planDelegate(f, CLEAN);
+      const result = await f.call();
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'review-confirmation-required');
+      assert.match(result.output.summary, /Missing original reviewer slot ghost\[0\]/);
+    } finally { f.cleanup(); }
+  }
+
+  // Every confirmation slot failing keeps review-failed.
+  {
+    const f = await fixture();
+    try {
+      await rejectedMustRound(f, f.plan, 'plan');
+      f.deps.delegate = async () => ({outcome: {status: 'fail', cls: 'auth', detail: 'No credentials'}, invocations: []});
+      const failed = await f.call();
+      assert.equal(failed.exit, 2);
+      assert.equal(failed.output.reason, 'review-failed');
+      assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
+    } finally { f.cleanup(); }
+  }
+
+  // A failed source slot falls back to a reserve and confirms the rejection.
+  {
+    const f = await fixture();
+    try {
+      configureAssignable(f);
+      await rejectedMustRound(f, f.plan, 'plan');
+      const reads: {provider: string; prompt: string}[] = [];
+      f.deps.delegate = async (provider, request, mode) => {
+        f.launches.push({provider, request, mode});
+        if (provider === 'agy') return {outcome: {status: 'fail', cls: 'auth', detail: 'No credentials'}, invocations: []};
+        const prompt = fs.readFileSync(request.promptPath, 'utf8');
+        reads.push({provider, prompt});
+        const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+        return {outcome: {status: 'ok', text: JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'The reserve checked the captured bound'}))}), resume: null, sessionId: null}, invocations: []};
+      };
+      f.launches.length = 0;
+      const second = await f.call();
+      assert.equal(second.exit, 0, JSON.stringify(second));
+      const round = f.read(2, 'round.json');
+      assert.deepEqual(targetSlotIds(round), ['agy[0]']);
+      assert.deepEqual(reserveSlotIds(round), ['copilot[0]']);
+      assert.deepEqual(delegateSlots(f), ['agy', 'copilot']);
+      assert.match(reads[0]!.prompt, /\(confirmation-only\)/);
+      const [confirmation] = f.read(2, 'findings.json').confirmations;
+      assert.equal(confirmation.sourceSlot, 'agy[0]');
+      assert.equal(confirmation.responder.slot, 'copilot[0]');
+      assert.equal((await f.call()).output.reason, 'round-cap');
+    } finally { f.cleanup(); }
+  }
+});

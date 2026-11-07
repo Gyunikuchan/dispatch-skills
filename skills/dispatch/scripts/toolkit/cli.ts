@@ -22,7 +22,7 @@ import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { lintArtifact } from './lint.ts';
-import { appendRecord, foldLedger, queryLedger } from './ledger.ts';
+import { appendRecords, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
@@ -142,24 +142,32 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     let input: unknown;
     try {input = JSON.parse(text);}
     catch (error) {throw new ToolError(1, 'invalid-input', 'Record file ' + file + ' is not valid JSON: ' + (error as SyntaxError).message);}
-    const appended = await appendRecord(session, input, deps);
     let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
     let findingsSectionReason: string | undefined;
-    if (input && typeof input === 'object' && !Array.isArray(input)) {
-      const record = input as Record<string, unknown>;
-      const data = record['data'];
-      if (record['kind'] === 'ruling' && data && typeof data === 'object' && !Array.isArray(data)) {
-        const review = typeof (data as Record<string, unknown>)['subject'] === 'string'
-          ? rulingReview((data as Record<string, unknown>)['subject'] as string)
-          : null;
-        if (review) findingsSection = refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; });
+    const appended = await appendRecords(session, input, deps, { onCommit: () => {
+      const reviews = new Set<string>();
+      for (const item of Array.isArray(input) ? input : [input]) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const data = record['data'];
+        if (record['kind'] !== 'ruling' || !data || typeof data !== 'object' || Array.isArray(data)) continue;
+        const subject = (data as Record<string, unknown>)['subject'];
+        const review = typeof subject === 'string' ? rulingReview(subject) : null;
+        if (review) reviews.add(review);
       }
-    }
+      for (const review of reviews) {
+        findingsSection = refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; });
+        if (findingsSection !== 'skipped') findingsSectionReason = undefined;
+      }
+    }});
     const value = {
       ...appended,
       ...(findingsSection ? { findingsSection, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
     };
-    return { ok: true, value, summary: 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended'), exit: 0 };
+    const summary = Array.isArray(input)
+      ? appended.count + ' records (last seq ' + appended.seq + (appended.deduped ? ', all deduped' : '') + ')'
+      : 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended');
+    return { ok: true, value, summary, exit: 0 };
   },
   'ledger query': async ({ session, values, args }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'query takes only filters');

@@ -441,3 +441,64 @@ test('failed plan slot rule has one home', () => {
   assert.match(read(root + 'references/readme/configuration.md'), removal);
   assert.match(read(root + 'references/readme/troubleshooting.md'), removal);
 });
+
+test('scope-round carry-forward and settled-decision deduplication contracts hold across grounding quality bar and review prompt', () => {
+  const grounding = read(root + 'references/grounding.md');
+  const explorer = read(root + 'references/templates/explorer-brief.md');
+  for (const [name, text] of [['grounding.md', grounding], ['explorer-brief.md', explorer]] as const) {
+    assert.ok(text.includes('realpath'), name + ': symlinked path resolution');
+    assert.ok(text.includes('(uncommitted)'), name + ': uncommitted marker');
+    assert.ok(text.includes('git ls-tree'), name + ': tracked path check');
+    assert.ok(text.includes('git diff --name-only'), name + ': unchanged path check');
+    assert.match(text, /Commit: <sha>/, name + ': capture commit');
+  }
+
+  // A scope-round entry survives only on a verified unchanged baseline; anything else is re-read.
+  assert.match(grounding, /no cited path[^.]*\(uncommitted\)/i);
+  assert.match(grounding, /git ls-tree <sha> -- <cited-and-resolved-paths>[^.]*lists every cited and resolved target path/i);
+  assert.match(grounding, /git diff --name-only <sha> -- <cited-and-resolved-paths>[^.]*returns empty/i);
+  assert.match(grounding, /re-read and re-verify/);
+  assert.ok(grounding.includes('refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations'));
+  assert.equal(grounding.split('git status').length - 1, 1, 'git status appears only as a prohibition');
+  assert.ok(grounding.includes('Do not run a `git status` check.'));
+  assert.equal(explorer.split('git status').length - 1, 0, 'explorer brief asks for no git status check');
+
+  assert.match(explorer, /recorded `Commit: <sha>` is present/);
+  assert.match(explorer, /otherwise it re-reads the file/i);
+
+  // Settled decisions, non-goals and earlier rulings are closed without new unweighed evidence.
+  const quality = read(root + 'references/templates/quality-bar.md');
+  const prompt = read(root + 'references/templates/review-prompt.md');
+  for (const [name, text] of [['quality-bar.md', quality], ['review-prompt.md', prompt]] as const) {
+    assert.match(text, /accepted or rejected rulings/i, name + ': settled rulings');
+  }
+  assert.match(quality, /Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited\./);
+  const promptFlat = prompt.replace(/\s+/g, ' ');
+  assert.match(promptFlat, /earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed/);
+  assert.match(promptFlat, /do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers/);
+
+  const append = section(read(root + 'references/toolkit.md'), 'ledger append');
+  assert.match(append, /single record object or a non-empty JSON array of record objects/i);
+  assert.match(append, /validates each record sequentially|validated sequentially/i);
+  assert.match(append, /one `withLedger` lock|single `withLedger` lock/i);
+  assert.match(append, /findings refresh/i);
+});
+
+test('ADRs document software factory optimization guardrails', () => {
+  const adr = (name: string) => read('docs/decisions/' + name);
+
+  const rounds = adr('0005-review-rounds-policy.md');
+  for (const term of ['second opinion', 'confirmation-only', 'holistic', 'diff-sliced', 'cross-file']) {
+    assert.ok(rounds.toLowerCase().includes(term), '0005: ' + term);
+  }
+
+  const toolkit = adr('0013-toolkit-and-ledger.md');
+  for (const term of ['TDD', 'test-cleanup', 'identical retention', 'Per-task worktrees stay uniform', 'single-worktree', 'batchEndSeq', 'shell-quoting', 'JSON array']) {
+    assert.ok(toolkit.includes(term), '0013: ' + term);
+  }
+
+  const grounding = adr('0014-ground-first-intent-and-evidence-based-level.md');
+  for (const term of ['pre-spec', 'Scope Round', 'Spec and Plan', 'verified unchanged']) {
+    assert.ok(grounding.includes(term), '0014: ' + term);
+  }
+});

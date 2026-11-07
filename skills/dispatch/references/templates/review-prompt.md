@@ -35,9 +35,13 @@ when the convention itself is defective, report it once and name the other insta
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under [review rules](../review-rules.md#review-provenance-and-applicability).
 Read the full review history in the review log that each governing artifact's `## Review Findings & Resolutions` links. Consult raw provider output or ledger records when missing evidence, disputed adjudication or recovery requires it; follow [review rules](../review-rules.md) for ownership and ruling semantics. History does not replace source inspection.
 On re-review, verify prior resolutions in that review log, and treat
-earlier settled findings as closed. The governing spec's Decisions and Non-goals, and decisions recorded in the governing design or plan, are settled:
-contest one only by naming it and citing evidence it did not weigh. When Scope names changed sections or paths, raise new in-scope
-findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite
+new code or requirement evidence that the ruling missed, with the accepted-MUST exception stated in the shared quality-bar intent rule, which is canonical. The governing spec's Decisions and
+Non-goals, and decisions recorded in the governing design or plan, are settled:
+contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style
+preferences or checks enforced by configured linters, formatters or type checkers. When Scope names
+changed sections or paths, raise new in-scope findings only there; `adjacent` findings may cite any
+locus. Stop at that blast radius.
 <<slot:quality>>
 
 ### Tags

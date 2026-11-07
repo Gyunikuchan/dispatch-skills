@@ -13,7 +13,7 @@ import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
 import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
-import { artifactSections, changedHeadings, reviewPrompt, type Settled } from './prompts.ts';
+import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
 import { admission, finalizeRound, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
 import { git, gitOk, splitPaths } from './git.ts';
 import { captureCheckouts, compareCheckouts, type CheckoutBaselineFile } from './review-checkout.ts';
@@ -418,6 +418,17 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
     const contextMapFile = kind === 'code' ? undefined : path.join(session, path.basename(artifact).replace(/\.md$/, '.context.md'));
     const savedSlot = (name: string) => [...confirmationRounds.flatMap(value => value.metadata.roster), ...(round?.roster ?? [])].find(slot => slot.slot === name);
+    // A confirmation-only round re-uses the previous target, so later rounds anchor
+    // target selection and decisive rulings to the latest substantive round.
+    const confirmationOnly = (value: ConfirmationRound) => /\(confirmation-only\)/i.test((value.metadata as {scope?: string}).scope ?? '');
+    const latestSubstantive = (): ConfirmationRound | undefined => n > 1
+      ? confirmationRounds.filter(value => value.metadata.round < n && !confirmationOnly(value)).at(-1) : undefined;
+    const decisiveRound = (value: ConfirmationRound | undefined): boolean => {
+      if (!value) return false;
+      const rulings = rulingRows();
+      return value.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
+        && (effective(finding, rulings) === 'MUST' || (effective(finding, rulings) === 'SHOULD' && value.metadata.round < cap1)));
+    };
     function isRerunRound(): boolean {
       if (n <= 1) return false;
       const fold = foldLedger(session);
@@ -436,11 +447,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return true;
     }
     function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean; coverage?: 'open' | 'full' } {
+      const previous = latestSubstantive();
       // A rerun note admits its named round + 1 at whole-target scope with every
       // logical target of the named round on its current route. Earlier findings stay
       // in `prior`; the next round uses normal targets.
       if (isRerunRound()) {
-        const previous = confirmationRounds.find(value => value.metadata.round === n - 1);
         const logical = previous?.metadata.roster.filter(slot => !slot.reserve) ?? [];
         if (logical.length) return {targets: logical, narrowed: false};
         // An all-failed named round has no findings and no confirmation
@@ -451,10 +462,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const failedLogical = failedRound?.roster.filter(slot => !slot.reserve) ?? [];
         if (failedLogical.length) return {targets: failedLogical, narrowed: false};
       }
-      const previous = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
-      const target = previous?.metadata.roster.find(slot => !slot.reserve), rulings = rulingRows();
-      const decisive = previous?.findings.findings.some(finding => rulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id)?.data['ruling'] === 'accepted'
-        && (effective(finding, rulings) === 'MUST' || (effective(finding, rulings) === 'SHOULD' && n - 1 < cap1)));
+      const target = previous?.metadata.roster.find(slot => !slot.reserve);
+      const decisive = decisiveRound(previous);
       // Open coverage replaces the narrowed slot, and a decisive finding keeps the full roster; both run at whole-target scope.
       const open = review === 'code-integration' ? coverageState(session, foldLedger(session), review, applies).open : [];
       if (open.length && n > 1) return {targets: target && !decisive ? open.flatMap(name => { const slot = savedSlot(name); return slot ? [{...slot, reserve: false}] : []; }) : roster.targets, narrowed: false, coverage: target && !decisive ? 'open' : 'full'};
@@ -463,8 +472,16 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     async function start(generation: number, captured: Capture): Promise<Round> {
       const rerun = isRerunRound();
       const {targets, narrowed, coverage} = replacement();
+      const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
+      const previousRound = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
+      // The fast path needs the captured identity the previous round reviewed; a
+      // rerun, coverage grant, decisive ruling or moved target keeps the standard prompt.
+      const confirmationOnlyRound = n > 1 && !rerun && !coverage && requests.length > 0 && !decisiveRound(latestSubstantive())
+        && previousRound !== undefined && same(previousRound.metadata as Round, captured);
       let scope = 'Full review', changedPaths = captured.changed;
-      if (rerun && !coverage) {
+      if (confirmationOnlyRound) {
+        scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
+      } else if (rerun && !coverage) {
         const target = captured.target as {base?: string; head?: string};
         const comparison = typeof captured.target === 'string' ? captured.target : target.base + '..' + label(captured.target);
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison;
@@ -479,15 +496,27 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
       }
       // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
-      if (narrowed) scope = scope.replace('(full)', '(narrowed)');
+      if (narrowed && !confirmationOnlyRound) scope = scope.replace('(full)', '(narrowed)');
       const turnPaths = kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
-      const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
-      const slots=[...targets,...roster.reserves.filter(reserve=>!targets.some(slot=>slot.slot===reserve.slot))];
-      for(const request of requests)for(const source of request.sourceSlots)if(!slots.some(slot=>slot.slot===source && !slot.reserve)) {
-        const saved=savedSlot(source);
-        if(!saved)throw new ToolError(4,'review-confirmation-required','Missing original reviewer slot '+source);
-        const existing=slots.findIndex(slot=>slot.slot===source);if(existing>=0)slots.splice(existing,1);
-        slots.push({...saved,reserve:false});
+      let slots: RosterSlot[];
+      if (confirmationOnlyRound) {
+        // Only the assigned source slots and configured reserves are staffed; the
+        // reserves answer the source slot's own prompt when that slot fails.
+        const resolved: RosterSlot[] = [];
+        for (const source of [...new Set(requests.flatMap(request => request.sourceSlots))]) {
+          const saved = savedSlot(source);
+          if (!saved) throw new ToolError(4, 'review-confirmation-required', 'Missing original reviewer slot ' + source);
+          if (!resolved.some(slot => slot.slot === source)) resolved.push({...saved, reserve: false});
+        }
+        slots = [...resolved, ...roster.reserves.filter(reserve => !resolved.some(slot => slot.slot === reserve.slot))];
+      } else {
+        slots = [...targets, ...roster.reserves.filter(reserve => !targets.some(slot => slot.slot === reserve.slot))];
+        for (const request of requests) for (const source of request.sourceSlots) if (!slots.some(slot => slot.slot === source && !slot.reserve)) {
+          const saved = savedSlot(source);
+          if (!saved) throw new ToolError(4, 'review-confirmation-required', 'Missing original reviewer slot ' + source);
+          const existing = slots.findIndex(slot => slot.slot === source); if (existing >= 0) slots.splice(existing, 1);
+          slots.push({...saved, reserve: false});
+        }
       }
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
       const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{}),...(coverage?{coverage}:{}),...(admitted.coverage?.state==='readable'&&admitted.coverage.use?{coverageUse:admitted.coverage.use}:{})};
@@ -585,7 +614,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const requestsBySlot=new Map<string,RejectionRequest[]>();
       for(const request of round.requests ?? [])for(const slot of request.sourceSlots)requestsBySlot.set(slot,[...(requestsBySlot.get(slot) ?? []),request]);
       const targets = round!.roster.filter(entry => !entry.reserve);
+      const confirmationRound = round!.scope.includes('(confirmation-only)');
       const prompt = (slot:RosterSlot)=>{
+        if (confirmationRound) return confirmationPrompt(kind, {spec: round!.spec, artifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), requests: requestsBySlot.get(slot.slot) ?? []});
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
         return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
           ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),

@@ -65,21 +65,27 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
     return {dir,round:reviewRead(()=>JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8'))),findings:reviewRead(()=>JSON.parse(fs.readFileSync(path.join(dir,'findings.json'),'utf8')))};
   });
   const last=rounds.at(-1);
-    if(!last)refuse('review-required');
-  const {round,findings}=last;
-  const baseline=round.target?.head;
-  if(typeof baseline!=='string'||!/^([a-f0-9]{40}|[a-f0-9]{64})$/.test(baseline)||
-      round.target?.base!==base ||
-      (!equal(round.artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind'))) ||
-      round.spec?.hash!==round.artifacts?.spec) ||
-      ! /^(?:Full review|Re-review round \d+ \((?:full|narrowed|coverage)\))/i.test(round.scope??'') ||
-      !Number.isSafeInteger(round.round) || round.round!==Number(last.dir.slice(last.dir.lastIndexOf('round-')+6)) ||
-      !Number.isSafeInteger(round.generation) || round.generation<1 ||
-      !Number.isSafeInteger(round.startSeq) || round.startSeq<0 ||
-      !Array.isArray(round.roster) ||
-      !round.roster.length ||
-      !Array.isArray(findings.findings) ||
-      !Array.isArray(findings.failed))refuse('review-required');
+  // A confirmation-only round re-uses its predecessor's target, so identity and
+  // settled findings anchor to the latest round that reviewed the target itself.
+  const substantive=rounds.findLast(value=>!/\(confirmation-only\)/i.test(value.round.scope??''));
+  if(!last||!substantive)refuse('review-required');
+  const baseline=last.round.target?.head;
+  const validHeader=(entry:{dir:string;round:any;findings:any},scope:RegExp):boolean=>
+    typeof baseline==='string' && /^([a-f0-9]{40}|[a-f0-9]{64})$/.test(baseline) &&
+    entry.round.target?.head===baseline &&
+    entry.round.target?.base===base &&
+    equal(entry.round.artifacts,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind'))) &&
+    entry.round.spec?.hash===entry.round.artifacts?.spec &&
+    scope.test(entry.round.scope??'') &&
+    Number.isSafeInteger(entry.round.round) && entry.round.round===Number(entry.dir.slice(entry.dir.lastIndexOf('round-')+6)) &&
+    Number.isSafeInteger(entry.round.generation) && entry.round.generation>=1 &&
+    Number.isSafeInteger(entry.round.startSeq) && entry.round.startSeq>=0 &&
+    Array.isArray(entry.round.roster) &&
+    entry.round.roster.length &&
+    Array.isArray(entry.findings.findings) &&
+    Array.isArray(entry.findings.failed);
+  if(!validHeader(last,/^(?:Full review|Re-review round \d+ \((?:full|narrowed|coverage|confirmation-only)\))/i) ||
+      !validHeader(substantive,/^(?:Full review|Re-review round \d+ \((?:full|narrowed|coverage)\))/i))refuse('review-required');
   // Coverage replaces the last-round failure check: majority or overridden slots pass; rerun, user and unreadable state refuse.
   let coverage;
   try {coverage=coverageState(ctx.session,fold,'code-integration',applicableReviewIds(ctx.manifest,fold).get('code-integration'));}
@@ -87,14 +93,27 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
   if(coverage.decision==='rerun'||coverage.decision==='user')refuse('review-required');
   const covered=new Set([...coverage.open,...coverage.overridden.map(item=>item.slot)]);
   const files:unknown[]=[];
-  const targets=round.roster.filter((slot:any)=>!slot.reserve);
-  if(!targets.length)refuse('review-required');
-  for(const slot of targets) {
-    const saved=reviewRead(()=>JSON.parse(fs.readFileSync(path.join(last.dir,'gen-'+round.generation,'slots',slot.slot+'.json'),'utf8')));
-    if(saved.slot!==slot.slot ||
-      !(saved.state==='done'?parseReport({kind:'code',source:slot.slot,text:saved.text}).ok:saved.state==='failed'&&covered.has(slot.slot)))refuse('review-required');files.push(saved);
+  const validateSlots=(entry:{dir:string;round:any;findings:any},expected?:((slot:string)=>readonly string[])):unknown[]=>{
+    const targets=entry.round.roster.filter((slot:any)=>!slot.reserve);
+    if(!targets.length)refuse('review-required');
+    const savedFiles:unknown[]=[];
+    for(const slot of targets) {
+      const saved=reviewRead(()=>JSON.parse(fs.readFileSync(path.join(entry.dir,'gen-'+entry.round.generation,'slots',slot.slot+'.json'),'utf8')));
+      const requestIds=expected?.(slot.slot);
+      if(saved.slot!==slot.slot ||
+        !(saved.state==='done'?parseReport({kind:'code',source:slot.slot,text:saved.text,...(requestIds?{expectedRequestIds:requestIds}:{})}).ok:saved.state==='failed'&&covered.has(slot.slot)))refuse('review-required');
+      savedFiles.push(saved);
+    }
+    return savedFiles;
+  };
+  files.push(...validateSlots(substantive));
+  if(last!==substantive) {
+    const lastFiles=validateSlots(last,slot=>(last.round.requests??[]).filter((request:any)=>request.sourceSlots.includes(slot)).map((request:any)=>request.requestId));
+    files.push(...lastFiles);
+    if(!lastFiles.some((saved:any)=>saved.state==='done'))refuse('review-required');
   }
   if(!files.some((saved:any)=>saved.state==='done'))refuse('review-required');
+  const round=substantive.round,findings=substantive.findings;
   const escalations=new Map<string,string>();for(const r of fold.records)if(r.kind==='escalation')escalations.set(r.data['id'],r.data['state']);
   if([...escalations.values()].includes('open'))refuse('review-required');
   const all=rounds.flatMap(r=>r?.findings.findings??[]);
@@ -118,6 +137,9 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       r.round.target?.head!==baseline &&
       r.findings.findings.some((f:any)=>f.id===finding.id))  &&
        !findings.findings.some((f:any)=>f.id===finding.id ||
+      f.unresolved?.of===finding.id ||
+      f.recurrence?.of===finding.id) &&
+       !last.findings.findings.some((f:any)=>f.id===finding.id ||
       f.unresolved?.of===finding.id ||
       f.recurrence?.of===finding.id);
     return false;

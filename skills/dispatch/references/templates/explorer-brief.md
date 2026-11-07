@@ -14,6 +14,8 @@ Answer the planned-decision questions, not a general repository survey.
 
 For a scope round, use the confirmed spec's REQs and DECs as the baseline, then answer any related or unrelated planning questions the caller adds.
 
+When inspecting a file for a pre-spec map (`Commit: <sha>`), resolve any symlinked path with `realpath` and require the result inside the repository root. Check the cited path and its resolved target path: `git ls-tree <sha> -- <path>` lists the path and `git diff --name-only <sha> -- <path>` is empty. Mark any untracked, ignored, out-of-repository symlink or dirty cited path `(uncommitted)`.
+
 ## Host rules and tools
 
 Apply the [host rule discovery rule](quality-bar.md#shared). Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow [native slots](../providers.md#native-slots). List any named tool or skill that cannot run under `Not covered`. Name the tool used in the map's `Tool` field.
@@ -51,7 +53,7 @@ For map tasks, use the [context map template](context-map.md), including its sou
 
 Keep this map within 16,384 UTF-8 bytes (16 KB). If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 
-For a scope round, the caller provides the confirmed spec path and the spec-phase map path when it exists. Read the spec and map; if the map is absent, use the spec alone. Write the full scope map to the phase path defined in [grounding](../grounding.md#publish). When the spec-phase map exists, add to the reply entries added, corrected and removed and new `Surprises`; “no material delta” is valid. If the map must be returned inline, return the full map for the caller to save under its phase path.
+For a scope round, the caller provides the confirmed spec path and the spec-phase map path when it exists. Read the spec and map; if the map is absent, use the spec alone. In a scope round, carry forward an entry from `<slug>.spec.context.md` only when its recorded `Commit: <sha>` is present, no cited path is marked `(uncommitted)`, every symlink resolves inside the repository root, `git ls-tree <sha> -- <cited-and-resolved-paths>` lists every cited and resolved target path, and `git diff --name-only <sha> -- <cited-and-resolved-paths>` is empty. Otherwise it re-reads the file. Dedicate the search budget to thorough discovery of refined `REQ`s, `DEC`s, local seams, callers, invariants and `Not covered` items. Write the full scope map to the phase path defined in [grounding](../grounding.md#publish). When the spec-phase map exists, add to the reply entries added, corrected and removed and new `Surprises`; “no material delta” is valid. If the map must be returned inline, return the full map for the caller to save under its phase path.
 
 Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round. Follow [grounding's output rule](../grounding.md#publish) for `{{outputPath}}` and the inline fallback. After writing a map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step. For every written map, reply only with its path, lint status, and counts of `Surprises` and `Not covered` entries; a scope round also includes its delta when the spec-phase map exists.
 

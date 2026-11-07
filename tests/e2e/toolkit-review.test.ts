@@ -61,6 +61,54 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
  }finally{f.cleanup();}
 });
 
+test('unchanged target with a pending MUST rejection runs a confirmation-only round through the CLI', async () => {
+  const f = await toolkitRepo(); try {
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'confirmation-only-skill', {
+      'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}},
+      phases: {'code-review': {targets: {low: 2}, rounds: {low: 2}}},
+    });
+    f.deps.liveness = {claude: true, agy: true};
+    fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'first captured change\n');
+    let phase: 'finding' | 'confirmation' = 'finding';
+    const launched: string[] = [];
+    f.deps.delegate = async (provider, request) => {
+      launched.push(provider);
+      if (phase === 'finding') {
+        const text = provider === 'claude'
+          ? JSON.stringify({status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'Writes are unbounded', requiredChange: 'Bound the writes'}]})
+          : JSON.stringify(CLEAN);
+        return {outcome: {status: 'ok', text, resume: null, sessionId: null}, invocations: []};
+      }
+      const prompt = fs.readFileSync(request.promptPath, 'utf8');
+      const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+      assert.match(prompt, /\(confirmation-only\)/);
+      return {outcome: {status: 'ok', text: JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'The captured bound holds'}))}), resume: null, sessionId: null}, invocations: []};
+    };
+    const run = () => f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+    const first = await run();
+    assert.equal(first.exit, 0, JSON.stringify(first));
+    const review = first.value.review as string;
+    const dir = path.join(f.session, '.state/reviews', review);
+    const firstRound = JSON.parse(fs.readFileSync(path.join(dir, 'round-1', 'round.json'), 'utf8'));
+    assert.deepEqual(firstRound.roster.filter((slot: {reserve: boolean}) => !slot.reserve).map((slot: {slot: string}) => slot.slot), ['claude[0]', 'agy[0]']);
+    await appendRecord(f.session, {kind: 'ruling', by: 'orchestrator', key: 'reject-must', data: {subject: 'review:' + review + ':R1-F001', ruling: 'rejected', rationale: 'The captured implementation bounds each write'}}, f.deps);
+    phase = 'confirmation'; launched.length = 0;
+    const second = await run();
+    assert.equal(second.exit, 0, JSON.stringify(second));
+    const round = JSON.parse(fs.readFileSync(path.join(dir, 'round-2', 'round.json'), 'utf8'));
+    assert.match(round.scope, /^Re-review round 2 \(confirmation-only\) — comparison: [a-f0-9]{40}\.\.[a-f0-9]{40}$/);
+    assert.deepEqual(round.roster.filter((slot: {reserve: boolean}) => !slot.reserve).map((slot: {slot: string}) => slot.slot), ['claude[0]']);
+    assert.deepEqual(launched, ['claude']);
+    const prompt = fs.readFileSync(path.join(dir, 'round-2', 'gen-1', 'prompts', 'claude[0].md'), 'utf8');
+    assert.ok(prompt.includes('- Target Revision: ' + round.target.base + '..' + round.target.head), prompt);
+    const findings = JSON.parse(fs.readFileSync(path.join(dir, 'round-2', 'findings.json'), 'utf8'));
+    assert.equal(findings.confirmations.length, 1);
+    assert.equal(findings.confirmations[0].sourceSlot, 'claude[0]');
+    assert.match(second.output.summary, /round 2\/2/);
+    assert.equal((await run()).output.reason, 'round-cap');
+  } finally {f.cleanup();}
+});
+
 test('toolkit worktree review excludes unignored session state and preserves committed session blobs', async () => {
   const f = await toolkitRepo();
   try {

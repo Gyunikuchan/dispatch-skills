@@ -366,6 +366,24 @@ test('context map: code prompts never render the map line', () => {
 });
 
 
+test('writer quality criteria omit prune directive while code and plan keep it', () => {
+  const bar = read(templates, 'quality-bar.md');
+  const cleanup = read(templates, 'test-cleanup-brief.md');
+  const writer = qualityCriteria(bar, 'writer');
+  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:']) assert.ok(writer.includes(gate), `writer: ${gate}`);
+  assert.ok(writer.includes('Shape:'), 'writer: Shape');
+  assert.ok(writer.includes('Naming:'), 'writer: Naming');
+  assert.ok(writer.includes('Writer focus'), 'writer: Writer focus');
+  assert.doesNotMatch(writer, /^- Prune:/m);
+  assert.doesNotMatch(writer, /disposable/);
+  for (const consumer of ['code', 'plan'] as const) {
+    const criteria = qualityCriteria(bar, consumer);
+    assert.match(criteria, /^- Prune:/m, `${consumer}: Prune`);
+    assert.doesNotMatch(criteria, /Writer focus/, `${consumer}: Writer focus`);
+  }
+  assert.match(cleanup, /executing `- Prune:` and ignoring `- Writer focus`/);
+});
+
 test('reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned', () => {
   for (const kind of reviewKinds) {
     for (const context of [reviewContext(kind), {...reviewContext(kind), requests: []}]) assert.doesNotMatch(reviewPrompt(kind, context), /Pending MUST rejection confirmation|confirmations/);

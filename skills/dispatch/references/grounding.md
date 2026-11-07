@@ -12,6 +12,18 @@ Run `doctor run` without `--level` and use its `utility` host entry exactly for 
 
 After `confirm` and before authoring a standalone plan or any design, ground the confirmed scope with the same launch, explorer brief and Coverage checklist. Start with questions from the confirmed spec's REQs and DECs, then add any related or unrelated question the orchestrator needs to plan or design. Give the explorer the governing spec path and its `<session>/<slug>.spec.context.md` map path. Continue the live explorer when the host can; otherwise launch a fresh one with both paths. If the spec-phase map does not exist, ground from the spec alone.
 
+At pre-spec capture time, resolve any symlinked cited path with `realpath` and require the result inside the repository root, for example `.claude/CLAUDE.md` -> `AGENTS.md`. When inspecting a cited path against `Commit: <sha>`, check both the cited path and its resolved target path: `git ls-tree <sha> -- <path>` lists the path and `git diff --name-only <sha> -- <path>` is empty. Mark any untracked, ignored, out-of-repository symlink or dirty cited path `(uncommitted)` in `<slug>.spec.context.md`.
+
+The Scope Round explorer carries forward an entry from `<session>/<slug>.spec.context.md` without re-reading it only when all these hold:
+
+- `<slug>.spec.context.md` records a valid `Commit: <sha>`.
+- No cited path in the entry is marked `(uncommitted)`.
+- Every symlinked cited path resolves inside the repository root.
+- `git ls-tree <sha> -- <cited-and-resolved-paths>` lists every cited and resolved target path.
+- `git diff --name-only <sha> -- <cited-and-resolved-paths>` returns empty.
+
+If `Commit` is absent, a path or symlink target was `(uncommitted)` at capture time or is untracked or ignored, has diffs against `<sha>`, or its line ranges shifted, re-read and re-verify the source or record it under `Not covered`. Spend the exploration budget on rigorous code-level discovery of refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations.
+
 Write the full scope map to the plan or design path defined under [Publish](#publish), which also owns the inline fallback. Use the [explorer brief's reply rules](templates/explorer-brief.md#map-budget-and-output). Read any delta and apply [map checks](#check-and-recover).
 
 ## Design increments

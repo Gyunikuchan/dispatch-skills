@@ -8,6 +8,9 @@ import {appendRecord,currentHashes,foldLedger,latest} from '../../../skills/disp
 import {reviewIdentity} from '../../../skills/dispatch/scripts/toolkit/review-identity.ts';
 import {readManifest} from '../../../skills/dispatch/scripts/lib/session.ts';
 import {stableValue} from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
+import {main} from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import {rejectionRequest, type RejectionRequest} from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
+import type {Finding} from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
 const source=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');
 test('review identity keeps unexpected read errors',async()=>{
  const f=sessionFixture({memory:true});try {
@@ -190,4 +193,103 @@ test('review identity reads coverage decision: failures outside the applicable r
  const rounds:CoverageRound[]=[{n:1,base:'c'.repeat(40),done:[B,C],failed:[A]},{n:2,coverage:'open',done:[B,C],failed:[]}];
  assert.deepEqual(await coverageIdentity(rounds),{ok:false,reason:'review-required'},'without a predicate the earlier failure stays open');
  assert.equal((await coverageIdentity(rounds,()=>[],undefined,true)).ok,true);
+});
+
+// SECTION: Confirmation-only rounds
+
+const identityRoster=[{slot:'reviewer',provider:'codex',model:null,index:0,reserve:false,native:false}];
+type IdentitySeed={n:number;scope:string;head:string;startSeq:number;findings:object[];roster?:typeof identityRoster;requests?:RejectionRequest[];confirmations?:object[];slotText?:string;responder?:object};
+const seedIdentityRounds=(f:ReturnType<typeof sessionFixture>,base:string,artifacts:Record<string,string>,spec:{path:string;hash:string},rounds:readonly IdentitySeed[])=>{
+ const root=path.join(f.session,'.state/reviews/code-integration');
+ for(const item of rounds) {
+  const dir=path.join(root,'round-'+item.n),slots=path.join(dir,'gen-1/slots'),roster=item.roster??identityRoster;
+  fs.mkdirSync(slots,{recursive:true});
+  fs.writeFileSync(path.join(dir,'round.json'),JSON.stringify({round:item.n,cap:3,generation:1,startSeq:item.startSeq,target:{base,head:item.head},artifacts,spec,scope:item.scope,roster,...(item.requests?{requests:item.requests}:{})}));
+  fs.writeFileSync(path.join(dir,'findings.json'),JSON.stringify({review:'code-integration',round:item.n,findings:item.findings,failed:[],...(item.confirmations?{confirmations:item.confirmations}:{})}));
+  for(const slot of roster.filter(entry=>!entry.reserve))fs.writeFileSync(path.join(slots,slot.slot+'.json'),JSON.stringify({slot:slot.slot,state:'done',text:item.slotText??'{"status":"CLEAN","findings":[]}',...(item.responder?{responder:item.responder}:{})}));
+ }
+};
+const confirmationOf=(request:RejectionRequest,rationale:string)=>{
+ const responder={slot:'reviewer',provider:'codex',model:null,native:false};
+ return {
+  reply:{...request,sourceSlot:'reviewer',responder,decision:'agree',replyRationale:rationale},
+  slotText:JSON.stringify({status:'CLEAN',findings:[],confirmations:[{requestId:request.requestId,decision:'agree',rationale}]}),
+ };
+};
+const reviewClaim=(id:string,defect:string):Finding=>({id,severity:'MUST',impact:'blocks',trigger:'realistic',category:'correctness',locus:'src/file.ts:L1',defect,requiredChange:'Bound the writes',sources:['reviewer'],scope:'in'});
+
+test('confirmation-only round preserves substantive review identity and rejects unverified accepted MUST',async()=>{
+ // A verified fix settles an accepted MUST across a confirmation-only round.
+ {
+  const f=sessionFixture({memory:true});try{
+   f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
+   await appendRecord(f.session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},f.deps);
+   const artifacts=currentHashes(f.root,latest(foldLedger(f.session),'bind')) as Record<string,string>;
+   const base='c'.repeat(40),first='a'.repeat(40),second='b'.repeat(40);
+   await appendRecord(f.session,{kind:'integrate',by:'tool',key:'opened',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base,dest:{path:f.root,branch:'main'}}},f.deps);
+   const accepted=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-first',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'The bounded fix is required'}},f.deps);
+   const rejected=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-second',data:{subject:'review:code-integration:R2-F001',ruling:'rejected',rationale:'The captured bound holds'}},f.deps);
+   const claim=reviewClaim('R2-F001','Writes are unbounded'),spec={path:path.resolve(f.root,'work.spec.md'),hash:artifacts['spec']!};
+   const request=rejectionRequest({review:'code-integration',finding:'R2-F001',rulingSeq:rejected.seq,claim,rationale:'The captured bound holds',target:{base,head:second},spec,sourceSlots:['reviewer']});
+   const confirmation=confirmationOf(request,'The captured bound holds');
+   seedIdentityRounds(f,base,artifacts,spec,[
+    {n:1,scope:'Full review',head:first,startSeq:1,findings:[reviewClaim('R1-F001','Writes are unbounded')]},
+    {n:2,scope:'Re-review round 2 (full) — changed: src/file.ts; comparison: '+first+'..'+second,head:second,startSeq:rejected.seq+1,findings:[claim]},
+    {n:3,scope:'Re-review round 3 (confirmation-only) — comparison: '+second+'..'+second,head:second,startSeq:rejected.seq+2,findings:[],requests:[request],confirmations:[confirmation.reply],slotText:confirmation.slotText,responder:confirmation.reply.responder},
+   ]);
+   const ctx={session:f.session,manifest:readManifest(f.session),deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+   const identity=await reviewIdentity(ctx,foldLedger(f.session),f.root,second,base);
+   assert.equal(identity.baseline,second);
+   assert.deepEqual({round:identity.round,generation:identity.generation,startSeq:identity.startSeq},{round:2,generation:1,startSeq:rejected.seq+1});
+   assert.ok(accepted.seq>0);
+   f.lines.length=0;
+   const exit=await main(['report','complete','--session',f.session],f.deps);
+   const output=JSON.parse(f.lines[0]!);
+   assert.equal(exit,4);
+   assert.equal(output.reason,'no-integration','the confirmation gate admits the report before the missing integration refuses it');
+  }finally{f.cleanup();}
+ }
+ // An accepted MUST with no later substantive verification still refuses, even when a confirmation-only round has no findings.
+ {
+  const f=sessionFixture({memory:true});try{
+   f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
+   await appendRecord(f.session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},f.deps);
+   const artifacts=currentHashes(f.root,latest(foldLedger(f.session),'bind')) as Record<string,string>;
+   const base='c'.repeat(40),head='a'.repeat(40);
+   await appendRecord(f.session,{kind:'integrate',by:'tool',key:'opened',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base,dest:{path:f.root,branch:'main'}}},f.deps);
+   const accepted=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-unverified',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'Claimed resolution'}},f.deps);
+   const rejected=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-other',data:{subject:'review:code-integration:R1-F002',ruling:'rejected',rationale:'Still broken'}},f.deps);
+   const claim=reviewClaim('R1-F002','Retries are unbounded'),spec={path:path.resolve(f.root,'work.spec.md'),hash:artifacts['spec']!};
+   const request=rejectionRequest({review:'code-integration',finding:'R1-F002',rulingSeq:rejected.seq,claim,rationale:'Still broken',target:{base,head},spec,sourceSlots:['reviewer']});
+   const confirmation=confirmationOf(request,'Still broken');
+   seedIdentityRounds(f,base,artifacts,spec,[
+    {n:1,scope:'Full review',head,startSeq:accepted.seq,findings:[reviewClaim('R1-F001','Writes are unbounded'),claim]},
+    {n:2,scope:'Re-review round 2 (confirmation-only) — comparison: '+head+'..'+head,head,startSeq:rejected.seq+1,findings:[],requests:[request],confirmations:[confirmation.reply],slotText:confirmation.slotText,responder:confirmation.reply.responder},
+   ]);
+   const ctx={session:f.session,manifest:readManifest(f.session),deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+   await assert.rejects(reviewIdentity(ctx,foldLedger(f.session),f.root,head,base),{reason:'review-required'});
+  }finally{f.cleanup();}
+ }
+ // A recurrence in the substantive round blocks settlement even when the confirmation-only round reports no findings.
+ {
+  const f=sessionFixture({memory:true});try{
+   f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
+   await appendRecord(f.session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},f.deps);
+   const artifacts=currentHashes(f.root,latest(foldLedger(f.session),'bind')) as Record<string,string>;
+   const base='c'.repeat(40),first='a'.repeat(40),second='b'.repeat(40);
+   await appendRecord(f.session,{kind:'integrate',by:'tool',key:'opened',data:{phase:'opened',path:'.state/worktrees/integration',branch:'integration',base,dest:{path:f.root,branch:'main'}}},f.deps);
+   const accepted=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-recurring',data:{subject:'review:code-integration:R1-F001',ruling:'accepted',rationale:'Claimed resolution'}},f.deps);
+   const rejected=await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'reject-current',data:{subject:'review:code-integration:R2-F001',ruling:'rejected',rationale:'Still unbounded'}},f.deps);
+   const claim=reviewClaim('R2-F001','Retries are unbounded'),spec={path:path.resolve(f.root,'work.spec.md'),hash:artifacts['spec']!};
+   const request=rejectionRequest({review:'code-integration',finding:'R2-F001',rulingSeq:rejected.seq,claim,rationale:'Still unbounded',target:{base,head:second},spec,sourceSlots:['reviewer']});
+   const confirmation=confirmationOf(request,'Still unbounded');
+   seedIdentityRounds(f,base,artifacts,spec,[
+    {n:1,scope:'Full review',head:first,startSeq:accepted.seq,findings:[reviewClaim('R1-F001','Writes are unbounded')]},
+    {n:2,scope:'Re-review round 2 (full) — changed: src/file.ts; comparison: '+first+'..'+second,head:second,startSeq:rejected.seq+1,findings:[claim,{...reviewClaim('R2-F002','Writes are unbounded'),severity:'SHOULD',impact:'degrades',recurrence:{of:'R1-F001'}}]},
+    {n:3,scope:'Re-review round 3 (confirmation-only) — comparison: '+second+'..'+second,head:second,startSeq:rejected.seq+2,findings:[],requests:[request],confirmations:[confirmation.reply],slotText:confirmation.slotText,responder:confirmation.reply.responder},
+   ]);
+   const ctx={session:f.session,manifest:readManifest(f.session),deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+   await assert.rejects(reviewIdentity(ctx,foldLedger(f.session),f.root,second,base),{reason:'review-required'});
+  }finally{f.cleanup();}
+ }
 });

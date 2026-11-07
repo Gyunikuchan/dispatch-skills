@@ -265,10 +265,13 @@ describe('writer brief', () => {
       assert.ok(command.includes('capture.cjs'));
       assert.doesNotMatch(command, /[$%]/);
       const quality = getQuality(f.deps.skillRoot);
-      assert.equal(brief.split('## Quality\n\n' + qualityCriteria(quality, 'writer')).length - 1, 1);
-      for (const name of ['shared', 'code', 'testing']) {
+      const writerQuality = qualityCriteria(quality, 'writer');
+      assert.equal(brief.split('## Quality\n\n' + writerQuality).length - 1, 1);
+      assert.ok(writerQuality.includes('Writer focus'));
+      assert.doesNotMatch(writerQuality, /^- Prune:/m);
+      for (const name of ['shared', 'code']) {
         const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
-        assert.ok(brief.includes(body));
+        assert.ok(writerQuality.includes(body));
       }
       for (const text of [path.resolve(f.session, '.state/worktrees/T1-1'), 'mission.spec.md', f.hashes.spec!, 'work.plan.md', f.hashes.plan!, 'Shared gated context 日本語.', '## Task Map', '### T1', 'Preserve the first invariant', 'First implementation detail', 'SC1', 'node first-check', 'node first-red', 'src/first.ts', 'node contract-check', '**intent**', '**correctness**', 'DONE', 'BLOCKED', 'NEEDS_CONTEXT']) assert.ok(brief.includes(text), text);
       assert.match(brief, /read.*whole/i);
