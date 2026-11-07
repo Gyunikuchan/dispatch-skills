@@ -47,7 +47,7 @@ test('delegates-resume-handles: recorded successes yield text, session id, and e
   const codexStream = ['{"type":"thread.started","thread_id":"t-9"}', '{"type":"item.completed","item":{"type":"reasoning","text":"x"}}',
     '{"type":"item.completed","item":{"type":"agent_message","text":"R"}}'].join('\n');
   assert.deepEqual(parse('codex', out(codexStream)), { status: 'ok', text: 'R', sessionId: 't-9', resume: 'codex exec resume t-9' });
-  assert.deepEqual(parse('opencode', out(opencodeText('R'))), { status: 'ok', text: 'R', sessionId: null, resume: 'opencode:openai/gpt-5' });
+  assert.deepEqual(parse('opencode', out(opencodeText('R'))), { status: 'ok', text: 'R', sessionId: 'ses', resume: 'opencode:openai/gpt-5' });
   const local = parse('opencode', out(opencodeText('R')), { endpoint: 'http://127.0.0.1:1234/v1' });
   assert.equal(local.status === 'ok' ? local.resume : null, 'http://127.0.0.1:1234/v1');
 });
@@ -119,4 +119,65 @@ test('copilot effort rejection yields to sandbox and auth errors', () => {
   const auth = parse('copilot', out('', 1, 'not authenticated\n' + COPILOT_INVALID_EFFORT), { effort: 'high' });
   assert.equal(cls(auth), 'auth');
   assert.equal(auth.status === 'fail' ? auth.retryWithoutEffort : undefined, undefined);
+});
+
+const attempt = (id: ProviderId, result: ProcessResult, over: Partial<LaunchRequest> = {}): string | null =>
+  SPECS[id].attemptSession!(result, { ...req, ...over });
+
+const codexStream = (threadId: string | null): string =>
+  [`{"type":"thread.started"${threadId === null ? '' : `,"thread_id":"${threadId}"`}}`,
+    '{"type":"item.completed","item":{"type":"agent_message","text":"R"}}'].join('\n');
+
+const opencodeEvent = (sessionID: string, text: string): string => JSON.stringify({
+  type: 'text', timestamp: 0, sessionID,
+  part: { id: 'text-0', sessionID, messageID: 'msg', type: 'text', text },
+});
+
+test('attempt session: codex returns thread id and builds resume argv', () => {
+  assert.equal(attempt('codex', out(codexStream('t-9'))), 't-9');
+  assert.equal(attempt('codex', out('')), null);
+  assert.equal(attempt('codex', out(codexStream('../evil'))), null);
+  const argv = SPECS.codex.argv({ ...req, sandbox: true, resume: 't-9', prompt: 'C' }, 'cli').argv;
+  assert.ok(argv.includes('resume') && argv.includes('t-9'));
+  assert.ok(argv.includes('--json') && argv.includes('--skip-git-repo-check'));
+});
+
+test('attempt session: opencode returns last sessionID', () => {
+  assert.equal(attempt('opencode', out([opencodeEvent('ses_first', 'a'), opencodeEvent('ses_last', 'b')].join('\n'))), 'ses_last');
+  assert.equal(attempt('opencode', out('')), null);
+  assert.equal(attempt('opencode', out([opencodeEvent('../evil', 'x')].join('\n'))), null);
+});
+
+test('attempt session: copilot prefers resume, extracts id, presets only after idle output', () => {
+  assert.equal(attempt('copilot', out(''), { resume: 'preset-id-1' }), 'preset-id-1');
+  assert.equal(attempt('copilot', out('R\n\nTo resume: copilot --resume 0123456789abcdef')), '0123456789abcdef');
+  assert.equal(attempt('copilot', { ...out('partial'), idleMs: 120000 }, { sessionPreset: 'preset-id-2' }), 'preset-id-2');
+  assert.equal(attempt('copilot', out('', 1)), null);
+  assert.equal(attempt('copilot', out('some unclassified stdout', 1, 'boom')), null);
+  assert.equal(attempt('copilot', out('', 1), { sessionPreset: 'preset-id-3' }), null);
+  assert.equal(attempt('copilot', out('R', 1), { resume: '../evil' }), null);
+  const fresh = SPECS.copilot.argv(req, 'cli').argv;
+  assert.ok(!fresh.includes('--session-id'));
+  const preset = SPECS.copilot.argv({ ...req, sessionPreset: 'preset-id-4' }, 'cli').argv;
+  assert.ok(preset.includes('--session-id') && preset.includes('preset-id-4'));
+});
+
+test('attempt session: claude returns envelope session id', () => {
+  assert.equal(attempt('claude', out('{"type":"result","result":"R","session_id":"abc123"}')), 'abc123');
+  assert.equal(attempt('claude', out('')), null);
+  assert.equal(attempt('claude', out('', 1)), null);
+  assert.equal(attempt('claude', out('{"type":"result","result":"R","session_id":"../evil"}')), null);
+  const argv = SPECS.claude.argv({ ...req, resume: 'abc123', prompt: 'C' }, 'cli').argv;
+  assert.ok(argv.includes('--resume') && argv.includes('abc123'));
+});
+
+test('attempt session: agy returns conversation id and classes empty envelope', () => {
+  assert.equal(attempt('agy', out('{"conversationId":"c-1","response":"R"}')), 'c-1');
+  assert.equal(attempt('agy', out('')), null);
+  assert.equal(attempt('agy', out('{"conversationId":"../evil","response":"R"}')), null);
+  assert.equal(cls(parse('agy', out('{"conversationId":"c-1","response":""}'))), 'empty-output');
+  assert.equal(parse('agy', out('hello')).status, 'ok');
+  assert.equal(cls(parse('agy', out('{"conversationId":"c-1","response":""}', 1, 'rate limit exceeded'))), 'quota');
+  const argv = SPECS.agy.argv({ ...req, resume: 'c-1', prompt: 'C' }, 'cli').argv;
+  assert.ok(argv.includes('--conversation') && argv.includes('c-1'));
 });

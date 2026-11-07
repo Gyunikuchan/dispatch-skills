@@ -5,6 +5,7 @@ import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import {
+  CONTINUE_PROMPT,
   IDLE_TIMEOUT_MS,
   batchInvocation, buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
@@ -395,7 +396,346 @@ test('silent delegate times out idle after the idle window, before the overall d
   const done = await run;
   assert.equal(done.result?.timedOut, true);
   assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /^idle 300s; partial output at \/r\/log$/);
+  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', new RegExp(`^idle ${Math.round(IDLE_TIMEOUT_MS / 1000)}s; partial output at \\/r\\/log$`));
+});
+
+test('idle after two minutes', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(10_000);
+  h.activity();
+  h.clock.advance(119_000);
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(31_000);
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  const done = await run;
+  assert.equal(done.result?.timedOut, true);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+const makeNudgeSpec = (sessionId: string | null): any => ({
+  ...claude,
+  id: 'codex',
+  silentUntilExit: undefined,
+  attemptSession: () => sessionId,
+  parse: (out: ProcessResult) =>
+    out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+  argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+});
+
+test('nudge: idle then ok resumes once with continue prompt', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'SESS partial', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: 'FINAL answer' }));
+  const done = await run;
+  assert.equal(h.launches.length, 2);
+  assert.match(String(h.launches[1]?.argv[1] ?? ''), /resume:sess1/);
+  assert.ok(String(h.launches[1]?.argv[2] ?? '').includes(CONTINUE_PROMPT));
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.invocations.length, 2);
+  assert.equal((done.invocations[1] as any)?.nudge, true);
+  assert.ok((h.fs.files.get('/r/log.stalled') ?? '').includes('## codex'));
+});
+
+test('nudge: empty-output then ok resumes once', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'no answer', stderrTail: 'boom' }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: 'FINAL answer' }));
+  const done = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal((done.invocations[1] as any)?.nudge, true);
+});
+
+test('nudge: second failure returns without third launch', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty two' }));
+  const done = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(done.outcome.status, 'fail');
+  assert.equal(done.invocations.length, 2);
+  assert.equal((done.invocations[1] as any)?.nudge, true);
+});
+
+test('nudge: no session id skips resume', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec(null);
+  const run = runDelegate(spec, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush();
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status, 'fail');
+});
+
+test('nudge: no deadline left skips resume', async () => {
+  const h = harness(posix, { '/r/p.md': 'Review it' });
+  const spec: any = {
+    ...claude, id: 'codex', silentUntilExit: undefined,
+    attemptSession: () => { h.clock.advance(10_000); return 'sess1'; },
+    parse: () => ({ status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' }),
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 5000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status, 'fail');
+});
+
+test('nudge: lifecycleError, truncated and overall-deadline timeout skip resume', async () => {
+  const cases: { name: string; result: ProcessResult; cls: string }[] = [
+    { name: 'lifecycleError', result: ok({ lifecycleError: 'group unconfirmed' } as any), cls: 'timeout' },
+    { name: 'truncated', result: ok({ truncated: true }), cls: 'buffer' },
+    { name: 'overall-deadline timeout', result: ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }), cls: 'timeout' },
+  ];
+  for (const { name, result, cls } of cases) {
+    const h = harness(posix);
+    const run = runDelegate(makeNudgeSpec('sess1'), req, 'cli', h.ports);
+    await flush();
+    h.finish(result);
+    await flush(); await flush();
+    const done = await run;
+    assert.equal(h.launches.length, 1, name);
+    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, cls, name);
+  }
+});
+
+test('nudge: effort rejection then ok has no nudge', async () => {
+  const h = harness(posix);
+  const spec: any = {
+    ...claude,
+    parse: (out: ProcessResult, launch: any) =>
+      launch.effort ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true } : claude.parse(out, launch),
+    attemptSession: () => 'sess1',
+  };
+  const run = runDelegate(spec, { ...req, model: 'm', effort: 'high' }, 'cli', h.ports);
+  await flush(); h.finish(ok({ durationMs: 7 }));
+  await flush(); await flush(); h.finish(ok({ durationMs: 9 }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal(h.launches.length, 2);
+  assert.equal((done.invocations[1] as any)?.nudge, undefined);
+});
+
+test('nudge: resume prompt carries safety header without attachments', async () => {
+  const h = harness(posix, { '/r/p.md': 'Review it', '/r/a.ts': 'attachment data' });
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, { ...req, attachments: ['/r/a.ts'] }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: 'FINAL answer' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  const resumePrompt = String(h.launches[1]?.argv[2] ?? '');
+  assert.ok(resumePrompt.includes(GUARDRAIL_HEADER));
+  assert.ok(resumePrompt.includes(CONTINUE_PROMPT));
+  assert.ok(!resumePrompt.includes('/r/a.ts'));
+});
+
+test('nudge: spilled first prompt does not leak brief file into resume', async () => {
+  const h = harness(posix, { '/r/p.md': 'Review it', '/r/a.ts': `data ${'x'.repeat(110000)}` });
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, { ...req, attachments: ['/r/a.ts'] }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: 'FINAL answer' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.ok(String(h.launches[0]?.argv[2] ?? '').includes('Brief file:'));
+  const resumePrompt = String(h.launches[1]?.argv[2] ?? '');
+  assert.ok(resumePrompt.includes(CONTINUE_PROMPT));
+  assert.ok(!resumePrompt.includes('Brief file:'));
+  assert.equal(done.briefFile, null);
+});
+
+test('nudge: two stalled launches in one slot both kept in stalled', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  for (let i = 0; i < 2; i++) {
+    const run = runDelegate(spec, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: `empty ${i}` }));
+    await flush(); await flush();
+    h.finish(ok({ stdout: 'FINAL answer' }));
+    await run;
+  }
+  const stalled = h.fs.files.get('/r/log.stalled') ?? '';
+  assert.equal((stalled.match(/## codex/g) ?? []).length, 2);
+});
+
+test('nudge: first stall with missing or unreadable stalled file still nudges', async () => {
+  for (const code of ['ENOENT', 'EACCES'] as const) {
+    const h = harness(posix);
+    const realRead = h.fs.readText;
+    h.fs.readText = (f: string) => {
+      if (f.endsWith('.stalled')) {
+        if (code === 'ENOENT') { const e = new Error('missing') as NodeJS.ErrnoException; (e as any).code = 'ENOENT'; throw e; }
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      }
+      return realRead(f);
+    };
+    const run = runDelegate(makeNudgeSpec('sess1'), req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    await flush(); await flush();
+    h.finish(ok({ stdout: 'FINAL answer' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'ok', code);
+    assert.equal(h.launches.length, 2, code);
+    if (code === 'ENOENT') assert.ok((h.fs.files.get('/r/log.stalled') ?? '').includes('## codex'), code);
+  }
+});
+
+test('nudge: aborted resume setup returns stalled outcome', async () => {
+  const parse = (out: ProcessResult) => out.stdout.includes('FINAL')
+    ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+    : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' };
+  const argv = (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd });
+  { // resume prepare fails
+    const h = harness(posix);
+    h.ports.prepare = { fetchModels: async () => [], acquireGpuLock: async () => () => {} };
+    const spec: any = {
+      ...claude, id: 'codex', silentUntilExit: undefined,
+      prepare: async (r: any) => r.resume ? { kind: 'fail' as const, outcome: { status: 'fail' as const, cls: 'config' as const, detail: 'nope' } } : { kind: 'launch' as const, env: {}, release: () => {} },
+      parse, attemptSession: () => 'sess1', argv,
+    };
+    const run = runDelegate(spec, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'fail');
+    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'empty-output');
+    assert.equal(h.launches.length, 1);
+  }
+  { // deadline spent in resume prepare
+    const h = harness(posix);
+    h.ports.prepare = { fetchModels: async () => [], acquireGpuLock: async () => () => {} };
+    const spec: any = {
+      ...claude, id: 'codex', silentUntilExit: undefined,
+      prepare: async (r: any) => { if (r.resume) h.clock.advance(10_000); return { kind: 'launch' as const, env: {}, release: () => {} }; },
+      parse, attemptSession: () => 'sess1', argv,
+    };
+    const run = runDelegate(spec, { ...req, timeoutMs: 5000 }, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'fail');
+    assert.equal(h.launches.length, 1);
+  }
+});
+
+test('nudge: win32 cmd resume spills continue prompt and starts', async () => {
+  const h = harness(windows);
+  h.ports.binary = 'C:/bin/tool.cmd';
+  const spec: any = {
+    ...claude, id: 'codex', silentUntilExit: undefined,
+    attemptSession: () => 'sess1',
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: any) => ({ argv: [r.binary, r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: 'FINAL answer' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.ok((h.fs.files.get('/r/brief.md') ?? '').includes(CONTINUE_PROMPT));
+  assert.equal(h.launches.length, 2);
+});
+
+test('nudge: throwing resume setup returns stalled outcome', async () => {
+  const parse = (out: ProcessResult) => out.stdout.includes('FINAL')
+    ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+    : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' };
+  { // throwing spill write on resume (win32 batch launcher always spills)
+    const h = harness(windows);
+    h.ports.binary = 'C:/bin/tool.cmd';
+    const realWrite = h.fs.writeText;
+    h.fs.writeText = (f: string, t: string) => { if (f === '/r/brief.md' && t.includes(CONTINUE_PROMPT)) throw new Error('spill boom'); realWrite(f, t); };
+    const spec: any = {
+      ...claude, id: 'codex', silentUntilExit: undefined,
+      attemptSession: () => 'sess1', parse,
+      argv: (r: any) => ({ argv: [r.binary, r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+    };
+    const run = runDelegate(spec, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'fail');
+    assert.equal(h.launches.length, 1);
+  }
+  { // throwing argv build on resume
+    const h = harness(posix);
+    const spec: any = {
+      ...claude, id: 'codex', silentUntilExit: undefined,
+      attemptSession: () => 'sess1', parse,
+      argv: (r: any) => { if (r.resume) throw new Error('argv boom'); return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }; },
+    };
+    const run = runDelegate(spec, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'fail');
+    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'empty-output');
+    assert.equal(h.launches.length, 1);
+  }
+  { // throwing process start on resume
+    const h = harness(posix);
+    const spec = makeNudgeSpec('sess1');
+    const realStart = h.ports.process.start.bind(h.ports.process);
+    h.ports.process.start = ((launch: Launch, io: any) => {
+      if (String((launch.argv[1] ?? '')).startsWith('resume:')) throw new Error('spawn boom');
+      return (realStart as any)(launch, io);
+    }) as any;
+    const run = runDelegate(spec, req, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: 1, stdout: 'empty' }));
+    const done = await run;
+    assert.equal(done.outcome.status, 'fail');
+    assert.equal(h.launches.length, 1);
+  }
+});
+
+test('nudge: copilot preset flag on fresh launch only', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const h = harness(posix);
+  (h.ports as any).nonce = () => 'preset123';
+  const run = runDelegate(copilot, { ...req, timeoutMs: 60000 }, 'cli', h.ports);
+  await flush();
+  assert.ok((h.launches[0]?.argv ?? []).includes('--session-id'));
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial output', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
+  await flush(); await flush();
+  const resumeArgv = h.launches[1]?.argv ?? [];
+  assert.ok(resumeArgv.includes('--resume'));
+  assert.ok(!resumeArgv.includes('--session-id'));
+  h.finish(ok({ exit: 0, stdout: 'recovered answer', stderrTail: '' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
 });
 
 test('silent-until-exit delegate is not idle-killed before its deadline', async () => {
@@ -446,7 +786,9 @@ test('OpenCode settles its POSIX group after success, failure and timeout withou
       const spec=scenario==='other-provider'?claude:opencode;
       const pending=runDelegate(spec,{...req,agent:'explore',readOnlyVerified:true},'cli',h.ports);
       await flush();if(scenario==='timeout')h.clock.advance(req.timeoutMs);
-      const stdout=scenario==='other-provider'?'{}':JSON.stringify({type:'text',timestamp:0,sessionID:'ses',part:{id:'text-0',sessionID:'ses',messageID:'msg',type:'text',text:'controlled output'}});
+      const stdout=scenario==='other-provider'?'{}':scenario==='failure'
+        ? JSON.stringify({type:'text',timestamp:0,part:{id:'text-0',messageID:'msg',type:'text',text:'controlled output'}})
+        : JSON.stringify({type:'text',timestamp:0,sessionID:'ses',part:{id:'text-0',sessionID:'ses',messageID:'msg',type:'text',text:'controlled output'}});
       h.finish(ok({exit:scenario==='failure'?7:0,stdout}));
       const result=await pending;
       assert.equal(checks,scenario==='other-provider'?0:1);

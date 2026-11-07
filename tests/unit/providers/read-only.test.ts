@@ -114,3 +114,52 @@ test('delegates-sandbox-strict: sandbox on an unsupported host fails the slot wi
   const rejected = await runDelegate(SPECS.codex, delegate, 'cli', codex);
   assert.equal(rejected.outcome.status === 'fail' && rejected.outcome.cls, 'sandbox-unsupported');
 });
+
+test('resume argv: codex keeps read-only approval and sandbox keys without forbidden flags', () => {
+  for (const sandbox of [true, false]) {
+    const argv = SPECS.codex.argv({ ...request(sandbox), resume: 't-9', prompt: 'C' }, 'cli').argv;
+    assert.ok(argv.includes('resume') && argv.includes('t-9'));
+    assert.ok(argv.includes('approval_policy="never"'), String(sandbox));
+    assert.ok(argv.includes(sandbox ? 'sandbox_mode="read-only"' : 'sandbox_mode="danger-full-access"'), String(sandbox));
+    assert.ok(argv.includes('-c'), String(sandbox));
+    for (const flag of ['--cd', '--sandbox', '--config']) assert.ok(!argv.includes(flag), `${String(sandbox)} has ${flag}`);
+  }
+});
+
+test('resume argv: opencode keeps read-only run flag and session id', () => {
+  for (const sandbox of [true, false]) {
+    const argv = SPECS.opencode.argv({ ...request(sandbox, env('linux', true)), resume: 'ses_last', agent: 'explore', prompt: 'C' }, 'cli').argv;
+    assert.ok(argv.includes('run'));
+    const session = argv.indexOf('--session');
+    assert.ok(session > 0 && argv[session + 1] === 'ses_last', String(sandbox));
+    assert.ok(session < argv.lastIndexOf('--'), String(sandbox));
+    if (sandbox) assert.equal(argv[0], 'bwrap');
+  }
+});
+
+test('resume argv: copilot keeps plan mode and sandbox flags with resume and no session id', () => {
+  for (const sandbox of [true, false]) {
+    const argv = SPECS.copilot.argv({ ...request(sandbox), sessionPreset: 'preset-id-4', resume: 'preset-id-4' }, 'cli').argv;
+    assert.ok(argv.includes('--resume') && argv.includes('preset-id-4'), String(sandbox));
+    assert.ok(!argv.includes('--session-id'), String(sandbox));
+    for (const flag of ['--mode', 'plan']) assert.ok(argv.includes(flag), String(sandbox));
+    if (sandbox) for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user']) assert.ok(argv.includes(flag), String(sandbox));
+  }
+});
+
+test('resume argv: claude keeps plan mode and tool denylist with resume', () => {
+  for (const sandbox of [true, false]) {
+    const argv = SPECS.claude.argv({ ...request(sandbox), resume: 'abc123' }, 'cli').argv;
+    assert.ok(argv.includes('--resume') && argv.includes('abc123'), String(sandbox));
+    for (const flag of ['--permission-mode', 'plan', 'Write', 'Edit', 'Agent', 'Task']) assert.ok(argv.includes(flag), String(sandbox));
+    if (sandbox) assert.ok(argv.includes('--settings'), String(sandbox));
+  }
+});
+
+test('resume argv: agy keeps plan mode with conversation id', () => {
+  for (const sandbox of [true, false]) {
+    const argv = SPECS.agy.argv({ ...request(sandbox), resume: 'c-1' }, 'cli').argv;
+    assert.ok(argv.includes('--conversation') && argv.includes('c-1'), String(sandbox));
+    assert.ok(argv.includes('--mode') && argv.includes('plan'), String(sandbox));
+  }
+});

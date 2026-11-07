@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
@@ -931,4 +931,99 @@ test('OpenCode lifecycle steps survive failure without private data', async () =
  const directory=path.join(f.session,'.state','diagnostics');
  assert.doesNotMatch(fs.readdirSync(directory).map(file=>fs.readFileSync(path.join(directory,file),'utf8')).join(''),/private|secret|detail/);
  } finally {f.cleanup();}
+});
+
+test('nudge: resume marker passes through collector and renders', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), {diagnostics: true});
+    f.deps.skillRoot = skill;
+    f.deps.delegate = async () => ({
+      outcome: {status: 'ok', text: 'answer', resume: null, sessionId: null},
+      invocations: [
+        {provider: 'codex', model: 'm', mode: 'cli', effort: null, launched: true, outcome: 'timeout', durationMs: 10},
+        {provider: 'codex', model: 'm', mode: 'cli', effort: null, launched: true, outcome: 'ok', durationMs: 10, nudge: true},
+      ],
+    });
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    const dir = path.join(f.session, 'work');
+    await observer.deps.delegate('codex', {logPath: path.join(dir, 'logs', 'codex[0].log')} as never, 'cli');
+    observer.finish({ok: true, exit: 0, summary: 'done', value: null});
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
+    assert.equal(facts.invocations.length, 2);
+    assert.equal((facts.invocations[1] as Record<string, unknown>)['nudge'], true);
+    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.match(report, / · nudge/);
+  } finally { f.cleanup(); }
+});
+
+test('nudge: non-boolean marker is dropped', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    captureRuns(f.session, [
+      {phase: 'plan-review', attempt: 1, provider: 'codex', model: 'm', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'codex[0]', subject: 'aaaaaaaaaaaaaaaa', nudge: 'yes'},
+      {phase: 'plan-review', attempt: 2, provider: 'codex', model: 'm', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'codex[0]', subject: 'aaaaaaaaaaaaaaaa', nudge: 1},
+    ]);
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    assert.ok(facts.invocations.every((i) => !('nudge' in i)));
+    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.doesNotMatch(report, / · nudge/);
+  } finally { f.cleanup(); }
+});
+
+test('nudge: recovered stalls yield no waste finding', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const subject = 'aaaaaaaaaaaaaaaa';
+    captureRuns(f.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'ok'}), nudge: true},
+      {...attempt(subject, {slot: 'codex[1]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[1]', provider: 'codex', model: 'm', attempt: 2, outcome: 'ok'}), nudge: true},
+    ]);
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H1'), [], 'two recovered stalls');
+  } finally { f.cleanup(); }
+  const g = sessionFixture({ memory: true });
+  try {
+    const subject = 'bbbbbbbbbbbbbbbb';
+    captureRuns(g.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'ok'}), nudge: true},
+      {...attempt(subject, {slot: 'codex[1]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+    ]);
+    const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H1'), [], 'one recovered stall plus one unrelated failure');
+  } finally { g.cleanup(); }
+});
+
+test('nudge: waste counts a recovered stall exactly', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const subject = 'cccccccccccccccc';
+    captureRuns(f.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'ok'}), nudge: true, validationOutcome: 'timeout'},
+    ]);
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
+    assert.equal(findings.length, 1, 'failed validation on ok resume still yields waste');
+    assert.match(findings[0]!.evidence, /`timeout`: 2 of 2 CLI attempts failed/);
+  } finally { f.cleanup(); }
+  const g = sessionFixture({ memory: true });
+  try {
+    const subject = 'dddddddddddddddd';
+    captureRuns(g.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-a', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-a', attempt: 2, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-b', attempt: 3, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'model-b', attempt: 4, outcome: 'ok'}), nudge: true},
+    ]);
+    const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
+    assert.equal(findings.length, 1, 'unrelated failures of another model');
+    assert.match(findings[0]!.evidence, /`timeout`: 2 of 4 CLI attempts failed/);
+  } finally { g.cleanup(); }
 });

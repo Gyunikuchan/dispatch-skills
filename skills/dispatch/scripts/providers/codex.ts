@@ -2,7 +2,8 @@
 // sandbox; sandbox rejection → `sandbox-unsupported`; only `sandbox: false` selects `danger-full-access`.
 
 import { classifyFailure, failOutcome } from './runner.ts';
-import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import { validSessionId } from './types.ts';
 import { codexUsage } from '../lib/diagnostic-usage.ts';
 
 const REJECTED = [
@@ -52,9 +53,18 @@ export const codex: ProviderSpec = {
   sandbox: { flags: ['--sandbox', 'read-only'], inactive: REJECTED[1] ?? /$^/, supported: () => true },
   modeCascadeOn: [],
   resumeCommand: (id) => `codex exec resume ${id}`,
+  attemptSession: (out: ProcessResult): string | null => validSessionId(parseCodexEvents(out.stdout).threadId),
   argv(req) {
+    // `exec resume` takes no --cd or --sandbox, so read-only sandbox and approval ride on -c keys with cwd from launch.
+    if (req.resume) {
+      const argv = [req.binary, 'exec', 'resume', req.resume, '--json', '--skip-git-repo-check', '-c', 'approval_policy="never"',
+        '-c', req.sandbox ? 'sandbox_mode="read-only"' : 'sandbox_mode="danger-full-access"'];
+      if (req.model) argv.push('--model', req.model);
+      if (req.effort) argv.push('-c', `model_reasoning_effort=${JSON.stringify(req.effort)}`);
+      argv.push(req.prompt);
+      return { argv, stdin: null, env: {}, cwd: req.cwd };
+    }
     const argv = [req.binary, 'exec'];
-    if (req.resume) argv.push('resume', req.resume);
     // Codex refuses untrusted non-git folders; dispatch enforces read-only access itself, so skip that check.
     argv.push('--json', '--skip-git-repo-check', '--cd', req.cwd, '--config', 'approval_policy="never"');
     // NOTE: the unsandboxed path uses config because an older CLI may reject --sandbox itself.

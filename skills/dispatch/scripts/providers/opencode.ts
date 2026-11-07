@@ -6,6 +6,7 @@
 import { classifyFailure, failOutcome } from './runner.ts';
 import { opencodeUsage } from '../lib/diagnostic-usage.ts';
 import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, RunOutcome } from './types.ts';
+import { validSessionId } from './types.ts';
 
 export const PROXY_TRAP = 'http://127.0.0.1:0';
 const PROXY_KEYS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
@@ -16,11 +17,13 @@ type EventRow = Record<string, unknown>;
 const row = (v: unknown): EventRow | null => v && typeof v === 'object' && !Array.isArray(v) ? v as EventRow : null;
 
 /** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
-function parseEvents(raw: string): { text: string; errors: string[] } {
+function parseEvents(raw: string): { text: string; errors: string[]; sessionId: string | null } {
   const texts: string[] = [], errors: string[] = [];
+  let sessionId: string | null = null;
   for (const line of raw.split(/\r?\n/).filter((value) => value.trim())) {
     let event: EventRow | null;
     try { event = row(JSON.parse(line)); } catch { continue; }
+    if (typeof event?.['sessionID'] === 'string') sessionId = event['sessionID'] as string;
     if (event?.['type'] === 'text') {
       const text = row(event['part'])?.['text'];
       if (typeof text === 'string') texts.push(text);
@@ -30,7 +33,7 @@ function parseEvents(raw: string): { text: string; errors: string[] } {
       errors.push(typeof message === 'string' ? message : 'OpenCode reported an error');
     }
   }
-  return { text: texts.join('').trim(), errors };
+  return { text: texts.join('').trim(), errors, sessionId };
 }
 
 export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDALONE_UNSUPPORTED.test(text) || /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
@@ -98,12 +101,14 @@ export const opencode: ProviderSpec = {
   usage: opencodeUsage,
   outputCapBytes: 64 * 1024 * 1024,
   resumeCommand: (id) => id,
+  attemptSession: (out): string | null => validSessionId(parseEvents(out.stdout).sessionId),
   argv(req) {
     // Headless `--auto` requires the read-only agent from preparation: verified deny-by-default, or best-effort explore.
     // Standalone owns the server lifecycle; `--pure` and `--variant` are v1-only and never emitted.
     const inner = [req.binary, '--standalone', 'run', '--auto', '--format', 'json'];
     if (req.agent) inner.push('--agent', req.agent);
     if (req.model) inner.push('-m', req.effort ? `${req.model}#${req.effort}` : req.model);
+    if (req.resume) inner.push('--session', req.resume);
     inner.push('--', req.prompt);
     return { argv: req.sandbox ? bwrapArgv(req, inner) : inner, stdin: null, env: {}, cwd: req.cwd };
   },
@@ -112,7 +117,8 @@ export const opencode: ProviderSpec = {
     const diagnostics = [out.stderrTail, ...events.errors].join('\n').trim();
     if (out.exit === 0 && !events.errors.length && events.text) {
       const handle = req.endpoint ?? (req.model ? `opencode:${req.model}` : null);
-      return { status: 'ok', text: events.text, sessionId: null, resume: handle };
+      const id = validSessionId(events.sessionId);
+      return { status: 'ok', text: events.text, sessionId: id, resume: handle };
     }
     const detail = `opencode exit ${String(out.exit)}: ${diagnostics.slice(0, 300)}`;
     if (unsupportedStandaloneDiagnostic(diagnostics)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');

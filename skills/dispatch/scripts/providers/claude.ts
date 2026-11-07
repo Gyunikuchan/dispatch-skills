@@ -2,7 +2,8 @@
 // denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
-import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import { validSessionId } from './types.ts';
 import { claudeUsage } from '../lib/diagnostic-usage.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
@@ -70,6 +71,8 @@ export const claude: ProviderSpec = {
   resumeCommand: (id) => `claude --resume ${id}`,
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
+  // NOTE: claude never idle-stops, so only an exit envelope carries a session to resume.
+  attemptSession: (out: ProcessResult): string | null => validSessionId(parseEnvelope(out.stdout)?.sessionId ?? null),
   argv(req) {
     const argv = [req.binary, '-p', req.prompt, '--output-format', 'json', '--permission-mode', 'plan'];
     if (req.resume) argv.push('--resume', req.resume);

@@ -3,7 +3,8 @@
 
 import { agyUsage } from '../lib/diagnostic-usage.ts';
 import { classifyFailure, failOutcome } from './runner.ts';
-import type { ModeId, PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import { validSessionId } from './types.ts';
 
 export const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
 
@@ -12,12 +13,12 @@ const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|
 const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
 const dirname = (file: string): string => file.replace(/[/\\][^/\\]*$/, '') || file;
 
-function parseEnvelope(stdout: string): { conversationId: string | null; text: string | null } {
+function parseEnvelope(stdout: string): { conversationId: string | null; text: string | null } | null {
   const start = stdout.indexOf('{');
-  if (start === -1) return { conversationId: null, text: null };
+  if (start === -1) return null;
   let value: unknown;
-  try { value = JSON.parse(stdout.slice(start)); } catch { return { conversationId: null, text: null }; }
-  if (typeof value !== 'object' || value === null) return { conversationId: null, text: null };
+  try { value = JSON.parse(stdout.slice(start)); } catch { return null; }
+  if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
   const nested = record['conversation'] as { id?: unknown } | undefined;
   const id = record['conversationId'] ?? record['conversation_id'] ?? nested?.id;
@@ -42,20 +43,24 @@ export const agy: ProviderSpec = {
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
   usage: agyUsage,
+  attemptSession: (out: ProcessResult): string | null =>
+    validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),
   argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));
     const argv = [req.binary, '--print', req.prompt, '--output-format', 'json', `--print-timeout=${seconds}s`];
     if (req.briefFile) argv.push('--add-dir', dirname(req.briefFile));
     if (req.model) argv.push('--model', req.model);
     if (req.effort) argv.push('--effort', req.effort);
+    if (req.resume) argv.push('--conversation', req.resume);
     argv.push('--mode', 'plan', '--dangerously-skip-permissions');
     return { argv, stdin: null, env: { JETSKI_APP_DATA_DIR: AGY_MODE_PROFILES[mode] }, cwd: req.cwd };
   },
   parse(out): RunOutcome {
     const envelope = parseEnvelope(out.stdout);
-    const text = (envelope.text ?? out.stdout).trim();
+    // A parsed envelope with no answer text is an empty exit, not a raw-JSON answer; plain-text stdout stays valid.
+    const text = envelope ? (envelope.text ?? '').trim() : out.stdout.trim();
     if (out.exit === 0 && text) {
-      const id = envelope.conversationId;
+      const id = envelope?.conversationId ?? null;
       return { status: 'ok', text, sessionId: id, resume: id ? `conversation://${id}` : null };
     }
     const both = `${out.stderrTail}\n${out.stdout}`;

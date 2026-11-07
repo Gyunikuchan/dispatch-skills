@@ -12,10 +12,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 14561 covers measured 14434 driver LOC for software-factory additions (writer quality filter, confirmation-only fast path, batch ledger appends), headroom 127.
+  // NOTE: 14600 covers measured 14567 driver LOC (software-factory additions plus stall-nudge provider resume, runner nudge and diagnostics marker), headroom 33; raised from 14561 by user authorization "Raise budget to 14600" in session 20261107T0657Z-stall-detection-and-continue-nudge-for-p.
   assert.ok(
-    lines <= 14561,
-    `driver TS LOC ${lines} exceeds 14561 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    lines <= 14600,
+    `driver TS LOC ${lines} exceeds 14600 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   assert.ok(
     KINDS.length <= 14,

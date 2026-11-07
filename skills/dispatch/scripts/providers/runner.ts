@@ -5,14 +5,15 @@
 import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import type { OsId } from '../lib/platform.ts';
-import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 1800 * 1000;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 export const KILL_ESCALATION_MS = 1000;
 /** Silence on both stdout and stderr that stops a delegate before its overall deadline. */
-export const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+export const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+export const CONTINUE_PROMPT = 'Your previous turn stopped before a final answer. Continue the task from where you stopped and return your final answer in the format the original prompt requires.';
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
@@ -443,7 +444,8 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   const scope = { attachedFiles: attachments.attachedFiles, ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
   const guarded = formatSafetyPrompt(attachments.text ? `${attachments.text}\n\n${body}` : body, scope);
   const schemaText = req.schemaPath && spec.schema ? ports.fs.readText(req.schemaPath) : null;
-  const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform };
+  const sessionPreset = spec.presetsSession ? ports.nonce() : null;
+  const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform, ...(sessionPreset ? { sessionPreset } : {}) };
   // The batch ceiling covers the whole command line, so fixed arguments spend budget too.
   const reserved = bytes(spec.argv({ ...base, prompt: '' }, mode).argv.join(' '));
   let briefFile: string | null = null;
@@ -455,14 +457,28 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
 
   let attempts = 0;
   let current = prepared;
+  let nudged = false;
+  let isNudge = false;
+  let stalledOutcome: Extract<RunOutcome, { status: 'fail' }> | null = null;
+  let stalledResult: ProcessResult | null = null;
+  const VALID_NUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
   for (;;) {
     const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
     const prepareStart = ports.clock.now();
-    const pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
-    if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
-    if (pre?.kind === 'fail') return unlaunched(pre.outcome, attempts, briefFile, steps);
+    let pre: Prelaunch | null = null;
+    try {
+      pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
+      if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
+    } catch (error) {
+      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      throw error;
+    }
+    if (pre?.kind === 'fail') {
+      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      return unlaunched(pre.outcome, attempts, briefFile, steps);
+    }
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     try {
@@ -470,6 +486,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
       result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', steps);
+    } catch (error) {
+      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      throw error;
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }
@@ -477,11 +496,67 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let usage: DiagnosticUsage | undefined;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
-    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isNudge ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;
       continue;
+    }
+    if (outcome.status === 'fail' && !nudged) {
+      const isIdleKill = result.idleMs !== undefined;
+      const isEmpty = outcome.cls === 'empty-output';
+      if ((isIdleKill || isEmpty)
+        && !result.lifecycleError
+        && !result.truncated
+        && !(result.timedOut && result.idleMs === undefined)
+        && !outcome.retryWithoutEffort) {
+        let sessionId: string | null = null;
+        try {
+          sessionId = spec.attemptSession ? spec.attemptSession(result, current) : null;
+        } catch {
+          sessionId = null;
+        }
+        const remainingNudge = deadline - ports.clock.now();
+        if (typeof sessionId === 'string' && VALID_NUDGE_ID.test(sessionId) && remainingNudge > 0) {
+          stalledOutcome = outcome;
+          stalledResult = result;
+          try {
+            const stalledPath = `${req.logPath}.stalled`;
+            let existing = '';
+            try {
+              existing = ports.fs.readText(stalledPath);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
+              else throw error;
+            }
+            const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
+            const entry = `${header}\n${result.stdout ?? ''}`;
+            const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
+            ports.fs.writeText(stalledPath, combined);
+          } catch {
+            // Best effort: a copy failure skips the copy, not the nudge.
+          }
+          try {
+            const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
+            const resumeGuarded = formatSafetyPrompt(CONTINUE_PROMPT, resumeScope);
+            const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: sessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
+            let resumeBriefFile: string | null = null;
+            let resumePrompt = resumeGuarded;
+            if (mustSpill(resumeGuarded, ports.platform, ports.binary, resumeReserved)) {
+              ports.fs.writeText(req.briefPath, resumeGuarded);
+              resumeBriefFile = req.briefPath;
+              resumePrompt = spillPointer(req.briefPath);
+            }
+            briefFile = resumeBriefFile;
+            current = { ...current, resume: sessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingNudge };
+          } catch {
+            return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+          }
+          nudged = true;
+          isNudge = true;
+          continue;
+        }
+      }
     }
     return { outcome, result, attempts, briefFile, invocations };
   }

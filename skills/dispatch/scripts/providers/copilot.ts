@@ -3,7 +3,8 @@
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
 import type { FailureClass } from '../toolkit/types.ts';
-import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import { validSessionId } from './types.ts';
 
 const AUTH = /(no authentication|can be authenticated|oauth token|personal access token|gh auth login|subscription required|not subscribed|active github copilot subscription)/i;
 
@@ -33,9 +34,19 @@ export const copilot: ProviderSpec = {
   native: 'copilot',
   modeCascadeOn: ['quota'],
   resumeCommand: (id) => `copilot --resume ${id}`,
+  // NOTE: a preset id alone proves nothing; only an idle kill after streamed output reports it.
+  presetsSession: true,
+  attemptSession(out: ProcessResult, req: LaunchRequest): string | null {
+    if (req.resume) return validSessionId(req.resume);
+    const extracted = extractSessionId(out.stdout, 'copilot') ?? extractSessionId(out.stderrTail, 'copilot');
+    if (extracted) return validSessionId(extracted);
+    if (out.idleMs !== undefined && out.stdout.trim() && req.sessionPreset) return validSessionId(req.sessionPreset);
+    return null;
+  },
   argv(req) {
     const argv = [req.binary, ...(req.sandbox ? [...SANDBOX_FLAGS] : []), '-p', req.prompt];
     if (req.resume) argv.push('--resume', req.resume);
+    else if (req.sessionPreset) argv.push('--session-id', req.sessionPreset);
     if (req.model) argv.push('--model', req.model);
     if (req.effort) argv.push('--reasoning-effort', req.effort);
     for (const command of req.readCommands ?? []) argv.push('--allow-tool', `shell(${command}:*)`);

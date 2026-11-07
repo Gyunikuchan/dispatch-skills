@@ -18,6 +18,8 @@ CLI delegates use provider controls, credential stripping, sensitive-file guards
 
 Configured model and mode combinations cascade on failure, including `refusal` and `blocked`; exhausted voices use reserves as available, then save `failed`. MUST rejection requests retain the original logical source slot through each fallback. The physical responder and explicit reply remain in the result; only assigned requests can establish confirmation. See [rejection confirmation](review-rules.md#rulings-and-fix-scope). One combination's failure does not exhaust all combinations. Preserve actual failure and coverage evidence.
 
+Streaming CLI delegates stop after 2 minutes of silence; an idle stop or an empty answer resumes the same session once with a continue prompt when the runner has the attempt's session id and time remains in the deadline, then fails over, otherwise it fails over without a nudge. Copilot session presets need GitHub Copilot CLI 1.0.106 or later.
+
 ## Quota
 
 Quota cooldown applies to the exact provider, model alias/default and launch mode for one hour from its recorded failure bucket. Effort changes share the key; other models/modes remain eligible. Use `session quota-reprobe` for one key under [session commands](toolkit.md#session-commands). Reprobe affects future selection; retain already-issued work and available results.

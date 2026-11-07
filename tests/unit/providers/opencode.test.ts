@@ -150,10 +150,21 @@ test('unsupported standalone parser variants fail config without effort retry or
   }
 });
 
+test('resume argv: opencode inserts --session before --', () => {
+  const fresh = opencode.argv(launchReq(), 'cli').argv;
+  assert.ok(!fresh.includes('--session'));
+  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
+    const argv = opencode.argv(launchReq({ resume: 'ses_abc123' }), mode).argv;
+    const session = argv.indexOf('--session');
+    const dash = argv.indexOf('--');
+    assert.ok(session > 0 && argv[session + 1] === 'ses_abc123' && session < dash, mode);
+  }
+});
+
 test('opencode json text extraction', () => {
   const stream = [jsonText('Hello '), jsonText('world'), jsonStep({ input: 12, output: 3, reasoning: 1, cache: { read: 4, write: 0 } })].join('\n');
   assert.deepEqual(opencode.parse(result(stream), launchReq()), {
-    status: 'ok', text: 'Hello world', sessionId: null, resume: 'opencode:lmstudio/qwen',
+    status: 'ok', text: 'Hello world', sessionId: 'ses', resume: 'opencode:lmstudio/qwen',
   });
 });
 

@@ -54,9 +54,16 @@ export type LaunchRequest = DelegateRequest & {
   briefFile: string | null;
   schemaText: string | null;
   platform: PlatformEnv;
+  /** Pre-assigned session id for a fresh launch; only emitted when the spec presets sessions. */
+  sessionPreset?: string | null;
 };
 
 export type Launch = { argv: readonly string[]; stdin: string | null; env: Readonly<Record<string, string>>; cwd: string; promptFile?: string };
+
+/** Shell-safe session ids only: ids ride on argv and the win32 batch launcher. */
+const VALID_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const validSessionId = (id: string | null | undefined): string | null =>
+  (typeof id === 'string' && VALID_SESSION_ID.test(id) ? id : null);
 
 export type ProcessResult = {
   exit: number | null;
@@ -82,7 +89,7 @@ export type RunOutcome =
 export type LifecycleStep = { step: 'debug-config' | 'debug-agents' | 'prepare' | 'response' | 'teardown'; elapsedMs: number; budgetMs: number; outcome: 'ok' | 'failed' | 'timeout' | 'unconfirmed' };
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason; lifecycleSteps?: LifecycleStep[] };
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason; lifecycleSteps?: LifecycleStep[]; /** Set on the single resume launch after an idle stop or empty answer. */ nudge?: true };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
 export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
@@ -125,6 +132,10 @@ export type ProviderSpec = {
   /** Classes that advance to the next mode (spec §6.4). */
   modeCascadeOn: readonly FailureClass[];
   resumeCommand(id: string): string;
+  /** True when argv sets `--session-id <sessionPreset>` on a fresh launch (copilot only). */
+  presetsSession?: true;
+  /** Session id of a finished or killed attempt when the attempt shows the session exists; null otherwise. */
+  attemptSession?(out: ProcessResult, req: LaunchRequest): string | null;
   /** The CLI writes nothing until exit (single JSON envelope), so silence is not idleness; only the deadline applies. */
   silentUntilExit?: true;
   prepare?(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch>;

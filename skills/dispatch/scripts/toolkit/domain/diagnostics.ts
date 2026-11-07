@@ -46,7 +46,7 @@ export type DiagnosticEvent = {
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason;
-  estimated?: boolean; tokens?: number; slot?: string; lifecycleSteps?: LifecycleStep[];
+  estimated?: boolean; tokens?: number; slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
 
@@ -267,6 +267,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
     ...opt('coverage', (['no usage output'] as const).find(x => x === v['coverage'])),
     ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
+    ...(v['nudge'] === true ? { nudge: true as const } : {}),
   }];
 }
 
@@ -400,7 +401,8 @@ export function heuristics(run: RunFacts): Finding[] {
   // Quota-store skips never launch, so they cost no driver time and are not attempts.
   const cli = run.invocations.filter((i) => i.surface === 'cli' && i.launched);
   // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
-  const failed = cli.filter((i) => (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok')));
+  // A stall a nudge recovers is not waste: a failed row directly followed by attempt in the same subject and slot by an ok nudge row of the same provider and model with no failed validation leaves the failure set.
+  const failed = cli.filter((i) => (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok'))).filter((row) => row.slot === undefined || row.attempt === undefined || !cli.some((next) => (next.subject ?? next.phase) === (row.subject ?? row.phase) && next.slot === row.slot && next.attempt === (row.attempt ?? -1) + 1 && next.nudge === true && next.provider === row.provider && next.model === row.model && next.outcome === 'ok' && (next.validationOutcome === undefined || next.validationOutcome === 'ok')));
   const failureClass = (i:InvocationFacts) => i.outcome !== 'ok' ? i.outcome : i.validationOutcome!;
   const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
   const bySlot = count((i) => `${i.subject??i.phase}|${i.slot ?? ''}`);
@@ -600,7 +602,7 @@ function appendix(runs: readonly RunFacts[]): string[] {
       const review=/^review-[a-f0-9]{16}$/.test(i.phase);
       const ordinal=i.attempt!==undefined&&i.attempt>0?i.attempt:undefined;
       const identity=i.subject?(review?` · attempt ${i.subject}/${ordinal??DASH}`:` · subject ${i.subject} · attempt ${ordinal??DASH}`):ordinal===undefined?'':` · attempt ${ordinal}`;
-      lines.push(row([String(index + 1), phaseName(run, i.phase)+identity+(i.slot?' · slot '+i.slot:''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.surface==='native' ? `native ${i.nativeState??(i.outcome==='ok'?'completed':i.outcome==='native-pending'?'pending':'unavailable')}` : `${i.outcome}${i.validationOutcome?' · validation '+i.validationOutcome:''}${i.routingOutcome?' · routing '+i.routingOutcome:''}${i.slotState?' · slot '+i.slotState:''}${i.lifecycleSteps?.length?' · lifecycle '+i.lifecycleSteps.map(s=>`${s.step} ${s.outcome} ${s.elapsedMs}/${s.budgetMs} ms`).join(', '):''}${i.launched?'':' (not launched)'}`]));
+      lines.push(row([String(index + 1), phaseName(run, i.phase)+identity+(i.slot?' · slot '+i.slot:''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage, i.estimated ? '~' : ''), all === undefined ? DASH : `${i.estimated ? '~' : ''}${num(all)}`, i.surface==='native' ? `native ${i.nativeState??(i.outcome==='ok'?'completed':i.outcome==='native-pending'?'pending':'unavailable')}` : `${i.outcome}${i.nudge===true?' · nudge':''}${i.validationOutcome?' · validation '+i.validationOutcome:''}${i.routingOutcome?' · routing '+i.routingOutcome:''}${i.slotState?' · slot '+i.slotState:''}${i.lifecycleSteps?.length?' · lifecycle '+i.lifecycleSteps.map(s=>`${s.step} ${s.outcome} ${s.elapsedMs}/${s.budgetMs} ms`).join(', '):''}${i.launched?'':' (not launched)'}`]));
     }
   });
   lines.push('');
