@@ -1,4 +1,7 @@
 {
   "outputStyle": "Concise",
-  "autoCompactWindow": 250000
+  "autoCompactWindow": 300000,
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
+  }
 }
