@@ -297,6 +297,10 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.match(grounding, /cited range/i);
   assert.ok(grounding.includes('providers.md#native-slots'));
   assert.ok(grounding.includes('## Scope round'));
+  assert.ok(grounding.includes('Launch one map explorer per grounding phase'));
+  assert.ok(grounding.includes('launch research explorers in parallel, one per independent topic'));
+  assert.ok(grounding.includes('writes no map'));
+  assert.ok(grounding.includes('../SKILL.md#context-guard'));
   assert.ok(read(root + 'references/verbs/plan.md').includes('../grounding.md#scope-round'));
   assert.ok(read(root + 'references/verbs/design.md').includes('../grounding.md#scope-round'));
   assert.ok(explorer.includes('<slug>.spec.context.md'));
@@ -344,7 +348,8 @@ test('root skill routes work and guards orchestrator context', () => {
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
   for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'A configured launch failure is a blocker, not a fallback trigger', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
-  for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 500 lines', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
+  for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
+  assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
   for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'A follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));

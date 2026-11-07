@@ -46,7 +46,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 
 ## Context guard
 
-At every verb and for every raw source (files, logs, web, command output, result files, diffs), a launch has a cost. Stay inline for a known file, cited range, index query or small read. Use an explorer for about 5 files or 500 lines of expected reading, a long log or web research, with one explorer per independent topic in parallel. Require a distilled, cited reply; treat it as a claim and verify load-bearing claims at source. Orchestrator-row work stays with the orchestrator at any size; an explorer may locate material, but the orchestrator reads what it rules on. Explorers may research at any step, including `ask`. Run `ask` only on user request.
+At every verb and for every raw source (files, logs, web, command output, result files, diffs), a launch has a cost. Stay inline for a known file, cited range, index query or small read. Use an explorer for about 5 files or 20 KB (~5k tokens) of expected reading (an estimate, not a measured check), a long log or web research, with one explorer per independent topic in parallel. Require a distilled, cited reply; treat it as a claim and verify load-bearing claims at source. Orchestrator-row work stays with the orchestrator at any size; an explorer may locate material, but the orchestrator reads what it rules on. Explorers may research at any step, including `ask`. Run `ask` only on user request.
 
 ## Launch and continue
 

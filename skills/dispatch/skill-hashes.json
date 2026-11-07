@@ -1,11 +1,11 @@
 {
   "$version": "0.8.3",
-  "SKILL.md": "8ef7fef027300f88c6cff46d2cfda8454844d28dd06866fccae46c682e8fcb75",
+  "SKILL.md": "6d98533c089d370f3675e25dd5996441240225f29ddc177a6d4a8e28be2d7b62",
   "references/artifact-readability.md": "f23212f18bb5f17fa3dbc0b86fee32cb7d8f926bb261e344075ed920f59ceb61",
   "references/decision-frame.md": "b60df9f679ef4e9e598cb8d52fb4284fd94da6bc60a3efbde50fe071ecab6891",
   "references/diagnostics.md": "c76e6dfc61e4ba8d946b30636003d5b74987c6a9362346a7b55e27c081e96e66",
   "references/glossary.md": "69d580d4c36e2c5676c443151b19ab7daffa0e7322697b9c7d66da226dd90c81",
-  "references/grounding.md": "fa9cc033d0d35b579de48954475a0d9c9de83421e41a3553c48375ca57703a63",
+  "references/grounding.md": "a8fe4015bf677fdadb21851ca67828e4850155c48fd68c30aaadc7e23bafbec7",
   "references/providers.md": "987a323ef7a00c8dd1de59db437020aca1f58b85a72b60127b47bbbe55080ecb",
   "references/readme/ask.md": "8a062ff441c997a005a2c49896578a846987a299064fe02fd0c4db0659050fad",
   "references/readme/concepts.md": "efe4874666f1aeeb92ea495be11f8916096e2d5bbb088c07fce7fc3689cbb506",
