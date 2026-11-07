@@ -32,8 +32,8 @@ The spec is the governing requirements and intent document. Put selected archite
 ### DEC-<n> — <title>
 - Context: <why a choice was needed>
 - Options:
-  - <option and trade-off>
-  - <option and trade-off>
+  - <option: trade-off, limitation, risk>
+  - <option: trade-off, limitation, risk>
 - Choice: <chosen option; tag user-made choices `(user)`>
 - User quote: <verbatim quote when the user made the decision>
 - Rationale: <why>

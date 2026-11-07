@@ -185,6 +185,19 @@ test('spec stage lays out grounded approaches', () => {
   assert.match(template, /verbatim user quote[^.\n]*`\(user\)`/i);
 });
 
+test('spec stage offers the simplest worthwhile approach', () => {
+  const {refine} = stageParts();
+  assert.match(refine, /simplest approach with a reasonable trade-off worth considering/i);
+  assert.match(refine, /\[simplicity order\]\(templates\/quality-bar\.md#shared\)/);
+  assert.match(refine, /never a strawman/i);
+  assert.match(refine, /already that option[^.]*say so/i);
+  assert.match(refine, /trade-off, limitation and risk/i);
+  assert.match(refine, /recommend the simplest presented approach that meets intent and the simplicity floor[^.]*heavier[^.]*reason/i);
+  const template = read(root + 'references/templates/spec.md');
+  assert.match(template, /<option: trade-off, limitation, risk>/);
+  assert.doesNotMatch(template, /<option and trade-off>/);
+});
+
 test('spec stage asks only build-changing questions', () => {
   const {refine} = stageParts();
   assert.match(refine, /only decisions that change scope, behavior or risk and that grounding cannot answer/i);
@@ -228,6 +241,10 @@ test('spec stage docs describe approach options', () => {
     for (const sentence of text.split(/\.\s/).filter((s) => /alternative only when[^.]*materially better/i.test(s))) {
       assert.match(sentence, /problem, scope and cost|other lenses/i, name + ': materially-better filter names its lenses');
     }
+  }
+  for (const [name, text] of Object.entries(docs)) {
+    assert.match(text, /simplest[^.]*worth considering/i, name + ': simplest worthwhile option');
+    assert.match(text, /trade-off, limitation and risk/i, name + ': per-option cost');
   }
   assert.match(docs.adr, /brainstorming[^.]*rejected as a whole[\s\S]*adopts[^.]*approach options[^.]*question admission[^.]*short path[^.]*self-check/i);
 });
