@@ -5,13 +5,13 @@ Kind block for `review-prompt.md`.
 - `<Design Path>` — path to the attached technical design.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
-- `<Review Scope>` — full review or changed design sections, optionally followed by `Design lint warnings:` context.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on Round 1; `Full review — changed paths: ; comparison: <sha256>` on a rerun; `Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>` on Round <n> > 1, optionally followed by `Design lint warnings:` context.
 - `<Context Map>` — `Context Map:` bullet naming the session context map, or empty when the session has none.
 
 ## opener
 
 Review the technical design adversarially: challenge the requirement, its premise, and the design.
-Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews.
+Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews. Inspect the architecture critically; when the design is sound and no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
 
 ## context
 

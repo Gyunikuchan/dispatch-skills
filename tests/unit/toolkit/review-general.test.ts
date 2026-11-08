@@ -365,7 +365,7 @@ test('review rounds code review prompt uses intent and raw task markdown and ref
     const result=await f.call('code','T1');assert.equal(result.exit,0);
     const prompt=fs.readFileSync(f.launches[0]!.request.promptPath,'utf8');
     const summary=prompt.split('- Task: ')[1]!.split('\n- Spec Path:')[0]!;
-    assert.doesNotMatch(prompt,/Walkthrough|absent or unfilled table/);
+    assert.doesNotMatch(prompt,/absent or unfilled table/);
     assert.match(prompt,/selected diff and tests/);
     assert.match(prompt,/does not establish that verification commands ran or final gates passed/);
     assert.equal(summary,'Keep captured work recoverable.\n\n### T1 — First\n#### [NEW] src/first.ts\n- Purpose: Keep captured work recoverable.\n\n- [SC1] Works\n  - Changes: src/first.ts\n  - Verify: `node check`\n  - Evidence: verify');
@@ -712,4 +712,31 @@ test('plan and design review refuse without a user confirm of the current spec a
     const stale=await f.call();
     assert.equal(stale.exit,4);assert.equal(stale.output.reason,'missing-confirmation');
   }finally{f.cleanup();}
+});
+
+test('review run forwards round 2 on repository-rerun with empty settled', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      return {outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []};
+    };
+    const first = await f.call();
+    assert.equal(first.exit, 0, JSON.stringify(first.output));
+    const firstPrompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
+    assert.doesNotMatch(firstPrompt, /On re-review,/);
+    assert.doesNotMatch(firstPrompt, /Settled in earlier rounds/);
+    const round1Dir = path.join(f.directory, 'round-1/gen-1');
+    fs.mkdirSync(round1Dir, {recursive: true});
+    fs.writeFileSync(path.join(round1Dir, 'checkout-report.json'), JSON.stringify({repositoryCheck: {state: 'unavailable', reason: 'test'}, asOfSeq: 0}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: 'repository-rerun:plan-work.plan:1', data: {text: 'rerun'}}, f.deps);
+    const second = await f.call();
+    assert.equal(second.exit, 0, JSON.stringify(second.output));
+    assert.equal(second.value.round, 2);
+    const round2 = JSON.parse(fs.readFileSync(path.join(f.directory, 'round-2/round.json'), 'utf8'));
+    assert.equal(round2.round, 2);
+    assert.match(round2.scope, /^Full review/);
+    const secondPrompt = fs.readFileSync(f.launches.at(-1)!.request.promptPath, 'utf8');
+    assert.equal(secondPrompt.split('On re-review,').length - 1, 1);
+  } finally { f.cleanup(); }
 });

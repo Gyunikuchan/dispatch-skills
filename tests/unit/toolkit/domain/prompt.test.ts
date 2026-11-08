@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { assembleTemplate, extractDocumentLayers, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection, type Settled} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
@@ -23,6 +23,11 @@ test('settled accepted rows drop rationale', () => {
   const clipped = {...accepted, id: 'R3-F002', defect: `${'x'.repeat(130)}\nmore`};
   assert.deepEqual(settledRows(settledSection([clipped])), [`- R3-F002 § Tasks: ${'x'.repeat(119)}… — accepted`]);
   assert.match(settledSection([{...accepted, revision: 'abc1234'}], true), /— accepted \(reviewed revision abc1234\)$/m);
+  const must = {...accepted, id: 'R3-F003', severity: 'MUST', defect: `${'y'.repeat(130)}\nSecond line elaborates with more detail.`};
+  const mustSection = settledSection([must]);
+  assert.ok(mustSection.includes('y'.repeat(130)), 'accepted MUST preserves full defect');
+  assert.ok(mustSection.includes('Second line elaborates with more detail.'), 'accepted MUST preserves second line');
+  assert.doesNotMatch(mustSection, /…/, 'accepted MUST is not clipped');
 });
 
 test('settled duplicate rows keep original id', () => {
@@ -66,7 +71,8 @@ test('settled section halves round-7 fixture', () => {
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);
 const golden = new URL('../../../fixtures/review-prompt-golden/', import.meta.url);
 const read = (base: URL, name: string) => readFileSync(new URL(name, base), 'utf8');
-const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind), read(templates, 'review-severity.md')];
+const specStage = read(templates, '../spec-stage.md');
+const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage), read(templates, 'review-severity.md'), '## rereview\n'];
 
 test('prompt: fill rejects missing declared values and undeclared value names', () => {
   assert.throws(() => fillTemplate('<A> <B>', ['A', 'B'], { A: '1' }), /Missing value\(s\) for declared variable\(s\): B/);
@@ -140,6 +146,7 @@ const reviewContext = (kind: typeof reviewKinds[number], rotation = 0) => ({
   scope: REVIEW_PROMPT_INPUTS[kind]['Review Scope']!,
   turnTarget: 10,
   rotation,
+  round: 1,
 });
 const sectionBullets = (prompt: string, heading: string): string[] => {
   const lines = prompt.split('\n');
@@ -165,7 +172,7 @@ test('review voices receive identical guidance in rotated axis order', () => {
       ...sharedFixedLines,
       ...(kind === 'code' || kind === 'plan' ? ['- Tooling: skip issues that configured linters, formatters, or type checkers enforce.'] : []),
       ...(kind === 'plan' ? ['- Shared criteria: apply the shared section to proposed changes and touched interfaces at planning altitude; do not require written implementation.'] : []),
-      ...(kind === 'plan' || kind === 'design' ? ['### Visual-aid bar', '| Components and boundaries | Architecture diagram |'] : []),
+      ...(kind === 'plan' || kind === 'design' ? ['- Visuals, summaries, and callouts:'] : []),
     ];
     const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
     const familyCounts = familySections.map((section) => familyOrder[section].length);
@@ -251,7 +258,7 @@ test('review prompts: every kind grounds findings and reports a defective local 
   }
 });
 
-const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind).replace(/\s+/g, ' ');
+const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage).replace(/\s+/g, ' ');
 
 test('quality selection: reuse applies to every consumer and code tooling applies to code and plan', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
@@ -279,7 +286,7 @@ test('quality selection: every review contains each selected rule once and exclu
   ] as const;
   for (const kind of ['code', 'plan', 'design'] as const) {
     const prompt = assembled(kind);
-    const quality = qualityBar(bar, kind).split('## quality\n\n')[1]!;
+    const quality = qualityBar(bar, kind, 0, specStage).split('## quality\n\n')[1]!;
     assert.equal(prompt.split(quality).length, 2, kind);
     for (const [section, marker] of sectionMarkers) {
       assert.equal(prompt.split(marker).length - 1, (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0, `${kind}: ${section}`);
@@ -293,15 +300,15 @@ test('quality selection rejects missing, empty, duplicate sections and invalid c
   const sections = ['shared', 'spec', 'code', 'testing', 'plan', 'design'];
   const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
   for (const [consumer, selected] of Object.entries(expected)) {
-    assert.equal(qualityBar(bar, consumer as QualityConsumer), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);
+    assert.equal(qualityBar(bar, consumer as QualityConsumer, 0, specStage), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);
     for (const section of selected) {
-      assert.throws(() => qualityBar(bar.replace(`## ${section}\n${section} rule`, ''), consumer as QualityConsumer), { message: `Missing quality section: ${section}` });
-      assert.throws(() => qualityBar(bar.replace(`${section} rule`, '  \n\t'), consumer as QualityConsumer), { message: `Empty quality section: ${section}` });
+      assert.throws(() => qualityBar(bar.replace(`## ${section}\n${section} rule`, ''), consumer as QualityConsumer, 0, specStage), { message: `Missing quality section: ${section}` });
+      assert.throws(() => qualityBar(bar.replace(`${section} rule`, '  \n\t'), consumer as QualityConsumer, 0, specStage), { message: `Empty quality section: ${section}` });
     }
   }
-  assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code'), /declares section "shared" twice/);
-  for (const consumer of ['ask', '__proto__', 'toString']) assert.throws(() => qualityBar(bar, consumer as QualityConsumer), { message: `Unknown quality consumer: ${consumer}` });
-  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal\n## testing\nproof', 'code'), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal\n\nproof');
+  assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code', 0, specStage), /declares section "shared" twice/);
+  for (const consumer of ['ask', '__proto__', 'toString']) assert.throws(() => qualityBar(bar, consumer as QualityConsumer, 0, specStage), { message: `Unknown quality consumer: ${consumer}` });
+  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal\n## testing\nproof', 'code', 0, specStage), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal\n\nproof');
 });
 
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
@@ -313,7 +320,7 @@ test('review prompts: host rules take precedence over dispatch defaults in every
     assert.equal(text.split('This bar supplements host rules where they are silent and yields where they conflict.').length, 2, kind);
     assert.equal(text.split(discoveryRule).length - 1, 1, `${kind}: host-rule discovery`);
   }
-  assert.equal(qualityCriteria(bar, 'writer').split(discoveryRule).length - 1, 1, 'writer: host-rule discovery');
+  assert.equal(qualityCriteria(bar, 'writer', 0, specStage).split(discoveryRule).length - 1, 1, 'writer: host-rule discovery');
   const inspection = read(templates, 'review-prompt.md').split(/^### Inspection\s*$/m)[1]!.split(/^### /m)[0]!;
   assert.doesNotMatch(inspection, /AGENTS\.md/);
 });
@@ -322,7 +329,7 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 
 test('quality selection keeps artifact finding loci in review kind blocks', () => {
   const bar = read(templates, 'quality-bar.md');
-  for (const consumer of ['code', 'writer', 'plan', 'design'] as const) assert.doesNotMatch(qualityBar(bar, consumer), /Adjacent findings|nearest plan|nearest design/);
+  for (const consumer of ['code', 'writer', 'plan', 'design'] as const) assert.doesNotMatch(qualityBar(bar, consumer, 0, specStage), /Adjacent findings|nearest plan|nearest design/);
   for (const consumer of ['plan', 'design'] as const) {
     const kindBlock = read(templates, `review-prompt-${consumer}.md`);
     assert.match(kindBlock, new RegExp(`nearest ${consumer} heading as locus`));
@@ -360,7 +367,7 @@ test('plan authors and reviewers share the binding decision standard', () => {
 test('writer quality criteria omit prune directive while code and plan keep it', () => {
   const bar = read(templates, 'quality-bar.md');
   const cleanup = read(templates, 'test-cleanup-brief.md');
-  const writer = qualityCriteria(bar, 'writer');
+  const writer = qualityCriteria(bar, 'writer', 0, specStage);
   for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:']) assert.ok(writer.includes(gate), `writer: ${gate}`);
   assert.ok(writer.includes('Shape:'), 'writer: Shape');
   assert.ok(writer.includes('Naming:'), 'writer: Naming');
@@ -368,7 +375,7 @@ test('writer quality criteria omit prune directive while code and plan keep it',
   assert.doesNotMatch(writer, /^- Prune:/m);
   assert.doesNotMatch(writer, /disposable/);
   for (const consumer of ['code', 'plan'] as const) {
-    const criteria = qualityCriteria(bar, consumer);
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
     assert.match(criteria, /^- Prune:/m, `${consumer}: Prune`);
     assert.doesNotMatch(criteria, /Writer focus/, `${consumer}: Writer focus`);
   }
@@ -381,5 +388,74 @@ test('reviewPrompt renders MUST rejection confirmation instructions only when re
     const request = {requestId: 'R1-F001', finding: 'F001', claim: {locus: 'src/api.ts:L1', defect: 'Unbounded writes', requiredChange: 'Bound writes'}, rationale: 'The caller supplies the bound'};
     const prompt = reviewPrompt(kind, {...reviewContext(kind), requests: [request as unknown as NonNullable<Parameters<typeof reviewPrompt>[1]['requests']>[number]]});
     for (const rule of ['Pending MUST rejection confirmation', 'confirmations', 'requestId', 'decision', 'agree|disagree', 'rationale', 'nonblank evidence-backed', 'Answer every assigned request exactly once', 'Keep ordinary `status` and `findings`', 'A pending MUST rejection is open until explicit agreement', 'omission is not confirmation', request.requestId, request.claim.defect, request.claim.requiredChange, request.rationale]) assert.ok(prompt.includes(rule), `${kind}: ${rule}`);
+  }
+});
+
+test('extractDocumentLayers inlines spec-stage layers and qualityCriteria filters reviewer rules', () => {
+  const bar = read(templates, 'quality-bar.md');
+  const specStage = read(templates, '../spec-stage.md');
+  const layers = extractDocumentLayers(specStage);
+  assert.ok(layers.startsWith('Spec owns intent'), 'layers paragraph');
+  assert.ok(layers.includes('Cite upstream IDs instead of restating their layer.'), 'layers tail');
+  const modified = specStage.replace('Spec owns intent', 'Spec owns purpose');
+  assert.ok(extractDocumentLayers(modified).startsWith('Spec owns purpose'), 'reflects input without hardcoded fallback');
+  const dollar = specStage.replace('Spec owns intent', () => 'Spec owns intent ($&, $\', $$)');
+  const dollarLayers = extractDocumentLayers(dollar);
+  assert.ok(dollarLayers.includes('Spec owns intent ($&, $\', $$)'), 'layers keep $ tokens');
+  assert.ok(qualityCriteria(bar, 'code', 0, dollar).includes(`document layers (${dollarLayers})`), 'code: $ tokens preserved verbatim');
+  assert.throws(() => extractDocumentLayers('no heading here'), /Readers and document layers|heading/i);
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const criteria = qualityCriteria(bar, kind, 0, specStage);
+    assert.ok(criteria.includes(`document layers (${layers})`), `${kind}: inlined layers`);
+    assert.doesNotMatch(criteria, /\.\.\//, `${kind}: no relative link`);
+    assert.doesNotMatch(criteria, /\(templates\//, `${kind}: no templates link`);
+    assert.doesNotMatch(criteria, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/, `${kind}: no settled-ruling text`);
+    if (kind === 'code') {
+      assert.ok(criteria.includes('Exclude host-rule/brief conflicts from findings.'), 'code reviewer filter');
+      assert.doesNotMatch(criteria, /Writers report host-rule\/brief conflicts/, 'code no writer clause');
+    } else {
+      assert.ok(criteria.includes('Exclude host-rule/brief conflicts from findings.'), `${kind}: reviewer filter`);
+    }
+  }
+  {
+    const writer = qualityCriteria(bar, 'writer', 0, specStage);
+    assert.ok(writer.includes('Report host-rule/brief conflicts under concerns.'), 'writer filter');
+    assert.ok(writer.includes(`document layers (${layers})`), 'writer inlined layers');
+    assert.doesNotMatch(writer, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/, 'writer no settled text');
+  }
+  for (const kind of ['plan', 'design'] as const) {
+    const criteria = qualityCriteria(bar, kind, 0, specStage);
+    assert.ok(criteria.includes('- Visuals, summaries, and callouts:'), `${kind}: reviewer visual check`);
+    assert.ok(criteria.includes('stale'), `${kind}: stale`);
+    assert.ok(criteria.includes('contradicts'), `${kind}: contradictory`);
+    assert.ok(criteria.includes('decorative'), `${kind}: decorative`);
+    assert.ok(criteria.includes('duplicate'), `${kind}: duplicate`);
+    assert.ok(criteria.includes('[!NOTE]'), `${kind}: NOTE definition`);
+    assert.ok(criteria.includes('[!IMPORTANT]'), `${kind}: IMPORTANT definition`);
+    assert.ok(criteria.includes('misused') || criteria.includes('misuse'), `${kind}: misuse`);
+    assert.doesNotMatch(criteria, /- Artifact layout:/, `${kind}: no authoring layout`);
+    assert.doesNotMatch(criteria, /### Visual-aid bar/, `${kind}: no visual-aid bar`);
+  }
+  for (const kind of reviewKinds) {
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), round: 1});
+    assert.doesNotMatch(prompt, /\(\.\.\//, `${kind}: compiled prompt has no relative link`);
+    assert.doesNotMatch(prompt, /\(templates\//, `${kind}: compiled prompt has no templates link`);
+    assert.ok(prompt.includes('When all requirements, invariants, and boundaries hold, return `CLEAN`'), `${kind}: CLEAN calibration`);
+  }
+});
+
+test('reviewPrompt omits re-review block on round 1 and includes it once on later rounds and reruns', () => {
+  for (const kind of reviewKinds) {
+    const first = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review'});
+    assert.doesNotMatch(first, /On re-review,/, `${kind} round 1: no re-review`);
+    assert.doesNotMatch(first, /Settled in earlier rounds/, `${kind} round 1: no settled section`);
+    const narrowed = reviewPrompt(kind, {...reviewContext(kind), round: 2, scope: 'Re-review round 2 (narrowed) — changed: New work; comparison: a..b'});
+    assert.equal(narrowed.split('On re-review,').length - 1, 1, `${kind} round 2 narrowed: single re-review block`);
+    assert.ok(narrowed.includes('Settled in earlier rounds'), `${kind} round 2 narrowed settles earlier rounds`);
+    const rerun = reviewPrompt(kind, {...reviewContext(kind), round: 2, scope: 'Full review — changed paths: src/a.ts; comparison: a..b', settled: []});
+    assert.equal(rerun.split('On re-review,').length - 1, 1, `${kind} round 2 rerun: single re-review block`);
+    assert.doesNotMatch(rerun, /Read the full review history/, `${kind} rerun: no external log instruction`);
+    const withSettled = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review', settled: [{id: 'R1-F001', locus: '§ Work', defect: 'Defect text', ruling: 'accepted', reason: 'Fixed'}]});
+    assert.equal(withSettled.split('On re-review,').length - 1, 1, `${kind} round 1 with settled: single re-review block`);
   }
 });

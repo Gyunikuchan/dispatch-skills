@@ -6,11 +6,11 @@ Kind block for `review-prompt.md`.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
 - `<Plan Path>` — path to the attached plan, or `None`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed paths: <changed paths>; <range>`.
+- `<Review Scope>` — preparation-supplied scope string: `Full review — changed paths: <changed paths>; comparison: <base>..<head>` on Round 1 or a rerun; `Re-review round <n> (full|narrowed) — changed: changed paths: <changed paths>; comparison: <prev>..<curr>` or `Re-review round <n> (coverage) — changed paths: <changed paths>; comparison: <base>..<head>` on Round <n> > 1.
 
 ## opener
 
-Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance.
+Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance. Inspect critically; when no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
 
 ## context
 

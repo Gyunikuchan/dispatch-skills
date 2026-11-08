@@ -34,6 +34,7 @@ export async function fixture(bound=true, confirmed=true) {
   const skill=path.join(f.root,'skill');
   fs.mkdirSync(path.join(skill,'references/templates'),{recursive:true});
   for(const [file,source] of templates)fs.writeFileSync(path.join(skill,'references/templates',file),source);
+  fs.copyFileSync(path.resolve('skills/dispatch/references/spec-stage.md'), path.join(skill,'references/spec-stage.md'));
   f.deps.skillRoot=skill;
   const config=(native=false)=>fs.writeFileSync(path.join(skill,'config.jsonc'),JSON.stringify({
     'read-delegates':native?{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}}:{claude:{targets:[{low:{model:'fake'}}]},agy:{targets:[{low:{model:'fake'}}]}},

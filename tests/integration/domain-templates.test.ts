@@ -19,9 +19,10 @@ const KEPT = [
 
 test('code review evidence is actionable with and without a bound plan', () => {
   for (const planPath of [undefined, 'work.plan.md']) {
-    const prompt = reviewPrompt('code', {skillRoot: path.resolve('skills/dispatch'), spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'worktree', scope: 'Full review', turnTarget: 10, ...(planPath ? {planPath} : {})});
+    const prompt = reviewPrompt('code', {skillRoot: path.resolve('skills/dispatch'), spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'worktree', scope: 'Full review', turnTarget: 10, round: 1, ...(planPath ? {planPath} : {})});
     assert.ok(prompt.includes(`- Plan: ${planPath ?? 'None'}`));
-    assert.doesNotMatch(prompt, /Walkthrough|absent or unfilled table|<Walkthrough Path>/);
+    assert.doesNotMatch(prompt, /absent or unfilled table|<Walkthrough Path>/);
+    assert.ok(prompt.includes('Walkthrough owns delivered behavior'));
     assert.match(prompt, /selected diff and tests/);
     assert.match(prompt, /does not establish that verification commands ran or final gates passed/);
   }
@@ -194,6 +195,7 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   const sorted = (tags: readonly string[]) => [...tags].sort();
   assert.deepEqual(sorted([...REVIEW_TAGS]), sorted(families), 'validator vocabulary');
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  const specStage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
   const section = (name: string) => quality.split(`## ${name}\n`)[1]!.split(/^## /m)[0]!;
   for (const rule of ['WCAG accessibility', 'POLA', 'Keep the existing format of rendered output unless a recorded user decision changes it.', 'state non-goals', 'State system-wide invariants that hold within and across increments', 'spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege', 'Map trust boundaries and least privilege', 'missing indexes', 'closed handles and resource closure', 'breaking changes', "Hyrum's law", 'semver', 'expand/contract migrations', 'rollback', 'version skew with graceful degradation', 'affected callers', 'persisted schemas and serialized formats', 'portability across OS, shell, path, and encoding', 'deployment and runtime operation', 'observability through logs, metrics, and traces', 'actionable diagnostics', 'configuration, and a kill switch']) assert.ok(section('shared').includes(rule), rule);
   assert.ok(section('code').includes('- **spec**'));
@@ -204,7 +206,7 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   const evidenceRule = quality.split('\n').filter((line) => line.startsWith('- Evidence:'));
   assert.equal(evidenceRule.length, 1);
   for (const term of ['sample inspected against the population', 'uncertainty', "search method's exclusions", 'direct evidence the host supports', 'mark it unverified']) assert.ok(evidenceRule[0]!.includes(term), term);
-  for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.ok(qualityCriteria(quality, consumer).includes(evidenceRule[0]!), consumer);
+  for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.ok(qualityCriteria(quality, consumer, 0, specStage).includes(evidenceRule[0]!), consumer);
   assert.ok(explorer.includes('[shared evidence rule](quality-bar.md#shared)'));
   const planGuidance = readFileSync(new URL('plan.md', root), 'utf8');
   for (const text of [evidenceRule[0]!, section('plan')]) assert.doesNotMatch(text, /\.codegraph|node_modules|\.gitignore|package\.json|\bnpm\b|\bjest\b|\bpytest\b/);
@@ -227,13 +229,13 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   });
   t.diagnostic(`rendered explorer brief (fixed objective/questions/outputPath/cliPath/session): ${measureBrief(renderedExplorer).totalBytes} UTF-8 bytes; advisory only`);
   for (const name of ['quality-bar.md', 'explorer-brief.md']) t.diagnostic(`${name}: ${Buffer.byteLength(readFileSync(new URL(name, root), 'utf8'), 'utf8')} UTF-8 bytes`);
-  t.diagnostic(`writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer'), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
-  for (const [kind, baseline] of [['code', 13849], ['plan', 17847], ['design', 13132]] as const) t.diagnostic(`${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`);
+  t.diagnostic(`writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer', 0, specStage), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
+  for (const [kind, baseline] of [['code', 15627], ['plan', 19533], ['design', 15297]] as const) t.diagnostic(`${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`);
   for (const kind of ['code', 'plan', 'design'] as const) {
     const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
     const offered = [...block.matchAll(/^- `([^`]+)`$/gm)].map((tag) => tag[1]!);
     assert.deepEqual(sorted(offered), sorted(expectedByKind[kind]), `${kind} prompt families`);
-    const selectedQuality = qualityBar(quality, kind);
+    const selectedQuality = qualityBar(quality, kind, 0, specStage);
     for (const family of offered.filter((tag) => tag !== 'standards' && tag !== 'adjacent')) {
       assert.equal(selectedQuality.split('\n').filter((line) => line.startsWith(`- **${family}** —`)).length, 1, `${kind}: ${family} quality bullet exactly once`);
     }
@@ -255,14 +257,12 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   assert.ok(maintainability);
   assert.ok(maintainability.includes('search the repository by name and behaviour for an existing equivalent'));
 
-  // Standard code smells as judgement calls
-  const codeMaintainability = qualityBar(quality, 'code').split('\n').find((line) => line.startsWith('- **maintainability** —'));
+  // Structural coupling/cohesion replaces textbook smells
+  const codeMaintainability = qualityBar(quality, 'code', 0, specStage).split('\n').find((line) => line.startsWith('- **maintainability** —'));
   assert.ok(codeMaintainability);
-  for (const smell of [
-    'Duplicated Code', 'Feature Envy', 'Data Clumps', 'Primitive Obsession', 'Shotgun Surgery', 'Divergent Change',
-    'Repeated Switches', 'Message Chains', 'Middle Man', 'Speculative Generality', 'Refused Bequest', 'Mysterious Name',
-  ]) assert.ok(codeMaintainability.includes(smell), `missing ${smell}`);
-  assert.ok(codeMaintainability.includes('Smells (judgement calls, never `blocks` or `critical` alone)'));
+  for (const term of ['shotgun surgery', 'divergent change', 'leaky abstractions', 'CQS', 'removes concrete concepts, files, or code paths', 'never `blocks` or `critical` alone']) assert.ok(codeMaintainability.includes(term), `missing ${term}`);
+  for (const smell of ['Duplicated Code', 'Feature Envy', 'Data Clumps', 'Primitive Obsession', 'Repeated Switches', 'Message Chains', 'Middle Man', 'Speculative Generality', 'Refused Bequest', 'Mysterious Name']) assert.ok(!codeMaintainability.includes(smell), `stale ${smell}`);
+  assert.ok(!codeMaintainability.includes('Smells (judgement calls'));
 
   // Unrequested consumer-boundary behaviour as intent
   const against = readFileSync(new URL('review-prompt-code.md', root), 'utf8').split(/^## against$/m)[1]?.split(/^## /m)[0]?.replace(/\s+/g, ' ');
@@ -319,10 +319,54 @@ const LEAN_ANCHORS = [
 
 test('lean simplicity rules have one shared home reached by every quality consumer', () => {
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  const leanStage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
   const count = (text: string, needle: string) => text.split(needle).length - 1;
   for (const anchor of LEAN_ANCHORS) {
     assert.equal(count(quality, anchor), 1, `quality-bar: ${anchor}`);
-    for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.equal(count(qualityCriteria(quality, consumer), anchor), 1, `${consumer}: ${anchor}`);
+    for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.equal(count(qualityCriteria(quality, consumer, 0, leanStage), anchor), 1, `${consumer}: ${anchor}`);
+  }
+});
+
+test('review templates calibrate CLEAN, align Review Scope, replace textbook smells, and reduce golden bytes', () => {
+  const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
+  const stage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
+  const baselines = { code: 15627, plan: 19533, design: 15297 } as const;
+  const bytesByKind = {} as Record<'code' | 'plan' | 'design', number>;
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const golden = readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8');
+    const bytes = Buffer.byteLength(golden, 'utf8');
+    bytesByKind[kind] = bytes;
+    assert.ok(bytes < baselines[kind], `${kind} golden ${bytes} B not below pre-change baseline ${baselines[kind]} B`);
+  }
+  assert.ok(bytesByKind.plan <= baselines.plan - 2500, `plan golden ${bytesByKind.plan} B not reduced by 2500 B from ${baselines.plan} B`);
+  assert.ok(bytesByKind.design <= baselines.design - 2500, `design golden ${bytesByKind.design} B not reduced by 2500 B from ${baselines.design} B`);
+  const compiled = (['code', 'plan', 'design'] as const).map((kind) => qualityBar(quality, kind, 0, stage)).join('\n');
+  const goldens = (['code', 'plan', 'design'] as const).map((kind) => readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8')).join('\n');
+  const hay = `${compiled}\n${goldens}`;
+  for (const term of ['shotgun surgery', 'divergent change', 'leaky abstractions', 'CQS', 'removes concrete concepts, files, or code paths', 'never `blocks` or `critical` alone']) assert.ok(hay.includes(term), `missing coupling rule: ${term}`);
+  for (const smell of ['Duplicated Code', 'Feature Envy', 'Data Clumps', 'Primitive Obsession', 'Repeated Switches', 'Message Chains', 'Middle Man', 'Speculative Generality', 'Refused Bequest', 'Mysterious Name']) assert.ok(!hay.includes(smell), `stale textbook smell: ${smell}`);
+  assert.ok(!hay.includes('Smells (judgement calls'), 'stale smell prefix');
+  for (const term of ['IEEE 29148', 'DRY', 'YAGNI', 'KISS', 'Rule of three', "Chesterton's fence", 'CQS', 'STRIDE', 'OWASP/CWE', 'TOCTOU', 'idempotency', 'fail-closed', 'Big-O', 'N+1', 'backpressure', "Hyrum's law", 'semver', 'expand/contract', 'WCAG', 'POLA', 'FIRST', 'INVEST']) assert.ok(hay.includes(term), `missing dense term: ${term}`);
+  const codeDoc = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
+  assert.ok(codeDoc.includes('Full review — changed paths: <changed paths>; comparison: <base>..<head>'), 'code Round 1 scope');
+  assert.ok(codeDoc.includes('Re-review round <n> (full|narrowed) — changed: changed paths: <changed paths>; comparison: <prev>..<curr>'), 'code narrowed scope');
+  assert.ok(codeDoc.includes('Re-review round <n> (coverage) — changed paths: <changed paths>; comparison: <base>..<head>'), 'code coverage scope');
+  for (const name of ['review-prompt-plan.md', 'review-prompt-design.md'] as const) {
+    const doc = readFileSync(new URL(name, root), 'utf8');
+    assert.ok(doc.includes('Full review'), `${name} Round 1 scope`);
+    assert.ok(doc.includes('Full review — changed paths: ; comparison: <sha256>'), `${name} rerun scope`);
+    assert.ok(doc.includes('Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>'), `${name} narrowed scope`);
+    assert.ok(!doc.includes('(coverage)'), `${name} omits coverage`);
+    assert.ok(!doc.includes('(delta)'), `${name} omits delta`);
+    assert.ok(!doc.includes('(full artifact)'), `${name} omits full artifact`);
+  }
+  const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
+  assert.ok(frame.includes('expected high-signal'), 'frame CLEAN calibration');
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const doc = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
+    assert.ok(doc.includes('expected high-signal'), `${kind} CLEAN calibration`);
+    const opener = doc.split(/^## opener$/m)[1]?.split(/^## /m)[0] ?? '';
+    assert.ok(opener.includes('expected high-signal'), `${kind} opener CLEAN`);
   }
 });
 

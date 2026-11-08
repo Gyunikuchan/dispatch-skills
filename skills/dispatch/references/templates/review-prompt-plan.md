@@ -5,13 +5,13 @@ Kind block for `review-prompt.md`.
 - `<Plan Path>` — path to the attached plan.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> (full artifact) — review the whole artifact; changed sections for context: <changed sections>`, or `Re-review round <n> (delta) — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is read delegate context.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on Round 1; `Full review — changed paths: ; comparison: <sha256>` on a rerun; `Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>` on Round <n> > 1. An optional `Plan lint warnings:` suffix is read delegate context.
 - `<Context Map>` — `Context Map:` bullet naming the session context map, or empty when the session has none.
 
 ## opener
 
 Review the implementation plan adversarially: challenge the requirement, its premise, and the plan.
-Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius.
+Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius. Inspect critically; when the plan is sound and no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
 
 ## context
 

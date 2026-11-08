@@ -42,6 +42,7 @@ test('summary byte cap preserves large ask answers review findings and native sl
       fs.mkdirSync(path.join(skill, 'references/templates'), {recursive: true});
       for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md', 'review-severity.md'])
         fs.copyFileSync(path.join(f.deps.skillRoot, 'references/templates', file), path.join(skill, 'references/templates', file));
+      fs.copyFileSync(path.join(f.deps.skillRoot, 'references/spec-stage.md'), path.join(skill, 'references/spec-stage.md'));
       const native = scenario === 'native';
       fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
         'read-delegates': {codex: {nativeSubagentsOnly: native, targets: Array.from({length: native ? 20 : 1}, () => ({medium: {model: 'fixture'}}))}},
@@ -103,6 +104,7 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
     const plan=f.artifact('large-multibyte.plan.md',source); f.artifact('mission.spec.md','# Mission\n');
     const skill=path.join(f.root,'skill'); const templates=path.join(skill,'references/templates'); fs.mkdirSync(templates,{recursive:true});
     for(const file of ['writer-brief.md','quality-bar.md']) fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(templates,file));
+    fs.copyFileSync(path.join(f.deps.skillRoot,'references/spec-stage.md'), path.join(skill,'references/spec-stage.md'));
     const add=(kind:string,data:object,extra:object={})=>appendRecord(f.session,{kind,by:'orchestrator',key:kind,data,...extra},f.deps);
     await add('bind',{spec:'mission.spec.md',plan:'large-multibyte.plan.md'});
     await add('confirm',{spec:currentHashes(f.root,latest(foldLedger(f.session),'bind')).spec},{by:'user',quote:'Approved'});

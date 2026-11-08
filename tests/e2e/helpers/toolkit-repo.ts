@@ -82,6 +82,7 @@ export function setupTestSkill(deps: CliDeps, session: string, name = 'skill', c
   const skill = path.join(session, name);
   fs.mkdirSync(path.join(skill, 'references'), { recursive: true });
   fs.cpSync(path.join(deps.skillRoot, 'references/templates'), path.join(skill, 'references/templates'), { recursive: true });
+  fs.copyFileSync(path.join(deps.skillRoot, 'references/spec-stage.md'), path.join(skill, 'references/spec-stage.md'));
   fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify(config));
   return skill;
 }

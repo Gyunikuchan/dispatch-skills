@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, fillTemplate, qualityBar, rotateTags, settledSection, type Settled } from './domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, rotateTags, settledSection, type Settled } from './domain/prompt.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import type { ReviewTarget } from './findings.ts';
@@ -32,14 +32,19 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number;
+  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number; round: number;
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
   const kindBlock = read('review-prompt-' + kind + '.md');
   const tags = sections(kindBlock, false).get('tags');
   const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
-  const template = assembleTemplate(read('review-prompt.md'), rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0), read('review-severity.md')]);
+  const frameMarkdown = read('review-prompt.md');
+  const specStage = fs.readFileSync(path.join(context.skillRoot, 'references/spec-stage.md'), 'utf8');
+  const settled = settledSection(context.settled ?? []);
+  const isRereview = context.round > 1 || settled.length > 0;
+  const rereviewBody = extractTemplate(frameMarkdown, 'Re-review template').template;
+  const template = assembleTemplate(frameMarkdown, rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0, specStage), read('review-severity.md'), `## rereview\n\n${isRereview ? rereviewBody : ''}`]);
   // NOTE: the map is a pre-change index, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
   const contextMap = context.contextMapPath ? `\n- Context Map: ${context.contextMapPath} — pre-change index; verify claims at source.` : '';
   const values: Record<string, string> = {
@@ -51,7 +56,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
   };
   const requests=context.requests ?? [];
   const confirmation=requests.length?'\n\n### Pending MUST rejection confirmation\nReview each original claim and the host evidence. Add `confirmations` to the JSON report with exactly `requestId`, `decision` (`agree|disagree`), and a nonblank evidence-backed `rationale`: [{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]. Answer every assigned request exactly once. Keep ordinary `status` and `findings`. A pending MUST rejection is open until explicit agreement; omission is not confirmation.\n'+requests.map(request=>`\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nRequired change: ${request.claim.requiredChange}\nHost rejection: ${request.rationale}\n`).join(''):'';
-  return fillTemplate(template.template, template.variables, values) + settledSection(context.settled ?? [])+confirmation;
+  return fillTemplate(template.template, template.variables, values) + settled+confirmation;
 }
 
 /** A compact round that asks the assigned source slots to confirm or dispute one rejection each. */

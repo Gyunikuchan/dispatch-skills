@@ -9,7 +9,7 @@ const TABLE: Readonly<Record<Impact, Readonly<Record<Trigger, Severity>>>> = {
   critical: {realistic: 'MUST', contrived: 'MUST'},
   blocks: {realistic: 'MUST', contrived: 'SHOULD'},
   degrades: {realistic: 'SHOULD', contrived: 'CONSIDER'},
-  minor: {realistic: 'SHOULD', contrived: 'CONSIDER'},
+  minor: {realistic: 'CONSIDER', contrived: 'CONSIDER'},
 };
 
 export const RANK: Readonly<Record<Severity, number>> = {MUST: 2, SHOULD: 1, CONSIDER: 0};

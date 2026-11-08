@@ -59,7 +59,7 @@ test('derives severity from impact and trigger', () => {
     critical: { realistic: 'MUST', contrived: 'MUST' },
     blocks: { realistic: 'MUST', contrived: 'SHOULD' },
     degrades: { realistic: 'SHOULD', contrived: 'CONSIDER' },
-    minor: { realistic: 'SHOULD', contrived: 'CONSIDER' },
+    minor: { realistic: 'CONSIDER', contrived: 'CONSIDER' },
   } as const;
   for (const [impact, row] of Object.entries(table)) {
     for (const [trigger, severity] of Object.entries(row)) {

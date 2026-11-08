@@ -265,14 +265,16 @@ describe('writer brief', () => {
       assert.ok(command.includes('capture.cjs'));
       assert.doesNotMatch(command, /[$%]/);
       const quality = getQuality(f.deps.skillRoot);
-      const writerQuality = qualityCriteria(quality, 'writer');
+      const specStage = fs.readFileSync(path.join(f.deps.skillRoot, 'references/spec-stage.md'), 'utf8');
+      const writerQuality = qualityCriteria(quality, 'writer', 0, specStage);
       assert.equal(brief.split('## Quality\n\n' + writerQuality).length - 1, 1);
       assert.ok(writerQuality.includes('Writer focus'));
       assert.doesNotMatch(writerQuality, /^- Prune:/m);
-      for (const name of ['shared', 'code']) {
-        const body = quality.split('## ' + name + '\n')[1]!.split('\n## ')[0]!.trim();
-        assert.ok(writerQuality.includes(body));
-      }
+      assert.ok(writerQuality.includes('document layers ('));
+      assert.ok(writerQuality.includes('Report host-rule/brief conflicts under concerns.'));
+      assert.doesNotMatch(writerQuality, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/);
+      const codeBody = quality.split('## code\n')[1]!.split('\n## ')[0]!.trim();
+      assert.ok(writerQuality.includes(codeBody));
       for (const text of [path.resolve(f.session, '.state/worktrees/T1-1'), 'mission.spec.md', f.hashes.spec!, 'work.plan.md', f.hashes.plan!, 'Shared gated context 日本語.', '## Task Map', '### T1', 'Preserve the first invariant', 'First implementation detail', 'SC1', 'node first-check', 'node first-red', 'src/first.ts', 'node contract-check', '**intent**', '**correctness**', 'DONE', 'BLOCKED', 'NEEDS_CONTEXT']) assert.ok(brief.includes(text), text);
       assert.match(brief, /read.*whole/i);
       assert.match(brief, /failing tests/i);
@@ -386,6 +388,7 @@ test('writer brief states the host explorer model and effort or that none resolv
   fs.mkdirSync(templates, {recursive: true});
   fs.writeFileSync(path.join(templates, 'writer-brief.md'), getWriterTemplate(skillRoot));
   fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
+  fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
   const config = path.join(skill, 'config.jsonc');
   const valid = JSON.stringify({
     'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},

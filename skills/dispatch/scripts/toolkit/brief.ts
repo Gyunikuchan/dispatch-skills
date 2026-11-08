@@ -138,7 +138,8 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   const redLogDir = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.red');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const quality = qualityCriteria(bar, 'writer');
+  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
+  const quality = qualityCriteria(bar, 'writer', 0, specStage);
   const slots: Record<string, string> = {
     task, worktree,
     specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']), specHash: snapshot.hashes.spec!,

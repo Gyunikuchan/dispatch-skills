@@ -5,6 +5,26 @@
 
 export type Template = { variables: readonly string[]; template: string };
 
+export function extractDocumentLayers(specStageMarkdown: string): string {
+  const lines = specStageMarkdown.replace(/\r\n/g, '\n').split('\n');
+  const headingIndex = lines.findIndex((line) => /^##\s+Readers and document layers\s*$/.test(line));
+  if (headingIndex === -1) throw new Error('Section "Readers and document layers" not found');
+  const paragraph: string[] = [];
+  let started = false;
+  for (let index = headingIndex + 1; index < lines.length; index++) {
+    const line = lines[index] ?? '';
+    if (/^#{1,6}\s/.test(line)) break;
+    if (!line.trim()) {
+      if (started) break;
+      continue;
+    }
+    started = true;
+    paragraph.push(line.trim());
+  }
+  if (!paragraph.length) throw new Error('Section "Readers and document layers" has no paragraph');
+  return paragraph.join(' ');
+}
+
 export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string; severity?: string; rejectionConfirmed?: boolean };
 
 export function settledSection(settled: readonly Settled[], revisions = false): string {
@@ -15,7 +35,7 @@ export function settledSection(settled: readonly Settled[], revisions = false): 
   const row = (entry: Settled) => {
     const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
     const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '';
-    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${clip(firstLine, 120)} — accepted${suffix}`;
+    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${suffix}`;
     if (entry.ruling === 'duplicate') {
       const reason = entry.reason || 'no reason recorded', clipped = clip(reason, 120), labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
       const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map(match => match[0]!).filter(id => id !== entry.id);
@@ -25,7 +45,7 @@ export function settledSection(settled: readonly Settled[], revisions = false): 
     }
     return `- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${suffix}`;
   };
-  return `\n\n### Settled in earlier rounds\nRe-raise a settled point only with new evidence that the ruling missed.\n${settled.map(row).join('\n')}\n`;
+  return `\n\n### Settled in earlier rounds\n${settled.map(row).join('\n')}\n`;
 }
 
 export function askPrompt(question: string, context: string): string {
@@ -132,13 +152,27 @@ export function rotateTags(kindBlockTags: string, by: number): string {
 }
 
 /** Joined bodies of the consumer's selected quality sections. */
-export function qualityCriteria(markdown: string, consumer: QualityConsumer, rotation = 0): string {
+export function qualityCriteria(markdown: string, consumer: QualityConsumer, rotation: number, specStageMarkdown: string): string {
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
+  const layers = extractDocumentLayers(specStageMarkdown);
   return qualitySections[consumer].map((section) => {
     let body = sections.get(section);
     if (body === undefined) throw new Error(`Missing quality section: ${section}`);
     if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
+    if (section === 'shared') {
+      body = body.replace('[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.', () => `document layers (${layers})`);
+      body = body.replace(' Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited. An accepted `MUST` is never closed by that rule: re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present.', '');
+      if (consumer !== 'writer') body = body.replace('Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.', 'Exclude host-rule/brief conflicts from findings.');
+      else body = body.replace('Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.', 'Report host-rule/brief conflicts under concerns.');
+    }
+    if (section === 'spec') {
+      const lines = body.split('\n');
+      const visualIndex = lines.findIndex((line) => line.startsWith('### Visual-aid bar'));
+      let truncated = visualIndex >= 0 ? lines.slice(0, visualIndex) : lines;
+      truncated = truncated.filter((line) => !line.startsWith('- Artifact layout:'));
+      body = truncated.join('\n');
+    }
     if (section === 'testing') {
       const omit = consumer === 'writer' ? '- Prune:' : '- Writer focus';
       body = body.split('\n').filter((line) => !line.startsWith(omit)).join('\n');
@@ -149,8 +183,8 @@ export function qualityCriteria(markdown: string, consumer: QualityConsumer, rot
 }
 
 /** Selects the consumer's criteria as the frame's single `quality` slot section. */
-export function qualityBar(markdown: string, consumer: QualityConsumer, rotation = 0): string {
-  return `## quality\n\n${qualityCriteria(markdown, consumer, rotation)}`;
+export function qualityBar(markdown: string, consumer: QualityConsumer, rotation: number, specStageMarkdown: string): string {
+  return `## quality\n\n${qualityCriteria(markdown, consumer, rotation, specStageMarkdown)}`;
 }
 
 /**

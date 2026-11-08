@@ -621,7 +621,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
         return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
           ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),
-          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position});
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
       };
       const validate = (text: string,logicalSlot:string): Validation => {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
