@@ -1,5 +1,18 @@
 {
+  "permissions": {
+    "deny": [
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "NotebookEdit",
+      "ScheduleWakeup",
+      "DesignSync"
+    ]
+  },
   "outputStyle": "Concise",
+  "disableBundledSkills": true,
+  "disableClaudeAiConnectors": true,
+  "disableArtifact": true,
+  "disableWorkflows": true,
   "autoCompactWindow": 300000,
   "env": {
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
