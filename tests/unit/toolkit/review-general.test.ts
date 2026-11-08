@@ -676,11 +676,13 @@ test('plan and design review launch without a sibling context map', async () => 
     const plan=await f.call('plan',orphan);
     assert.equal(plan.exit,0,JSON.stringify(plan));
     assert.equal(f.launches.length,2);
+    for (const launch of f.launches) assert.doesNotMatch(fs.readFileSync(launch.request.promptPath,'utf8'),/Context Map/);
 
     const design=f.artifact('orphan.design.md','# Design\n## Boundaries\nSingle writer.\n');
     const designReview=await f.call('design',design);
     assert.equal(designReview.exit,0,JSON.stringify(designReview));
     assert.equal(f.launches.length,4);
+    for (const launch of f.launches.slice(2)) assert.doesNotMatch(fs.readFileSync(launch.request.promptPath,'utf8'),/Context Map/);
   }finally{f.cleanup();}
 });
 

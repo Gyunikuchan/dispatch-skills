@@ -42,24 +42,15 @@ test('spec lint: ids are returned in order', () => {
   assert.deepEqual(result.spec.decIds, ['DEC-1']);
 });
 
-test('spec lint: ids with gaps or duplicates are id-sequence', () => {
+test('spec lint: validates id forms and ignores prose mentions', () => {
   assert.deepEqual(codes(spec({ Requirements: '### REQ-1 — A\n- Acceptance: a\n### REQ-3 — B\n- Acceptance: b\n' })), ['id-sequence']);
   assert.deepEqual(codes(spec({ Decisions: '### DEC-1 — A\n### DEC-1 — B\n' })), ['id-sequence']);
-});
-
-test('spec lint: ids in malformed headings are malformed-id', () => {
   assert.deepEqual(codes(spec({ Requirements: `${REQS}### Requirement three\n- Acceptance: c\n` })), ['malformed-id']);
   assert.deepEqual(codes(spec({ Decisions: `${DECS}### REQ-2 — misplaced\n` })), ['malformed-id']);
-});
-
-test('spec lint: ids that use plan, criterion, increment, or finding forms are colliding-id', () => {
   for (const id of ['T1', 'SC2', 'I01', 'R1', 'R1-F2']) {
     assert.deepEqual(codes(spec({ Requirements: `${REQS}### ${id} — Collides\n- Acceptance: c\n` })), ['colliding-id'], id);
   }
   assert.deepEqual(codes(spec({ Decisions: `${DECS}### T1 — Collides\n` })), ['colliding-id']);
-});
-
-test('spec lint: ids in prose are not defects', () => {
   assert.ok(parseSpec(spec({ 'Intent & Problem': 'Cites SC1, T2, I01, and R1-F1.' })).ok);
 });
 

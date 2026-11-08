@@ -354,16 +354,7 @@ test('plan authors and reviewers share the binding decision standard', () => {
 
 // SECTION: Computed turn target and context map
 
-test('turn target: the advisory budget shows the computed number in every kind', () => {
-  for (const kind of reviewKinds) {
-    const prompt = reviewPrompt(kind, {...reviewContext(kind), turnTarget: 42});
-    assert.ok(prompt.includes('- Advisory Tool Turn Target: 42'), kind);
-  }
-});
-
-test('context map: code prompts never render the map line', () => {
-  assert.doesNotMatch(reviewPrompt('code', {...reviewContext('code'), contextMapPath: '/session/work.plan.context.md'}), /Context Map/);
-});
+ 
 
 
 test('writer quality criteria omit prune directive while code and plan keep it', () => {

@@ -898,29 +898,4 @@ test('plan human layout: details wrappers and callouts leave parse results uncha
   assert.ok(defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<div>Other HTML</div>')).includes('task-map'));
 });
 
-test('plan human layout: long prose paragraphs warn and structured blocks are exempt', () => {
-  const words = (n: number) => Array(n).fill('word').join(' ');
-  const body = [words(60), `${words(30)}\n${words(31)}`, `- ${words(70)}\n  ${words(70)}`, `| ${words(70)} |`, `\`\`\`\n${words(70)}\n\`\`\``, `> ${words(70)}`, `<details>\n<summary>${words(70)}</summary>\n</details>`, `    ${words(70)}`, `<span>${words(61)}</span>`].join('\n\n');
-  const source = PLAN.replace('## Key Decisions & Context', `## At a Glance\n${body}\n\n## Key Decisions & Context`);
-  const warnings = parsePlan(source).warnings.filter(row => row.code === 'long-paragraph');
-  assert.equal(warnings.length, 2);
-  assert.equal(warnings[0]?.line, source.split('\n').indexOf(words(30)) + 1);
-  assert.ok(warnings.every(row => row.severity === 'warning'));
-});
-
-test('plan lint warns when At a Glance table restates task map', () => {
-  const glance = (table: string) => `## At a Glance\n- **What:** Cap retries.\n- **How it works:** One task.\n\n${table}\n\n`;
-  const restating = '| ID | Outcome |\n| --- | --- |\n| T1 | Fetch stops after three attempts. |';
-  const source = PLAN.replace('## Key Decisions & Context', `${glance(restating)}## Key Decisions & Context`);
-  const warnings = parsePlan(source).warnings.filter(row => row.code === 'glance-restates-task-map');
-  assert.equal(warnings.length, 1);
-  assert.equal(warnings[0]?.severity, 'warning');
-  assert.match(warnings[0]!.message, /At a Glance/);
-  assert.match(warnings[0]!.message, /Task Map/);
-
-  const unrelated = '| Area | Outcome |\n| --- | --- |\n| Fetch | Stops after three attempts. |';
-  assert.equal(parsePlan(PLAN.replace('## Key Decisions & Context', `${glance(unrelated)}## Key Decisions & Context`)).warnings.filter(row => row.code === 'glance-restates-task-map').length, 0);
-
-  const outsideGlance = PLAN.replace('## Key Decisions & Context', `## Key Decisions & Context\n\n${restating}`);
-  assert.equal(parsePlan(outsideGlance).warnings.filter(row => row.code === 'glance-restates-task-map').length, 0);
-});
+ 

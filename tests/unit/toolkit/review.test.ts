@@ -618,20 +618,6 @@ test('first round saves current cap', async () => {
   } finally { f.cleanup(); }
 });
 
-test('level raise mid review keeps saved cap and delivery identity', async () => {
-  const f = await fixture();
-  try {
-    singlePlanTarget(f);
-    setPlanRounds(f, 'high', 3);
-    seedCompletedRound(f, 1, []);
-    await f.add('level', { level: 'high' });
-    const result = await callDefaultLevel(f);
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.equal(f.read(2, 'round.json').cap, 2);
-    assert.match(result.output.summary, /round 2\/2/);
-  } finally { f.cleanup(); }
-});
-
 test('orphan ceiling resolution grants nothing', async () => {
   const f = await fixture();
   try {

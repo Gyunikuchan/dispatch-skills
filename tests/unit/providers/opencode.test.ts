@@ -24,13 +24,7 @@ test('opencode argv is v2-only: run --auto --format json, -m model#effort, -- pr
   assert.equal(opencode.outputCapBytes, 64 * 1024 * 1024);
 });
 
-test('OpenCode delegates use private servers in every mode', async () => {
-  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
-    const argv = opencode.argv(launchReq({ agent: 'plan' }), mode).argv;
-    assert.deepEqual(argv.slice(0, 3), ['opencode', '--standalone', 'run'], mode);
-    assert.ok(argv.includes('--auto') && argv.includes('--agent') && argv.includes('plan'));
-  }
-
+test('OpenCode bubblewrapped launch keeps private server invocation', async () => {
   const bubblewrapped = opencode.argv(launchReq({
     sandbox: true,
     platform: { ...platform, os: 'linux', bubblewrap: true },

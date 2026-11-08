@@ -238,6 +238,13 @@ test('codex hides host and child read errors while retaining other child usage',
   assert.equal(result.notes?.subagent?.['unreadable files'], 1);
   assert.equal(result.rows[0]?.role, 'subagent');
   assert.ok(!JSON.stringify(result).includes('private'));
+
+  const degraded = memoryFs({ [host]: lines(context, event(1)), [bad]: lines(meta('host'), context, event(2)) });
+  let listCount = 0;
+  const listFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...degraded, list: dir => { if (/1970[\\/]01[\\/]01$/.test(dir) && ++listCount === 2) throw Object.assign(Error('private'), { code: 'EACCES' }); return degraded.list(dir); } });
+  assert.equal(listFailure.rows[0]?.role, 'host'); assert.equal(listFailure.notes?.subagent?.['unreadable files'], 1);
+  const statFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...degraded, stat: file => { if (file.endsWith('bad.jsonl')) throw Error('private'); return degraded.stat(file); } });
+  assert.equal(statFailure.rows[0]?.role, 'host'); assert.equal(statFailure.notes?.subagent?.['unreadable files'], 1);
 });
 
 test('codex validates the first nonblank child header before counting rows', () => {
@@ -245,13 +252,6 @@ test('codex validates the first nonblank child header before counting rows', () 
   const fs = memoryFs({ [host]: lines(context, event(1)), [child]: '\n' + lines(meta('host'), context, event(7)), [resumed]: '\n' + lines(meta('host'), context, event(7)), [other]: '\n' + lines(meta('other'), context, event(8)) });
   const result = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
   assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
-});
-test('codex preserves host counters when candidate listing or stat fails', () => {
-  const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child'); const fs = memoryFs({ [host]: lines(context, event(1)), [child]: lines(meta('host'), context, event(2)) }); let listCount = 0;
-  const listFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, list: dir => { if (/1970[\\/]01[\\/]01$/.test(dir) && ++listCount === 2) throw Object.assign(Error('private'), { code: 'EACCES' }); return fs.list(dir); } });
-  assert.equal(listFailure.rows[0]?.role, 'host'); assert.equal(listFailure.notes?.subagent?.['unreadable files'], 1);
-  const statFailure = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, stat: file => { if (file.endsWith('child.jsonl')) throw Error('private'); return fs.stat(file); } });
-  assert.equal(statFailure.rows[0]?.role, 'host'); assert.equal(statFailure.notes?.subagent?.['unreadable files'], 1);
 });
 test('codex repeated compressed overflows exhaust the shared decode budget', () => {
   const host = rollout('00-01', 'host'); const text = lines(context, event(1)); const files: Record<string, string> = { [host]: text };

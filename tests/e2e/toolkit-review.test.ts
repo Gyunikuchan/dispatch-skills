@@ -497,11 +497,14 @@ test('repository changes skip ignored and session files while listing untracked 
     fs.writeFileSync(path.join(f.root,'ignored'), 'ignored edit\n');
     fs.writeFileSync(path.join(f.session,'untracked-session.txt'), 'session edit\n');
     fs.writeFileSync(path.join(f.root,'src/new-untracked.ts'), 'untracked\n');
+    fs.mkdirSync(path.join(f.root,'src','newdir'), {recursive: true});
+    fs.writeFileSync(path.join(f.root,'src','newdir','inner.ts'), 'untracked inner\n');
     fs.rmSync(path.join(f.root,'src/file.ts'));
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     const listed = done.value.repositoryChanges.flatMap((entry: {paths: string[]}) => entry.paths);
     assert.ok(listed.includes('src/new-untracked.ts'), JSON.stringify(done.value.repositoryChanges));
+    assert.ok(listed.includes('src/newdir/inner.ts'), JSON.stringify(done.value.repositoryChanges));
     assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
     assert.ok(!listed.includes('ignored'), JSON.stringify(done.value.repositoryChanges));
     assert.ok(!listed.some((p: string) => p.includes('untracked-session')), JSON.stringify(done.value.repositoryChanges));
@@ -562,18 +565,26 @@ test('repository changes list a mode change and an assume-unchanged edit', async
     fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
     fs.writeFileSync(path.join(f.root,'src/mode.sh'), 'echo hi\n');
-    f.git(['add','src/mode.sh']); f.git(['commit','-qm','mode file']);
+    fs.writeFileSync(path.join(f.root,'src/staged.ts'), 'staged base\n');
+    f.git(['add','src/mode.sh','src/staged.ts']); f.git(['commit','-qm','mode file']);
     f.git(['update-index','--assume-unchanged','src/file.ts']);
     const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
     f.git(['update-index','--chmod=+x','src/mode.sh']);
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'assume-unchanged edit\n');
+    fs.writeFileSync(path.join(f.root,'src','untracked-mode.sh'),'echo hi\n');
+    f.git(['update-index','--add','--chmod=+x','src/untracked-mode.sh']);
+    fs.writeFileSync(path.join(f.root,'src/staged.ts'),'staged new content\n');
+    f.git(['add','src/staged.ts']);
+    fs.writeFileSync(path.join(f.root,'src/staged.ts'),'staged base\n');
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
     assert.ok(listed.includes('src/mode.sh'), JSON.stringify(done.value.repositoryChanges));
     assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+    assert.ok(listed.includes('src/untracked-mode.sh'), JSON.stringify(done.value.repositoryChanges));
+    assert.ok(listed.includes('src/staged.ts'), JSON.stringify(done.value.repositoryChanges));
   } finally {f.cleanup();}
 });
 
@@ -635,28 +646,6 @@ test('repository changes detect a second edit of an already dirty path', async (
   } finally {f.cleanup();}
 });
 
-test('repository changes list a path inside an untracked directory', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    fs.mkdirSync(path.join(f.root,'src','newdir'), {recursive: true});
-    fs.writeFileSync(path.join(f.root,'src','newdir','inner.ts'),'untracked inner\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
-    assert.ok(listed.includes('src/newdir/inner.ts'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
-});
-
 test('repository changes list a renamed path', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
@@ -675,52 +664,6 @@ test('repository changes list a renamed path', async () => {
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
     assert.ok(listed.includes('src/renamed.ts'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
-});
-
-test('repository changes list a mode-only change on an untracked path', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    fs.writeFileSync(path.join(f.root,'src','untracked-mode.sh'),'echo hi\n');
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    f.git(['update-index','--add','--chmod=+x','src/untracked-mode.sh']);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
-    assert.ok(listed.includes('src/untracked-mode.sh'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
-});
-
-test('repository changes detect an index-only change', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const original = fs.readFileSync(path.join(f.root,'src/file.ts'),'utf8');
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),'staged new content\n');
-    f.git(['add','src/file.ts']);
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),original);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
   } finally {f.cleanup();}
 });
 
@@ -1356,38 +1299,6 @@ test('cli-only superseded round runs no repository check and opens no report', a
   } finally {f.cleanup();}
 });
 
-test('all-failed retry preserves the first report when the second compare is clean', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'fail', cls: 'auth', detail: 'denied'}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    const review = waved.value.review as string;
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
-    const failed = await run();
-    assert.equal(failed.output.reason, 'review-failed', JSON.stringify(failed.output));
-    assert.match(failed.output.summary, /src\/file\.ts/);
-    // Restore the changed path, then retry: the CLI still fails and the new
-    // compare is clean, but the first unacknowledged report must stay open.
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),'initial\n');
-    const retry = await run();
-    assert.equal(retry.output.reason, 'review-failed', JSON.stringify(retry.output));
-    const first = JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',review,'round-1/gen-1/checkout-report.json'),'utf8'));
-    assert.ok((first.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths).includes('src/file.ts'));
-    const status = await f.run(['status','show']);
-    const open = (status.value.openRepositoryChanges ?? []).flatMap((row: {repositoryChanges?: {paths: string[]}[]}) => (row.repositoryChanges ?? []).flatMap(entry => entry.paths));
-    assert.ok(open.includes('src/file.ts'), 'the first report survives a clean retry: ' + JSON.stringify(status.value.openRepositoryChanges));
-  } finally {f.cleanup();}
-});
-
 test('successful retry after all-failed keeps the first report until a closing note', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
@@ -1405,9 +1316,17 @@ test('successful retry after all-failed keeps the first report until a closing n
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'change before all-failed\n');
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
     assert.equal((await run()).output.reason, 'review-failed');
-    // Restore the path and recover the CLI: the retry finalizes cleanly, but
-    // the failed report stays open until the orchestrator closes it.
+    // Restore the changed path, then retry while the CLI still fails: the new
+    // compare is clean, but the first unacknowledged report must stay open.
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'initial\n');
+    const retry = await run();
+    assert.equal(retry.output.reason, 'review-failed', JSON.stringify(retry.output));
+    const kept = JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',review,'round-1/gen-1/checkout-report.json'),'utf8'));
+    assert.ok((kept.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths).includes('src/file.ts'));
+    const retryStatus = await f.run(['status','show']);
+    assert.ok((retryStatus.value.openRepositoryChanges ?? []).flatMap((row: {repositoryChanges?: {paths: string[]}[]}) => (row.repositoryChanges ?? []).flatMap(entry => entry.paths)).includes('src/file.ts'), 'the first report survives a clean retry: ' + JSON.stringify(retryStatus.value.openRepositoryChanges));
+    // Recover the CLI: the retry finalizes cleanly, but
+    // the failed report stays open until the orchestrator closes it.
     f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));

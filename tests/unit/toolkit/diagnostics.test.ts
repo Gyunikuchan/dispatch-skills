@@ -663,27 +663,17 @@ test('token table groups by effort', () => {
     captureRuns(f.session, [
       { phase: 'plan-review', attempt: 1, provider: 'codex', model: 'gpt', effort: 'low', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 100, output: 10 } },
       { phase: 'plan-review', attempt: 2, provider: 'codex', model: 'gpt', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 200, output: 20 } },
+      { phase: 'plan-review', attempt: 3, provider: 'copilot', model: 'auto', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', coverage: 'no usage output' },
     ]);
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    assert.equal(facts.invocations.find(i => i.provider === 'copilot')?.coverage, 'no usage output');
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(table, /### Tokens by stage/);
     assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \|$/m);
     assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \|$/m);
     assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \|$/m);
-    assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
-  } finally { f.cleanup(); }
-});
-
-test('copilot usage unavailable reason', () => {
-  const f = sessionFixture({ memory: true });
-  try {
-    captureRuns(f.session, [
-      { phase: 'plan-review', attempt: 1, provider: 'copilot', model: 'auto', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', coverage: 'no usage output' },
-    ]);
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
-    assert.equal(facts.invocations[0]?.coverage, 'no usage output');
-    const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage output \|$/m);
+    assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
   } finally { f.cleanup(); }
 });
 

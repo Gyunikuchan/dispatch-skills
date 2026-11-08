@@ -163,13 +163,6 @@ ${clean}`],
   for (const [name, text] of rejected) assert.equal(failure(text), 'uncovered-scope', name);
 });
 
-test('a line-start blocked report keeps its reason', () => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Note\n${JSON.stringify({ reason: 'target unreadable', status: 'BLOCKED' })}` });
-  assert.ok(!result.ok);
-  assert.equal(result.failure.kind, 'blocked');
-  assert.match(result.failure.detail, /target unreadable/);
-});
-
 test('a narrated report with many findings parses', () => {
   const rows = Array.from({ length: 1100 }, (_, i) => JSON.stringify(finding({ locus: `src/fetch.ts:L${i + 1}` }))).join(',\n');
   const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Note:\n{"status":"FINDINGS","findings":[\n${rows}\n]}` });
@@ -198,6 +191,8 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
   assert.equal(failure('{"status":"FINDINGS","findings":[{"sev', true), 'truncated');
   assert.equal(failure('Looks fine to me.'), 'uncovered-scope');
   assert.equal(failure(report([finding()], 'CLEAN')), 'uncovered-scope');
+  assert.equal(failure(JSON.stringify({ status: 'CLEAN', findings: [], otherFindings: [] })), 'uncovered-scope');
+  assert.equal(failure(report([finding({ defect: '<invoke name="x">' })])), 'uncovered-scope');
 });
 
 const MARK = 'unresolved-locus: ';
@@ -212,9 +207,6 @@ test('loose locus keeps findings: only the loose locus of a reply is marked, in 
   assert.deepEqual(parsedLoci('plan', [finding({ locus: 'A – T5 – Fix skill' }), finding({ locus: planLocus, defect: 'second defect' })]), [MARK + 'A – T5 – Fix skill', planLocus]);
   assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:L1-L9' }), finding({ defect: 'second defect' })]), [MARK + 'src/fetch.ts:L1-L9', 'src/fetch.ts:L12']);
   assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:12' })]), ['src/fetch.ts:L12']);
-});
-
-test('loose locus keeps findings: the marked text is sanitized, and an empty or non-string locus reports none', () => {
   assert.deepEqual(parsedLoci('plan', [finding({ locus: ' a\n\t<!-- b -->\u001b[31m c ' })]), [MARK + 'a &lt;!-- b --&gt; c']);
   for (const locus of ['', '   ', 42, null, ['§ Work']]) assert.deepEqual(parsedLoci('plan', [{ ...finding(), locus }]), [MARK + '(none)'], JSON.stringify(locus));
 });
@@ -254,6 +246,10 @@ test('loose locus keeps findings: a marked finding never matches by location', (
 });
 
 test('blocked json reports validate and sanitize reason', () => {
+  const lineStart = parseReport({ kind: 'code', source: 'codex[0]', text: `Note\n${JSON.stringify({ reason: 'target unreadable', status: 'BLOCKED' })}` });
+  assert.ok(!lineStart.ok);
+  assert.equal(lineStart.failure.kind, 'blocked');
+  assert.match(lineStart.failure.detail, /target unreadable/);
   const valid = parseReport({ kind: 'plan', source: 'codex[0]', text: JSON.stringify({ status: 'BLOCKED', reason: '  Session artifact denied by the guard  ' }) });
   assert.equal(valid.ok, false);
   if (!valid.ok) assert.deepEqual(valid.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
@@ -285,11 +281,6 @@ test('review-sanitization: report text is sanitized before relay', () => {
   assert.ok(!defect.includes('<!--'));
 });
 
-test('delegates-one-report-parse: extra top-level keys and sanitised-empty fields are uncovered scope', () => {
-  assert.equal(failure(JSON.stringify({ status: 'CLEAN', findings: [], otherFindings: [] })), 'uncovered-scope');
-  assert.equal(failure(report([finding({ defect: '<invoke name="x">' })])), 'uncovered-scope');
-});
-
 // SECTION: Unknown tag recovery
 
 const planFinding = (tag: string, heading: string, defect: string) => ({
@@ -301,7 +292,7 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   return result.findings;
 };
 
-test('collected findings preserve unknown tags across review kinds and maintain known categories', () => {
+test('collected findings preserve unknown tags across review kinds, sanitizing collisions', () => {
   // Plan review recovery
   const planText = `\`\`\`json\n${report([
     planFinding('robustness', 'Proposed Changes', 'retry path has no bound'),
@@ -326,9 +317,8 @@ test('collected findings preserve unknown tags across review kinds and maintain 
   assert.equal(findings[0]?.originalTag, 'robustness');
   assert.equal(findings[1]?.category, 'performance');
   assert.ok(!('originalTag' in (findings[1] ?? {})));
-});
 
-test('findings report: preserves distinct findings with unknown tags differing, sanitizing alike, or bounded', () => {
+  // Distinct, sanitized-alike, and length-bounded unknown tags preserve separate findings
   const diff = parsedFindings('code', report([finding({ tag: 'robustness' }), finding({ tag: 'resilience' })]));
   assert.deepEqual(diff.map((item) => [item.category, item.originalTag]), [['uncategorized', 'robustness'], ['uncategorized', 'resilience']]);
 
@@ -353,14 +343,11 @@ test('adjacent and intent tag handling preserves exact keywords and treats varia
   assert.ok(!('originalTag' in (intent ?? {})));
 });
 
-test('empty or non-string tag still fails the report', () => {
+test('unknown tags fail invalid reports without masking other failures', () => {
   for (const tag of ['', '   ', '\n\t']) assert.equal(failure(report([finding({ tag })])), 'uncovered-scope', JSON.stringify(tag));
   for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }]) assert.equal(failure(report([{ ...finding(), tag }])), 'uncovered-scope', JSON.stringify(tag));
   const { tag: _tag, ...missing } = finding();
   assert.equal(failure(report([missing])), 'uncovered-scope');
-});
-
-test('unknown tag does not mask other report failures', () => {
   const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
   assert.equal(failure(report([unknown({ impact: 'HIGH' })])), 'uncovered-scope');
   assert.equal(failure(report([unknown({ defect: '' })])), 'uncovered-scope');
@@ -420,17 +407,15 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
-test('diagnostics config renders explore-subagents', () => {
+test('diagnostics config renders explore-subagents and redacts read-command locators', () => {
   const config = { 'explore-subagents': { codex: { model: 'gpt-6-luna', effort: 'low' } } };
   const sanitized = sanitizeFacts(facts({ config }));
   assert.deepEqual(sanitized.config?.['explore-subagents'], config['explore-subagents']);
   const text = render([facts({ config })]);
   assert.match(text, /"explore-subagents": \{/);
   assert.match(text, /"effort": "low"/);
-});
-test('diagnostics config keeps read-command prefixes and redacts locators', () => {
-  const sanitized = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));
-  assert.deepEqual(sanitized.config?.['read-commands'], ['codegraph explore', '—', '—']);
+  const redacted = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));
+  assert.deepEqual(redacted.config?.['read-commands'], ['codegraph explore', '—', '—']);
 });
 test('diagnostics render one subject per phase cell and bound observed collection coverage', () => {
  const subject='1234567890abcdef';
@@ -482,27 +467,21 @@ function assertShape(finding: Finding | undefined, category: keyof typeof CATEGO
 
 // SECTION: Layout, durations, and token columns
 
-test('diagnostics report: renders sections in order', () => {
+test('diagnostics report: renders summary shell with sections, version, and durations', () => {
   const text = render([facts()]);
   const at = ['## Summary', '## Overview', '## Findings', '## Appendix', '<details>'].map((marker) => text.indexOf(marker));
   assert.ok(at.every((index) => index >= 0), `all sections present: ${at.join(',')}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
-});
-
-test('diagnostics report: summary shows version and build', () => {
-  assert.match(render([facts()]), /^- Build: dispatch 0\.7\.1 · build abababababab$/m);
+  assert.match(text, /^- Build: dispatch 0\.7\.1 · build abababababab$/m);
   const { version: _version, ...rest } = facts();
   assert.match(render([{ ...rest, build: 'not-a-hash' }]), /^- Build: dispatch — · build —$/m);
-});
-
-test('diagnostics report: formats durations', () => {
   assert.equal(formatDuration(3_723_000), '1h 2m 3s');
   assert.equal(formatDuration(45_000), '45s');
   assert.equal(formatDuration(400), '<1s');
   assert.equal(formatDuration(undefined), '—');
 });
 
-test('diagnostics report: renders duration and token breakdown columns', () => {
+test('diagnostics report: renders duration, token, and estimate columns with unavailable handling', () => {
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
   assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
@@ -510,30 +489,25 @@ test('diagnostics report: renders duration and token breakdown columns', () => {
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
   assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-});
-
-test('diagnostics report: renders unavailable as dash', () => {
-  const text = render([facts({
+  const partial = render([facts({
     phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000 }],
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
   })]);
-  assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), text);
-  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), text);
-  assert.match(text, /native and write —/);
-});
+  assert.ok(partial.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), partial);
+  assert.ok(partial.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), partial);
+  assert.match(partial, /native and write —/);
 
-test('diagnostics report: excludes estimates from measured totals', () => {
-  const text = render([facts({
+  const estimated = render([facts({
     invocations: [
       invocation(),
       bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, tokens: 5000 }),
       invocation({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, usage: { input: 9000, output: 1000 } }),
     ],
   })]);
-  assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-  assert.match(text, /^- Estimated, excluded from measured totals: native and write ~15,000$/m);
-  assert.ok(text.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
-  assert.ok(text.includes('| ~5,000 | native completed |'), text);
+  assert.match(estimated, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
+  assert.match(estimated, /^- Estimated, excluded from measured totals: native and write ~15,000$/m);
+  assert.ok(estimated.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), estimated);
+  assert.ok(estimated.includes('| ~5,000 | native completed |'), estimated);
 });
 
 // SECTION: Heuristics, severity, and model attribution
@@ -609,7 +583,7 @@ test('H1 quota names model and fallback recoveries', () => {
 const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
-test('H8 names the handling module of each repeated rejection and a fallback for unknown operations', () => {
+test('H8 names the handling module of repeated rejections and ignores one-offs', () => {
   const verify = assertShape(h8(rejections('verify', 'run', 'invalid-input'))[0], 'correctness');
   assert.equal(verify.component, 'scripts/toolkit/verify.ts');
   assert.match(verify.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
@@ -627,14 +601,10 @@ test('H8 names the handling module of each repeated rejection and a fallback for
     const finding = assertShape(h8(rejections(tool, action, 'invalid-input'))[0], 'correctness');
     assert.notEqual(finding.component, 'scripts/toolkit/cli.ts', `${name} has a module`);
   }
-});
 
-test('H8 ignores one-off rejections and counts only repeats of one tool, action and class', () => {
   assert.deepEqual(h8(rejections('verify', 'run', 'invalid-input', 1)), []);
-  assert.equal(h8(rejections('verify', 'run', 'invalid-input')).length, 1);
   assert.deepEqual(h8([...rejections('verify', 'run', 'invalid-input', 1), ...rejections('verify', 'run', 'user-only', 1)]), []);
   assert.deepEqual(h8([...rejections('ledger', 'append', 'key-conflict', 1), ...rejections('ledger', 'query', 'key-conflict', 1)]), []);
-
   const [mixed] = h8([...rejections('verify', 'run', 'invalid-input'), ...rejections('verify', 'run', 'user-only', 1)]);
   assert.match(mixed!.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
 });
@@ -643,21 +613,6 @@ test('diagnostics report: heuristic H1 fires for CLI failures', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
   assert.equal(finding.component, 'references/providers.md');
   assert.match(finding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
-});
-
-test('diagnostics amendment convergence keeps H2 signals and suppresses plain known-cap continuation', () => {
-  const reraised = assertShape(only(heuristics(facts({ reviews: [
-    { phase: 'review', round: 1, accepted: 1, rejected: 1 },
-    { phase: 'review', round: 2, accepted: 1, rejected: 0, reraised: ['R1-F001'] },
-  ] })), 'H2')[0], 'review-convergence');
-  assert.match(reraised.evidence, /code review: 2 rounds; 1 finding re-raised across rounds \(R1-F001\)\./);
-  const escalated = only(heuristics(facts({ reviews: [
-    { phase: 'review', round: 1, accepted: 1, rejected: 0 },
-    { phase: 'review', round: 2, accepted: 0, rejected: 0, escalation: { kind: 'regression', ids: ['R1-F001'] } },
-  ] })), 'H2');
-  assert.match(assertShape(escalated[0], 'review-convergence').evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
-  const rounds = only(heuristics(facts({ reviews: [1, 2, 3, 4].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3 })) })), 'H2');
-  assert.deepEqual(rounds, []);
 });
 
 test('diagnostics report: heuristic H4 fires for cache read share', () => {
@@ -708,6 +663,16 @@ test('diagnostics amendment convergence: evaluates caps, reraises, and escalatio
     assert.match(escalationOnly.evidence, kind === 'deadlock' ? /cap reached \(3\)/ : /regression escalation \(R1-F001\)/);
   }
   assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
+  const twoRoundReraised = assertShape(only(heuristics(facts({ reviews: [
+    { phase: 'review', round: 1, accepted: 1, rejected: 1 },
+    { phase: 'review', round: 2, accepted: 1, rejected: 0, reraised: ['R1-F001'] },
+  ] })), 'H2')[0], 'review-convergence');
+  assert.match(twoRoundReraised.evidence, /code review: 2 rounds; 1 finding re-raised across rounds \(R1-F001\)\./);
+  const twoRoundEscalated = assertShape(only(heuristics(facts({ reviews: [
+    { phase: 'review', round: 1, accepted: 1, rejected: 0 },
+    { phase: 'review', round: 2, accepted: 0, rejected: 0, escalation: { kind: 'regression', ids: ['R1-F001'] } },
+  ] })), 'H2')[0], 'review-convergence');
+  assert.match(twoRoundEscalated.evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
 });
 
 test('H2 review convergence phrasing distinguishes plain cap from re-raise deadlock', () => {
@@ -776,27 +741,21 @@ test('diagnostics report: equivalent codex and claude usage yield equal totals a
   assert.equal(normalizeUsage({ input: 100, cacheRead: 300, output: 1 }, 'includes-cache')?.input, 0);
 });
 
-test('diagnostics report: attributes tokens per reported model', () => {
-  const text = render([facts({ invocations: [invocation({
+test('diagnostics report: renders per-model token rows across launch states', () => {
+  const split = render([facts({ invocations: [invocation({
     provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'],
     usage: { input: 150, output: 15, models: { 'claude-opus-5-5': { input: 100, output: 10 }, 'claude-haiku-5': { input: 50, output: 5 } } },
   })] })]);
-  assert.ok(text.includes('| code review | claude | delegate | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), text);
-  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), text);
-  assert.doesNotMatch(text, /\(configured\)/);
-});
-
-test('diagnostics report: mixed measured and unmeasured launches share one model row', () => {
-  const text = render([facts({ invocations: [
+  assert.ok(split.includes('| code review | claude | delegate | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), split);
+  assert.ok(split.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), split);
+  assert.doesNotMatch(split, /\(configured\)/);
+  const mixed = render([facts({ invocations: [
     invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 100, output: 10, models: { 'claude-opus-5-5': { input: 100, output: 10 } } } }),
     bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
   ] })]);
-  assert.ok(text.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), text);
-  const table = text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
+  assert.ok(mixed.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), mixed);
+  const table = mixed.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
   assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
-});
-
-test('diagnostics report: handles configured-model labels and multi-model aggregates', () => {
   const configured = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
   assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
   assert.ok(configured.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), configured);
@@ -808,15 +767,19 @@ test('diagnostics report: handles configured-model labels and multi-model aggreg
 
 // SECTION: Scope gate and redaction
 
-test('retro observations: rejects more than twenty observations', () => {
+const LEAKS = [
+  'see /home/alice/repo/src/app.ts', 'at ~/work/app', 'path C:\\Users\\alice\\repo', 'path d:/work/repo', 'share \\\\server\\team\\x',
+  'docs at https://intranet.example/x', 'host www.example.org', 'host build.example.com', 'mail alice@example.com',
+  'session 123e4567-e89b-12d3-a456-426614174000', `hash ${'a1'.repeat(20)}`,
+];
+const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
+
+test('retro observations: validates ids, components, categories, content, and size', () => {
   const ids = Array.from({ length: 21 }, (_, i) => `o${i + 1}`);
   const result = retroObservations(ids.map((id) => observation({ id })));
   assert.deepEqual(result.values.map((v) => v.id), ids.slice(0, 20));
   assert.equal(result.rejected, 1);
   assert.deepEqual(retroObservations([]), { state:'empty', values: [], rejected: 0 });
-});
-
-test('retro observations: rejects foreign component', () => {
   for (const component of ['src/app.ts', 'core/frame.ts', '../dispatch/scripts/toolkit/records.ts', 'skills/dispatch-plan/SKILL.md', 'README.md']) {
     assert.deepEqual(retroObservations([observation({ component })]), { state:'collected', values: [], rejected: 1 }, component);
   }
@@ -828,33 +791,14 @@ test('retro observations: rejects foreign component', () => {
   assert.equal(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]).values.length, 1);
   assert.equal(retroObservations([observation({component:'scripts/toolkit/review-identity.ts'})]).values[0]?.component,'scripts/toolkit/review-identity.ts');
   assert.equal(retroObservations([observation({ component: 'references/templates/writer-brief.md' })]).values.length, 1);
-});
-
-test('retro observations: rejects unknown category', () => {
   for (const category of ['vibes', 'driver protocol', '', undefined]) assert.equal(retroObservations([observation({ category })]).rejected, 1, String(category));
   for (const category of [...Object.keys(CATEGORIES), 'Token economy']) assert.equal(retroObservations([observation({ category })]).values.length, 1, category);
-});
-
-test('retro observations: rejects invalid id', () => {
   for (const id of ['', 'bad id', 'x'.repeat(49), 'a/b', 7]) assert.equal(retroObservations([observation({ id })]).rejected, 1, String(id));
   assert.deepEqual(retroObservations([observation({ id: 'dup' }), observation({ id: 'dup' })]).rejected, 1);
-});
-
-const LEAKS = [
-  'see /home/alice/repo/src/app.ts', 'at ~/work/app', 'path C:\\Users\\alice\\repo', 'path d:/work/repo', 'share \\\\server\\team\\x',
-  'docs at https://intranet.example/x', 'host www.example.org', 'host build.example.com', 'mail alice@example.com',
-  'session 123e4567-e89b-12d3-a456-426614174000', `hash ${'a1'.repeat(20)}`,
-];
-const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
-
-test('retro observations: rejects prohibited content across evidence, impact, and proposedFix', () => {
   for (const field of ['evidence', 'impact', 'proposedFix'] as const) {
     for (const leak of LEAKS) assert.equal(retroObservations([observation({ [field]: leak })]).rejected, 1, `${field}: ${leak}`);
     assert.equal(retroObservations([observation({ [field]: CLEAN })]).values[0]?.[field], CLEAN);
   }
-});
-
-test('retro observations: rejects oversized field', () => {
   assert.equal(retroObservations([observation({ evidence: 'z'.repeat(512) })]).values.length, 1);
   for (const evidence of ['z'.repeat(513), 'é'.repeat(257), '   ', 42]) assert.equal(retroObservations([observation({ evidence })]).rejected, 1, String(evidence).slice(0, 8));
 });
@@ -951,7 +895,7 @@ test('heuristic H1 fires on repeated slot failures and suppresses isolated failu
   }
 });
 
-test('host rows preserve missing effort, notes and platform totals without transcript fields', () => {
+test('host rows preserve totals and notes, scrub labels, and surface unavailability', () => {
   const run=facts({hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'m',effort:null,input:10,output:2,cacheRead:5,cacheWrite:2,reasoning:4},{stage:'plan',role:'subagent',model:'m',effort:null,input:20,output:3}],notes:{host:{'unparsed lines':2},subagent:{'read budget reached':1}}},invocations:[invocation({provider:'claude',usage:{input:7,output:1}})]});
   (run.hostUsage!.rows[0] as unknown as Record<string,unknown>)['text']='secret transcript';
   const text=render([run]);
@@ -962,15 +906,12 @@ test('host rows preserve missing effort, notes and platform totals without trans
   assert.ok(text.includes('Overview token columns count CLI delegates only.'));
   assert.ok(text.includes('other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.'));
   assert.ok(!text.includes('secret transcript'));
-});
-
-test('invalid host labels retain valid counters and host unavailability remains visible beside subagent notes', () => {
-  const hostUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
-  const text=render([facts({hostUsage,invocations:[]})]);
-  assert.ok(text.includes('| plan | claude | host | — | — | 4 | — | — | 1 | — | — |'));
-  assert.ok(text.includes('host unavailable: read-error:EACCES'));
-  assert.ok(text.includes('subagents not measured (unreadable files 2)'));
-  assert.ok(!text.includes('C:/private'));
+  const invalidUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
+  const sanitized=render([facts({hostUsage:invalidUsage,invocations:[]})]);
+  assert.ok(sanitized.includes('| plan | claude | host | — | — | 4 | — | — | 1 | — | — |'));
+  assert.ok(sanitized.includes('host unavailable: read-error:EACCES'));
+  assert.ok(sanitized.includes('subagents not measured (unreadable files 2)'));
+  assert.ok(!sanitized.includes('C:/private'));
 });
 
 

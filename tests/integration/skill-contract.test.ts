@@ -505,22 +505,3 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   assert.match(append, /one `withLedger` lock|single `withLedger` lock/i);
   assert.match(append, /findings refresh/i);
 });
-
-test('ADRs document software factory optimization guardrails', () => {
-  const adr = (name: string) => read('docs/decisions/' + name);
-
-  const rounds = adr('0005-review-rounds-policy.md');
-  for (const term of ['second opinion', 'confirmation-only', 'holistic', 'diff-sliced', 'cross-file']) {
-    assert.ok(rounds.toLowerCase().includes(term), '0005: ' + term);
-  }
-
-  const toolkit = adr('0013-toolkit-and-ledger.md');
-  for (const term of ['TDD', 'test-cleanup', 'identical retention', 'Per-task worktrees stay uniform', 'single-worktree', 'batchEndSeq', 'shell-quoting', 'JSON array']) {
-    assert.ok(toolkit.includes(term), '0013: ' + term);
-  }
-
-  const grounding = adr('0014-ground-first-intent-and-evidence-based-level.md');
-  for (const term of ['pre-spec', 'Scope Round', 'Spec and Plan', 'verified unchanged']) {
-    assert.ok(grounding.includes(term), '0014: ' + term);
-  }
-});

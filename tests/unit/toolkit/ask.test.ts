@@ -398,7 +398,7 @@ test('ask run keeps a responder-less saved orphan without throwing', async () =>
   } finally {f.cleanup();}
 });
 
-test('ask diagnostics name the first model when the reserve configures a list', async () => {
+test('ask diagnostics name the reserve voice on invalid and completed native replies', async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -407,31 +407,13 @@ test('ask diagnostics name the first model when the reserve configures a list', 
     f.deps.orchestrator = {platform: 'codex', model: null};
     f.deps.liveness = {claude: true, codex: true};
     f.script('claude', 'target', {status: 'fail', cls: 'auth', detail: 'denied'});
-    const events: unknown[] = [];
-    f.deps.diagnostics = (event: unknown) => { events.push(event); };
-    const launched = await f.call();
-    assert.equal(launched.output.reason, 'native-pending');
-    const pending = (events as any[]).find(event => event.kind === 'native' && event.state === 'pending');
-    assert.ok(pending, 'the reserve mint keeps its native pending marker: ' + JSON.stringify((events as any[]).filter(event => event.kind === 'native')));
-    assert.equal(pending.slot, 'claude[0]', 'the pending marker keeps the logical target slot');
-    assert.equal(pending.provider, 'codex', 'the pending marker names the reserve provider');
-    assert.equal(pending.model, 'first-alias', 'the pending marker names the first configured alias: ' + JSON.stringify(pending));
-  } finally {f.cleanup();}
-});
-
-test('ask diagnostics name the reserve voice on invalid and completed native replies', async () => {
-  const f = fixture(); try {
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
-      claude: {targets: [{medium: {model: 'target'}}]},
-      codex: {nativeSubagentsOnly: true, targets: [{medium: {model: 'reserve'}}]},
-    }, phases: {ask: {targets: {medium: 1}}}}));
-    f.deps.orchestrator = {platform: 'codex', model: null};
-    f.deps.liveness = {claude: true, codex: true};
-    f.script('claude', 'target', {status: 'fail', cls: 'auth', detail: 'denied'});
     const events: any[] = [];
     f.deps.diagnostics = (event: unknown) => { events.push(event); };
     const launched = await f.call();
     assert.equal(launched.output.reason, 'native-pending');
+    const minted = events.filter(event => event.kind === 'native' && event.state === 'pending').pop();
+    assert.deepEqual([minted?.slot, minted?.provider], ['claude[0]', 'codex'], 'the reserve mint keeps the logical slot and names the reserve: ' + JSON.stringify(events));
+    assert.equal(minted?.model, 'first-alias', 'the pending marker names the first configured alias: ' + JSON.stringify(minted));
     const replyPath = launched.value.native[0].replyPath as string;
     fs.writeFileSync(replyPath, ' ');
     await f.call();

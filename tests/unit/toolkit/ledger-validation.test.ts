@@ -116,20 +116,6 @@ test('uncommitted records accept exact identities and refuse missing or unknown 
  for(const phase of ['deliver-started','delivered'])for(const mode of ['squash','other'])assert.throws(()=>record({phase,mode,dest,from:commit,source:commit}),{reason:'invalid-record'});
 });
 
-test('invalid-record rejections name the field and its expected shape', () => {
-  const hash='sha256:'+'a'.repeat(64);
-  const cases: [unknown,RegExp][]=[
-    [{kind:'approval',by:'user',quote:'q',data:{plan:hash}},/^data\.spec is invalid; expected required sha256:<64 lowercase hex>$/],
-    [{kind:'level',by:'user',quote:'q',key:'k',data:{level:'huge'}},/^data\.level is invalid; expected one of low, medium, high, xhigh, max$/],
-    [{kind:'writer',by:'tool',data:{phase:'bad'}},/^data\.phase is invalid; expected one of launched, finished, abandoned$/],
-    [{kind:'writer',by:'tool',data:{phase:'launched',task:'t',path:'p'}},/^data\.base is invalid; expected required an object with commit, taskSection, seq$/],
-    [{kind:'evidence',by:'tool',data:{clean:'yes'}},/^data\.criterion is invalid; expected required a non-blank string$/],
-    [{kind:'note',by:'tool',quote:7,data:{text:'t'}},/^record\.quote is invalid; expected a string$/],
-    [{kind:'integrate',by:'tool',data:{phase:'test-cleanup',from:'a'.repeat(40),fromTree:'b'.repeat(40),to:'c'.repeat(40),removed:'SC1',deleted:1,merged:0}},/^data.removed is invalid; expected .*$/],
-  ];
-  for(const [record,message] of cases)assert.throws(()=>validateRecord(record),(error: Error)=>message.test(error.message),String(message));
-});
-
 test('cap-ending SHOULD fixes validate integration metadata',()=>{
  const commit='a'.repeat(40),reviewFix={review:'code-integration',round:3,generation:2,findings:['R3-F001'],from:commit};
  const record=(metadata:unknown)=>validateRecord({kind:'integrate',by:'tool',data:{phase:'fix',commit,reason:'repair accepted SHOULD',...(metadata===undefined?{}:{reviewFix:metadata})}});

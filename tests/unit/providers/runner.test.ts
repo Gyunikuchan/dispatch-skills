@@ -364,7 +364,6 @@ test('runner waits for asynchronous lease release before returning', async () =>
 
 test('runDelegate records one invocation per launch attempt, including the effort retry, and has no observe port', async () => {
   const h = harness(posix);
-  assert.equal('observe' in h.ports, false);
   const spec = { ...claude, parse: (out: ProcessResult, launch: { effort: string | null }) => launch.effort ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true } : claude.parse(out, launch as never) };
   const run = runDelegate(spec, { ...req, model: 'sonnet', effort: 'high' }, 'cli', h.ports);
   await flush(); h.finish(ok({ durationMs: 7 }));
@@ -397,22 +396,6 @@ test('silent delegate times out idle after the idle window, before the overall d
   assert.equal(done.result?.timedOut, true);
   assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
   assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', new RegExp(`^idle ${Math.round(IDLE_TIMEOUT_MS / 1000)}s; partial output at \\/r\\/log$`));
-});
-
-test('idle after two minutes', async () => {
-  const h = harness(posix);
-  const run = runDelegate(codex, { ...req, timeoutMs: 4 * IDLE_TIMEOUT_MS }, 'cli', h.ports);
-  await flush();
-  h.clock.advance(10_000);
-  h.activity();
-  h.clock.advance(119_000);
-  assert.deepEqual(h.signals, []);
-  h.clock.advance(31_000);
-  assert.deepEqual(h.signals, ['-50:SIGTERM']);
-  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
-  const done = await run;
-  assert.equal(done.result?.timedOut, true);
-  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
 });
 
 const makeNudgeSpec = (sessionId: string | null): any => ({

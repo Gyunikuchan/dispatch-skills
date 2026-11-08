@@ -103,6 +103,9 @@ describe('toolkit writer worktrees', () => {
     const r=await toolkitRepo(source); t.after(r.cleanup);
     fs.writeFileSync(path.join(r.root,'src/delete.ts'),'delete'); r.git(['add','.']); r.git(['commit','-m','fixture']);
     assert.equal((await r.run(['worktree','create','T1'])).exit,0); const cwd=launchPath(r);
+    const hooks=path.join(r.root,'.test-hooks'); fs.mkdirSync(hooks);
+    fs.writeFileSync(path.join(hooks,'pre-commit'),'#!/bin/sh\necho generated > unowned.txt\ngit add unowned.txt\n',{mode:0o755});
+    r.git(['config','core.hooksPath',hooks]);
     fs.writeFileSync(path.join(cwd,'src/file.ts'),'changed'); fs.writeFileSync(path.join(cwd,'src/add.ts'),'added'); r.git(['add','src/add.ts'],cwd);
     fs.unlinkSync(path.join(cwd,'src/delete.ts')); fs.writeFileSync(path.join(cwd,'src/untracked.ts'),'new');
     const interrupted=await r.run(['worktree','submit','T1'],crash('submit:after-commit'));
@@ -115,6 +118,8 @@ describe('toolkit writer worktrees', () => {
     assert.equal(r.git(['rev-parse','refs/dispatch/test/candidates/T1-1']),finished.data['candidate']);
     assert.equal(r.git(['show','HEAD:src/untracked.ts'],cwd),'new');
     assert.equal(r.git(['status','--porcelain'],cwd),'');
+    assert.equal(r.git(['log','-1','--format=%s'],cwd),'chore(dispatch): T1 launch 1');
+    assert.deepEqual(r.git(['diff','--name-only','HEAD^','HEAD'],cwd).split('\n').sort(),['src/add.ts','src/delete.ts','src/file.ts','src/untracked.ts']);
     assert.equal((await r.run(['worktree','create','T1'])).output.reason,'candidate-pending');
   });
   it('refuses out of scope changes before committing and recovers committed submissions', async t => {
@@ -143,16 +148,5 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree','submit','T1'])).output.reason,'out-of-scope');
     assert.equal(r.git(['rev-parse','HEAD'],cwd),base); assert.equal(fs.readFileSync(path.join(cwd,'outside'),'utf8'),'outside');
     assert.equal(records(r).filter(x=>x.data['phase']==='finished').length,0);
-  });
-  it('commits writer submissions with a conventional message and without host hooks', async t => {
-    const r=await toolkitRepo(); t.after(r.cleanup);
-    assert.equal((await r.run(['worktree','create','T1'])).exit,0); const cwd=launchPath(r);
-    const hooks=path.join(r.root,'.test-hooks'); fs.mkdirSync(hooks);
-    fs.writeFileSync(path.join(hooks,'pre-commit'),'#!/bin/sh\necho generated > unowned.txt\ngit add unowned.txt\n',{mode:0o755});
-    r.git(['config','core.hooksPath',hooks]);
-    fs.writeFileSync(path.join(cwd,'src/file.ts'),'changed\n');
-    const submitted=await r.run(['worktree','submit','T1']); assert.equal(submitted.exit,0,JSON.stringify(submitted));
-    assert.equal(r.git(['log','-1','--format=%s'],cwd),'chore(dispatch): T1 launch 1');
-    assert.equal(r.git(['diff','--name-only','HEAD^','HEAD'],cwd),'src/file.ts');
   });
 });

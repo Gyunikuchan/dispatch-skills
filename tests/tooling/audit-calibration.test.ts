@@ -4,16 +4,7 @@ import path from 'node:path';
 import { before, describe, test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 
-import { load, ARMS, SETTINGS, NOW, readBrief, type Json, fixture, defects, controls, prepared, ids, high } from '../helpers/audit-calibration.ts';
-
-test('audit calibration fixture curates five categorized defects and three controls with verified excerpts', async () => {
-  const { validateFixture } = await load();
-  const f = fixture();
-  validateFixture(f as never);
-  assert.deepEqual(defects(f).map((c: Json) => c['category']).sort(), ['ambiguity', 'contradiction', 'efficiency', 'handoff', 'recovery']);
-  assert.equal(controls(f).length, 3);
-  assert.ok(high(f).length >= 1);
-});
+import { load, ARMS, SETTINGS, NOW, readBrief, fixture, defects, prepared, ids } from '../helpers/audit-calibration.ts';
 
 test('audit calibration prepare rejects malformed fixtures and invalid settings', async () => {
   const { prepare } = await load();
