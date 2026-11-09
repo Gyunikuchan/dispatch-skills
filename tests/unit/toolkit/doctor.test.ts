@@ -239,3 +239,35 @@ test('doctor utility names the opencode subagent model value', async () => {
     assert.deepEqual(plain.utility.opencode.subagentModels, ['prov/plain']);
   } finally { f.cleanup(); }
 });
+
+test('doctor reports configured writeConcurrency defaulting to 1 when omitted or invalid', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
+    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
+      'write-concurrency': 3,
+    }));
+    const run = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    };
+    const configured = await run();
+    assert.equal(configured.writeConcurrency, 3);
+
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
+    }));
+    const omitted = await run();
+    assert.equal(omitted.writeConcurrency, 1);
+
+    fs.writeFileSync(config, '{"unknown":true}');
+    const invalid = await run();
+    assert.equal(invalid.writeConcurrency, 1);
+  } finally { f.cleanup(); }
+});

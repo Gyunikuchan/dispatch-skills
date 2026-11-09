@@ -551,3 +551,34 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   assert.match(append, /one `withLedger` lock|single `withLedger` lock/i);
   assert.match(append, /findings refresh/i);
 });
+
+test('grounding guidance defines gap explorer triggers limits scout role and remaining gap handling', () => {
+  const grounding = read(root + 'references/grounding.md');
+  for (const signal of ['Not covered', 'Surprises', '(text-only)', 'unresolved-dispatch', 'map size warning']) {
+    assert.ok(grounding.includes(signal), signal);
+  }
+  assert.match(grounding, /Launch a gap explorer only when the answer could change a REQ, DEC, scope or blast radius and its reading exceeds the \[context guard\]\(\.\.\/SKILL\.md#context-guard\) threshold/);
+  assert.match(grounding, /read smaller gaps inline/);
+  assert.match(grounding, /touches a shared contract, schema or predicate with consumers in several areas, one slot is a scout/);
+  assert.match(grounding, /gets the objective and the paths already covered, not the findings, and reports surfaces absent from them/);
+  assert.match(grounding, /A scout is new work, not duplicated work for fresh context/);
+  assert.match(grounding, /Launch at most three in one round, one per independent surface, fresh, as research explorers/);
+  assert.match(grounding, /Remaining gaps stay in `Not covered` or the spec's Open Questions/);
+});
+
+test('implement guide bounds active task writers by doctor run writeConcurrency', () => {
+  const implement = read(root + 'references/verbs/implement.md');
+  assert.match(implement, /Keep active task writers within `doctor run` `writeConcurrency`\./);
+  assert.doesNotMatch(implement, /Honor configured native capacity\./);
+});
+
+test('configuration documentation recommends strongest model for orchestrator', () => {
+  const config = read(root + 'references/readme/configuration.md');
+  assert.match(config, /strongest available model for the orchestrator/i);
+  assert.match(config, /cheap explorers and writers depend on a strong lead/i);
+});
+
+test('toolkit doctor run documents writeConcurrency in result shape', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.match(section(toolkit, 'doctor run'), /writeConcurrency/);
+});

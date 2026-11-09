@@ -88,6 +88,8 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 ## Optional settings
 
+Use the strongest available model for the orchestrator, because cheap explorers and writers depend on a strong lead.
+
 `explore-subagents` configures native explorers for grounding, research and triage, and the utility subagents that do low-risk routine tasks such as test cleanup and mechanical fixes. Use a cheaper model than the host agent, so token-heavy reading stays out of the orchestrator's context. Define one `{ model, effort? }` entry per platform; the choice does not depend on run level. Without an entry, explorer work runs read-only on the lowest `write-subagents` entry for that platform, and utility subagents use the same entry. When neither exists, the host agent does the work itself. Independent topics can run in parallel, and the host agent can continue a subagent for a related follow-up ([routing](../../SKILL.md#routing)).
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.

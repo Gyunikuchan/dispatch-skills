@@ -39,3 +39,14 @@ test('diagnostics retain privacy and measurement guidance', () => {
   assert.ok(concepts.includes('Native timing and usage'));
   for (const term of ['unavailable value, not zero', 'Measured totals exclude `~` figures', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
 });
+
+test('diagnostics instructions specify grounding retro items and yield format', () => {
+  const instruction = read('references/diagnostics.md');
+  assert.ok(instruction.includes('id: grounding-<phase>'));
+  assert.ok(instruction.includes('component: references/grounding.md'));
+  assert.ok(instruction.includes('category: information-access'));
+  assert.ok(instruction.includes('evidence: map <n>, gap <n>, scout <n>, not-covered <n>, yield <changed>/<launched>, tokens <n|unavailable>'));
+  assert.match(instruction, /`yield` counts gap and scout explorers whose reply changed a REQ, DEC, scope or blast radius/);
+  assert.match(instruction, /record whether to keep or change the follow-up limit/);
+  assert.doesNotMatch(read('SKILL.md'), /grounding-<phase>/);
+});

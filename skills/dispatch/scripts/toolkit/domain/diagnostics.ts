@@ -97,7 +97,7 @@ export type Finding = { source: string; run?: number; id?: string; category: Cat
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
 export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
-export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1024 } as const;
+export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1536 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
 

@@ -21,12 +21,12 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const writers: Record<string, ResolvedSubagent> = {};
   const explorers: Record<string, ResolvedSubagent> = {};
   let utility: Record<string, ResolvedSubagent & { subagentModels?: string[] }> = {};
-  let sandboxRemoved: string[] = [];
+  let sandboxRemoved: string[] = [], writeConcurrency = 1;
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
     problems = validateConfig(loaded.config);
-    if (!problems.length) {
+    if (!problems.length) { writeConcurrency = (loaded.config['write-concurrency'] as number) ?? 1;
       const writerTable = loaded.config['write-subagents'] as Record<string, LevelMap<SubagentEntry>>;
       for (const [platform, levels] of Object.entries(writerTable)) writers[platform] = resolveSubagent(resolveLevel(levels, level)!);
       const explorerTable = loaded.config['explore-subagents'] as Record<string, SubagentEntry>;
@@ -51,5 +51,6 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
     host: { platform: host, source: host ? 'declared' : 'none' },
     integrity,
     config: { path: configPath, problems }, level, writers, explorers, utility, sandboxRemoved,
+    writeConcurrency,
   };
 }

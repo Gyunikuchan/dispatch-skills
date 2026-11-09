@@ -983,3 +983,24 @@ test('diagnostics report names each lifecycle step outcome and keeps raw details
   assert.match(text, /lifecycle debug-config timeout 120\/5000 ms, teardown unconfirmed 120\/5000 ms/);
   assert.doesNotMatch(text, /prepare failed|home\/me|opencode/);
 });
+
+test('grounding phase retro observation passes gate and renders evidence in report', () => {
+  const item = {
+    id: 'grounding-spec',
+    component: 'references/grounding.md',
+    category: 'information-access' as const,
+    evidence: 'map 1, gap 2, scout 1, not-covered 0, yield 2/3, tokens unavailable',
+    impact: 'Keep the follow-up limit at 3.',
+    proposedFix: 'Keep the current discovery bounds.',
+  };
+  const gated = retroObservations([item]);
+  assert.equal(gated.state, 'collected');
+  assert.equal(gated.rejected, 0);
+  assert.equal(gated.values.length, 1);
+  assert.deepEqual(gated.values[0], item);
+
+  const text = render([facts({ observations: [item] })]);
+  assert.match(text, /host retro `grounding-spec`/);
+  assert.match(text, /Information access · `references\/grounding\.md`/);
+  assert.match(text, /map 1, gap 2, scout 1, not-covered 0, yield 2\/3, tokens unavailable/);
+});

@@ -119,7 +119,6 @@ const canonical = (key: string): string => ALIASES[key.toLowerCase()] ?? key.toL
 const nonNegativeInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
 const positiveInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) > 0;
 
-/** Active task-writer cap; absent means serial execution through the same scheduler. */
 const goodName = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '' && !value.trim().endsWith(':');
 
 function sortedJson(value: unknown): string {
