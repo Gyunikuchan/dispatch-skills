@@ -23,6 +23,8 @@ export type DelegateRequest = {
   sandbox: boolean;
   schemaPath: string | null;
   resume: string | null;
+  /** Resumes already spent in this model attempt; absent means 0. */
+  resumesUsed?: number;
   cwd: string;
   /** Active Dispatch session directory; its artifacts skip the basename word patterns in the guard. */
   sessionRoot?: string;
@@ -83,13 +85,13 @@ export type ProcessResult = {
 
 export type RunOutcome =
   | { status: 'ok'; text: string; sessionId: string | null; resume: string | null }
-  | { status: 'fail'; cls: FailureClass; detail: string; retryWithoutEffort?: boolean };
+  | { status: 'fail'; cls: FailureClass; detail: string; retryAfterMs?: number; retryWithoutEffort?: boolean };
 
 /** One measured OpenCode lifecycle step: enums and bounded integers only, never raw output or configuration. */
 export type LifecycleStep = { step: 'debug-config' | 'debug-agents' | 'prepare' | 'response' | 'teardown'; elapsedMs: number; budgetMs: number; outcome: 'ok' | 'failed' | 'timeout' | 'unconfirmed' };
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason; lifecycleSteps?: LifecycleStep[]; /** Set on the single resume launch after an idle stop or empty answer. */ nudge?: true };
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason; lifecycleSteps?: LifecycleStep[]; /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
 export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };

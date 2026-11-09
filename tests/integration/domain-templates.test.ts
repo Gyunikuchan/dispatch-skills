@@ -351,7 +351,7 @@ test('lean simplicity rules have one shared home reached by every quality consum
   }
 });
 
-test('review templates calibrate CLEAN, align Review Scope, replace textbook smells, and reduce golden bytes', () => {
+test('review prompt scope strings calibrate CLEAN, replace textbook smells, and reduce golden bytes', () => {
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
   const stage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
   const baselines = { code: 15627, plan: 19533, design: 15297 } as const;
@@ -373,12 +373,13 @@ test('review templates calibrate CLEAN, align Review Scope, replace textbook sme
   for (const term of ['IEEE 29148', 'DRY', 'YAGNI', 'KISS', 'Rule of three', "Chesterton's fence", 'CQS', 'STRIDE', 'OWASP/CWE', 'TOCTOU', 'idempotency', 'fail-closed', 'Big-O', 'N+1', 'backpressure', "Hyrum's law", 'semver', 'expand/contract', 'WCAG', 'POLA', 'FIRST', 'INVEST']) assert.ok(hay.includes(term), `missing dense term: ${term}`);
   const codeDoc = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
   assert.ok(codeDoc.includes('Full review — changed paths: <changed paths>; comparison: <base>..<head>'), 'code Round 1 scope');
-  assert.ok(codeDoc.includes('Re-review round <n> (full|narrowed) — changed: changed paths: <changed paths>; comparison: <prev>..<curr>'), 'code narrowed scope');
+  assert.ok(codeDoc.includes('Re-review round <n> (full|narrowed) — changed paths: <changed paths>; comparison: <prev>..<curr>'), 'code narrowed scope');
   assert.ok(codeDoc.includes('Re-review round <n> (coverage) — changed paths: <changed paths>; comparison: <base>..<head>'), 'code coverage scope');
   for (const name of ['review-prompt-plan.md', 'review-prompt-design.md'] as const) {
     const doc = readFileSync(new URL(name, root), 'utf8');
     assert.ok(doc.includes('Full review'), `${name} Round 1 scope`);
-    assert.ok(doc.includes('Full review — changed paths: ; comparison: <sha256>'), `${name} rerun scope`);
+    assert.ok(doc.includes('Full review — changed: <changed sections>; comparison: <sha256>'), `${name} rerun scope with changed sections`);
+    assert.ok(doc.includes('Full review — comparison: <sha256>'), `${name} rerun scope without changed sections`);
     assert.ok(doc.includes('Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>'), `${name} narrowed scope`);
     assert.ok(!doc.includes('(coverage)'), `${name} omits coverage`);
     assert.ok(!doc.includes('(delta)'), `${name} omits delta`);

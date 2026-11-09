@@ -6,7 +6,7 @@ Kind block for `review-prompt.md`.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
 - `<Plan Path>` — path to the attached plan, or `None`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review — changed paths: <changed paths>; comparison: <base>..<head>` on Round 1 or a rerun; `Re-review round <n> (full|narrowed) — changed: changed paths: <changed paths>; comparison: <prev>..<curr>` or `Re-review round <n> (coverage) — changed paths: <changed paths>; comparison: <base>..<head>` on Round <n> > 1.
+- `<Review Scope>` — preparation-supplied scope string: `Full review — changed paths: <changed paths>; comparison: <base>..<head>` on Round 1 or a rerun; `Re-review round <n> (full|narrowed) — changed paths: <changed paths>; comparison: <prev>..<curr>` or `Re-review round <n> (coverage) — changed paths: <changed paths>; comparison: <base>..<head>` on Round <n> > 1.
 
 ## opener
 

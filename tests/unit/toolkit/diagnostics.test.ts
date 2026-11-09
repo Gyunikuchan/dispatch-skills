@@ -1017,3 +1017,36 @@ test('nudge: waste counts a recovered stall exactly', async () => {
     assert.match(findings[0]!.evidence, /`timeout`: 2 of 4 CLI attempts failed/);
   } finally { g.cleanup(); }
 });
+
+test('diagnostics resume chain: consecutive resumes that end ok leave no waste', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const subject = 'eeeeeeeeeeeeeeee';
+    captureRuns(f.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'timeout'}), nudge: true},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 3, outcome: 'timeout'}), nudge: true},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 4, outcome: 'ok'}), nudge: true},
+    ]);
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H1'), [], 'two failed resumes absorbed by a third');
+    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.equal((report.match(/ · nudge/g) ?? []).length, 3, 'every resume launch is marked');
+  } finally { f.cleanup(); }
+});
+
+test('diagnostics resume chain: a chain without a successful end stays waste', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const subject = 'ffffffffffffffff';
+    captureRuns(f.session, [
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'timeout'}), nudge: true},
+      {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 3, outcome: 'timeout'}), nudge: true},
+    ]);
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
+    assert.equal(findings.length, 1);
+    assert.match(findings[0]!.evidence, /`timeout`: 3 of 3 CLI attempts failed/);
+  } finally { f.cleanup(); }
+});

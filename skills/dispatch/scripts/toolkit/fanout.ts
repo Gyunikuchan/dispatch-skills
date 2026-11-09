@@ -10,6 +10,7 @@ import { resolveRoster, nativeFirstRoute, normalizeProvider, type Roster, type R
 import { opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome } from '../providers/types.ts';
+import { validSessionId } from '../providers/types.ts';
 import { sessionScope, formatSafetyPrompt } from '../providers/runner.ts';
 import { nodeRunnerFs } from '../providers/node-process.ts';
 import { sanitizeText } from './domain/sanitize.ts';
@@ -22,6 +23,7 @@ import type { Level } from './types.ts';
 const newNativeReply = (cwd: string, replyPath: string) => `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
 
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
+const MAX_REPORT_RESUMES = 3;
 export type BlockedAttempt = {provider: string; model: string | null; reason: string; reasonHash: string};
 export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string; blocked?: {reason: string; reasonHash: string}};
 export type SlotOutcome = {slot: string; blocked?: BlockedAttempt[]} & (
@@ -363,6 +365,13 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     return pending;
   };
 
+  // A report resume asks the same session for only the final report. Its prompt
+  // sits beside the voice prompt because the runner reads the body from promptPath.
+  const reportResumePromptPath = (promptPath: string): string =>
+    path.join(path.dirname(promptPath), path.basename(promptPath, '.md') + '.no-report.md');
+  const reportResumePrompt = (reason: string): string =>
+    `Your previous answer did not include a valid final report.\n\nValidation failure: ${reason}\n\nReply with only the final JSON report in the required format (a JSON object with "status" and "findings", plus "confirmations" with requestId, decision and rationale for every assigned confirmation request). Do not repeat the review.\n`;
+
   const voiceCLI = async (physical: RosterSlot, logicalSlot: string, promptPath: string): Promise<SlotOutcome> => {
     if (!isProviderId(physical.provider)) return {slot: physical.slot, state:'failed',cls:'config',reason:'Unknown provider ' + physical.provider};
     const provider = physical.provider, modes = deps.modes(provider);
@@ -372,8 +381,11 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     const config = {slot: physical.slot, platform: provider, models, modes, modeCascadeOn:SPECS[provider].modeCascadeOn};
     let position = {model:0,mode:0};
     const targetForEmit: RosterSlot = {...physical, slot: logicalSlot};
+    // A reserve runs on its own 30-minute budget from its start; targets share the wave deadline.
+    const voiceDeadline = physical.reserve ? deps.clock() + 30 * 60 * 1000 : deadline;
+    let resumesUsed = 0, reportResumes = 0, resumeSessionId: string | null = null;
     for (;;) {
-      const remaining = deadline - deps.clock();
+      const remaining = voiceDeadline - deps.clock();
       if (remaining <= 0) return {slot:physical.slot,state:'failed',cls:'timeout',reason:'Fan-out deadline passed', ...(blocked.length ? {blocked} : {})};
       const model = models[position.model] ?? null, mode = modes[position.mode]!;
       const decision = quotaFor(provider,model,mode);
@@ -381,30 +393,46 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       if (decision?.skipped) failure = {ok:false,cls:'quota',reason:'skipped-quota: quota-cooldown'};
       else {
         const logPath = path.join(input.dir,'logs',name(logicalSlot) + '.log');
-        ordinals.set(logicalSlot,(ordinals.get(logicalSlot)??0)+1);
-        const result = await deps.delegate(provider, {
-          promptPath,model,effort:physical.effort ?? null,sandbox:physical.sandbox ?? true,schemaPath:null,resume:null,cwd,
-          timeoutMs:remaining,outputCapBytes:SPECS[provider].outputCapBytes ?? 10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
-          configSelectors:Object.fromEntries(['OPENCODE_CONFIG','OPENCODE_CONFIG_DIR'].flatMap(key =>
-            deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),readCommands,
-          ...(input.sessionRoot === undefined ? {} : {sessionRoot: input.sessionRoot}),
-          ...(logicalSlot === physical.slot ? {} : {targetSlot: logicalSlot}),
-        },mode);
-        if(result.outcome.status === 'ok') {
-          const checked = input.validate(result.outcome.text, logicalSlot);
-          emit(targetForEmit,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
-          if(checked.ok) return {slot:logicalSlot,state:'done',text:checked.text ?? result.outcome.text,responder:{slot:physical.slot,provider,model,native:false}, ...(blocked.length ? {blocked} : {})};
-          failure = checked;
-          if(checked.blocked) blocked=mergeBlocked(blocked,[{provider, model, ...checked.blocked}]);
-        } else {
-          failure = {ok:false,cls:result.outcome.cls,reason:result.outcome.detail};
-          if(failure.cls === 'quota' && decision?.generation)
-            publishQuotaFailure(store,{provider,model,mode},decision.generation,deps.clock());
+        for (;;) {
+          const budget = voiceDeadline - deps.clock();
+          if (budget <= 0) { failure = {ok:false,cls:'timeout',reason:'Fan-out deadline passed'}; break; }
+          ordinals.set(logicalSlot,(ordinals.get(logicalSlot)??0)+1);
+          const result = await deps.delegate(provider, {
+            promptPath: reportResumes > 0 ? reportResumePromptPath(promptPath) : promptPath,
+            model,effort:physical.effort ?? null,sandbox:physical.sandbox ?? true,schemaPath:null,resume:resumeSessionId,cwd,
+            resumesUsed,timeoutMs:budget,outputCapBytes:SPECS[provider].outputCapBytes ?? 10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
+            configSelectors:Object.fromEntries(['OPENCODE_CONFIG','OPENCODE_CONFIG_DIR'].flatMap(key =>
+              deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),readCommands,
+            ...(input.sessionRoot === undefined ? {} : {sessionRoot: input.sessionRoot}),
+            ...(logicalSlot === physical.slot ? {} : {targetSlot: logicalSlot}),
+          },mode);
+          // The first invocation is this launch; later nudges are stall or capacity resumes spent in the model attempt.
+          resumesUsed += result.invocations.slice(1).filter(invocation => invocation.nudge === true).length;
+          if(result.outcome.status === 'ok') {
+            const checked = input.validate(result.outcome.text, logicalSlot);
+            emit(targetForEmit,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
+            if(checked.ok) return {slot:logicalSlot,state:'done',text:checked.text ?? result.outcome.text,responder:{slot:physical.slot,provider,model,native:false}, ...(blocked.length ? {blocked} : {})};
+            failure = checked;
+            if(checked.blocked) blocked=mergeBlocked(blocked,[{provider, model, ...checked.blocked}]);
+            const sessionId = validSessionId(result.outcome.sessionId);
+            if (sessionId !== null) resumeSessionId = sessionId;
+            if (checked.cls === 'no-report' && resumeSessionId !== null && reportResumes < MAX_REPORT_RESUMES && deps.clock() < voiceDeadline) {
+              reportResumes += 1;
+              try { fs.copyFileSync(logPath, logPath + '.no-report'); } catch {}
+              fs.writeFileSync(reportResumePromptPath(promptPath), reportResumePrompt(checked.reason), {mode: 0o600});
+              continue;
+            }
+          } else {
+            failure = {ok:false,cls:result.outcome.cls,reason:result.outcome.detail};
+            if(failure.cls === 'quota' && decision?.generation)
+              publishQuotaFailure(store,{provider,model,mode},decision.generation,deps.clock());
+          }
+          break;
         }
       }
       const cascade = next(failure.cls,position,config);
       emit(targetForEmit,{kind:'routing',state:cascade.kind==='terminal'?'stop':cascade.kind,cls:failure.cls});
-      if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;continue;}
+      if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;resumesUsed=0;reportResumes=0;resumeSessionId=null;continue;}
       return {slot:physical.slot,state:'failed',cls:failure.cls,reason:failure.reason, ...(blocked.length ? {blocked} : {})};
     }
   };
@@ -533,7 +561,6 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
 
   const reserveAvailableFor = (logical: string): boolean => {
     if (!firstReserve) return false;
-    if (deps.clock() >= deadline) return false;
     if (reserveOwner !== undefined && reserveOwner !== logical) {
       // A recorded owner that no longer holds the reserve releases it for
       // another eligible target: a failed CLI-only retake (the plan

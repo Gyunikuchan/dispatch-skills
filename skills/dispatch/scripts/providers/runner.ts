@@ -457,28 +457,37 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
 
   let attempts = 0;
   let current = prepared;
-  let nudged = false;
-  let isNudge = false;
+  let resumesUsed = req.resumesUsed ?? 0;
   let stalledOutcome: Extract<RunOutcome, { status: 'fail' }> | null = null;
   let stalledResult: ProcessResult | null = null;
+  const MAX_RESUMES = 3;
+  const CAPACITY_WAIT_MS = 30_000;
+  const CAPACITY_WAIT_CAP_MS = 120_000;
   const VALID_NUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  let lastSessionId = typeof req.resume === 'string' && VALID_NUDGE_ID.test(req.resume) ? req.resume : null;
+  // The capacity wait reuses the runner clock so every test harness keeps its existing ports.
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+    let stop: (() => void) | null = null;
+    stop = ports.clock.every(ms, () => { stop?.(); resolve(); });
+  });
   for (;;) {
     const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
+    const isResume = current.resume !== null;
     const prepareStart = ports.clock.now();
     let pre: Prelaunch | null = null;
     try {
       pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
       if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
     } catch (error) {
-      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
     }
     if (pre?.kind === 'fail') {
-      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       return unlaunched(pre.outcome, attempts, briefFile, steps);
     }
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     try {
@@ -487,7 +496,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       attempts++;
       result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', steps);
     } catch (error) {
-      if (isNudge && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
     } finally {
       if (pre?.kind === 'launch') await pre.release();
@@ -496,65 +505,72 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let usage: DiagnosticUsage | undefined;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
-    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isNudge ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;
       continue;
     }
-    if (outcome.status === 'fail' && !nudged) {
+    if (outcome.status === 'fail') {
       const isIdleKill = result.idleMs !== undefined;
-      const isEmpty = outcome.cls === 'empty-output';
-      if ((isIdleKill || isEmpty)
+      const resumable = (isIdleKill || outcome.cls === 'empty-output' || outcome.cls === 'capacity')
         && !result.lifecycleError
         && !result.truncated
         && !(result.timedOut && result.idleMs === undefined)
-        && !outcome.retryWithoutEffort) {
-        let sessionId: string | null = null;
+        && !outcome.retryWithoutEffort;
+      if (resumable) {
+        let reportedId: string | null = null;
         try {
-          sessionId = spec.attemptSession ? spec.attemptSession(result, current) : null;
+          reportedId = spec.attemptSession ? spec.attemptSession(result, current) : null;
         } catch {
-          sessionId = null;
+          reportedId = null;
         }
-        const remainingNudge = deadline - ports.clock.now();
-        if (typeof sessionId === 'string' && VALID_NUDGE_ID.test(sessionId) && remainingNudge > 0) {
-          stalledOutcome = outcome;
-          stalledResult = result;
+        if (typeof reportedId === 'string' && VALID_NUDGE_ID.test(reportedId)) lastSessionId = reportedId;
+        try {
+          const stalledPath = `${req.logPath}.stalled`;
+          let existing = '';
           try {
-            const stalledPath = `${req.logPath}.stalled`;
-            let existing = '';
+            existing = ports.fs.readText(stalledPath);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
+            else throw error;
+          }
+          const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
+          const entry = `${header}\n${result.stdout ?? ''}`;
+          const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
+          ports.fs.writeText(stalledPath, combined);
+        } catch {
+          // Best effort: a copy failure skips the copy, not the resume.
+        }
+        if (resumesUsed < MAX_RESUMES) {
+          if (outcome.cls === 'capacity' && lastSessionId !== null) {
+            const waitMs = Math.min(outcome.retryAfterMs ?? CAPACITY_WAIT_MS, CAPACITY_WAIT_CAP_MS);
+            if (deadline - ports.clock.now() <= waitMs) return { outcome, result, attempts, briefFile, invocations };
+            await sleep(waitMs);
+          }
+          const remainingNudge = deadline - ports.clock.now();
+          if (lastSessionId !== null && remainingNudge > 0) {
+            stalledOutcome = outcome;
+            stalledResult = result;
             try {
-              existing = ports.fs.readText(stalledPath);
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
-              else throw error;
+              const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
+              const resumeGuarded = formatSafetyPrompt(CONTINUE_PROMPT, resumeScope);
+              const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: lastSessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
+              let resumeBriefFile: string | null = null;
+              let resumePrompt = resumeGuarded;
+              if (mustSpill(resumeGuarded, ports.platform, ports.binary, resumeReserved)) {
+                ports.fs.writeText(req.briefPath, resumeGuarded);
+                resumeBriefFile = req.briefPath;
+                resumePrompt = spillPointer(req.briefPath);
+              }
+              briefFile = resumeBriefFile;
+              current = { ...current, resume: lastSessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingNudge };
+            } catch {
+              return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
             }
-            const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
-            const entry = `${header}\n${result.stdout ?? ''}`;
-            const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
-            ports.fs.writeText(stalledPath, combined);
-          } catch {
-            // Best effort: a copy failure skips the copy, not the nudge.
+            resumesUsed += 1;
+            continue;
           }
-          try {
-            const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-            const resumeGuarded = formatSafetyPrompt(CONTINUE_PROMPT, resumeScope);
-            const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: sessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
-            let resumeBriefFile: string | null = null;
-            let resumePrompt = resumeGuarded;
-            if (mustSpill(resumeGuarded, ports.platform, ports.binary, resumeReserved)) {
-              ports.fs.writeText(req.briefPath, resumeGuarded);
-              resumeBriefFile = req.briefPath;
-              resumePrompt = spillPointer(req.briefPath);
-            }
-            briefFile = resumeBriefFile;
-            current = { ...current, resume: sessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingNudge };
-          } catch {
-            return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
-          }
-          nudged = true;
-          isNudge = true;
-          continue;
         }
       }
     }

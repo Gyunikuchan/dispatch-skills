@@ -375,7 +375,9 @@ const FAILURE_FIXES: Record<string, readonly [string, string]> = {
   'model-not-found': ['scripts/policy/cascade.ts', 'Check configured model names in the preflight and cascade past unknown models before launch.'],
   'model-not-loaded': ['references/providers.md', 'Check that the configured model is installed and loadable on the provider, or replace it in config.'],
   quota: ['references/providers.md', 'Reorder or remove the exhausted model alias, or check its quota; quota limits may be shared.'],
-  timeout: ['references/providers.md', 'Inspect the slot log: an `idle` detail means a stalled model, so consider replacing that model in config.'],
+  capacity: ['references/providers.md', 'Check the provider capacity and retry delay; reduce concurrent launches on that provider or wait before re-running.'],
+  'no-report': ['references/templates/review-prompt.md', 'Keep the required report JSON in the prompt and inspect the slot log when an answer ends without a report.'],
+  timeout: ['references/providers.md', 'Inspect the slot log nudge rows: if the stall persisted through three resumes, check provider health and model load before re-running.'],
   blocked: ['references/providers.md', 'Read the blocked reason; fix the denied path or brief, or replace the model.'],
   'context-overflow': ['scripts/toolkit/prompts.ts', 'Bound prompt and attachment bytes per voice before launch so prompts fit the model context.'],
   auth: PREFLIGHT, 'cli-outdated': PREFLIGHT, 'not-found': PREFLIGHT, 'sandbox-unsupported': PREFLIGHT, config: PREFLIGHT,
@@ -401,8 +403,27 @@ export function heuristics(run: RunFacts): Finding[] {
   // Quota-store skips never launch, so they cost no driver time and are not attempts.
   const cli = run.invocations.filter((i) => i.surface === 'cli' && i.launched);
   // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
-  // A stall a nudge recovers is not waste: a failed row directly followed by attempt in the same subject and slot by an ok nudge row of the same provider and model with no failed validation leaves the failure set.
-  const failed = cli.filter((i) => (i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok'))).filter((row) => row.slot === undefined || row.attempt === undefined || !cli.some((next) => (next.subject ?? next.phase) === (row.subject ?? row.phase) && next.slot === row.slot && next.attempt === (row.attempt ?? -1) + 1 && next.nudge === true && next.provider === row.provider && next.model === row.model && next.outcome === 'ok' && (next.validationOutcome === undefined || next.validationOutcome === 'ok')));
+  const isOk = (i: InvocationFacts) => i.outcome === 'ok' && (i.validationOutcome === undefined || i.validationOutcome === 'ok');
+  const isFailure = (i: InvocationFacts) => i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok');
+  const identity = (i: InvocationFacts) => [i.subject ?? i.phase, i.slot, i.provider, i.model].join('\0');
+  const cliIndex = new Map(cli.map((row, index) => [row, index] as const));
+  // A stall or missing report that a resume chain recovers is not waste: consecutive resume attempts of the same subject, slot, provider and model must end in a valid ok row for the whole chain to leave the failure set.
+  const recoveredByResume = (row: InvocationFacts): boolean => {
+    if (row.slot === undefined || row.attempt === undefined) return false;
+    const start = cliIndex.get(row);
+    if (start === undefined) return false;
+    const key = identity(row);
+    let attempt = row.attempt;
+    for (let index = start + 1; index < cli.length; index++) {
+      const next = cli[index]!;
+      if (identity(next) !== key) continue;
+      if (next.nudge !== true || next.attempt !== attempt + 1) return false;
+      attempt = next.attempt;
+      if (isOk(next)) return true;
+    }
+    return false;
+  };
+  const failed = cli.filter(isFailure).filter((row) => !recoveredByResume(row));
   const failureClass = (i:InvocationFacts) => i.outcome !== 'ok' ? i.outcome : i.validationOutcome!;
   const count = (key: (i: InvocationFacts) => string) => { const m = new Map<string, number>(); for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1); return m; };
   const bySlot = count((i) => `${i.subject??i.phase}|${i.slot ?? ''}`);
@@ -443,15 +464,17 @@ export function heuristics(run: RunFacts): Finding[] {
     const fallback = cap === undefined && rounds >= T.reviewRounds;
     if (!fallback && !reraised.length && !escalation) continue;
     const ids = (values: readonly string[]) => values.length ? ` (${values.slice(0, 5).join(', ')})` : '';
-    // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label, so it reports as the cap; a regression is always real.
-    const capReached = cap !== undefined && (escalation?.kind === 'deadlock' ? rounds >= cap && !reraised.length : !escalation && rounds > cap);
+    // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label; past the cap it marks designed continuation, so its fix must not raise the cap.
+    const capReached = cap !== undefined && escalation?.kind === 'deadlock' && rounds === cap && !reraised.length;
+    const pastCap = cap !== undefined && rounds > cap && (!escalation ? reraised.length > 0 : escalation.kind === 'deadlock' && !reraised.length);
     const detail = [
       plural(rounds, 'round'),
       ...(capReached ? [`cap reached (${cap})`] : []),
+      ...(pastCap ? [`continued past the cap (${cap})`] : []),
       ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
       ...(escalation && !capReached ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
     ];
-    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', capReached && !reraised.length ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
+    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', capReached ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;
@@ -480,7 +503,7 @@ export function heuristics(run: RunFacts): Finding[] {
     add('H8', 'correctness', component, `${plural(items.length, 'toolkit operation')} rejected (${tally(items.map(rejection))}).`, 'Rejected operations can require another host turn.', 'Return the allowed input shape and current preconditions with the rejection.');
   }
   // One relaunch without a recorded cause is not a pattern.
-  if ((run.relaunches ?? 0) >= 2) add('H9','correctness','references/templates/writer-brief.md',`${plural(run.relaunches!,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Inspect the prior launch and failed checks before changing the writer brief.');
+  if ((run.relaunches ?? 0) >= 2) add('H9','correctness','scripts/toolkit/brief.ts',`${plural(run.relaunches!,'writer relaunch')}; rework evidence, cause unavailable.`,'Additional launches repeat context and may repeat verification.','Read the writer launch reports at `.state/briefs/<task>-<launch>.report.md` for the relaunch cause.');
   return bySeverity(out);
 }
 

@@ -125,6 +125,182 @@ test('fan-out validates provider text before done and shares one deadline',async
  }finally{f.cleanup();}
 });
 
+test('no-report resume asks the same session for its final report up to three times', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const dir = path.join(f.session, 'no-report');
+    const reason = 'uncovered-scope: no JSON report object found';
+    const check = (text: string): Validation => text === 'FINAL' ? {ok:true, text} : {ok:false, cls:'no-report', reason};
+    const texts = ['Draft one', 'Draft two', 'FINAL'];
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      const index = f.launches.length - 1;
+      fs.appendFileSync(request.logPath, 'launch ' + (index + 1) + '\n');
+      return {
+        outcome: {status:'ok', text: texts[index]!, resume:null, sessionId: index === 0 ? 'session-one' : null},
+        // A report resume launch is itself a nudge; only later stall resumes count against the runner limit.
+        invocations: [
+          {provider, model: request.model, mode, effort:null, launched:true, outcome:'ok', ...(index === 0 ? {} : {nudge: true as const})},
+          ...(index < 2 ? [{provider, model: request.model, mode, effort:null, launched:true, outcome:'timeout', nudge: true as const}] : []),
+        ],
+      };
+    };
+    const outcomes = await fanOut({dir, slots:[slot('claude')], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(outcomes[0]?.state, 'done');
+    assert.equal(f.launches.length, 3);
+    assert.deepEqual(f.launches.map(launch => launch.request.resumesUsed), [0, 1, 2]);
+    assert.deepEqual(f.launches.map(launch => launch.request.resume), [null, 'session-one', 'session-one'], 'a resume without a new session id keeps the last valid one');
+    assert.notEqual(f.launches[1]!.request.promptPath, f.launches[0]!.request.promptPath);
+    assert.equal(f.launches[1]!.request.promptPath, f.launches[2]!.request.promptPath);
+    const prompt = fs.readFileSync(f.launches[1]!.request.promptPath, 'utf8');
+    assert.match(prompt, /uncovered-scope: no JSON report object found/);
+    assert.match(prompt, /final JSON report/i);
+    assert.match(prompt, /confirmations/i);
+    assert.match(prompt, /requestId/);
+    assert.match(prompt, /decision/);
+    assert.match(prompt, /rationale/);
+    for (const key of ['agent', 'sandbox', 'cwd', 'model', 'effort'] as const) {
+      assert.deepEqual(f.launches[1]!.request[key], f.launches[0]!.request[key], key);
+    }
+    assert.equal(fs.readFileSync(path.join(dir, 'logs', 'claude[0].log.no-report'), 'utf8'), 'launch 1\nlaunch 2\n', 'the slot log is copied before the resumed launch');
+    assert.ok(fs.existsSync(path.join(dir, 'logs', 'claude[0].log')), 'the slot log path stays in place');
+  } finally { f.cleanup(); }
+});
+
+test('no-report resume yields the slot after three report resumes', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const reason = 'uncovered-scope: no JSON report object found';
+    const check = (): Validation => ({ok:false, cls:'no-report', reason});
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      return {outcome:{status:'ok', text:'still prose', resume:null, sessionId:'session-one'}, invocations: []};
+    };
+    const outcomes = await fanOut({dir:path.join(f.session, 'limit'), slots:[slot('claude')], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(outcomes[0]?.state, 'failed');
+    assert.equal(outcomes[0]?.state === 'failed' && outcomes[0].cls, 'no-report');
+    assert.equal(f.launches.length, 4);
+    assert.deepEqual(f.launches.map(launch => launch.request.resume), [null, 'session-one', 'session-one', 'session-one']);
+  } finally { f.cleanup(); }
+});
+
+test('no-report resume leaves refusal and blocked answers to the cascade', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  for (const item of [
+    {cls:'refusal' as const, reason:'refusal: I cannot review this plan.'},
+    {cls:'blocked' as const, reason:'blocked: artifact denied'},
+  ]) {
+    const f = sessionFixture({memory:true}); try {
+      f.deps.delegate = async (provider, request, mode) => {
+        f.launches.push({provider, request, mode});
+        return {outcome:{status:'ok', text:'answer', resume:null, sessionId:'session-one'}, invocations: []};
+      };
+      const check = (): Validation => ({ok:false, cls:item.cls, reason:item.reason});
+      const outcomes = await fanOut({dir:path.join(f.session, 'cascade'), slots:[slot('claude')], prompt:'question', validate:check, quota}, f.deps);
+      assert.equal(outcomes[0]?.state, 'failed');
+      assert.equal(outcomes[0]?.state === 'failed' && outcomes[0].cls, item.cls);
+      assert.equal(f.launches.length, 1);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('no-report resume resets its limit for the next model', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    let now = 0; f.deps.clock = () => now;
+    const reason = 'uncovered-scope: no JSON report object found';
+    const check = (text: string): Validation => text === 'FINAL' ? {ok:true, text} : {ok:false, cls:'no-report', reason};
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      now += 100;
+      const invocations = [
+        {provider, model: request.model, mode, effort:null, launched:true, outcome:'ok', ...(request.resume ? {nudge: true as const} : {})},
+        {provider, model: request.model, mode, effort:null, launched:true, outcome:'timeout', nudge: true as const},
+      ];
+      return request.model === 'second'
+        ? {outcome:{status:'ok', text:'FINAL', resume:null, sessionId:null}, invocations}
+        : {outcome:{status:'ok', text:'draft', resume:null, sessionId:'first-session'}, invocations};
+    };
+    const outcomes = await fanOut({dir:path.join(f.session, 'models'), slots:[slot('claude',['first','second'])], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(outcomes[0]?.state, 'done');
+    assert.deepEqual(f.launches.map(launch => launch.request.model), ['first', 'first', 'first', 'first', 'second']);
+    assert.deepEqual(f.launches.map(launch => launch.request.resume), [null, 'first-session', 'first-session', 'first-session', null]);
+    assert.deepEqual(f.launches.map(launch => launch.request.resumesUsed), [0, 1, 2, 3, 0]);
+  } finally { f.cleanup(); }
+});
+
+test('no-report resume starts no launch after the voice deadline', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    let now = 0; f.deps.clock = () => now;
+    const reason = 'uncovered-scope: no JSON report object found';
+    const check = (): Validation => ({ok:false, cls:'no-report', reason});
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      now = 30 * 60 * 1000;
+      return {outcome:{status:'ok', text:'draft', resume:null, sessionId:'session-one'}, invocations: []};
+    };
+    const outcomes = await fanOut({dir:path.join(f.session, 'deadline'), slots:[slot('claude',['first','second'])], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(f.launches.length, 1);
+    assert.equal(outcomes[0]?.state, 'failed');
+    assert.equal(outcomes[0]?.state === 'failed' && outcomes[0].cls, 'timeout');
+  } finally { f.cleanup(); }
+});
+
+test('reserve deadline gives a CLI reserve its own 30 minutes after the wave deadline', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    let now = 0; f.deps.clock = () => now;
+    const budgets: number[] = [];
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      budgets.push(request.timeoutMs);
+      if (provider === 'claude') {
+        now += 31 * 60 * 1000;
+        return {outcome:{status:'fail', cls:'auth', detail:'unavailable'}, invocations: []};
+      }
+      return {outcome:{status:'ok', text:'reserve answer', resume:null, sessionId:null}, invocations: []};
+    };
+    const outcomes = await fanOut({dir:path.join(f.session, 'reserve'), slots:[slot('claude'), slot('copilot','good',true)], prompt:'question', validate, quota}, f.deps);
+    const served = outcomes.find(outcome => outcome.slot === 'claude[0]');
+    assert.equal(served?.state, 'done');
+    assert.deepEqual(f.launches.map(launch => launch.provider), ['claude', 'copilot']);
+    assert.deepEqual(budgets, [1800000, 1800000], 'the reserve starts after the wave deadline with a fresh 30-minute budget');
+
+    f.launches.length = 0;
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      budgets.push(request.timeoutMs);
+      if (request.model === 'slow') {
+        now += 60 * 1000;
+        return {outcome:{status:'fail', cls:'auth', detail:'unavailable'}, invocations: []};
+      }
+      return {outcome:{status:'ok', text:'answer', resume:null, sessionId:null}, invocations: []};
+    };
+    budgets.length = 0;
+    const targeted = await fanOut({dir:path.join(f.session, 'targets'), slots:[slot('claude',['slow','good'])], prompt:'question', validate, quota}, f.deps);
+    assert.equal(targeted[0]?.state, 'done');
+    assert.deepEqual(budgets, [1800000, 1740000], 'targets keep the shared wave deadline');
+  } finally { f.cleanup(); }
+});
+
+test('capacity failure publishes no quota cooldown', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture(); try {
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      return {outcome:{status:'fail', cls:'capacity', detail:'at capacity', retryAfterMs:30000}, invocations: []};
+    };
+    const outcomes = await fanOut({dir:path.join(f.session, 'capacity'), slots:[slot('claude')], prompt:'question', validate}, f.deps);
+    assert.equal(outcomes[0]?.state, 'failed');
+    assert.equal(outcomes[0]?.state === 'failed' && outcomes[0].cls, 'capacity');
+    const quotaDir = path.join(f.session, '.state', 'quota');
+    assert.ok(fs.existsSync(quotaDir), 'the quota store is consulted before the failure');
+    const observations = fs.readdirSync(quotaDir).flatMap(name => fs.readdirSync(path.join(quotaDir, name)).filter(file => file !== 'generation.json'));
+    assert.deepEqual(observations, []);
+  } finally { f.cleanup(); }
+});
+
 test('diagnostics observe validation routing and native replay without changing slots', async () => {
  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
  const f=sessionFixture({memory:true});try {

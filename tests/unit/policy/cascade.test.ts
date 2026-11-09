@@ -14,13 +14,13 @@ const lastModel = { model: 1, mode: 0 };
 test('delegates-failure-classes: every class has a disposition; integrity and config end the run', () => {
   const classes: FailureClass[] = [
     'quota', 'context-overflow', 'auth', 'model-not-found', 'cli-outdated', 'model-not-loaded', 'sandbox-unsupported', 'not-found',
-    'timeout', 'buffer', 'empty-output', 'refusal', 'blocked', 'truncated', 'integrity', 'config',
+    'timeout', 'buffer', 'empty-output', 'capacity', 'refusal', 'no-report', 'blocked', 'truncated', 'integrity', 'config',
   ];
   const dispositions = Object.fromEntries(classes.map((cls) => [cls, failureDisposition(cls)]));
   assert.equal(dispositions['sandbox-unsupported'], 'skip-voice');
   assert.equal(dispositions['integrity'], 'terminal-run');
   assert.equal(dispositions['config'], 'terminal-run');
-  assert.equal(classes.filter((cls) => dispositions[cls] === 'cascade').length, 13);
+  assert.equal(classes.filter((cls) => dispositions[cls] === 'cascade').length, 15);
   assert.deepEqual(next('config', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'run', reason: 'config is terminal for the run' });
 });
 
@@ -31,6 +31,12 @@ test('delegates-model-array-cascade: every cascade class, auth and quota include
     assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
   }
   assert.deepEqual(next('sandbox-unsupported', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'slot', reason: 'agy[0] failed: sandbox-unsupported' });
+});
+
+test('delegates-model-array-cascade: capacity and no-report advance to the next model', () => {
+  for (const cls of ['capacity', 'no-report'] as const) {
+    assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
+  }
 });
 
 test('delegates-mode-cascade: only provider-declared classes advance the mode, resetting the model', () => {

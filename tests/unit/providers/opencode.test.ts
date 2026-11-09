@@ -162,6 +162,29 @@ test('opencode json text extraction', () => {
   });
 });
 
+test('opencode rate-limit event becomes capacity with its retry delay; quota wording stays quota', () => {
+  const errorEvent = (error: Record<string, unknown>): string => JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error });
+  const parseError = (error: Record<string, unknown>) => opencode.parse(result(errorEvent(error)), launchReq());
+  const cases: [Record<string, unknown>, number | undefined][] = [
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)', status: 429, retryAfterMs: 30_000 }, 30_000],
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)' }, undefined],
+    [{ message: 'the cell is at capacity; retry shortly (after 30 s)', status: 429 }, undefined],
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)', retryAfterMs: 45_000 }, 45_000],
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: 0 }, undefined],
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: -1 }, undefined],
+    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: '30000' }, undefined],
+  ];
+  for (const [error, retryAfterMs] of cases) {
+    const outcome = parseError(error);
+    assert.equal(outcome.status, 'fail', JSON.stringify(error));
+    assert.equal(outcome.status === 'fail' && outcome.cls, 'capacity', JSON.stringify(error));
+    assert.equal(outcome.status === 'fail' ? outcome.retryAfterMs : undefined, retryAfterMs, JSON.stringify(error));
+  }
+  const quota = parseError({ type: 'provider.rate-limit', message: 'rate limit exceeded: usage limit reached', status: 429, retryAfterMs: 30_000 });
+  assert.equal(quota.status === 'fail' && quota.cls, 'quota');
+  assert.equal(quota.status === 'fail' ? quota.retryAfterMs : undefined, undefined);
+});
+
 test('opencode narration parses when the report starts its own line', () => {
   const stream = [jsonText("I'll read the plan.\n"), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
   const outcome = opencode.parse(result(stream), launchReq());

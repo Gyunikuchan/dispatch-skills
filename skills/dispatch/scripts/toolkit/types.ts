@@ -4,7 +4,7 @@ export type FindingId = string;
 export type SlotId = string;
 export type FailureClass =
   | 'quota' | 'context-overflow' | 'auth' | 'model-not-found' | 'cli-outdated' | 'model-not-loaded'
-  | 'sandbox-unsupported' | 'not-found' | 'timeout' | 'buffer' | 'empty-output' | 'refusal' | 'blocked'
+  | 'sandbox-unsupported' | 'not-found' | 'timeout' | 'buffer' | 'empty-output' | 'capacity' | 'refusal' | 'no-report' | 'blocked'
   | 'truncated' | 'integrity' | 'config';
 
 export type QuotaKey = { provider: string; model: string | null; mode: string };

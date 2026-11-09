@@ -196,6 +196,26 @@ test('raw blocked reason absent from slot and findings files', async () => {
   } finally { f.cleanup(); }
 });
 
+test('report failure class names a missing report and keeps refusal wording', async () => {
+  const cases = [
+    {name:'missing', text:'Analysis finished; the plan shows no blocking defects.', cls:'no-report', reason:/^uncovered-scope: /},
+    {name:'refusal', text:"I can't review this plan.", cls:'refusal', reason:/^refusal: /},
+    {name:'blocked', text:blockedReport('Cannot read the plan'), cls:'blocked', reason:/^blocked: /},
+    {name:'empty', text:'', cls:'empty-output', reason:/^empty-output: /},
+  ] as const;
+  for (const item of cases) {
+    const f = await fixture();
+    try {
+      f.deps.delegate = async (provider) => reply(provider === 'claude' ? item.text : CLEAN);
+      const result = await f.call();
+      assert.equal(result.exit, 0, item.name + ': ' + JSON.stringify(result));
+      const failed = f.read(1, 'findings.json').failed as {slot: string; cls: string; reason: string}[];
+      assert.deepEqual(failed.map(row => [row.slot, row.cls]), [['claude[0]', item.cls]], item.name);
+      assert.match(failed[0]!.reason, item.reason, item.name);
+    } finally { f.cleanup(); }
+  }
+});
+
 
 // SECTION: Review ceiling
 type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
@@ -976,7 +996,8 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
       const round = f.read(3, 'round.json');
-      assert.match(round.scope, /^Full review — changed paths: .*; comparison: /);
+      assert.match(round.scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
+      assert.doesNotMatch(round.scope, /changed paths:/);
       assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
     } finally { f.cleanup(); }
   }
@@ -1035,6 +1056,61 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       assert.equal(confirmation.sourceSlot, 'agy[0]');
       assert.equal(confirmation.responder.slot, 'copilot[0]');
       assert.equal((await f.call()).output.reason, 'round-cap');
+    } finally { f.cleanup(); }
+  }
+});
+
+test('non-code rerun scope names changed headings from the prior snapshot', async () => {
+  const f = await fixture();
+  try {
+    seedCompletedRound(f, 1, []);
+    rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+    const first = f.read(1, 'round.json');
+    seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+    const second = f.read(2, 'findings.json');
+    fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    planDelegate(f, CLEAN);
+    const third = await f.call();
+    assert.equal(third.exit, 0, JSON.stringify(third));
+    assert.match(f.read(3, 'round.json').scope, /^Full review — changed: Fix; comparison: sha256:[a-f0-9]{64}$/);
+  } finally { f.cleanup(); }
+});
+
+test('non-code rerun scope omits headings without a prior snapshot', async () => {
+  const f = await fixture();
+  try {
+    seedCompletedRound(f, 1, []);
+    rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+    const first = f.read(1, 'round.json');
+    seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+    const second = f.read(2, 'findings.json');
+    fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+    fs.rmSync(path.join(f.directory, 'round-2', 'target.snapshot.md'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
+    planDelegate(f, CLEAN);
+    const third = await f.call();
+    assert.equal(third.exit, 0, JSON.stringify(third));
+    assert.match(f.read(3, 'round.json').scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
+  } finally { f.cleanup(); }
+});
+
+test('non-code re-review omits the changed segment without changed headings', async () => {
+  for (const [name, edit, expected] of [
+    ['names changed headings', true, /^Re-review round 2 \((full|narrowed)\) — changed: Fix; comparison: sha256:[a-f0-9]{64}\.\.sha256:[a-f0-9]{64}$/],
+    ['omits the changed segment', false, /^Re-review round 2 \((full|narrowed)\) — comparison: sha256:[a-f0-9]{64}\.\.sha256:[a-f0-9]{64}$/],
+  ] as const) {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, []);
+      planDelegate(f, CLEAN);
+      if (edit) fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      const second = await f.call();
+      assert.equal(second.exit, 0, name + ': ' + JSON.stringify(second));
+      const scope = f.read(2, 'round.json').scope as string;
+      assert.match(scope, expected, name);
+      if (!edit) assert.doesNotMatch(scope, /changed:/, name);
     } finally { f.cleanup(); }
   }
 });

@@ -481,26 +481,21 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     async function start(generation: number, captured: Capture): Promise<Round> {
       const rerun = isRerunRound();
-      const {targets, narrowed, coverage} = replacement();
-      const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
+      const {targets, narrowed, coverage} = replacement(); const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
       const previousRound = n > 1 ? confirmationRounds.find(value => value.metadata.round === n - 1) : undefined;
       // The fast path needs the captured identity the previous round reviewed; a
       // rerun, coverage grant, decisive ruling or moved target keeps the standard prompt.
       const confirmationOnlyRound = n > 1 && !rerun && !coverage && requests.length > 0 && !decisiveRound(latestSubstantive())
         && previousRound !== undefined && same(previousRound.metadata as Round, captured);
-      let scope = 'Full review', changedPaths = captured.changed;
+      let scope = 'Full review', changedPaths = captured.changed; const changedHeadingsSince = (round: number): string[] => {const snapshot = path.join(directory, 'round-' + round, 'target.snapshot.md'); return kind !== 'code' && captured.source !== undefined && fs.existsSync(snapshot) ? changedHeadings(fs.readFileSync(snapshot, 'utf8'), captured.source) : [];};
       if (confirmationOnlyRound) {
         scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
       } else if (rerun && !coverage) {
-        const target = captured.target as {base?: string; head?: string};
-        const comparison = typeof captured.target === 'string' ? captured.target : target.base + '..' + label(captured.target);
-        scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison;
+        const comparison = typeof captured.target === 'string' ? captured.target : (captured.target as {base: string}).base + '..' + label(captured.target); scope += kind === 'code' ? ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison : (changed => changed.length ? ' — changed: ' + changed.join(', ') + '; comparison: ' + comparison : ' — comparison: ' + comparison)(changedHeadingsSince(n - 1));
       } else if (coverage) scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as {base: string}).base}..${label(captured.target)}`;
       else if (n > 1) {
-        const previous = priorTargets[n - 1]!;
-        changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(previous), label(captured.target)])) : [];
-        const changed = kind === 'code' ? 'changed paths: ' + changedPaths.join(', ') : changedHeadings(fs.readFileSync(path.join(directory, 'round-' + (n - 1), 'target.snapshot.md'), 'utf8'), captured.source!).join(', ');
-        scope = `Re-review round ${n} (full) — changed: ${changed}; comparison: ${label(previous)}..${label(captured.target)}`;
+        changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(priorTargets[n - 1]!), label(captured.target)])) : [];
+        const changed = kind === 'code' ? 'changed paths: ' + changedPaths.join(', ') : (headings => headings.length ? 'changed: ' + headings.join(', ') : '')(changedHeadingsSince(n - 1)); scope = `Re-review round ${n} (full) — ${changed ? changed + '; ' : ''}comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
       } else if (kind === 'code') {
         const target = captured.target as {base: string; head: string};
         scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
@@ -654,7 +649,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           const reason = sanitizeText(raw).slice(0, 200) || '(reason removed by sanitizer)';
           return {ok: false, cls: 'blocked', reason: 'blocked: ' + reason, blocked: {reason, reasonHash: crypto.createHash('sha256').update(raw).digest('hex')}};
         }
-        const cls = parsed.failure.kind === 'uncovered-scope' ? 'refusal' : parsed.failure.kind;
+        const cls = parsed.failure.kind === 'uncovered-scope' ? 'no-report' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.

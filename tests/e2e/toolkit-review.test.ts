@@ -404,6 +404,38 @@ test('coverage round follows an all-failed narrowed round at whole-target scope'
   } finally { t.f.cleanup(); }
 });
 
+test('code full re-review scope carries one changed paths label', async () => {
+  const f = await toolkitRepo(); try {
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'scope-skill', {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 3}}}});
+    f.deps.liveness = {claude: true}; f.deps.orchestrator = null;
+    const prompts: string[] = [];
+    f.deps.delegate = async (_provider, request) => {
+      prompts.push(fs.readFileSync(request.promptPath, 'utf8'));
+      return {outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []};
+    };
+    await f.level('low'); await f.approve();
+    const launch = async (text: string) => {
+      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0, JSON.stringify(made.output));
+      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), text);
+      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
+      return foldLedger(f.session).records.findLast(row => row.kind === 'writer' && row.data['phase'] === 'finished')!.data['candidate'] as string;
+    };
+    const review = async () => {
+      const result = await f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
+      assert.equal(result.exit, 0, JSON.stringify(result.output));
+    };
+    const previousHead = await launch('first\n');
+    await review();
+    assert.equal((await f.run(['worktree','integrate','T1'])).exit, 0);
+    const head = await launch('second\n');
+    await review();
+    const metadata = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews/code-T1/round-2/round.json'), 'utf8'));
+    assert.equal(metadata.scope, `Re-review round 2 (narrowed) — changed paths: src/file.ts; comparison: ${previousHead}..${head}`);
+    assert.equal(metadata.scope.split('changed paths:').length - 1, 1, metadata.scope);
+    assert.ok(prompts.at(-1)!.includes(metadata.scope));
+  } finally { f.cleanup(); }
+});
+
 test('coverage round past the cap counts an all-failed open-only round as used and stops for a user decision', async () => {
   const t = await coverageRepo(1); try {
     t.failing.add('claude'); t.failing.add('codex');

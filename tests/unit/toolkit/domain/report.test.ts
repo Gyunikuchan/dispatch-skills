@@ -615,6 +615,20 @@ test('diagnostics report: heuristic H1 fires for CLI failures', () => {
   assert.match(finding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
 });
 
+test('diagnostics fix text for capacity and no-report', () => {
+  const h1 = (rows: InvocationFacts[]) => assertShape(only(heuristics(facts({ invocations: rows })), 'H1')[0], 'correctness');
+  const repeated = (row: Partial<InvocationFacts>) => [invocation({ ...row, slot: 'codex[0]' }), invocation({ ...row, slot: 'codex[0]' })];
+  const capacity = h1(repeated({ outcome: 'capacity' }));
+  const noReport = h1(repeated({ outcome: 'ok', validationOutcome: 'no-report' }));
+  const unclassified = h1(repeated({ outcome: 'unclassified' }));
+  assert.match(capacity.evidence, /`capacity`/);
+  assert.match(capacity.proposedFix, /provider capacity and retry delay/i);
+  assert.match(noReport.evidence, /`no-report`/);
+  assert.match(noReport.proposedFix, /required report JSON/i);
+  for (const finding of [capacity, noReport]) assert.notEqual(finding.proposedFix, unclassified.proposedFix, 'own fix text');
+  assert.notEqual(capacity.proposedFix, noReport.proposedFix);
+});
+
 test('diagnostics report: heuristic H4 fires for cache read share', () => {
   const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 700, cacheRead: 300, output: 10 } })] })), 'H4')[0], 'token-economy');
   assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
@@ -660,7 +674,7 @@ test('diagnostics amendment convergence: evaluates caps, reraises, and escalatio
     const escalationOnly = assertShape(only(heuristics(facts({ reviews: [
       { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, escalation: { kind, ids: ['R1-F001'] } },
     ] })), 'H2')[0], 'review-convergence');
-    assert.match(escalationOnly.evidence, kind === 'deadlock' ? /cap reached \(3\)/ : /regression escalation \(R1-F001\)/);
+    assert.match(escalationOnly.evidence, kind === 'deadlock' ? /continued past the cap \(3\)/ : /regression escalation \(R1-F001\)/);
   }
   assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
   const twoRoundReraised = assertShape(only(heuristics(facts({ reviews: [
@@ -690,10 +704,36 @@ test('H2 review convergence phrasing distinguishes plain cap from re-raise deadl
   assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
 });
 
+test('H2 cap wording separates designed continuation from a deadlock at the cap', () => {
+  const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({
+    phase: 'review', round: i + 1, accepted: 1, rejected: 0, cap: 3, ...(i === count - 1 ? last : {}),
+  }));
+  const h2 = (reviews: RunFacts['reviews']) => assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
+
+  const continued = h2(rounds(4, { reraised: ['R1-F001'] }));
+  assert.match(continued.evidence, /continued past the cap \(3\)/);
+  assert.doesNotMatch(continued.evidence, /cap reached/);
+  assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
+
+  const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
+  assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);
+  assert.match(deadlockPast.evidence, /deadlock escalation \(R1-F001\)/);
+  assert.doesNotMatch(deadlockPast.evidence, /cap reached/);
+  assert.doesNotMatch(deadlockPast.proposedFix, /raise the (round )?cap/i);
+});
+
 test('heuristic precision screens the review cap as a bounded integer', () => {
   const capOf = (cap: unknown) => sanitizeFacts(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap } as never] })).reviews[0]?.cap;
   assert.equal(capOf(3), 3);
   for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
+});
+
+test('H9 points at launch reports', () => {
+  const finding = assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness');
+  assert.equal(finding.component, 'scripts/toolkit/brief.ts');
+  assert.match(finding.proposedFix, /writer launch reports/i);
+  assert.match(finding.proposedFix, /\.state\/briefs\/<task>-<launch>\.report\.md/);
+  assert.doesNotMatch(finding.proposedFix, /writer brief/i);
 });
 
 test('heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics', () => {

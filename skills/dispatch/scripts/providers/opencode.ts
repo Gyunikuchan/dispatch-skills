@@ -18,9 +18,11 @@ type EventRow = Record<string, unknown>;
 const row = (v: unknown): EventRow | null => v && typeof v === 'object' && !Array.isArray(v) ? v as EventRow : null;
 
 /** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
-function parseEvents(raw: string): { text: string; errors: string[]; sessionId: string | null } {
+function parseEvents(raw: string): { text: string; errors: string[]; sessionId: string | null; capacity: boolean; retryAfterMs?: number } {
   const texts: string[] = [], errors: string[] = [];
   let sessionId: string | null = null;
+  let capacity = false;
+  let retryAfterMs: number | undefined;
   for (const line of raw.split(/\r?\n/).filter((value) => value.trim())) {
     let event: EventRow | null;
     try { event = row(JSON.parse(line)); } catch { continue; }
@@ -30,11 +32,17 @@ function parseEvents(raw: string): { text: string; errors: string[]; sessionId: 
       if (typeof text === 'string') texts.push(text);
     }
     if (event?.['type'] === 'error') {
-      const message = row(event['error'])?.['message'] ?? event['message'];
+      const error = row(event['error']);
+      const message = error?.['message'] ?? event['message'];
       errors.push(typeof message === 'string' ? message : 'OpenCode reported an error');
+      if (error?.['type'] === 'provider.rate-limit' || error?.['status'] === 429) {
+        capacity = true;
+        const delay = error['retryAfterMs'];
+        if (typeof delay === 'number' && Number.isFinite(delay) && delay > 0) retryAfterMs = delay;
+      }
     }
   }
-  return { text: texts.join('').trim(), errors, sessionId };
+  return { text: texts.join('').trim(), errors, sessionId, capacity, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) };
 }
 
 export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDALONE_UNSUPPORTED.test(text) || /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
@@ -125,7 +133,9 @@ export const opencode: ProviderSpec = {
     if (unsupportedStandaloneDiagnostic(diagnostics)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');
     // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
     if (VARIANT_UNAVAILABLE.test(diagnostics) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
-    return failOutcome(classifyFailure(diagnostics) ?? 'empty-output', detail);
+    const cls = classifyFailure(diagnostics) ?? (events.capacity ? 'capacity' : 'empty-output');
+    if (cls === 'capacity' && events.retryAfterMs !== undefined) return { status: 'fail', cls, detail, retryAfterMs: events.retryAfterMs };
+    return failOutcome(cls, detail);
   },
   prepare: prepareOpencode,
 };

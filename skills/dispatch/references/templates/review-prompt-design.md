@@ -5,7 +5,7 @@ Kind block for `review-prompt.md`.
 - `<Design Path>` — path to the attached technical design.
 - `<Spec Path>` — path to the settled governing spec, or `None`.
 - `<Spec Hash>` — settled spec hash, or `None`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on Round 1; `Full review — changed paths: ; comparison: <sha256>` on a rerun; `Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>` on Round <n> > 1, optionally followed by `Design lint warnings:` context.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on Round 1; on a rerun, `Full review — changed: <changed sections>; comparison: <sha256>` when the prior snapshot has changed sections, otherwise `Full review — comparison: <sha256>`; `Re-review round <n> (full|narrowed) — changed: <changed sections>; comparison: <prev>..<curr>` on Round <n> > 1 when sections changed, otherwise `Re-review round <n> (full|narrowed) — comparison: <prev>..<curr>`, optionally followed by `Design lint warnings:` context.
 - `<Context Map>` — `Context Map:` bullet naming the session context map, or empty when the session has none.
 
 ## opener
