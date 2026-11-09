@@ -1,5 +1,5 @@
 approval_policy = "on-request"
 approvals_reviewer = "auto_review"
 sandbox_mode = "danger-full-access"
-model_context_window = 300000
-model_auto_compact_token_limit = 225000
+model_context_window = 400000
+model_auto_compact_token_limit = 300000

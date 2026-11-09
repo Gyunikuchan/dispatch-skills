@@ -13,7 +13,7 @@
   "disableClaudeAiConnectors": true,
   "disableArtifact": true,
   "disableWorkflows": true,
-  "autoCompactWindow": 300000,
+  "autoCompactWindow": 400000,
   "env": {
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
   }

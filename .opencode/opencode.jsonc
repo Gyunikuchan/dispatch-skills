@@ -2,8 +2,8 @@
 	"$schema": "https://opencode.ai/config.json",
 	"compaction": {
 		"auto": true,
-		// 1M window - 225k trigger to match Claude (300k @ 75%) / Codex (225k).
-		"buffer": "77.5%"
+		// 1M window - 300k trigger to match Claude (400k window @ 75%) / Codex (300k).
+		"buffer": "70%"
 	},
 	// "providers": {
 	// 	"lmstudio": {
