@@ -5,6 +5,8 @@ import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
+import { governedPlanText } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
+import { governedDesignText } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
 import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
 
@@ -729,7 +731,7 @@ test('review run forwards round 2 on repository-rerun with empty settled', async
     const round1Dir = path.join(f.directory, 'round-1/gen-1');
     fs.mkdirSync(round1Dir, {recursive: true});
     fs.writeFileSync(path.join(round1Dir, 'checkout-report.json'), JSON.stringify({repositoryCheck: {state: 'unavailable', reason: 'test'}, asOfSeq: 0}));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: 'repository-rerun:plan-work.plan:1', data: {text: 'rerun'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: 'repository-rerun:plan-work.plan:1:0', data: {text: 'rerun'}}, f.deps);
     const second = await f.call();
     assert.equal(second.exit, 0, JSON.stringify(second.output));
     assert.equal(second.value.round, 2);
@@ -738,5 +740,84 @@ test('review run forwards round 2 on repository-rerun with empty settled', async
     assert.match(round2.scope, /^Full review/);
     const secondPrompt = fs.readFileSync(f.launches.at(-1)!.request.promptPath, 'utf8');
     assert.equal(secondPrompt.split('On re-review,').length - 1, 1);
+  } finally { f.cleanup(); }
+});
+
+test('plan reviewer reads governed text without findings history', async () => {
+  const f = await fixture();
+  try {
+    const original = fs.readFileSync(f.plan, 'utf8');
+    const result = await f.call();
+    assert.equal(result.exit, 0, JSON.stringify(result.output));
+    const inputPath = path.join(f.directory, 'round-1.input.md');
+    assert.ok(fs.existsSync(inputPath));
+    const input = fs.readFileSync(inputPath, 'utf8');
+    assert.doesNotMatch(input, /Review Findings & Resolutions/);
+    assert.doesNotMatch(input, /Driver log\./);
+    assert.equal(input, governedPlanText(original));
+    const prompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
+    assert.ok(prompt.includes(inputPath));
+    assert.ok(prompt.includes('- Plan: ' + inputPath));
+    assert.equal(f.read(1, 'round.json').target, artifactHash('plan', original));
+    assert.equal(path.basename(f.directory), 'plan-work.plan');
+    assert.equal(fs.readFileSync(path.join(f.directory, 'round-1', 'target.snapshot.md'), 'utf8'), original);
+  } finally { f.cleanup(); }
+});
+
+test('design reviewer reads governed text without findings history', async () => {
+  const f = await fixture();
+  try {
+    const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n## Execution Status\nNext Action: act.\n## Review Findings & Resolutions\nDriver notes.\n');
+    f.artifact('strategy.design.context.md', CONTEXT_MAP);
+    const original = fs.readFileSync(design, 'utf8');
+    const result = await f.call('design', design);
+    assert.equal(result.exit, 0, JSON.stringify(result.output));
+    const reviewDir = path.join(f.session, '.state/reviews/design-strategy.design');
+    const inputPath = path.join(reviewDir, 'round-1.input.md');
+    assert.ok(fs.existsSync(inputPath));
+    const input = fs.readFileSync(inputPath, 'utf8');
+    assert.doesNotMatch(input, /Review Findings & Resolutions/);
+    assert.doesNotMatch(input, /Driver notes\./);
+    assert.doesNotMatch(input, /## Execution Status/);
+    assert.equal(input, governedDesignText(original));
+    const prompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
+    assert.ok(prompt.includes(inputPath));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(reviewDir, 'round-1/round.json'), 'utf8')).target, artifactHash('design', original));
+  } finally { f.cleanup(); }
+});
+
+test('reviewer input write failure refuses the round before launch', async () => {
+  const f = await fixture();
+  try {
+    fs.mkdirSync(f.directory, {recursive: true});
+    fs.mkdirSync(path.join(f.directory, 'round-1.input.md'), {recursive: true});
+    const result = await f.call();
+    assert.notEqual(result.exit, 0);
+    assert.equal(f.launches.length, 0);
+    assert.equal(fs.existsSync(path.join(f.directory, 'round-1', 'findings.json')), false);
+  } finally { f.cleanup(); }
+});
+
+test('resumed round reuses the same input path and bytes', async () => {
+  const f = await fixture();
+  try {
+    f.deps.hook = () => { throw new Error('Interrupted'); };
+    const hookPoint = 'review:after-pending';
+    const wrapped = f.deps.hook;
+    f.deps.hook = (point: string) => { if (point === hookPoint) return wrapped(point); };
+    assert.equal((await f.call()).exit, 2);
+    const inputPath = path.join(f.directory, 'round-1.input.md');
+    assert.ok(fs.existsSync(inputPath));
+    const before = fs.readFileSync(inputPath, 'utf8');
+    assert.doesNotMatch(before, /Review Findings & Resolutions/);
+    delete (f.deps as {hook?: unknown}).hook;
+    const callsBefore = f.launches.length;
+    const result = await f.call();
+    assert.equal(result.exit, 0, JSON.stringify(result.output));
+    assert.equal(fs.readFileSync(inputPath, 'utf8'), before);
+    assert.equal(f.read(1, 'round.json').generation, 1);
+    assert.ok(f.launches.length >= callsBefore);
+    const prompt = fs.readFileSync(f.launches.at(-1)!.request.promptPath, 'utf8');
+    assert.ok(prompt.includes(inputPath));
   } finally { f.cleanup(); }
 });

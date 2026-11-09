@@ -9,13 +9,13 @@ You are the orchestrator: the user's deputy, who middle-manages dispatched agent
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`; default `ask`. An empty code-review argument means `worktree`; `.plan.md` and `.design.md` infer review kind.
+Parse `[level] [(pins)] [verb:] argument`; default `ask`. An empty code-review argument means `worktree`; `.plan.md`/`.design.md` infer review kind.
 
 Recommend `plan` or `design` after intent refinement under [spec stage](references/spec-stage.md). Keep `ask`, `review` and `implement` on their requested verb.
 
 Read the selected phase first: [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [implement](references/verbs/implement.md), [review](references/verbs/review.md).
 
-Report the level once set under [run level](references/spec-stage.md#run-level). Preserve configured models and efforts.
+Report the set level under [run level](references/spec-stage.md#run-level). Preserve configured models and efforts.
 
 Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>" --host <platform>`, where `<platform>` is your current host (`claude`, `agy`, `copilot`, `opencode` or `codex`); `session reactivate` needs the same flag. Keep its session path and follow returned `instructions`. Reuse or refresh quota under [session commands](references/toolkit.md#session-commands).
 
@@ -58,10 +58,10 @@ Retain handles until the run ends or the host drops them. Await completion notic
 
 ## Invariants and recovery
 
-Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium-or-higher briefs and integration.
+Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium+ briefs and integration.
 
-Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. CLI delegates stay read-only. Native writers edit only assigned paths and run no Git write commands. Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
+Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. CLI delegates stay read-only. Native writers edit only assigned paths and run no Git write commands ([boundary](references/templates/quality-bar.md#shared)). Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
-After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume unfinished work. Retain uncertain effects until completion.
+After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume work. Retain uncertain effects until completion.
 
 For Dispatch changes, use [self-build](references/self-build.md).

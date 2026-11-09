@@ -606,9 +606,10 @@ test('repository changes close with a keep note and admit one rerun round at the
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
     const review = done.value.review;
+    const checkout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'));
     let status = await f.run(['status','show']);
     assert.ok(status.value.openRepositoryChanges.some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${checkout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     status = await f.run(['status','show']);
     const open = status.value.openRepositoryChanges.find((entry: {review: string; round: number}) => entry.review === review && entry.round === 1);
     assert.ok(open && open.rerunPending === true, JSON.stringify(status.value.openRepositoryChanges));
@@ -617,7 +618,7 @@ test('repository changes close with a keep note and admit one rerun round at the
     for (const slot of rerunWaved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
     const rerunDone = await run(); assert.equal(rerunDone.exit, 0, JSON.stringify(rerunDone.output));
     assert.equal(rerunDone.value.round, 2);
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1`, data: {text: 'explained'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${checkout.asOfSeq}`, data: {text: 'explained'}}, f.deps);
     status = await f.run(['status','show']);
     assert.ok(!status.value.openRepositoryChanges?.some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1), JSON.stringify(status.value));
   } finally {f.cleanup();}
@@ -825,7 +826,8 @@ test('repository changes stay open after an interruption between findings and th
     fs.rmSync(done.output.path, {force: true});
     const status = await f.run(['status','show']);
     assert.ok(status.value.openRepositoryChanges.some((entry: {review: string}) => entry.review === done.value.review), 'interrupted change stays open');
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${done.value.review}:1`, data: {text: 'explained'}}, f.deps);
+    const checkout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', done.value.review, 'round-1/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${done.value.review}:1:${checkout.asOfSeq}`, data: {text: 'explained'}}, f.deps);
     const closed = await f.run(['status','show']);
     assert.ok(!closed.value.openRepositoryChanges?.some((entry: {review: string}) => entry.review === done.value.review), JSON.stringify(closed.value));
   } finally {f.cleanup();}
@@ -872,7 +874,8 @@ test('repository changes keep rerunPending through an interrupted rerun round', 
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     const review = done.value.review;
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
+    const checkout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${review}:1:${checkout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     const launched = await run(); assert.equal(launched.output.reason, 'native-pending');
     let status = await f.run(['status','show']);
     assert.ok(status.value.openRepositoryChanges.some((entry: {review: string; round: number; rerunPending?: boolean}) => entry.review === review && entry.round === 1 && entry.rerunPending === true), JSON.stringify(status.value));
@@ -906,14 +909,17 @@ test('repository changes refuse a rerun at the ceiling but keep the report open'
       return done.value;
     };
     const first = await completeRound('ceiling edit one\n');
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${first.review}:1`, data: {text: 'rerun'}}, f.deps);
+    const firstCheckout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', first.review, 'round-1/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${first.review}:1:${firstCheckout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     const second = await completeRound('ceiling edit two\n');
     assert.equal(second.round, 2);
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${second.review}:2`, data: {text: 'rerun'}}, f.deps);
+    const secondCheckout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', second.review, 'round-2/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${second.review}:2:${secondCheckout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     const third = await completeRound('ceiling edit three\n', MUST);
     assert.equal(third.round, 3);
     await appendRecord(f.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-ceiling', data: {subject: 'review:' + third.review + ':R3-F001', ruling: 'accepted', rationale: 'Fix accepted'}}, f.deps);
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${third.review}:3`, data: {text: 'rerun'}}, f.deps);
+    const thirdCheckout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', third.review, 'round-3/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun', key: `repository-rerun:${third.review}:3:${thirdCheckout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     const refused = await run();
     assert.equal(refused.output.reason, 'review-ceiling', JSON.stringify(refused.output));
     const status = await f.run(['status','show']);
@@ -944,7 +950,8 @@ test('repository changes rerun a mixed round at whole-target scope and settle la
     const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
     assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
     const review = done.value.review;
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun mixed', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
+    const checkout = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'rerun mixed', key: `repository-rerun:${review}:1:${checkout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved2 = await run(); assert.equal(waved2.output.reason, 'native-pending');
     const round2 = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), 'utf8'));
@@ -1189,17 +1196,18 @@ test('reused round number keeps a later report open and admits a whole-target re
     assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
     const review = done.value.review as string;
     const roundDir = path.join(f.session,'.state/reviews',review,'round-1');
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1`, data: {text: 'explained'}}, f.deps);
-    const closeSeq = foldLedger(f.session).records.findLast(row => row.kind === 'note' && row.key === `repository-changes:${review}:1`)!.seq;
+    const firstCheckout = JSON.parse(fs.readFileSync(path.join(roundDir,'gen-1/checkout-report.json'),'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${firstCheckout.asOfSeq}`, data: {text: 'explained'}}, f.deps);
+    const closeSeq = foldLedger(f.session).records.findLast(row => row.kind === 'note' && row.key === `repository-changes:${review}:1:${firstCheckout.asOfSeq}`)!.seq;
     let status = await f.run(['status','show']);
     assert.ok(!status.value.openRepositoryChanges?.some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1), 'the acknowledged report stays closed: ' + JSON.stringify(status.value.openRepositoryChanges));
     // A later report under the reused round number stays open. The rerun note
-    // lands first, so its sequence strictly exceeds the closing note.
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
-    const laterSeq = foldLedger(f.session).lastSeq;
+    // names the later report, so its suffix matches the later identity.
+    const laterSeq = closeSeq + 1;
     assert.ok(laterSeq > closeSeq);
     fs.mkdirSync(path.join(roundDir,'gen-9'),{recursive:true});
     fs.writeFileSync(path.join(roundDir,'gen-9','checkout-report.json'), JSON.stringify({repositoryChanges: [{cwd: f.root, paths: ['src/file.ts']}], asOfSeq: laterSeq}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${laterSeq}`, data: {text: 'rerun'}}, f.deps);
     status = await f.run(['status','show']);
     const open = status.value.openRepositoryChanges.find((entry: {review: string; round: number}) => entry.review === review && entry.round === 1);
     assert.ok(open && open.rerunPending === true, 'a later report under a reused number stays open with rerunPending: ' + JSON.stringify(status.value.openRepositoryChanges));
@@ -1228,8 +1236,9 @@ test('reused round number keeps a later report open and admits a whole-target re
     assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
     const review = done.value.review as string;
     const roundDir = path.join(g.session,'.state/reviews',review,'round-1');
-    await appendRecord(g.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1`, data: {text: 'explained'}}, g.deps);
-    const closeSeq = foldLedger(g.session).records.findLast(row => row.kind === 'note' && row.key === `repository-changes:${review}:1`)!.seq;
+    const firstCheckout = JSON.parse(fs.readFileSync(path.join(roundDir,'gen-1/checkout-report.json'),'utf8'));
+    await appendRecord(g.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${firstCheckout.asOfSeq}`, data: {text: 'explained'}}, g.deps);
+    const closeSeq = foldLedger(g.session).records.findLast(row => row.kind === 'note' && row.key === `repository-changes:${review}:1:${firstCheckout.asOfSeq}`)!.seq;
     // No ledger record lands between the closing note and the later report:
     // the report carries the note's own sequence and still stays open.
     fs.mkdirSync(path.join(roundDir,'gen-9'),{recursive:true});
@@ -1237,7 +1246,7 @@ test('reused round number keeps a later report open and admits a whole-target re
     let status = await g.run(['status','show']);
     const open = status.value.openRepositoryChanges.find((entry: {review: string; round: number}) => entry.review === review && entry.round === 1);
     assert.ok(open && open.rerunPending !== true, 'an equal-seq later report stays open: ' + JSON.stringify(status.value.openRepositoryChanges));
-    await appendRecord(g.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, g.deps);
+    await appendRecord(g.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${closeSeq}`, data: {text: 'rerun'}}, g.deps);
     status = await g.run(['status','show']);
     assert.equal(status.value.openRepositoryChanges.find((entry: {review: string; round: number}) => entry.review === review && entry.round === 1)?.rerunPending, true);
     const rerun = await run();
@@ -1334,7 +1343,7 @@ test('successful retry after all-failed keeps the first report until a closing n
     let status = await f.run(['status','show']);
     assert.ok((status.value.openRepositoryChanges ?? []).some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1),
       'the failed report stays open after a clean success: ' + JSON.stringify(status.value.openRepositoryChanges));
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1`, data: {text: 'explained'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${kept.asOfSeq}`, data: {text: 'explained'}}, f.deps);
     status = await f.run(['status','show']);
     assert.ok(!(status.value.openRepositoryChanges ?? []).some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1),
       'a closing note clears the retained report: ' + JSON.stringify(status.value.openRepositoryChanges));
@@ -1358,7 +1367,8 @@ test('quoted rerun for an all-failed report starts a fresh whole-target round', 
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'change before all-failed\n');
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
     assert.equal((await run()).output.reason, 'review-failed');
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
+    const failedCheckout = JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews',review,'round-1/gen-1/checkout-report.json'),'utf8'));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${failedCheckout.asOfSeq}`, data: {text: 'rerun'}}, f.deps);
     const rerun = await run();
     assert.equal(rerun.output.reason, 'native-pending', 'the rerun note starts a fresh round: ' + JSON.stringify(rerun.output));
     assert.equal(rerun.value.round, 2);
@@ -1529,7 +1539,8 @@ test('checkout reports gate sequences on content and order generations numerical
     fs.mkdirSync(path.join(roundDir,'gen-10'),{recursive:true});
     fs.writeFileSync(path.join(roundDir,'gen-1/checkout-report.json'), JSON.stringify({repositoryChanges:[{cwd:'c',paths:['old-path']}],asOfSeq:1}));
     fs.writeFileSync(path.join(roundDir,'gen-2/checkout-report.json'), JSON.stringify({repositoryChanges:[{cwd:'c',paths:['mid-path']}],asOfSeq:2}));
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1`, data: {text: 'explained'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:1`, data: {text: 'explained old'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:2`, data: {text: 'explained mid'}}, f.deps);
     const reported = async () => (await f.run(['status','show'])).value.openRepositoryChanges ?? [];
     assert.deepEqual(await reported(), [], 'the acknowledged report stays closed');
     // A clean later generation must not inflate the sequence past the note.
@@ -1644,7 +1655,7 @@ test('a stale rerun decision grants nothing for a later report', async () => {
     fs.writeFileSync(path.join(roundDir,'round.json'), JSON.stringify({cap:1}));
     const seqA = foldLedger(f.session).lastSeq;
     fs.writeFileSync(path.join(roundDir,'gen-1/checkout-report.json'), JSON.stringify({repositoryChanges:[{cwd:'c',paths:['a-path']}],asOfSeq:seqA}));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1`, data: {text: 'rerun'}}, f.deps);
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${seqA}`, data: {text: 'rerun'}}, f.deps);
     await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${seqA}`, data: {text: 'explained A'}}, f.deps);
     const seqB = foldLedger(f.session).lastSeq;
     fs.mkdirSync(path.join(roundDir,'gen-2'),{recursive:true});

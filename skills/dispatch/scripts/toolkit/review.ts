@@ -9,8 +9,8 @@ import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, type SlotOut
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
-import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
-import { parseIncrementGraph } from './domain/design.ts';
+import { parsePlan, selectTaskBrief, structuralLines, governedPlanText } from './domain/plan.ts';
+import { parseIncrementGraph, governedDesignText } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
@@ -42,6 +42,16 @@ function atomic(file: string, value: unknown) {
 }
 const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
+
+// Reviewer input holds governed plan/design text; code reviews read the working tree directly.
+const reviewerInputPath = (reviewDir: string, roundNumber: number): string => path.join(reviewDir, 'round-' + roundNumber + '.input.md');
+const governedInputFor = (reviewKind: ReviewKind, source: string): string => reviewKind === 'plan' ? governedPlanText(source) : governedDesignText(source);
+function writeReviewerInput(reviewDir: string, roundNumber: number, reviewKind: ReviewKind, source: string): void {
+  // A write failure refuses the round before any launch.
+  const file = reviewerInputPath(reviewDir, roundNumber);
+  try { fs.writeFileSync(file, governedInputFor(reviewKind, source)); }
+  catch (error) { throw new ToolError(2, 'review-failed', 'Cannot write reviewer input ' + file + ': ' + (error instanceof Error ? error.message : String(error))); }
+}
 
 // Compared directories are the round cwd, the repository root and, for a task
 // review, the launch worktree path resolved against the session, without duplicates.
@@ -521,6 +531,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
       const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{}),...(coverage?{coverage}:{}),...(admitted.coverage?.state==='readable'&&admitted.coverage.use?{coverageUse:admitted.coverage.use}:{})};
       if (!slots.some(entry => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
+      // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
+      if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) writeReviewerInput(directory, n, kind, captured.source);
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -607,6 +619,16 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       await supersede(current);
       if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
     }
+    // Plan and design reviewers read governed text only; a resumed round reuses the same path and bytes.
+    let reviewerArtifact = artifact;
+    if (kind === 'plan' || kind === 'design') {
+      const inputPath = reviewerInputPath(directory, n);
+      if (!fs.existsSync(inputPath)) {
+        if (current.source === undefined) throw new ToolError(2, 'review-failed', 'Cannot write reviewer input ' + inputPath + ': missing source');
+        writeReviewerInput(directory, n, kind, current.source);
+      }
+      reviewerArtifact = inputPath;
+    }
     let pending = read<Finalized>(pendingFile);
     const ignoredFailureReports: string[] = [];
     if (!pending) {
@@ -616,10 +638,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const targets = round!.roster.filter(entry => !entry.reserve);
       const confirmationRound = round!.scope.includes('(confirmation-only)');
       const prompt = (slot:RosterSlot)=>{
-        if (confirmationRound) return confirmationPrompt(kind, {spec: round!.spec, artifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
+        if (confirmationRound) return confirmationPrompt(kind, {spec: round!.spec, artifact: reviewerArtifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
           ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), requests: requestsBySlot.get(slot.slot) ?? []});
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
-        return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
+        return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact: reviewerArtifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
           ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),
           ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
       };

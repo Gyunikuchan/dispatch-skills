@@ -11,3 +11,11 @@ When an ask needs many files read to understand its domain, ground first using [
 Include settled chat decisions and constraints that the delegates cannot find in supplied files. Provider delegates return claims; inspect the full answers in the result file before synthesis. Verify disagreement against source and report an evidence-backed verdict, with any coverage gap. When source checks leave a material unknown or disagreement that needs user context, state the missing information and use the [Decision Frame](../decision-frame.md). Resolve routine facts autonomously and retain settled decisions.
 
 Launch each native slot under [native slots](../providers.md#native-slots) in launch order: the first call returns descriptors before any CLI launch, so rerun at once on `cliWave: "pending"` to run the CLI wave, and rerun to consume only after every retained handle finished or was reported. Report a failed voice with `--native-failed '<attempt>=<reason>'`. When answering a native voice yourself, read its prompt. [Providers](../providers.md) owns configured launch fidelity and fallback.
+
+## Step reads
+
+| Step | Reads |
+| --- | --- |
+| Write the question file and run the tool | [toolkit contract](../toolkit.md#ask-run) |
+| Ground first when the domain needs many files read | [grounding guidance](../grounding.md) |
+| Launch voices and synthesize under native slots | [native slots](../providers.md#native-slots) |

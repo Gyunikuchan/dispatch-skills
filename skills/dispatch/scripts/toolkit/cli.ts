@@ -15,7 +15,7 @@ import { sanitizeText } from './domain/sanitize.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
-import { renderBrief } from './brief.ts';
+import { renderBrief, renderExplorerBrief, renderTestCleanupBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
@@ -122,6 +122,8 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'report complete': reportComplete,
   'diagnostics render': diagnosticsRender,
   'brief render': renderBrief,
+  'brief explorer': renderExplorerBrief,
+  'brief test-cleanup': renderTestCleanupBrief,
   'worktree integrate': integrate,
   'worktree continue': continueIntegration,
   'worktree commit': commit,

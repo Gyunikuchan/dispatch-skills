@@ -1,6 +1,6 @@
 # Writer task {{task}}
 
-Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may create or update only their own cache or index. Follow applicable host rules; a stricter one wins. Run no Git write commands.
+Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may create or update only their own cache or index. Follow applicable host rules; a stricter one wins.
 
 Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
 Explorer subagent for this host: {{explorer}}. For heavy reading outside your task paths, you may launch it with a self-contained brief and fresh context when the host allows. Require it to stay read-only: no edits, no Git write commands and no toolkit. Read the files you edit yourself and treat its reply as claims. If none resolves or the host cannot nest a launch, read directly.

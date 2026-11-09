@@ -122,37 +122,46 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 
 ## Field notes
 
+Notes that explain a lint code live in [plan field notes](plan-field-notes.md); read the note when that code is reported.
+
 - Layout: follow [authoring rules](quality-bar.md#spec); put `> [!NOTE]` and `> [!IMPORTANT]` callouts inside sections.
 
-- At a Glance: a table repeating Task Map IDs triggers `glance-restates-task-map`; link `## Task Map` instead.
-
 - Scope: name components or top-level paths, not per-criterion file lists; each criterion's files belong in its Changes and Tests.
+
 - Out of Scope and Rollback & Blast Radius: keep Out of Scope to plan-local exclusions and deferred follow-ups; put affected consumers, reversibility and persistent effects in Rollback & Blast Radius when material, including inspected callers left unchanged.
 
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
-- Keep the template section order: At a Glance first, then shared context and decisions, then task outcomes and execution detail. A present section out of order is a `section-order` warning; absent optional sections are ignored. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
+
 - Task Map titles must match the task headings. Put task-specific Constraints and Overlap under the matching task. Put mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
+
 - Shared range: At a Glance, Background, optional Key Interfaces & Data, decisions, shared Constraints and Task Map precede task detail. Every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. The authored map is part of the governed plan hash and shared writer context. Put context that all tasks need in the shared range and task-specific detail under the task. For document-writing tasks, name actionable authoring-reference paths in shared context or the assigned task, relative to the repository/worktree or explicitly to the governing plan; check each path before launch.
 
 - Visual placement: put common orientation in the shared range, data shapes in Key Interfaces & Data, and task-local views after behaviour bullets. A depicted unchanged component is context, not a writer-owned path. A plan may include diagrams with or without a parent design; judge each visual with the [visual-aid bar](quality-bar.md#visual-aid-bar).
+
 - Format changes: when a task introduces a format, show its exact shape and producer/consumer contracts; when it changes one, show concrete proposed before and after shapes and affected contracts when useful. Label verification as planned until executed.
-- Task behaviour: put one or more observable bullets after `Constraints:` and `Overlap:` and before `<details>`. The `task-behaviour` warning reports missing bullets and bullets containing only a file count or placeholder; place useful section visuals after the bullets under the visual-aid bar.
+
 - Collapsed detail: wrap each task's file entries and each criterion's machine fields in `<details>` without a summary line. Keep wrapper tags on separate lines with a blank line after the opening tag and before the closing tag. Indent criterion wrappers and fields by two spaces; retain field names and file headings.
+
 - Technical-Design Traceability: increment plans only.
-- Verify: list only this criterion's tests. Select by literal behavior title with the project runner's filter (e.g. `npx jest tests/a.test.ts -t "<title>"`, `pytest tests/test_a.py -k "<name>"`) and fail on zero selected tests; red never runs the aggregate suite. A broad or slow required gate belongs in a criterion Verify command. A Verify command or test file name that contains a criterion or finding ID is a `plan-id-in-test-name` warning.
+
 - Task Map: author one table with columns ID, Title, Outcome, Prerequisites, Criteria. Use `none` when a task has no prerequisites. Separate multiple task or criterion IDs with commas. Escape literal pipes as `\|`, including inside inline code. Rows join task sections by ID, not position. Keep Paths in task details and shared Constraints in the shared section. Toolkit lint and brief tools read the table as authored and never rewrite it. Map edits change the governed plan hash; only Review Findings & Resolutions are excluded.
+
 - Review Findings & Resolutions: follow [review rules](../review-rules.md); the toolkit renders current findings and round links from the ledger after each review round and ruling.
-- Tests: the criterion's runnable test files plus every support file (helper, fixture, mock) its RED stage changes or needs, each also in its Changes. Support files (paths under `fixtures/`, `helpers/`, or `mocks/`) need no `[NEW]` action. A red criterion without Tests (and without RED exception) is a `criterion-red-test-path` warning; a Tests path outside Changes is a `criterion-tests-path` warning; a test-like Changes path in no criterion's Tests is an `undeclared-test-path` warning (support paths are exempt).
-- RED: the focused executable command that fails before the change, for any test tool (e.g. `npx jest tests/parser.test.ts -t "<title>"`, `pytest tests/test_parser.py -k "<name>"`). Generated capture commands expand `{files}` only from the criterion's Tests, quoted for the subprocess shell. The command runs as written through the platform's default subprocess shell and is never rewritten, so write quoting that shell parses. When Tests includes non-runnable support files, name runnable paths explicitly in RED. Record observed failures in the writer report. Missing RED evidence becomes a review finding. A missing or malformed code span is a `criterion-red-command` warning; a red criterion with neither RED nor RED exception is a `red-downgraded` warning.
+
 - Optional: Pre-existing `yes` identifies a baseline red failure; RED exception (red only) records a no-failing-state rationale; Review is required for review; missing Enforcement infeasibility for critical review is a warning.
+
 - Tasks: every H4 belongs to one task. Under `## Proposed Changes`, use H3 only for `### T<n> — <title>` task headings; the parser reads every H3 there as a task. Put task behaviour bullets before `<details>` and file entries inside it. Author to the [plan standard](quality-bar.md#plan): it judges outcomes, task boundaries and which decisions the plan binds. Record shared-resource dependencies (ports, caches, outputs) as prerequisites with a rationale.
-- Overlap: a write path repeated by tasks with no transitive prerequisite path is an `overlap` warning (case variants count as one path; references never count). Order the tasks, or justify each shared path with `Overlap:` on the task. A repeat inside one task is a `duplicate-change-path` defect.
+
 - Seams: existing public test entry points that criteria verify through; the orchestrator chooses them from current tests and checks each criterion's Verify against them.
-- Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks. A task-owned criterion needs Changes naming the task paths it proves; a task-owned criterion with Verify alone is a `criterion-task-changes` defect. Ownership names who changes the outcome, not who runs the evidence: the orchestrator can execute a criterion's post-integration `Review:` check, while the task keeps its Changes and a review-only criterion still completes by user manual-complete.
+
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
+
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add an exported or shared symbol, helper, module, or type, apply the [quality bar's shared reuse criterion](quality-bar.md#shared). Record the names searched and why none was reused, or write `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
+
 - Affected checks: criterion RED/Verify selectors give fast feedback; they do not replace full checks of modified logical test files or known impacted consumers before aggregate. A whole-file criterion Verify satisfies that file's check. List other affected-file checks under Automated Tests; lint rejects an exact repeat. Writers follow the [writer brief](writer-brief.md).
+
 - Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, and `verify run` records it against the integrated tree. Put broad or slow gates in a criterion Verify.
+
 - `[GENERATED]`: name the Command and Inputs needed to reproduce the output; a task producing an Input must be a (transitive) prerequisite. Run the generator before verification. Own each golden or generated output that renders an edited file, and each file whose line budget or byte cap the change can exceed, as a `[MODIFY]` or `[GENERATED]` entry of the task that changes it; an unowned output forces a mid-run plan edit.
 
 - Satisfies: name the governing spec REQ IDs on every criterion; missing or unknown references are warnings.

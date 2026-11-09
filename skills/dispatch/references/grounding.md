@@ -6,7 +6,7 @@ Grounding maps the landscape around the planned decision (constraints, consumers
 
 ## Launch
 
-Run `doctor run` without `--level` and use its `utility` host entry exactly for every map explorer launch, including scope round, design increment, retry and replacement. General explorer use follows [routing](../SKILL.md#routing). Send the explorer the question-driven [explorer brief](templates/explorer-brief.md), which sets a 16 KB (16,384 UTF-8 byte) budget per map. Fill `{{cliPath}}` with the `dispatch.ts` path the orchestrator invokes and `{{session}}` with the session directory, both resolvable from the explorer's working directory. Launch one map explorer per grounding phase. The brief sets no search direction; its Coverage checklist is the completeness contract. You may launch research explorers in parallel, one per independent topic, alongside the map explorer when the [context guard](../SKILL.md#context-guard) warrants it; each replies inline with cited sources and writes no map. Follow [native slot rules](providers.md#native-slots); a host that cannot launch the configured slot is a blocker, not permission to substitute. Launch the map explorer on an agent type that can write files.
+Run `doctor run` without `--level` and launch every map explorer on its [`utility` host entry](../SKILL.md#routing), including scope round, design increment, retry and replacement. General explorer use follows [routing](../SKILL.md#routing). Send the explorer the question-driven [explorer brief](templates/explorer-brief.md), whose per-map budget the toolkit renders from `DEFAULT_MAP_BUDGET`. Render it with the [`brief explorer`](toolkit.md#brief-explorer) action from a values file holding `objective`, `questions`, and `outputPath`. Launch one map explorer per grounding phase. The brief sets no search direction; its Coverage checklist is the completeness contract. You may launch research explorers in parallel, one per independent topic, alongside the map explorer when the [context guard](../SKILL.md#context-guard) warrants it; each replies inline with cited sources and writes no map. Follow [native slot rules](providers.md#native-slots); a host that cannot launch the configured slot is a blocker, not permission to substitute. Launch the map explorer on an agent type that can write files.
 
 ## Scope round
 
@@ -14,13 +14,7 @@ After `confirm` and before authoring a standalone plan or any design, ground the
 
 At pre-spec capture time, resolve any symlinked cited path with `realpath` and require the result inside the repository root, for example `.claude/CLAUDE.md` -> `AGENTS.md`. When inspecting a cited path against `Commit: <sha>`, check both the cited path and its resolved target path: `git ls-tree <sha> -- <path>` lists the path and `git diff --name-only <sha> -- <path>` is empty. Mark any untracked, ignored, out-of-repository symlink or dirty cited path `(uncommitted)` in `<slug>.spec.context.md`.
 
-The Scope Round explorer carries forward an entry from `<session>/<slug>.spec.context.md` without re-reading it only when all these hold:
-
-- `<slug>.spec.context.md` records a valid `Commit: <sha>`.
-- No cited path in the entry is marked `(uncommitted)`.
-- Every symlinked cited path resolves inside the repository root.
-- `git ls-tree <sha> -- <cited-and-resolved-paths>` lists every cited and resolved target path.
-- `git diff --name-only <sha> -- <cited-and-resolved-paths>` returns empty.
+The Scope Round explorer carries forward an entry from `<session>/<slug>.spec.context.md` without re-reading it only when it meets the [explorer brief's scope-round rule](templates/explorer-brief.md#map-budget-and-output).
 
 If `Commit` is absent, a path or symlink target was `(uncommitted)` at capture time or is untracked or ignored, has diffs against `<sha>`, or its line ranges shifted, re-read and re-verify the source or record it under `Not covered`. Spend the exploration budget on rigorous code-level discovery of refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations.
 
@@ -38,7 +32,7 @@ Treat maps as claims, not authority. Read only needed map sections once, never t
 
 ## Publish
 
-An explorer edits no repository source or config. It writes only its map to the brief's `outputPath`, except host tool caches under [native slots](providers.md#native-slots). Do not run a `git status` check. For a written map, reply only with its path, lint status, and counts of `Surprises` and `Not covered`; a scope round also includes its delta when the spec-phase map exists. The orchestrator reads `Surprises` and `Not covered` from the map file. Return the whole map inline only when the host has no write-capable agent type; the orchestrator then saves it verbatim to `outputPath`, runs `lint run` and fixes only reported defects. Context-map lint is the deterministic check.
+An explorer edits no repository source or config. It writes only its map to the brief's `outputPath`, except host tool caches under [native slots](providers.md#native-slots). Do not run a `git status` check. For a written map, reply under the [explorer brief's output rule](templates/explorer-brief.md#map-budget-and-output). The orchestrator reads `Surprises` and `Not covered` from the map file. Return the whole map inline only when the host has no write-capable agent type; the orchestrator then saves it verbatim to `outputPath`, runs `lint run` and fixes only reported defects. Context-map lint is the deterministic check.
 
 Save the initial map as `<session>/<slug>.spec.context.md`. Save a scope-round map as `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md`, matching the artifact it grounds.
 

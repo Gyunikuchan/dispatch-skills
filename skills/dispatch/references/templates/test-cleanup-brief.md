@@ -1,10 +1,10 @@
 # Test cleanup brief
 
-Work only in `{{integrationPath}}`. Edit only test files (tests, fixtures, helpers). Change no production code, docs or plan artifacts. Run no Git write commands (add, stash, commit, checkout, reset, restore); run no dispatch toolkit. Follow applicable host rules; a stricter one wins.
+Work only in `{{integrationPath}}`. Edit only test files (tests, fixtures, helpers). Change no production code, docs or plan artifacts. Run no dispatch toolkit. Follow applicable host rules; a stricter one wins.
 
 ## Objective
 
-Reduce test growth from this run. Delete, merge or rewrite lower-value tests so the suite keeps only protection that the [retention gates](quality-bar.md#testing) require.
+Reduce test growth from this run. Delete, merge or rewrite lower-value tests so the suite keeps only protection that the retention gates below require.
 
 ## Scope
 
@@ -14,10 +14,14 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 
 ## Rules
 
-- Apply the [shared](quality-bar.md#shared) and [testing](quality-bar.md#testing) sections of the quality bar (executing `- Prune:` and ignoring `- Writer focus`) to each in-scope test.
+- Apply the embedded quality bar below (executing `- Prune:` and ignoring `- Writer focus`) to each in-scope test.
 - A merge or rename keeps every name a criterion `Verify` selects.
 - After edits, run only the test files you edited. Fix a test you broke; revert a deletion that you cannot justify.
 - Report a needed production change as a concern; do not make it.
+
+## Quality
+
+{{quality}}
 
 ## Report
 

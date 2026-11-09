@@ -295,21 +295,179 @@ test('quality selection: every review contains each selected rule once and exclu
 });
 
 test('quality selection rejects missing, empty, duplicate sections and invalid consumers', () => {
-  const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'] };
+  const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'], cleanup: ['shared', 'testing'], explorer: ['shared'] };
   assert.deepEqual(qualitySections, expected);
-  const sections = ['shared', 'spec', 'code', 'testing', 'plan', 'design'];
-  const bar = sections.map((section) => `## ${section}\n${section} rule`).join('\n');
-  for (const [consumer, selected] of Object.entries(expected)) {
-    assert.equal(qualityBar(bar, consumer as QualityConsumer, 0, specStage), `## quality\n\n${selected.map((section) => `${section} rule`).join('\n\n')}`);
-    for (const section of selected) {
-      assert.throws(() => qualityBar(bar.replace(`## ${section}\n${section} rule`, ''), consumer as QualityConsumer, 0, specStage), { message: `Missing quality section: ${section}` });
-      assert.throws(() => qualityBar(bar.replace(`${section} rule`, '  \n\t'), consumer as QualityConsumer, 0, specStage), { message: `Empty quality section: ${section}` });
+  const bar = compliantBar();
+  for (const [consumer] of Object.entries(expected)) {
+    const rendered = qualityBar(bar, consumer as QualityConsumer, 0, specStage);
+    assert.doesNotMatch(rendered, /for:/, `${consumer}: no audience tag leaks`);
+    assert.doesNotMatch(rendered, /<!--/, `${consumer}: no comment leaks`);
+  }
+  for (const consumer of Object.keys(expected)) {
+    for (const section of (expected as Record<string, readonly string[]>)[consumer]!) {
+      const missingBar = removeSection(bar, section);
+      assert.throws(() => qualityBar(missingBar, consumer as QualityConsumer, 0, specStage), { message: `Missing quality section: ${section}` });
+      const emptyBar = emptySection(bar, section);
+      assert.throws(() => qualityBar(emptyBar, consumer as QualityConsumer, 0, specStage), /Empty quality section|Tagged bullet count/);
     }
   }
   assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code', 0, specStage), /declares section "shared" twice/);
   for (const consumer of ['ask', '__proto__', 'toString']) assert.throws(() => qualityBar(bar, consumer as QualityConsumer, 0, specStage), { message: `Unknown quality consumer: ${consumer}` });
-  assert.equal(qualityBar('## shared\nshared\n```markdown\n## code\nfenced\n```\n## code\nreal\n## testing\nproof', 'code', 0, specStage), '## quality\n\nshared\n```markdown\n## code\nfenced\n```\n\nreal\n\nproof');
+  assert.ok(qualityBar(fencedBar(), 'code', 0, specStage).includes('real'), 'fenced heading does not split sections');
 });
+
+test('audience tags select bullets per consumer and hide tags and author text', () => {
+  const bar = compliantBar();
+  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'explorer'] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+    assert.doesNotMatch(criteria, /<!--/, `${consumer}: no tag comment leaks`);
+    assert.doesNotMatch(criteria, /for:/, `${consumer}: no tag text leaks`);
+    assert.doesNotMatch(criteria, /Author-only/, `${consumer}: author text never renders`);
+  }
+  const writer = qualityCriteria(bar, 'writer', 0, specStage);
+  assert.ok(writer.includes('Report host-rule/brief conflicts under concerns.'), 'writer report clause');
+  assert.ok(writer.includes('No Git write commands.'), 'writer git rule');
+  assert.ok(writer.includes('Writer focus'), 'writer focus');
+  assert.doesNotMatch(writer, /Exclude host-rule\/brief conflicts from findings\./, 'writer no reviewer clause');
+  assert.doesNotMatch(writer, /^- Prune:/m, 'writer no prune');
+  for (const consumer of ['code', 'plan', 'design'] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+    assert.ok(criteria.includes('Exclude host-rule/brief conflicts from findings.'), `${consumer} reviewer clause`);
+    assert.doesNotMatch(criteria, /Report host-rule\/brief conflicts under concerns\./, `${consumer} no writer clause`);
+  }
+  assert.ok(qualityCriteria(bar, 'code', 0, specStage).includes('Prune:'), 'code prune');
+  assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Run no Git write commands'), 'cleanup git rule');
+  assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Prune:'), 'cleanup prune');
+  assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Report host-rule/brief conflicts under concerns.'), 'cleanup report clause');
+  const explorer = qualityCriteria(bar, 'explorer', 0, specStage);
+  assert.ok(explorer.includes('Host rule files'), 'explorer host rules');
+  assert.ok(explorer.includes('Precedence'), 'explorer precedence');
+  assert.ok(explorer.includes('Evidence'), 'explorer evidence');
+  assert.doesNotMatch(explorer, /Untagged shared/, 'explorer drops untagged');
+  assert.doesNotMatch(explorer, /Report host-rule/, 'explorer drops writer clause');
+  assert.doesNotMatch(explorer, /Exclude host-rule/, 'explorer drops reviewer clause');
+  const realBar = read(templates, 'quality-bar.md');
+  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'explorer'] as const) {
+    assert.doesNotMatch(qualityCriteria(realBar, consumer, 0, specStage), /<!--/, `${consumer}: real bar hides tags`);
+  }
+  assert.ok(qualityCriteria(realBar, 'writer', 0, specStage).includes('No Git write commands.'), 'real writer git');
+  assert.ok(qualityCriteria(realBar, 'cleanup', 0, specStage).includes('Run no Git write commands'), 'real cleanup git');
+});
+
+test('audience selection fails closed on unknown consumers tags counts layers and empty renders', () => {
+  const bar = compliantBar();
+  for (const consumer of ['ask', 'bogus', '__proto__'] as const) {
+    assert.throws(() => qualityCriteria(bar, consumer as QualityConsumer, 0, specStage), /Unknown quality consumer/);
+  }
+  assert.throws(() => qualityCriteria(bar.replace('<!-- for: all -->', '<!-- for: bogus -->'), 'code', 0, specStage), /Unknown audience tag/);
+  assert.throws(() => qualityCriteria('## shared\n<!-- for: writer -->\n- Only writer.\n## code\n- Code.\n## testing\n- Testing.', 'code', 0, specStage), /Empty quality section|Tagged bullet count/);
+  assert.throws(() => qualityCriteria('## shared\n- shared without layers link\n## code\n- Code.\n## testing\n- Testing.', 'code', 0, specStage), /document layers|Tagged bullet count/);
+  const noLayers = bar.replace('[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.', 'document layers missing.');
+  assert.throws(() => qualityCriteria(noLayers, 'code', 0, specStage), /document layers/);
+  const dangling = bar.replace('<!-- for: writer -->\n- No Git write commands.', '<!-- for: writer -->');
+  assert.throws(() => qualityCriteria(dangling, 'writer', 0, specStage), /Audience tag|Tagged bullet count|Empty quality section/);
+  assert.throws(() => qualityCriteria(bar.replace('<!-- for: code,plan,design,cleanup -->\n- Prune: prune.', '- Prune: prune.'), 'code', 0, specStage), /Tagged bullet count/);
+  assert.throws(() => qualityCriteria(bar.replace('<!-- for: all -->\n- Evidence: evidence.', '- Evidence: evidence.'), 'explorer', 0, specStage), /Tagged bullet count/);
+});
+
+function compliantBar(): string {
+  return [
+    '## shared',
+    '<!-- for: all -->',
+    '- Host rule files: host rules.',
+    '<!-- for: all -->',
+    '- Precedence: precedence.',
+    '<!-- for: all -->',
+    '- Evidence: evidence.',
+    '<!-- for: writer,cleanup -->',
+    '- Host rules override only this bar. Report host-rule/brief conflicts under concerns.',
+    '<!-- for: code,plan,design -->',
+    '- Host rules override only this bar. Exclude host-rule/brief conflicts from findings.',
+    '<!-- for: writer -->',
+    '- No Git write commands.',
+    '<!-- for: cleanup -->',
+    '- Run no Git write commands (add, stash, commit, checkout, reset, restore).',
+    '- Untagged shared. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. tail.',
+    '<!-- for: author -->',
+    '- Author-only: never rendered.',
+    '## spec',
+    '- Spec rule.',
+    '## code',
+    '- Code rule.',
+    '## testing',
+    '<!-- for: writer -->',
+    '- Writer focus.',
+    '<!-- for: code,plan,design,cleanup -->',
+    '- Prune: prune.',
+    '- Untagged testing.',
+    '## plan',
+    '- Plan rule.',
+    '## design',
+    '- Design rule.',
+  ].join('\n');
+}
+
+function removeSection(bar: string, section: string): string {
+  const lines = bar.split('\n');
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    const heading = /^##\s+(\S.*?)\s*$/.exec(line)?.[1];
+    if (heading) skipping = heading === section;
+    if (!skipping) out.push(line);
+  }
+  return out.join('\n');
+}
+
+function emptySection(bar: string, section: string): string {
+  const lines = bar.split('\n');
+  const out: string[] = [];
+  let inside = false;
+  for (const line of lines) {
+    const heading = /^##\s+(\S.*?)\s*$/.exec(line)?.[1];
+    if (heading) {
+      inside = heading === section;
+      out.push(line);
+      continue;
+    }
+    if (inside) continue;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+function fencedBar(): string {
+  return [
+    '## shared',
+    '<!-- for: all -->',
+    '- Host rule files: host rules.',
+    '<!-- for: all -->',
+    '- Precedence: precedence.',
+    '<!-- for: all -->',
+    '- Evidence: evidence.',
+    '<!-- for: writer,cleanup -->',
+    '- Host rules override only this bar. Report host-rule/brief conflicts under concerns.',
+    '<!-- for: code,plan,design -->',
+    '- Host rules override only this bar. Exclude host-rule/brief conflicts from findings.',
+    '<!-- for: writer -->',
+    '- No Git write commands.',
+    '<!-- for: cleanup -->',
+    '- Run no Git write commands (add, stash, commit, checkout, reset, restore).',
+    '- Untagged shared. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. tail.',
+    '## code',
+    '```markdown',
+    '## code',
+    'fenced',
+    '```',
+    'real',
+    '## testing',
+    '<!-- for: writer -->',
+    '- Writer focus.',
+    '<!-- for: code,plan,design,cleanup -->',
+    '- Prune: prune.',
+    '- Untagged testing.',
+  ].join('\n');
+}
 
 test('review prompts: host rules take precedence over dispatch defaults in every kind', () => {
   const bar = read(templates, 'quality-bar.md');

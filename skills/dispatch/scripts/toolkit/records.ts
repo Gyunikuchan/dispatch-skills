@@ -170,7 +170,10 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
   }
   if (value.kind === 'note' && typeof value.key === 'string' && value.key.startsWith('repository-rerun:')) {
     if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'repository rerun requires by user and non-blank quote');
-    if (!/^repository-rerun:[^:\s]+:\d+(?::\d+)?$/.test(value.key)) invalid('record.key', 'repository-rerun:<review>:<round>[:<reportSeq>]');
+    if (!/^repository-rerun:[^:\s]+:\d+:\d+$/.test(value.key)) invalid('record.key', 'repository-rerun:<review>:<round>:<reportSeq>');
+  }
+  if (value.kind === 'note' && typeof value.key === 'string' && value.key.startsWith('repository-changes:')) {
+    if (!/^repository-changes:[^:\s]+:\d+:\d+$/.test(value.key)) invalid('record.key', 'repository-changes:<review>:<round>:<reportSeq>');
   }
   if (!stored && ['approval', 'confirm', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note', 'focus'].includes(value.kind) && value.key === undefined) {
     throw new ToolError(1, 'missing-key', 'record.key is required');

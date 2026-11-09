@@ -105,9 +105,9 @@ const files = (dir: string, names: string, ext: string) => names.split(' ').map(
 export const COMPONENTS: ReadonlySet<string> = new Set([
   'SKILL.md',
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting', '.md'),
-  ...files('references/templates', 'context-map design explorer-brief plan quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan review-severity spec test-cleanup-brief walkthrough writer-brief', '.md'),
+  ...files('references/templates', 'context-map design explorer-brief plan plan-field-notes quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan review-severity spec test-cleanup-brief walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review', '.md'),
-  ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-rules self-build spec-stage toolkit worktree-cleanup', '.md'),
+  ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
@@ -385,7 +385,7 @@ const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the de
 
 // The domain layer cannot import cli.ts, so this table mirrors its handler map.
 const TOOL_MODULES: Readonly<Record<string, string>> = {
-  'ask run': 'ask', 'review run': 'review', 'diagnostics render': 'diagnostics', 'brief render': 'brief', 'verify run': 'verify', 'doctor run': 'doctor', 'status show': 'status', 'lint run': 'lint',
+  'ask run': 'ask', 'review run': 'review', 'diagnostics render': 'diagnostics', 'brief render': 'brief', 'brief explorer': 'brief', 'brief test-cleanup': 'brief', 'verify run': 'verify', 'doctor run': 'doctor', 'status show': 'status', 'lint run': 'lint',
   'report render': 'report', 'report complete': 'report', 'ledger append': 'ledger', 'ledger query': 'ledger',
   'worktree integrate': 'integrate', 'worktree continue': 'integrate', 'worktree commit': 'integrate', 'worktree abort': 'integrate',
   'worktree deliver': 'deliver', 'worktree close': 'deliver', 'worktree cleanup': 'deliver',

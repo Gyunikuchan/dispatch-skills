@@ -1,6 +1,6 @@
 # Design
 
-No current spec: run the [spec stage](../spec-stage.md) (ground, refine, author, confirm) first.
+No current spec: run the [spec authoring sequence](../spec-authoring.md#resolve-and-author) (ground, refine, author, confirm) first.
 
 Follow the [scope round](../grounding.md#scope-round) rule.
 
@@ -11,3 +11,13 @@ Apply the [shared](../templates/quality-bar.md#shared), [spec](../templates/qual
 Revise the design in place under [revision protocol](../spec-stage.md#revision-protocol) and the [edit contract](../toolkit.md#edit). Notify affected writers under [implementation](implement.md).
 
 A later implement invocation delivers increments in prerequisite order. Author one coherent increment plan at a time, grounding each increment first under [design increments](../grounding.md#design-increments).
+
+## Step reads
+
+| Step | Reads |
+| --- | --- |
+| Run the spec authoring sequence when no current spec exists | [spec authoring](../spec-authoring.md#resolve-and-author) |
+| Ground the scope round | [scope round](../grounding.md#scope-round) |
+| Author the strategy | [design template](../templates/design.md) |
+| Apply design quality criteria | [design criteria](../templates/quality-bar.md#design) |
+| Lint, set the level, review, and record approval | [review rules](../review-rules.md) |

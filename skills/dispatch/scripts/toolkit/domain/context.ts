@@ -4,6 +4,9 @@ import { sectionRanges, structuralLines } from './plan.ts';
 export const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
 export type ContextSection = typeof CONTEXT_SECTIONS[number];
 
+/** Map byte budget rendered into the explorer brief; the warning threshold for context maps. */
+export const DEFAULT_MAP_BUDGET = 16_384;
+
 export type ParsedContextMap = {
   title: string | null;
   commit: string | null;
@@ -177,10 +180,11 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
   }
 
   const bytes = Buffer.byteLength(source, 'utf8');
-  if (bytes > 32_768) {
-    add('defect', 'context-size', null, `Context map is ${bytes} UTF-8 bytes; the hard limit is 32768.`);
-  } else if (bytes > 16_384) {
-    add('warning', 'context-size-warning', null, `Context map is ${bytes} UTF-8 bytes; the warning budget is 16384.`);
+  const hardLimit = 2 * DEFAULT_MAP_BUDGET;
+  if (bytes > hardLimit) {
+    add('defect', 'context-size', null, `Context map is ${bytes} UTF-8 bytes; the hard limit is ${hardLimit}.`);
+  } else if (bytes > DEFAULT_MAP_BUDGET) {
+    add('warning', 'context-size-warning', null, `Context map is ${bytes} UTF-8 bytes; the warning budget is ${DEFAULT_MAP_BUDGET}.`);
   }
 
   return { ok: defects.length === 0, defects, warnings, map };

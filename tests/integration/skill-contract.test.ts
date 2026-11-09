@@ -124,7 +124,7 @@ test('phase prose places each workflow rule in its canonical home', () => {
 });
 
 const stageParts = () => {
-  const stage = read(root + 'references/spec-stage.md');
+  const stage = read(root + 'references/spec-authoring.md');
   return {
     refine: stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '',
     author: stage.split('3. **Author.**')[1]?.split('\n4. **Confirm.**')[0] ?? '',
@@ -133,7 +133,7 @@ const stageParts = () => {
 };
 
 test('spec stage critiques the request premise before confirmation', () => {
-  const stage = read(root + 'references/spec-stage.md');
+  const stage = read(root + 'references/spec-authoring.md');
   const groundStep = stage.indexOf('1. **Ground.**');
   const refineStep = stage.indexOf('2. **Critique and refine.**');
   const authorStep = stage.indexOf('3. **Author.**');
@@ -219,7 +219,7 @@ test('spec stage short path and self-check', () => {
   assert.match(refine, /Confirm carries the critique result, any approach default, stated and assumed intent and the verb recommendation/i);
   assert.match(confirm, /when `grilling` was unavailable or asked no round/i);
   assert.match(confirm, /approach default, a self-check answer or a corrected assumption/i);
-  assert.match(confirm, /opens a new decision in this fallback, follow the \[revision protocol\]\(#revision-protocol\) \(for a new decision, resume `grilling` for its branch first when the host provides it\), which records the new confirmation; otherwise:/i);
+  assert.match(confirm, /opens a new decision in this fallback, follow the \[revision protocol\]\(spec-stage\.md#revision-protocol\) \(for a new decision, resume `grilling` for its branch first when the host provides it\), which records the new confirmation; otherwise:/i);
   const lint = author.indexOf('Lint');
   const check = author.search(/self-check/i);
   const relint = author.search(/lint (?:again|passes again)/i);
@@ -230,7 +230,7 @@ test('spec stage short path and self-check', () => {
 });
 
 test('spec stage docs describe approach options', () => {
-  const stage = read(root + 'references/spec-stage.md');
+  const stage = read(root + 'references/spec-authoring.md');
   const docs = {
     readme: read(root + 'README.md'),
     concepts: read(root + 'references/readme/concepts.md'),
@@ -327,8 +327,9 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   }
 
   assert.ok(explorer.includes('## Host rules and tools'));
-  assert.ok(explorer.includes('quality-bar.md#shared'));
-  assert.ok(explorer.includes('../providers.md#native-slots'));
+  assert.ok(explorer.includes('{{quality}}'));
+  assert.match(explorer, /native slots/);
+  assert.doesNotMatch(explorer, /\]\(/);
   assert.match(explorer, /Conventions/);
   assert.match(explorer, /parallel:/);
   assert.match(explorer, /Surprises/);
@@ -400,10 +401,13 @@ test('native voice launch order failure reports and change rules are documented'
     '`cliWave: "pending"`', 'no retained handle', 'every retained handle finished or was reported',
     'Stop a timed-out handle', '30-minute', '--native-failed', 'ordered model attempts', 'work in `cwd`',
   ]) assert.ok(providers.includes(term), term);
-  const rules = read(root + 'references/review-rules.md');
+  const coverage = read(root + 'references/review-coverage.md');
   for (const term of [
     'repositoryChanges', 'unproven', 'repository-changes:', 'repository-rerun:', 'Decision Frame',
-  ]) assert.ok(rules.includes(term), term);
+  ]) assert.ok(coverage.includes(term), term);
+  const rules = read(root + 'references/review-rules.md');
+  assert.ok(links(rules).includes('review-coverage.md#repository-changes-from-native-voices'));
+  assert.doesNotMatch(rules, /repository-changes:|repository-rerun:|keeps the legacy round-level meaning/);
   const toolkit = read(root + 'references/toolkit.md');
   for (const term of [
     '--native-failed', 'cliWave', 'repositoryChanges', 'openRepositoryChanges', 'checkout-report.json',
@@ -443,18 +447,21 @@ test('orchestrator reads quality bar sections by stage', () => {
   const implementLinks = links(read(root + 'references/verbs/implement.md'));
   for (const anchor of ['rulings-and-fix-scope', 'review-provenance-and-applicability']) assert.ok(implementLinks.includes('../review-rules.md#' + anchor));
   for (const guide of ['../spec-stage.md', 'plan.md', 'design.md']) assert.ok(implementLinks.includes(guide), guide);
-  for (const [file, anchor] of [['spec-stage.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code'], ['verbs/plan.md','testing'], ['verbs/implement.md','testing'], ['verbs/review.md','testing']]) {
+  for (const [file, anchor] of [['spec-authoring.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code'], ['verbs/plan.md','testing'], ['verbs/implement.md','testing'], ['verbs/review.md','testing']]) {
     const text = read(root + 'references/' + file);
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#' + anchor)), file);
     assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);
   }
 });
 test('failed plan slot rule has one home', () => {
+  const coverage = read(root + 'references/review-coverage.md');
+  assert.match(section(coverage, 'Failed-slot coverage'), /failed plan or design slot at the cap gets no extra round[^.]*\[Decision Frame\]\(decision-frame\.md\)[^.]*user decides/);
   const rules = read(root + 'references/review-rules.md');
-  assert.match(section(rules, 'Failed-slot coverage'), /failed plan or design slot at the cap gets no extra round[^.]*\[Decision Frame\]\(decision-frame\.md\)[^.]*user decides/);
+  assert.ok(links(rules).includes('review-coverage.md#failed-slot-coverage'));
+  assert.doesNotMatch(rules, /failed plan or design slot at the cap gets no extra round/);
   const implement = read(root + 'references/verbs/implement.md');
   const step = (n: number) => implement.split('\n').find(line => line.startsWith(n + '. ')) ?? '';
-  assert.ok(links(step(1)).includes('../review-rules.md#failed-slot-coverage'));
+  assert.ok(links(step(1)).includes('../review-coverage.md#failed-slot-coverage'));
   assert.doesNotMatch(implement, /extra round|reduced coverage goes/);
   assert.match(step(3), /`worktree create` refuses a task until its prerequisites have integrated; verify an integrated prerequisite before creating its dependents/);
   const toolkit = read(root + 'references/toolkit.md');
@@ -464,10 +471,49 @@ test('failed plan slot rule has one home', () => {
   assert.match(read(root + 'references/readme/troubleshooting.md'), removal);
 });
 
+test('reference duplicates keep one home and link to it', () => {
+  const ref = (name: string) => read(root + 'references/' + name + '.md');
+  // Spec authoring sequence lives in spec-authoring.md; spec-stage.md keeps its anchor and links.
+  const stage = ref('spec-stage');
+  assert.ok(links(stage).some((link) => link === 'spec-authoring.md' || link.startsWith('spec-authoring.md#')));
+  assert.ok(stage.includes('## Resolve and author'));
+  assert.doesNotMatch(stage, /1\. \*\*Ground\.\*\*/);
+  const authoring = read(root + 'references/spec-authoring.md');
+  assert.match(authoring, /1\. \*\*Ground\.\*\*/);
+  assert.match(authoring, /2\. \*\*Critique and refine\.\*\*/);
+  assert.match(authoring, /3\. \*\*Author\.\*\*/);
+  assert.match(authoring, /4\. \*\*Confirm\.\*\*/);
+  assert.ok(links(authoring).includes('spec-stage.md#revision-protocol'));
+  // Lint-code field notes live in plan-field-notes.md; plan.md links them.
+  const planTemplate = read(root + 'references/templates/plan.md');
+  assert.ok(links(planTemplate).includes('plan-field-notes.md'));
+  const fieldNotes = read(root + 'references/templates/plan-field-notes.md');
+  for (const code of ['glance-restates-task-map', 'section-order', 'task-behaviour', 'plan-id-in-test-name', 'criterion-red-test-path', 'criterion-tests-path', 'undeclared-test-path', 'criterion-red-command', 'red-downgraded', 'overlap', 'duplicate-change-path', 'criterion-task-changes']) assert.ok(fieldNotes.includes(code), code);
+  assert.doesNotMatch(planTemplate.split('## Field notes')[1] ?? '', /glance-restates-task-map/);
+  // The map budget is rendered from DEFAULT_MAP_BUDGET; no reference hardcodes it.
+  assert.doesNotMatch(ref('templates/context-map'), /16,384|32,768/);
+  assert.doesNotMatch(ref('grounding'), /16,384/);
+  assert.ok(links(ref('grounding')).includes('templates/explorer-brief.md#map-budget-and-output'));
+  // The native reply channel is generated; providers.md links it.
+  assert.ok(links(ref('providers')).some((link) => link.includes('scripts/toolkit/fanout.ts')));
+  // The utility entry resolves through SKILL routing.
+  assert.ok(links(ref('grounding')).includes('../SKILL.md#routing'));
+  // The repository-change closing rule lives in review-coverage.md; toolkit links it.
+  assert.ok(links(ref('toolkit')).includes('review-coverage.md#failed-slot-coverage'));
+  assert.ok(links(ref('toolkit')).includes('review-coverage.md#repository-changes-from-native-voices'));
+  assert.doesNotMatch(ref('toolkit'), /keeps the legacy round-level meaning/);
+  // Implement step 6 launches through the brief test-cleanup action.
+  const implement = ref('verbs/implement');
+  assert.match(implement, /brief test-cleanup/);
+  assert.ok(links(implement).some((link) => link.includes('toolkit.md#brief-test-cleanup')));
+  // The SKILL write boundary links the quality bar.
+  assert.ok(links(read(root + 'SKILL.md')).includes('references/templates/quality-bar.md#shared'));
+});
+
 test('scope-round carry-forward and settled-decision deduplication contracts hold across grounding quality bar and review prompt', () => {
   const grounding = read(root + 'references/grounding.md');
   const explorer = read(root + 'references/templates/explorer-brief.md');
-  for (const [name, text] of [['grounding.md', grounding], ['explorer-brief.md', explorer]] as const) {
+  for (const [name, text] of [['explorer-brief.md', explorer]] as const) {
     assert.ok(text.includes('realpath'), name + ': symlinked path resolution');
     assert.ok(text.includes('(uncommitted)'), name + ': uncommitted marker');
     assert.ok(text.includes('git ls-tree'), name + ': tracked path check');
@@ -475,10 +521,10 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
     assert.match(text, /Commit: <sha>/, name + ': capture commit');
   }
 
-  // A scope-round entry survives only on a verified unchanged baseline; anything else is re-read.
-  assert.match(grounding, /no cited path[^.]*\(uncommitted\)/i);
-  assert.match(grounding, /git ls-tree <sha> -- <cited-and-resolved-paths>[^.]*lists every cited and resolved target path/i);
-  assert.match(grounding, /git diff --name-only <sha> -- <cited-and-resolved-paths>[^.]*returns empty/i);
+  // The carry-forward conditions live in the explorer brief; grounding links them.
+  assert.ok(links(grounding).includes('templates/explorer-brief.md#map-budget-and-output'));
+  assert.ok(grounding.includes('carries forward an entry'));
+  assert.ok(grounding.includes("explorer brief's scope-round rule"));
   assert.match(grounding, /re-read and re-verify/);
   assert.ok(grounding.includes('refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations'));
   assert.equal(grounding.split('git status').length - 1, 1, 'git status appears only as a prohibition');

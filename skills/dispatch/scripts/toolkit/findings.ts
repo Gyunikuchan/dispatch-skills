@@ -115,7 +115,7 @@ export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asO
 // Every content report for a round with its durable identity: findings.json
 // first, then each generation in numeric order and each attempt file in
 // numeric order. A clean generation contributes no identity. A report without
-// a numeric asOfSeq keeps identity 0, so a legacy closing note still covers it.
+// a numeric asOfSeq keeps identity 0.
 export type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState };
 export function contentReports(session: string, review: string, round: number): ReportContent[] {
   const out: ReportContent[] = [];
@@ -155,36 +155,34 @@ export function reportSeqs(session: string, review: string, round: number): numb
   return [...new Set(contentReports(session, review, round).map(report => report.seq))].sort((left, right) => left - right);
 }
 
-/** Closing decisions for a round: legacy keys and per-report suffixed keys alike. */
-export function closingNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq?: number}[] {
-  const out: {seq: number; reportSeq?: number}[] = [];
+/** Closing decisions for a round: per-report suffixed keys. */
+export function closingNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq: number}[] {
+  const out: {seq: number; reportSeq: number}[] = [];
   for (const row of fold.records) {
     if (row.kind !== 'note' || typeof row.key !== 'string') continue;
     const parsed = parseRepositoryNoteKey(row.key);
     if (!parsed || parsed.kind !== 'changes' || parsed.review !== review || parsed.round !== round) continue;
-    out.push({seq: row.seq, ...(parsed.reportSeq !== undefined ? {reportSeq: parsed.reportSeq} : {})});
+    out.push({seq: row.seq, reportSeq: parsed.reportSeq});
   }
   return out;
 }
 
-/** Quoted user rerun decisions for a round, legacy and suffixed. */
-export function rerunNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq?: number}[] {
-  const out: {seq: number; reportSeq?: number}[] = [];
+/** Quoted user rerun decisions for a round, per-report suffixed. */
+export function rerunNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq: number}[] {
+  const out: {seq: number; reportSeq: number}[] = [];
   for (const row of fold.records) {
     if (row.kind !== 'note' || typeof row.key !== 'string') continue;
     const parsed = parseRepositoryNoteKey(row.key);
     if (!parsed || parsed.kind !== 'rerun' || parsed.review !== review || parsed.round !== round) continue;
     if (row.by !== 'user' || !row.quote?.trim()) continue;
-    out.push({seq: row.seq, ...(parsed.reportSeq !== undefined ? {reportSeq: parsed.reportSeq} : {})});
+    out.push({seq: row.seq, reportSeq: parsed.reportSeq});
   }
   return out;
 }
 
-// A legacy closing note covers every earlier report; a suffixed note covers
-// only its named report. Both need a strictly later note sequence, so an
-// equal-seq report under a reused number stays open.
-export function coversReport(note: {seq: number; reportSeq?: number}, seq: number): boolean {
-  if (note.reportSeq === undefined) return note.seq > seq;
+// A suffixed note covers only its named report and needs a strictly later
+// note sequence, so an equal-seq report under a reused number stays open.
+export function coversReport(note: {seq: number; reportSeq: number}, seq: number): boolean {
   return note.reportSeq === seq && note.seq > seq;
 }
 
@@ -195,19 +193,14 @@ export function isReportsClosed(fold: Fold, review: string, round: number, seqs:
   return seqs.every(seq => notes.some(note => coversReport(note, seq)));
 }
 
-// The report a rerun decision acknowledges: an explicit suffix, or the latest
-// report finalized at or before a legacy note (legacy keys carry no suffix,
-// so time binds them). A later report under the same number matches no stale
-// decision.
-export function rerunCoverSeq(session: string, review: string, round: number, note: {seq: number; reportSeq?: number}): number {
-  if (note.reportSeq !== undefined) return note.reportSeq;
-  let covered = 0;
-  for (const seq of reportSeqs(session, review, round)) if (seq <= note.seq) covered = Math.max(covered, seq);
-  return covered;
+// The report a rerun decision acknowledges is its explicit suffix. A later
+// report under the same number matches no stale decision.
+export function rerunCoverSeq(session: string, review: string, round: number, note: {seq: number; reportSeq: number}): number {
+  return note.reportSeq;
 }
 
 /** A rerun decision grants only the latest uncovered report of its round: a
- * quoted or legacy decision for an earlier or already-closed report grants
+ * quoted decision for an earlier or already-closed report grants
  * nothing for the still-open one. */
 export function rerunGranted(session: string, fold: Fold, review: string, round: number): boolean {
   const seqs = reportSeqs(session, review, round);
@@ -219,8 +212,8 @@ export function rerunGranted(session: string, fold: Fold, review: string, round:
   return rerunNotesFor(fold, review, round).some(note => rerunCoverSeq(session, review, round, note) === current);
 }
 
-// Rerun admission counts legacy and per-report suffixed decisions alike: the
-// shared repository-note parser recognizes both key forms, so a documented
+// Rerun admission counts per-report suffixed decisions: the shared
+// repository-note parser recognizes the suffixed key form, so a documented
 // suffixed decision grants its round. The pre-gate stays because admission
 // and isRerunRound scope the grant to one named round before binding it to
 // the current report via rerunGranted.

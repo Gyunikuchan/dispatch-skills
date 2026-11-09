@@ -423,3 +423,119 @@ test('writer brief states the host explorer model and effort or that none resolv
     f.cleanup();
   }
 });
+
+describe('explorer brief', () => {
+  test('renders complete with no unfilled placeholder', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const values = {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'};
+      const valuesPath = path.join(f.session, 'explorer-values.json');
+      fs.writeFileSync(valuesPath, JSON.stringify(values));
+      f.lines.length = 0;
+      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      const output = f.output();
+      const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+      assert.ok(value.briefPath);
+      const brief = fs.readFileSync(value.briefPath, 'utf8');
+      assert.equal(value.bytes, Buffer.byteLength(brief));
+      assert.doesNotMatch(brief, /\{\{\w+\}\}/);
+      assert.doesNotMatch(brief, /]\(/);
+      for (const text of [values.objective, values.questions, values.outputPath, 'lint run', 'dispatch.ts', '16,384', '# Context map:', '## Not covered', 'Host rule files:']) assert.ok(brief.includes(text), text);
+      assert.ok(!brief.includes('Writer focus (task writers only'), 'explorer quality carries no writer directive');
+      assert.ok(output.summary.includes(value.briefPath));
+    } finally { f.cleanup(); }
+  });
+
+  test('refuses missing or unknown value without writing', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const briefs = path.join(f.session, '.state', 'briefs');
+      const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
+      const cases: Record<string, string>[] = [
+        {objective: 'Map.', questions: '- Q?'},
+        {objective: 'Map.', questions: '- Q?', outputPath: 'out.md', extra: 'x'},
+        {objective: '   ', questions: '- Q?', outputPath: 'out.md'},
+      ];
+      for (const [index, values] of cases.entries()) {
+        const valuesPath = path.join(f.session, `explorer-bad-${index}.json`);
+        fs.writeFileSync(valuesPath, JSON.stringify(values));
+        f.lines.length = 0;
+        const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session], f.deps);
+        assert.equal(exit, 1, JSON.stringify(values));
+        assert.equal(f.output().reason, 'invalid-input');
+      }
+      const malformed = path.join(f.session, 'explorer-malformed.json');
+      fs.writeFileSync(malformed, '{');
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', malformed, '--session', f.session], f.deps), 1);
+      assert.equal(f.output().reason, 'invalid-input');
+      const after = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
+      assert.deepEqual(after, before);
+    } finally { f.cleanup(); }
+  });
+});
+
+describe('test-cleanup brief', () => {
+  test('renders complete with no unfilled placeholder', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const base = 'a'.repeat(40);
+      const integrationPath = '.scratch/worktrees/integration';
+      const valuesPath = path.join(f.session, 'cleanup-values.json');
+      fs.writeFileSync(valuesPath, JSON.stringify({base, integrationPath}));
+      f.lines.length = 0;
+      const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      const output = f.output();
+      const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+      assert.ok(value.briefPath);
+      const brief = fs.readFileSync(value.briefPath, 'utf8');
+      assert.equal(value.bytes, Buffer.byteLength(brief));
+      assert.doesNotMatch(brief, /\{\{\w+\}\}/);
+      assert.doesNotMatch(brief, /]\(/);
+      for (const text of [base, integrationPath, 'work.plan.md', 'Run no Git write commands', '- Prune:', '{"removed": ["SC1"], "deleted": 0, "merged": 0}']) assert.ok(brief.includes(text), text);
+      assert.ok(!brief.includes('Writer focus (task writers only'), 'cleanup quality carries no writer directive');
+      const match = /`([^`]*work\.plan\.md)`/.exec(brief);
+      assert.ok(match, 'bound plan path');
+      assert.equal(fs.readFileSync(path.resolve(match[1]!), 'utf8'), fs.readFileSync(f.planPath, 'utf8'));
+      assert.ok(output.summary.includes(value.briefPath));
+    } finally { f.cleanup(); }
+  });
+
+  test('refuses missing, unknown or unbound plan without writing', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const briefs = path.join(f.session, '.state', 'briefs');
+      const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
+      const cases: Record<string, string>[] = [
+        {integrationPath: 'integration'},
+        {base: 'a'.repeat(40), integrationPath: 'integration', extra: 'x'},
+        {base: '', integrationPath: 'integration'},
+      ];
+      for (const [index, values] of cases.entries()) {
+        const valuesPath = path.join(f.session, `cleanup-bad-${index}.json`);
+        fs.writeFileSync(valuesPath, JSON.stringify(values));
+        f.lines.length = 0;
+        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session], f.deps);
+        assert.equal(exit, 1, JSON.stringify(values));
+        assert.equal(f.output().reason, 'invalid-input');
+      }
+      const g = sessionFixture({memory: true});
+      try {
+        const valuesPath = path.join(g.session, 'cleanup-values.json');
+        fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
+        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', g.session], g.deps);
+        assert.equal(exit, 4);
+        assert.equal(g.output().reason, 'lint-errors');
+        assert.equal(fs.existsSync(path.join(g.session, '.state', 'briefs')), false);
+      } finally { g.cleanup(); }
+      const after = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
+      assert.deepEqual(after, before);
+    } finally { f.cleanup(); }
+  });
+});

@@ -4,6 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { KINDS, validateRecord } from '../../skills/dispatch/scripts/toolkit/records.ts';
+import { reviewPrompt } from '../../skills/dispatch/scripts/toolkit/prompts.ts';
+import { qualityCriteria } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import type { QualityConsumer } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import type { ReviewKind } from '../../skills/dispatch/scripts/toolkit/domain/types.ts';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -12,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 14600 covers measured 14567 driver LOC (software-factory additions plus stall-nudge provider resume, runner nudge and diagnostics marker), headroom 33; raised from 14561 by user authorization "Raise budget to 14600" in session 20261107T0657Z-stall-detection-and-continue-nudge-for-p.
+  // NOTE: 14900 ceiling per factory.plan.md Decide (raised 14600 to 14900 by user authorization "Raise ceiling to 14900"; covers measured 14790 with headroom).
   assert.ok(
-    lines <= 14600,
-    `driver TS LOC ${lines} exceeds 14600 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    lines <= 14900,
+    `driver TS LOC ${lines} exceeds 14900 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   assert.ok(
     KINDS.length <= 14,
@@ -27,6 +31,89 @@ test('toolkit stays within the structural size budgets', () => {
     bytes <= 7488,
     `SKILL.md bytes ${bytes} exceeds 7488 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
   );
+});
+
+const STEP_BUDGET = 37067;
+const PLAN_AUTHORING_BUDGET = 36914;
+const GUIDES = ['ask', 'design', 'plan', 'implement', 'review'] as const;
+
+function slug(heading: string): string {
+  return heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Byte size of a whole reference file, or of the section under an anchor heading.
+function sectionBytes(file: string, anchor: string | null): number {
+  const text = fs.readFileSync(path.join(root, 'skills/dispatch', file), 'utf8');
+  if (!anchor) return Buffer.byteLength(text);
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => {
+    const match = /^(#{2,4})\s+(.*?)\s*$/.exec(line);
+    return match !== null && slug(match[2]!) === anchor;
+  });
+  assert.ok(start >= 0, `${file}#${anchor} resolves to a heading`);
+  const level = /^(#{2,4})/.exec(lines[start]!)![1]!.length;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index++) {
+    const match = /^(#{2,4})\s+/.exec(lines[index]!);
+    if (match && match[1]!.length <= level) { end = index; break; }
+  }
+  return Buffer.byteLength(lines.slice(start, end).join('\n'));
+}
+
+test('verb steps stay within the per-step byte budgets', () => {
+  const skillBytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
+  for (const guide of GUIDES) {
+    const rel = `references/verbs/${guide}.md`;
+    const text = fs.readFileSync(path.join(root, 'skills/dispatch', rel), 'utf8');
+    assert.ok(text.includes('## Step reads'), `${rel} states its step table`);
+    const rows = text.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Step') && !line.startsWith('| ---'));
+    assert.ok(rows.length > 0, `${rel} has step rows`);
+    const guideBytes = fs.statSync(path.join(root, 'skills/dispatch', rel)).size;
+    for (const row of rows) {
+      const cells = row.split('|').map((cell) => cell.trim()).filter(Boolean);
+      const links = [...cells[1]!.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)];
+      assert.equal(links.length, 1, `${guide} step links exactly one file: ${row}`);
+      const target = links[0]![2]!;
+      assert.ok(!/^(https?:|mailto:|<)/.test(target), `${guide} step links a relative path: ${target}`);
+      const [ref, anchor] = target.split('#');
+      const file = path.posix.normalize(path.posix.join('references/verbs', ref!));
+      const total = sectionBytes(file, anchor ?? null) + skillBytes + guideBytes;
+      assert.ok(total <= STEP_BUDGET, `${guide} step reads ${total} bytes exceed ${STEP_BUDGET}: ${row.trim()}`);
+      if (guide === 'plan') {
+        assert.ok(total <= PLAN_AUTHORING_BUDGET, `plan authoring step reads ${total} bytes exceed ${PLAN_AUTHORING_BUDGET}: ${row.trim()}`);
+      }
+    }
+  }
+});
+
+test('rendered packs stay within the per-actor byte budgets', () => {
+  const skillRoot = path.join(root, 'skills/dispatch');
+  const templateBytes = (name: string) => fs.statSync(path.join(skillRoot, 'references/templates', name)).size;
+  const bar = fs.readFileSync(path.join(skillRoot, 'references/templates/quality-bar.md'), 'utf8');
+  const specStage = fs.readFileSync(path.join(skillRoot, 'references/spec-stage.md'), 'utf8');
+  const qualityBytes = (consumer: QualityConsumer) => Buffer.byteLength(qualityCriteria(bar, consumer, 0, specStage));
+  const promptBytes = (kind: ReviewKind) => Buffer.byteLength(reviewPrompt(kind, {
+    skillRoot, spec: { path: 's', hash: 'h' }, artifact: 'a',
+    planPath: 'None', taskSummary: 't', scope: 's', turnTarget: 1, round: 1,
+  }));
+  // NOTE: pack budgets from factory.plan.md SC5. The explorer/map/shared component
+  // estimates (5418/1824/5396) predate the T1 audience tags and the T6 map-budget
+  // sentence; the test enforces the pack totals plus the components that still hold.
+  assert.ok(promptBytes('code') <= 14648, `code reviewer prompt exceeds 14648 budget`);
+  assert.ok(promptBytes('plan') <= 16653, `plan reviewer prompt exceeds 16653 budget`);
+  assert.ok(promptBytes('design') <= 12439, `design reviewer prompt exceeds 12439 budget`);
+  const writer = templateBytes('writer-brief.md') + qualityBytes('writer');
+  assert.ok(writer <= 10520, `writer brief pack ${writer} exceeds 10520 budget`);
+  const explorerBrief = templateBytes('explorer-brief.md');
+  assert.ok(explorerBrief <= 5418, `explorer brief template ${explorerBrief} exceeds 5418 budget`);
+  const explorer = explorerBrief + templateBytes('context-map.md') + qualityBytes('explorer');
+  assert.ok(explorer <= 12638, `explorer pack ${explorer} exceeds 12638 budget`);
+  const cleanupQuality = qualityBytes('cleanup');
+  assert.ok(cleanupQuality <= 7653, `test-cleanup rendered quality ${cleanupQuality} exceeds 7653 budget`);
+  const cleanupBrief = templateBytes('test-cleanup-brief.md');
+  assert.ok(cleanupBrief <= 1870, `test-cleanup brief template ${cleanupBrief} exceeds 1870 budget`);
+  const cleanup = cleanupBrief + cleanupQuality;
+  assert.ok(cleanup <= 9523, `test-cleanup pack ${cleanup} exceeds 9523 budget`);
 });
 
 test('ledger authority is limited to approval, exceptions and user-selected levels', () => {

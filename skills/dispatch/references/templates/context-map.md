@@ -41,4 +41,4 @@ This is a claims artifact, not governing authority. Verify each claim you rely o
 - Use plain text before the — separator in Precedent and Conventions entries, including symbol names and dotted helpers; reserve backticks for repository refs.
 - Conventions is optional and does not produce plan-coverage warnings.
 - Mark consumers found only by text search with `(text-only)`.
-- A map warns above 16,384 UTF-8 bytes and errors above 32,768 bytes.
+- A map warns above the map budget and errors above twice it; the budget is rendered into the explorer brief from `DEFAULT_MAP_BUDGET`.

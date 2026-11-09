@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { currentSnapshot, gate, latest, withLedger } from './ledger.ts';
+import { currentSnapshot, foldLedger, gate, latest, withLedger } from './ledger.ts';
 import { parsePlan, selectTaskBrief } from './domain/plan.ts';
 import { qualityCriteria } from './domain/prompt.ts';
+import { DEFAULT_MAP_BUDGET } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
+import { stripBom } from '../lib/fs-ext.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
 import { normalizeProvider, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
 
@@ -110,6 +112,50 @@ function explorerText(skillRoot: string, platform: string | undefined): string {
   return entry.effort ? models + ', effort `' + entry.effort + '`' : models + ', no effort set';
 }
 
+/** Shared `{{slot}}` substitution; an unknown slot name refuses instead of emitting raw braces. */
+function fillSlots(label: string, text: string, slots: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    if (!Object.hasOwn(slots, name)) throw new Error(`Unknown ${label} brief slot ${name}`);
+    return slots[name]!;
+  });
+}
+
+function assertFilled(label: string, text: string): void {
+  if (/\{\{\w+\}\}/.test(text)) throw new ToolError(2, 'fault', `Unfilled ${label} brief placeholder`);
+  if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text)) throw new ToolError(2, 'fault', `Rendered ${label} brief contains a relative link`);
+}
+
+function nextBriefPath(directory: string, base: string): string {
+  let index = 1;
+  for (;;) {
+    const file = path.join(directory, `${base}-${index}.md`);
+    if (!fs.existsSync(file)) return file;
+    index++;
+  }
+}
+
+/** Reads a JSON values file; a missing, unreadable, unknown or blank value refuses before anything is written. */
+function readValues<const Keys extends string>(valuesPath: string, expected: readonly Keys[]): Record<Keys, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripBom(fs.readFileSync(path.resolve(valuesPath), 'utf8')));
+  } catch {
+    throw new ToolError(1, 'invalid-input', 'Cannot read values file ' + valuesPath);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError(1, 'invalid-input', 'Values file must hold a JSON object: ' + valuesPath);
+  const record = parsed as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!(expected as readonly string[]).includes(key)) throw new ToolError(1, 'invalid-input', 'Unknown value ' + key);
+  }
+  const out = {} as Record<Keys, string>;
+  for (const key of expected) {
+    const value = record[key];
+    if (typeof value !== 'string' || !value.trim()) throw new ToolError(1, 'invalid-input', 'Missing value ' + key);
+    out[key] = value;
+  }
+  return out;
+}
+
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
   const task = ctx.args[0]!;
@@ -150,14 +196,64 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     reportPath, redLogDir, redCapture: renderRedCapture(selected, task, worktree, redLogDir),
     contracts: checks(parsed.plan).find(check => check.criterion === 'contract')!.commands.map(command => '- `' + command + '`').join('\n'),
   };
-  const text = fs.readFileSync(path.join(templates, 'writer-brief.md'), 'utf8').replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
-    if (!Object.hasOwn(slots, name)) throw new Error('Unknown writer brief slot ' + name);
-    return slots[name]!;
-  });
+  const text = fillSlots('writer', fs.readFileSync(path.join(templates, 'writer-brief.md'), 'utf8'), slots);
   const directory = path.join(ctx.session, '.state', 'briefs');
   fs.mkdirSync(directory, {recursive: true});
   const file = path.join(directory, task + '-' + launch.launch + '.md');
   fs.writeFileSync(file, text);
   const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text)};
   return {ok: true, exit: 0, value, summary: task + ' launch ' + launch.launch + ': ' + file + ' (' + value.bytes + ' bytes)'};
+}
+
+const EXPLORER_VALUES = ['objective', 'questions', 'outputPath'] as const;
+const TEST_CLEANUP_VALUES = ['base', 'integrationPath'] as const;
+
+export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerResult> {
+  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
+  const values = readValues(ctx.args[0]!, EXPLORER_VALUES);
+  const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
+  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
+  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
+  const slots: Record<string, string> = {
+    objective: values.objective,
+    questions: values.questions,
+    outputPath: values.outputPath,
+    cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
+    session: ctx.session,
+    mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
+    contextMapTemplate: fs.readFileSync(path.join(templates, 'context-map.md'), 'utf8'),
+    quality: qualityCriteria(bar, 'explorer', 0, specStage),
+  };
+  const text = fillSlots('explorer', fs.readFileSync(path.join(templates, 'explorer-brief.md'), 'utf8'), slots);
+  assertFilled('explorer', text);
+  const directory = path.join(ctx.session, '.state', 'briefs');
+  fs.mkdirSync(directory, {recursive: true});
+  const file = nextBriefPath(directory, 'explorer');
+  fs.writeFileSync(file, text);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text)};
+  return {ok: true, exit: 0, value, summary: 'explorer brief: ' + file + ' (' + value.bytes + ' bytes)'};
+}
+
+export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<HandlerResult> {
+  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
+  const values = readValues(ctx.args[0]!, TEST_CLEANUP_VALUES);
+  const bind = latest(foldLedger(ctx.session), 'bind');
+  if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim()) throw new ToolError(4, 'lint-errors', 'No bound plan');
+  const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
+  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
+  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
+  const slots: Record<string, string> = {
+    base: values.base,
+    integrationPath: values.integrationPath,
+    planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']),
+    quality: qualityCriteria(bar, 'cleanup', 0, specStage),
+  };
+  const text = fillSlots('test-cleanup', fs.readFileSync(path.join(templates, 'test-cleanup-brief.md'), 'utf8'), slots);
+  assertFilled('test-cleanup', text);
+  const directory = path.join(ctx.session, '.state', 'briefs');
+  fs.mkdirSync(directory, {recursive: true});
+  const file = nextBriefPath(directory, 'test-cleanup');
+  fs.writeFileSync(file, text);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text)};
+  return {ok: true, exit: 0, value, summary: 'test-cleanup brief: ' + file + ' (' + value.bytes + ' bytes)'};
 }

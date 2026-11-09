@@ -15,6 +15,7 @@ const root = new URL('../../skills/dispatch/references/templates/', import.meta.
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
   'writer-brief.md', 'quality-bar.md', 'review-severity.md', 'context-map.md', 'explorer-brief.md', 'test-cleanup-brief.md',
+  'plan-field-notes.md',
 ];
 
 test('code review evidence is actionable with and without a bound plan', () => {
@@ -167,7 +168,15 @@ test('templates: every kept template exists and none are extra', () => {
 
 test('templates: no kept template contains <!--, rebuttal, or consensus', () => {
   for (const name of KEPT) {
-    const text = readFileSync(new URL(name, root), 'utf8');
+    let text = readFileSync(new URL(name, root), 'utf8');
+    if (name === 'quality-bar.md') {
+      const stripped = text.split('\n').filter((line) => !/^\s*<!--\s*for:\s*[^>]+?-->\s*$/.test(line)).join('\n');
+      assert.ok(!/<!--/.test(stripped), `${name} contains non-audience <!--`);
+      for (const line of text.split('\n').filter((line) => line.includes('<!--'))) {
+        assert.match(line, /^\s*<!--\s*for:\s*(code|plan|design|writer|cleanup|explorer|all|author)(,\s*(code|plan|design|writer|cleanup|explorer|all|author))*\s*-->\s*$/, `${name}: invalid audience tag ${line.trim()}`);
+      }
+      text = stripped;
+    }
     for (const token of [/<!--/, /rebuttal/i, /consensus/i]) assert.ok(!token.test(text), `${name} contains ${String(token)}`);
   }
 });
@@ -202,13 +211,15 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   for (const rule of ['- Artifact layout:', 'At a Glance', 'State each visible fact once; a summary must add a distinct view, not restate a later visible section.', 'A visible summary may restate collapsed `<details>` detail.', 'Keep task and increment behaviour visible before `<details>`', 'Keep machine fields outside callouts, prefer point form, and retain every required field.', '[!NOTE]', '[!IMPORTANT]']) assert.ok(section('spec').includes(rule), rule);
   const explorer = readFileSync(new URL('explorer-brief.md', root), 'utf8');
   for (const rule of ['Surprises', 'Not covered', '## Questions', '## Coverage checklist', '## Map, budget and output']) assert.ok(explorer.includes(rule), rule);
-  // Evidence rule: one shared home, reached by every consumer, linked from the explorer, stack neutral.
+  // Evidence rule: one shared home, reached by every consumer, embedded in each rendered brief.
   const evidenceRule = quality.split('\n').filter((line) => line.startsWith('- Evidence:'));
   assert.equal(evidenceRule.length, 1);
   for (const term of ['sample inspected against the population', 'uncertainty', "search method's exclusions", 'direct evidence the host supports', 'mark it unverified']) assert.ok(evidenceRule[0]!.includes(term), term);
   for (const consumer of ['code', 'plan', 'design', 'writer'] as const) assert.ok(qualityCriteria(quality, consumer, 0, specStage).includes(evidenceRule[0]!), consumer);
-  assert.ok(explorer.includes('[shared evidence rule](quality-bar.md#shared)'));
-  const planGuidance = readFileSync(new URL('plan.md', root), 'utf8');
+  assert.ok(explorer.includes('{{quality}}'));
+  assert.doesNotMatch(explorer, /\]\(/);
+  const planGuidance = readFileSync(new URL('plan-field-notes.md', root), 'utf8');
+  assert.ok(readFileSync(new URL('plan.md', root), 'utf8').includes('plan-field-notes.md'));
   for (const text of [evidenceRule[0]!, section('plan')]) assert.doesNotMatch(text, /\.codegraph|node_modules|\.gitignore|package\.json|\bnpm\b|\bjest\b|\bpytest\b/);
   assert.match(planGuidance, /Ownership names who changes the outcome, not who runs the evidence/);
   assert.match(planGuidance, /review-only criterion still completes by user manual-complete/);
@@ -222,12 +233,16 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   assert.ok(revision.includes('for a confirmed standalone spec revision that cannot, use the [note fallback](toolkit.md#note), which grants no edit or approval authority'));
   const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8').replace(/\s+/g, ' ');
   for (const rule of ['With a plan, its `## Key Decisions & Context` entries are settled', 'An attached "Approved technical-design context"', 'Obey an explicit Git range in Scope', 'when the diff changes a shared invariant, contract, or signature']) assert.ok(codePrompt.includes(rule), rule);
-  const explorerInputs: Record<string, string> = { objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md', cliPath: 'skills/dispatch/scripts/toolkit/cli.ts', session: '.scratch/session' };
+  const explorerInputs: Record<string, string> = { objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md', cliPath: 'skills/dispatch/scripts/toolkit/cli.ts', session: '.scratch/session', mapBudget: '16,384', contextMapTemplate: readFileSync(new URL('context-map.md', root), 'utf8'), quality: qualityCriteria(quality, 'explorer', 0, specStage) };
   const renderedExplorer = explorer.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
     assert.ok(Object.hasOwn(explorerInputs, name), name);
     return explorerInputs[name]!;
   });
-  t.diagnostic(`rendered explorer brief (fixed objective/questions/outputPath/cliPath/session): ${measureBrief(renderedExplorer).totalBytes} UTF-8 bytes; advisory only`);
+  assert.ok(renderedExplorer.includes(evidenceRule[0]!));
+  assert.ok(renderedExplorer.includes(readFileSync(new URL('context-map.md', root), 'utf8')));
+  assert.doesNotMatch(renderedExplorer, /\{\{\w+\}\}/);
+  assert.doesNotMatch(renderedExplorer, /\]\(/);
+  t.diagnostic(`rendered explorer brief (fixed objective/questions/outputPath/cliPath/session/mapBudget/contextMapTemplate/quality): ${measureBrief(renderedExplorer).totalBytes} UTF-8 bytes; advisory only`);
   for (const name of ['quality-bar.md', 'explorer-brief.md']) t.diagnostic(`${name}: ${Buffer.byteLength(readFileSync(new URL(name, root), 'utf8'), 'utf8')} UTF-8 bytes`);
   t.diagnostic(`writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer', 0, specStage), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
   for (const [kind, baseline] of [['code', 15627], ['plan', 19533], ['design', 15297]] as const) t.diagnostic(`${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`);
@@ -295,10 +310,19 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
 
 test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
   const brief = readFileSync(new URL('test-cleanup-brief.md', root), 'utf8');
-  assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}']);
+  assert.deepEqual([...new Set(brief.match(/\{\{\w+\}\}/g))].sort(), ['{{base}}', '{{integrationPath}}', '{{planPath}}', '{{quality}}']);
   assert.ok(brief.includes('git diff <base>..HEAD'));
   assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
-  assert.ok(brief.includes('quality-bar.md#testing'));
+  assert.ok(brief.includes('{{quality}}'));
+  assert.doesNotMatch(brief, /\]\(/);
+  const rendered = brief.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    const slots: Record<string, string> = {base: 'abc1234', integrationPath: '.scratch/worktrees/integration', planPath: 'work.plan.md', quality: qualityCriteria(readFileSync(new URL('quality-bar.md', root), 'utf8'), 'cleanup', 0, readFileSync(new URL('../spec-stage.md', root), 'utf8'))};
+    assert.ok(Object.hasOwn(slots, name), name);
+    return slots[name]!;
+  });
+  assert.ok(rendered.includes('Run no Git write commands'));
+  assert.doesNotMatch(rendered, /\{\{\w+\}\}/);
+  assert.doesNotMatch(rendered, /\]\(/);
 });
 
 const LEAN_ANCHORS = [

@@ -5,11 +5,19 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 ## shared
 
+<!-- for: all -->
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
+<!-- for: all -->
 - Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
-- Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.
+<!-- for: writer,cleanup -->
+- Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Report host-rule/brief conflicts under concerns.
+<!-- for: code,plan,design -->
+- Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Exclude host-rule/brief conflicts from findings.
+<!-- for: all -->
 - Evidence: a claim about an external format states the sample inspected against the population and its uncertainty; never generalize beyond that sample. An absence claim (no caller, no consumer, not present) checks the search method's exclusions (ignored paths, file types, generated output, dynamic dispatch) and rests on direct evidence the host supports, such as an index query, reference lookup or exhaustive listing; otherwise mark it unverified.
-- **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Map requirements to changes and goals to requirements; state non-goals. Check the result serves the requested users. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, XY problem, conflicting constraints, and missing prerequisites; add nothing beyond the ask. Keep the existing format of rendered output unless a recorded user decision changes it. Route a design or plan that changes intent through the user gate. Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited. An accepted `MUST` is never closed by that rule: re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present.
+- **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Map requirements to changes and goals to requirements; state non-goals. Check the result serves the requested users. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, XY problem, conflicting constraints, and missing prerequisites; add nothing beyond the ask. Keep the existing format of rendered output unless a recorded user decision changes it. Route a design or plan that changes intent through the user gate.
+<!-- for: author -->
+- Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited. An accepted `MUST` is never closed by that rule: re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present.
 - **maintainability** — Delete › reuse › stdlib or platform › installed dependency › new; never add a dependency for a few lines. DRY: one source of truth; search the repository by name and behaviour for an existing equivalent before adding any exported/shared symbol, helper, module or type. Rule of three: extract on third use; duplication beats wrong abstraction. YAGNI, KISS; deep modules, low coupling, high cohesion. Remove needless branches; fix root causes. Split by responsibility, never by length; add no helper that only shortens a function. A fix or remedy is the smallest change that removes the defect: prefer deletion; add no layer, config or dependency the defect does not need. Simplicity floor: simplification never removes trust-boundary validation, data-loss guards, security or accessibility controls, or requested behaviour; moved or merged code keeps its error handling and validation. Preserve Chesterton's fence; names/docs/comments explain why and track behaviour. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. Flag structural coupling or cohesion defects (shotgun surgery, divergent change, leaky abstractions, or CQS violations) only when the remedy removes concrete concepts, files, or code paths; never `blocks` or `critical` alone.
 - **correctness** — State system-wide invariants that hold within and across increments, and check domain-valid formulas and algorithms, preconditions, postconditions, and invariants; type-valid but domain-invalid states; valid transitions and reachable states; off-by-one errors; units, signs, and scales; runtime behavior; and type validity.
 - **reliability** — Cover edge, boundary, empty, and zero inputs; unhandled branches; partial failures and updates; atomicity and crash consistency; idempotency; races and TOCTOU; floating promises; fail-closed behavior; data loss; and destructive-operation guards.
@@ -18,6 +26,10 @@ Authors read the same sections through their author frame. Keep judging criteria
 - **compatibility** — Check breaking changes, Hyrum's law, semver, expand/contract migrations, rollback, version skew with graceful degradation, affected callers, persisted schemas and serialized formats, and portability across OS, shell, path, and encoding.
 - **operability** — Check deployment and runtime operation, observability through logs, metrics, and traces, actionable diagnostics, configuration, and a kill switch.
 - **usability** — Check WCAG accessibility, POLA (least astonishment), accessible UI, CLI/API ergonomics, and actionable errors.
+<!-- for: writer -->
+- No Git write commands.
+<!-- for: cleanup -->
+- Run no Git write commands (add, stash, commit, checkout, reset, restore).
 
 ## spec
 
@@ -25,8 +37,10 @@ Authors read the same sections through their author frame. Keep judging criteria
 
 - Visuals, summaries, and callouts: flag a visual aid or At a Glance summary when it is stale, contradicts governed or collapsed `<details>` content, or is decorative or duplicates visible prose/tables/visuals; flag `> [!NOTE]` (for information the user must know) or `> [!IMPORTANT]` (only for a decision they must make, consistent with `Decide:`) when misused or wrapping machine fields.
 
+<!-- for: author -->
 - Artifact layout: Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line. State each visible fact once; a summary must add a distinct view, not restate a later visible section. A visible summary may restate collapsed `<details>` detail. Keep task and increment behaviour visible before `<details>`; use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field.
 
+<!-- for: author -->
 ### Visual-aid bar
 
 A visual aid is a diagram, table, code, pseudo-code or data block. Include one when it explains content prose explains poorly, gives a skimmable map of three or more related items in long prose, or lets a reader grasp collapsed `<details>` detail, such as file changes, criteria or flow, without expanding it. Choose the smallest useful view that answers the reader’s question. Include relevant unchanged ownership, boundaries or flow; distinguish current context from proposed change with labels or diff notation, not color alone. Keep explanatory text adjacent. Match the content to its form:
@@ -58,7 +72,9 @@ Reject decorative or stale visuals and visuals that duplicate visible prose, tab
   3. Oracle: requirement-derived and discriminating; exact for deterministic output, else a property, invariant, relation or tolerance; fails on broken behaviour, passes a behaviour-preserving refactor.
   4. Unique kill: no other retained test or configured static check catches that regression; static checks never prove runtime authorization or state transitions.
 - Shape: one case per equivalence class and boundary; one layer per distinct failure, the lowest that observes it; merge only within one consumer scenario; tabulating is not merging. Prefer FIRST tests with diagnostic failures. When mocks, fixtures or infrastructure outweigh regression risk, use the closest executable or review evidence and record the limit.
+<!-- for: writer -->
 - Writer focus (task writers only; ignored by reviewers and test-cleanup): author failing RED proof tests first, implement to GREEN, and write durable regression-spec tests that pass the four gates above; leave suite-wide test pruning to the post-integration test-cleanup pass.
+<!-- for: code,plan,design,cleanup -->
 - Prune: delete or merge gate failures by category: static-enforced or trivial; coverage padding; redundant; implementation-coupled (private state, call order, mock counts, or wording and structure outside the contract; text stating a required or prohibited effect is contract); tautological (self-derived expectations, source restatements, test-created data); no required contract. Rewrite weak oracles (truthy, no-throw, shape-only) guarding retained contracts. Flag required contracts, failure modes and seams lacking a spec test. Keep a test while required-contract doubt remains.
 - Naming: name tests, describe blocks, files, comments, section headers and fixtures for behaviour; never cite plan artifacts (criterion, task or finding IDs, plan or session paths).
 

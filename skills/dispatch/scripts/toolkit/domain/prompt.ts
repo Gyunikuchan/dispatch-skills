@@ -125,13 +125,41 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
   return { variables, sections };
 }
 
-export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer';
+export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer' | 'cleanup' | 'explorer';
 export const qualitySections = {
   code: ['shared', 'code', 'testing'],
   writer: ['shared', 'code', 'testing'],
   plan: ['shared', 'spec', 'plan', 'testing'],
   design: ['shared', 'spec', 'design'],
+  cleanup: ['shared', 'testing'],
+  explorer: ['shared'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
+
+const REQUIRED_TAGGED = {
+  code: 5,
+  writer: 6,
+  plan: 5,
+  design: 4,
+  cleanup: 6,
+  explorer: 3,
+} as const satisfies Record<QualityConsumer, number>;
+
+const KNOWN_AUDIENCES = new Set(['code', 'plan', 'design', 'writer', 'cleanup', 'explorer', 'all', 'author']);
+const FOR_TAG_PATTERN = /^\s*<!--\s*for:\s*([^>]+?)\s*-->\s*$/;
+const DOCUMENT_LAYERS_LINK = '[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.';
+
+function parseAudienceTag(line: string): string[] {
+  const match = FOR_TAG_PATTERN.exec(line);
+  if (!match) return [];
+  return match[1]!.split(',').map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+function audienceAllows(tags: readonly string[] | null, consumer: QualityConsumer): boolean {
+  if (tags === null) return consumer !== 'explorer';
+  if (tags.includes('author')) return false;
+  if (tags.includes('all') || tags.includes(consumer)) return true;
+  return false;
+}
 
 export function rotate<T>(items: readonly T[], by: number): T[] {
   if (!items.length) return [];
@@ -156,30 +184,80 @@ export function qualityCriteria(markdown: string, consumer: QualityConsumer, rot
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
   const layers = extractDocumentLayers(specStageMarkdown);
-  return qualitySections[consumer].map((section) => {
-    let body = sections.get(section);
-    if (body === undefined) throw new Error(`Missing quality section: ${section}`);
-    if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
-    if (section === 'shared') {
-      body = body.replace('[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.', () => `document layers (${layers})`);
-      body = body.replace(' Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited. An accepted `MUST` is never closed by that rule: re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present.', '');
-      if (consumer !== 'writer') body = body.replace('Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.', 'Exclude host-rule/brief conflicts from findings.');
-      else body = body.replace('Writers report host-rule/brief conflicts under concerns; reviewers exclude them from findings.', 'Report host-rule/brief conflicts under concerns.');
+  let totalTagged = 0;
+  const rendered = qualitySections[consumer].map((section) => {
+    const raw = sections.get(section);
+    if (raw === undefined) throw new Error(`Missing quality section: ${section}`);
+    if (!raw.trim()) throw new Error(`Empty quality section: ${section}`);
+    const { body, tagged } = filterSection(raw, consumer, section);
+    totalTagged += tagged;
+    let out = body;
+    if (!out.trim()) throw new Error(`Empty quality section: ${section}`);
+    if (section === 'shared' && consumer !== 'explorer') {
+      if (!out.includes(DOCUMENT_LAYERS_LINK)) throw new Error(`Missing document layers link in shared section`);
+      out = out.replace(DOCUMENT_LAYERS_LINK, () => `document layers (${layers})`);
     }
-    if (section === 'spec') {
-      const lines = body.split('\n');
-      const visualIndex = lines.findIndex((line) => line.startsWith('### Visual-aid bar'));
-      let truncated = visualIndex >= 0 ? lines.slice(0, visualIndex) : lines;
-      truncated = truncated.filter((line) => !line.startsWith('- Artifact layout:'));
-      body = truncated.join('\n');
-    }
-    if (section === 'testing') {
-      const omit = consumer === 'writer' ? '- Prune:' : '- Writer focus';
-      body = body.split('\n').filter((line) => !line.startsWith(omit)).join('\n');
-      if (!body.trim()) throw new Error(`Empty quality section: ${section}`);
-    }
-    return rotateLines(body.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
+    return rotateLines(out.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
   }).join('\n\n');
+  const expected = REQUIRED_TAGGED[consumer];
+  if (totalTagged !== expected) throw new Error(`Tagged bullet count mismatch for consumer "${consumer}": expected ${expected}, got ${totalTagged}`);
+  return rendered;
+}
+
+function filterSection(body: string, consumer: QualityConsumer, _section: string): { body: string; tagged: number } {
+  const lines = body.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let tagged = 0;
+  let pending: string[] | null = null;
+  let active: string[] | null = null;
+  for (const line of lines) {
+    if (FOR_TAG_PATTERN.test(line)) {
+      const tags = parseAudienceTag(line);
+      for (const tag of tags) {
+        if (!KNOWN_AUDIENCES.has(tag)) throw new Error(`Unknown audience tag: ${tag}`);
+      }
+      if (!tags.length) throw new Error(`Audience tag names no consumer: ${line.trim()}`);
+      if (pending) throw new Error(`Audience tag without target: ${line.trim()}`);
+      pending = tags;
+      continue;
+    }
+    const subheading = /^###\s/.test(line);
+    if (subheading) {
+      if (pending) {
+        active = pending;
+        pending = null;
+      } else {
+        active = null;
+      }
+      const tags = active;
+      const taggedHeading = tags !== null;
+      if (!audienceAllows(tags, consumer)) continue;
+      out.push(line);
+      void taggedHeading;
+      continue;
+    }
+    if (pending) {
+      if (!line.startsWith('- ')) throw new Error(`Audience tag must precede a bullet or subsection: ${pending.join(',')}`);
+      const tags = pending;
+      pending = null;
+      if (!audienceAllows(tags, consumer)) continue;
+      out.push(line);
+      tagged += 1;
+      continue;
+    }
+    if (line.startsWith('- ')) {
+      const tags = active;
+      if (!audienceAllows(tags, consumer)) continue;
+      out.push(line);
+      if (tags !== null) tagged += 1;
+      continue;
+    }
+    const tags = active;
+    if (!audienceAllows(tags, consumer)) continue;
+    out.push(line);
+  }
+  if (pending) throw new Error(`Audience tag without target: ${pending.join(',')}`);
+  return { body: out.join('\n'), tagged };
 }
 
 /** Selects the consumer's criteria as the frame's single `quality` slot section. */

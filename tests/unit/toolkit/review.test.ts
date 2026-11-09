@@ -848,10 +848,10 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
         "Confirm or dispute the host's evidence-backed rejection of your earlier MUST finding(s) on this unchanged target.",
         '- Spec Path: ' + round.spec.path,
         '- Spec Hash: ' + round.spec.hash,
-        '- Target: ' + f.plan,
+        '- Target: ' + path.join(f.directory, 'round-2.input.md'),
         '- Target Revision: ' + round.target,
         '- Checkout Path: ' + fs.realpathSync(f.root),
-        '- Plan: ' + f.plan,
+        '- Plan: ' + path.join(f.directory, 'round-2.input.md'),
         '- Scope: ' + round.scope,
         '- Finding: R1-F001',
         '- Target: § Work',
@@ -971,7 +971,7 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       seedConfirmationRound(f, 2, {...first, generation: 1, roster: [{slot: 'agy[0]', provider: 'agy', model: 'fake', index: 0, reserve: false}], scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
       const second = f.read(2, 'findings.json');
       fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
-      await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2', data: {text: 'Grant one rerun'}}, f.deps);
+      await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
       planDelegate(f, CLEAN);
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
