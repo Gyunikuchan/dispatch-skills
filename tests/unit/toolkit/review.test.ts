@@ -234,7 +234,7 @@ const planAccepted = async (f: ReviewFixture, step: number, change = true) => {
 };
 const callDefaultLevel = async (f: ReviewFixture) => {
   f.lines.length = 0;
-  const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--session', f.session], f.deps);
+  const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--session', f.session, '--host', 'opencode'], f.deps);
   const output = f.output();
   return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
 };
@@ -364,7 +364,7 @@ test('open ceiling blocks review across configured and zero round levels', async
     assert.equal(foldLedger(f.session).lastSeq, seq);
 
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 4);
     assert.equal(f.output().reason, 'escalation-open');
   } finally { f.cleanup(); }
@@ -375,7 +375,7 @@ test('zero round level opens the saved ceiling', async () => {
   try {
     await seedAcceptedCeiling(f);
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 4);
     assert.equal(f.output().reason, 'review-ceiling');
     assert.deepEqual(openCeilingRows(f), [[ceilingId(PLAN_REVIEW, 4), 'open']]);
@@ -387,7 +387,7 @@ test('zero round level refuses a saved round cap without continuation', async ()
   try {
     seedCompletedRound(f, 2, [seededFinding('R2-F001', 'SHOULD')]);
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 4);
     assert.equal(f.output().reason, 'round-cap');
     assert.match(f.output().summary, /round cap 2/);
@@ -402,7 +402,7 @@ test('zero round level runs a pending rejection confirmation', async () => {
     await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R2-F001', ruling: 'rejected', rationale: 'Still broken' });
     confirmDelegate(f);
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 0, JSON.stringify(f.output()));
     assert.ok(fs.existsSync(path.join(f.directory, 'round-3', 'findings.json')));
   } finally { f.cleanup(); }
@@ -415,7 +415,7 @@ test('zero round level reuses an incomplete saved round', async () => {
     seedRound(f, 5);
     planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 0, JSON.stringify(f.output()));
     assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
     assert.equal(openCeilingRows(f).length, 0);
@@ -437,7 +437,7 @@ test('zero round level refuses before replacing a moved incomplete round', async
     const pendingBytes = fs.readFileSync(pendingPath, 'utf8');
     fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 4);
     assert.equal(f.output().reason, 'level-unapproved');
     assert.ok(f.read(5, 'round.json').roster.length > 0);
@@ -463,7 +463,7 @@ test('staffed level refuses a moved round when no live reviewer remains', async 
     fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
     f.deps.liveness = {claude: false, agy: false, codex: false, copilot: false, opencode: false};
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 4);
     assert.equal(f.output().reason, 'level-unapproved');
     assert.match(f.output().summary, /no live or usable reviewer/i);
@@ -481,7 +481,7 @@ test('zero round level reuses a staffed previous reviewer on a moved round', asy
     fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
     planDelegate(f, CLEAN);
     f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session], f.deps);
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
     assert.equal(exit, 0, JSON.stringify(f.output()));
     assert.ok(fs.existsSync(path.join(f.directory, 'round-2/findings.json')));
   } finally { f.cleanup(); }

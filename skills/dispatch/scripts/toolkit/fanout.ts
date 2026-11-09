@@ -7,6 +7,7 @@ import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, failureDisposition } from '../policy/cascade.ts';
 import { resolveRoster, nativeFirstRoute, normalizeProvider, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
+import { opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome } from '../providers/types.ts';
 import { sessionScope, formatSafetyPrompt } from '../providers/runner.ts';
@@ -25,10 +26,17 @@ export type BlockedAttempt = {provider: string; model: string | null; reason: st
 export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string; blocked?: {reason: string; reasonHash: string}};
 export type SlotOutcome = {slot: string; blocked?: BlockedAttempt[]} & (
   {state: 'done'; text: string; responder?: {slot: string; provider: string; model: string | null; native: boolean; effort?: string}} |
-  {state: 'native'; promptPath: string; replyPath: string; provider: string; attempt: string; cwd: string; model?: string | readonly string[]; effort?: string; error?: string; cliFallback?: true; nativeError?: string} |
+  {state: 'native'; promptPath: string; replyPath: string; provider: string; attempt: string; cwd: string; model?: string | readonly string[]; effort?: string; subagentModels?: string[]; error?: string; cliFallback?: true; nativeError?: string} |
   {state: 'failed'; cls: FailureClass; reason: string; cliOnly?: true}
 );
 export type NativeFailure = {attempt: string; reason: string; reasonHash: string};
+
+/** Native launch fields share one shape: provider opencode carries one `P/M#E` (or `P/M`) value per model. */
+const nativeSubagentModels = (provider: string, model: string | readonly string[] | undefined, effort: string | undefined): string[] | undefined => {
+  if (normalizeProvider(provider) !== 'opencode') return undefined;
+  const models = model === undefined ? undefined : typeof model === 'string' ? [model] : [...model];
+  return opencodeSubagentModels(models, effort ?? null);
+};
 type FanOutInput = {
   dir: string; slots: readonly RosterSlot[] | Roster;
   prompt: string | ((slot: RosterSlot) => string);
@@ -49,10 +57,6 @@ export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Le
   const roster = resolveRoster({level, readDelegates,
     orchestrator: deps.orchestrator, liveness: deps.liveness, ...(deps.sandboxSupported ? {sandboxSupported: deps.sandboxSupported} : {}),
     ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
-  // Fail closed: without a host, native-only providers would drop and silently shrink coverage.
-  if (!deps.orchestrator && roster.underfill?.excluded.length) {
-    throw new ToolError(4, 'host-undetected', `No session host recorded; native-only providers excluded: ${roster.underfill.excluded.join(', ')}. Run session reactivate --session-dir <session> --host <platform>.`);
-  }
   const seen = new Set<string>();
   const nativeFirstProviders: string[] = [];
   for (const key of Object.keys(readDelegates)) {
@@ -293,11 +297,13 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       const current = fs.readFileSync(baseFile, 'utf8');
       if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
     } catch { fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), {mode: 0o600}); }
+    const subagentModels = nativeSubagentModels(slot.provider, slot.model, slot.effort);
     const outcome: Extract<SlotOutcome, {state: 'native'}> = {
       slot: slot.slot, state: 'native', promptPath: baseFile, replyPath,
       provider: slot.provider, attempt, cwd,
       ...(slot.model !== undefined ? {model: slot.model} : {}),
       ...(slot.effort !== undefined ? {effort: slot.effort} : {}),
+      ...(subagentModels !== undefined ? {subagentModels} : {}),
     };
     markNativeLaunched();
     return outcome;
@@ -316,11 +322,13 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     fs.writeFileSync(nativeFile, buildNativePrompt(baseText, replyPath), {mode: 0o600});
     emit(attemptOf(logical, physical),{kind:'native',state:'pending'});
     markNativeLaunched();
+    const subagentModels = nativeSubagentModels(physical.provider, physical.model, physical.effort);
     return {
       slot: logical.slot, state: 'native', promptPath: nativeFile, replyPath,
       provider: physical.provider, attempt, cwd,
       ...(physical.model !== undefined ? {model: physical.model} : {}),
       ...(physical.effort !== undefined ? {effort: physical.effort} : {}),
+      ...(subagentModels !== undefined ? {subagentModels} : {}),
     };
   };
 
@@ -408,7 +416,8 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // slot; (4) on CLI failure a non-substitute takes the reserve once, else the
   // slot saves failed. A substitute (physical.slot !== logical slot) never
   // takes a second reserve, and a native-only attempt whose provider is no
-  // longer the host saves failed without minting a descriptor.
+  // longer the host saves failed without minting a descriptor. The current
+  // host never runs its CLI: it takes the reserve or saves failed.
   const fallbackToCli = async (
     logical: RosterSlot,
     nativeSaved: Extract<SlotOutcome, {state: 'native'}>,
@@ -425,6 +434,18 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     emit(attemptOf(logical, nativeSaved), {kind: 'native', state: 'failed'});
     invalidateReply(nativeSaved.replyPath);
     const {physical} = routeForNative(nativeSaved);
+    const failedForHost = (): Extract<SlotOutcome, {state: 'failed'}> => ({slot: logical.slot, state: 'failed', cls: blockedFailure ? 'blocked' : 'refusal', reason: (blockedFailure ? 'blocked: ' : 'refusal: ') + display, ...(merged.length ? {blocked: merged} : {})});
+    if (physical !== undefined && isCurrentHost(physical.provider)) {
+      const failed = failedForHost();
+      const isReserveSubstitute = physical.slot !== logical.slot;
+      if (!isReserveSubstitute && reserveAllowed(logical.slot, failed.cls)) {
+        const baseFile = basePathOf(logical.slot);
+        fs.writeFileSync(baseFile, baseTextOf(logical), {mode: 0o600});
+        const launched = await takeReserve(logical, failed, baseFile);
+        if (launched) return launched.state === 'native' ? launched : saveLogical(logical, launched);
+      }
+      return saveLogical(logical, failed);
+    }
     if (physical === undefined || physical.native) {
       const failed: Extract<SlotOutcome, {state: 'failed'}> = {slot: logical.slot, state: 'failed', cls: blockedFailure ? 'blocked' : 'refusal', reason: (blockedFailure ? 'blocked: ' : 'refusal: ') + display, ...(merged.length ? {blocked: merged} : {})};
       return saveLogical(logical, failed);
@@ -574,11 +595,13 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       const current = fs.readFileSync(baseFile, 'utf8');
       if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
     } catch { fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), {mode: 0o600}); }
+    const subagentModels = nativeSubagentModels(reserve.provider, reserve.model, reserve.effort);
     const created: Extract<SlotOutcome, {state: 'native'}> = {
       slot: logical.slot, state: 'native', promptPath: baseFile, replyPath,
       provider: reserve.provider, attempt: `${reserve.slot}#${nonce}`, cwd,
       ...(reserve.model !== undefined ? {model: reserve.model} : {}),
       ...(reserve.effort !== undefined ? {effort: reserve.effort} : {}),
+      ...(subagentModels !== undefined ? {subagentModels} : {}),
     };
     const withBlocked = failed.blocked?.length ? {...created, blocked: mergeBlocked(created.blocked, failed.blocked)} : created;
     markNativeLaunched();
@@ -598,7 +621,8 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     return {physical, routeOk: physical !== undefined && physicalRouteOk(physical, saved.provider), first: isNativeFirstProvider(physical?.provider ?? saved.provider, nativeFirstProviders)};
   };
   // One reserve gate for every path: native-first descriptor, native-only on
-  // current host, keep failed off-host, CLI only for non-native.
+  // current host, keep failed off-host, CLI only for non-native. The current
+  // host never runs its CLI: a host reserve mints a native descriptor.
   const takeReserve = async (logical: RosterSlot, failed: SlotOutcome, promptPath: string): Promise<SlotOutcome | undefined> => {
     if (!firstReserve) return undefined;
     if (isNativeFirstProvider(firstReserve.provider, nativeFirstProviders) && !firstReserve.native) {
@@ -614,6 +638,14 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       claimReserve(logical.slot);
       return createNativeOnlyReserve(logical, firstReserve, failed);
     }
+    if (isCurrentHost(firstReserve.provider)) {
+      const native = createNativeFirst(logical, firstReserve);
+      const withBlocked = failed.blocked?.length ? {...native, blocked: mergeBlocked(native.blocked, failed.blocked)} : native;
+      claimReserve(logical.slot);
+      atomic(fileOfLogical(logical.slot), withBlocked);
+      emit(logical, {kind:'slot', state:'native'});
+      return withBlocked;
+    }
     claimReserve(logical.slot);
     const substitute = await voiceCLI(firstReserve, logical.slot, promptPath);
     emit(firstReserve, {kind:'slot', state:substitute.state, targetSlot:logical.slot, ...(substitute.state === 'failed' ? {cls: substitute.cls} : {})});
@@ -622,10 +654,26 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   };
   // A reported native failure ends its attempt. External reports use the exact
   // 'BLOCKED:' marker only; any other casing is a refusal, not the protocol marker.
-  const saveReportFailure = (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, report: NativeFailure): Promise<SlotOutcome> => {
+  // A current-host attempt that is not a substitute takes its reserve when allowed.
+  const saveReportFailure = async (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, report: NativeFailure): Promise<SlotOutcome> => {
     const sanitized = blockedDisplayOf(report.reason);
     invalidateReply(native.replyPath);
     emit(attemptOf(slot, native), {kind: 'native', state: 'failed'});
+    const attemptSlot = native.attempt.split('#')[0] ?? '';
+    const isSubstitute = attemptSlot !== slot.slot;
+    if (isCurrentHost(native.provider) && !isSubstitute) {
+      const blockedForHost = reportIsBlocked(report.reason) ? mergeBlocked(native.blocked, reportEvidence(native, report)) : native.blocked;
+      const failed: Extract<SlotOutcome, {state: 'failed'}> = reportIsBlocked(report.reason)
+        ? {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + sanitized, ...(blockedForHost?.length ? {blocked: blockedForHost} : {})}
+        : {slot: slot.slot, state: 'failed', cls: 'refusal', reason: 'refusal: ' + sanitized, ...(blockedForHost?.length ? {blocked: blockedForHost} : {})};
+      if (reserveAllowed(slot.slot, failed.cls)) {
+        const baseFile = basePathOf(slot.slot);
+        fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
+        const launched = await takeReserve(slot, failed, baseFile);
+        if (launched) return launched.state === 'native' ? launched : saveLogical(slot, launched);
+      }
+      return saveLogical(slot, failed);
+    }
     if (reportIsBlocked(report.reason)) {
       const blocked = mergeBlocked(native.blocked, reportEvidence(native, report));
       return saveLogical(slot, {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + sanitized, blocked});
@@ -683,12 +731,38 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         if (report) {
           matchedReportAttempts.add(report.attempt);
           invalidateReply(nativeSaved.replyPath);
-          savedOutcomes.set(slot.slot, await saveReportFailure(slot, nativeSaved, report));
+          const reported = await saveReportFailure(slot, nativeSaved, report);
+          savedOutcomes.set(slot.slot, reported);
           prepassDone.add(slot.slot);
           continue;
         }
         if (fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
+          const {isBlocked, raw} = parseBlockedFile(text);
+          if (isBlocked && isCurrentHost(nativeSaved.provider)) {
+            const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: nativeSaved.model}), raw);
+            emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:'blocked'});
+            emit(attemptOf(slot,nativeSaved),{kind:'native',state:'failed',replay:true});
+            invalidateReply(nativeSaved.replyPath);
+            const blocked = mergeBlocked(nativeSaved.blocked, [entry]);
+            const failed: Extract<SlotOutcome, {state: 'failed'}> = {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + entry.reason, ...(blocked.length ? {blocked} : {})};
+            const attemptSlot = nativeSaved.attempt.split('#')[0] ?? '';
+            const isSubstitute = attemptSlot !== slot.slot;
+            if (!isSubstitute && reserveAllowed(slot.slot, failed.cls)) {
+              const baseFile = basePathOf(slot.slot);
+              fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
+              const launched = await takeReserve(slot, failed, baseFile);
+              if (launched) {
+                const outcome = launched.state === 'native' ? launched : await saveLogical(slot, launched);
+                savedOutcomes.set(slot.slot, outcome);
+                prepassDone.add(slot.slot);
+                continue;
+              }
+            }
+            savedOutcomes.set(slot.slot, await saveLogical(slot, failed));
+            prepassDone.add(slot.slot);
+            continue;
+          }
           const checked = input.validate(text, slot.slot);
           emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
           emit(attemptOf(slot,nativeSaved),{kind:'native',state:checked.ok?'completed':'invalid',replay:true});
@@ -1072,6 +1146,11 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         outcomes.set(slot.slot, saved);
       }
     }
+    // Snapshot before any concurrent fallback tasks launch: each pushed task
+    // runs its sync prefix (marker persist and failed save) immediately, so a
+    // later live read would see a marker that already settled to failed in this
+    // same batch and trigger a plain retry for the same slot.
+    const waveInitial = new Map(targets.map(slot => [slot.slot, readSaved(slot.slot)]));
     // Process reports for natives in this wave (fallback now, no reply read).
     for (const slot of targets) {
       if (isOnly(slot)) continue;
@@ -1114,11 +1193,16 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       })());
     }
     // Run unsaved CLI targets alongside fallback cascades in one concurrent batch.
+    // A slot with a saved native (including a fallback marker) is resumed by
+    // its own fallback task above; it never runs a second CLI here. The check
+    // runs before any task launches so a marker that settles to failed in this
+    // same batch does not trigger a plain retry for the same slot.
     const cliTargets = targets.filter(slot => !isOnly(slot) && !isFirst(slot));
     for (const slot of cliTargets) {
+      const initial = waveInitial.get(slot.slot);
+      if (initial?.state === 'native') continue;
       waveTasks.push((async () => {
       const saved = readSaved(slot.slot);
-      if (saved?.state === 'native') return;
       if (saved?.state === 'done' && input.validate(saved.text, slot.slot).ok) {
         emit(slot,{kind:'slot',state:'done',replay:true});
         outcomes.set(slot.slot, saved);
@@ -1223,11 +1307,41 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         const nativeSaved = saved as Extract<SlotOutcome,{state:'native'}>;
         const report = nativeFailures.find(entry => entry.attempt === nativeSaved.attempt);
         if (report) {
-          outcomes.set(slot.slot, await saveReportFailure(slot, nativeSaved, report));
+          const reported = await saveReportFailure(slot, nativeSaved, report);
+          outcomes.set(slot.slot, reported);
+          if (reported.state === 'native' && !(reported as {cliFallback?: true}).cliFallback) pendingRemains = true;
           continue;
         }
         if (fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
+          const {isBlocked, raw} = parseBlockedFile(text);
+          if (isBlocked && isCurrentHost(nativeSaved.provider)) {
+            const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: nativeSaved.model}), raw);
+            emit(slot,{kind:'validation',surface:'native',outcome:'blocked'});
+            emit(slot,{kind:'native',state:'failed',replay:true});
+            invalidateReply(nativeSaved.replyPath);
+            const blocked = mergeBlocked(nativeSaved.blocked, [entry]);
+            const failed: Extract<SlotOutcome, {state: 'failed'}> = {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + entry.reason, ...(blocked.length ? {blocked} : {})};
+            const attemptSlot = nativeSaved.attempt.split('#')[0] ?? '';
+            const isSubstitute = attemptSlot !== slot.slot;
+            if (!isSubstitute && reserveAllowed(slot.slot, failed.cls)) {
+              const baseFile = basePathOf(slot.slot);
+              fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
+              const launched = await takeReserve(slot, failed, baseFile);
+              if (launched) {
+                if (launched.state === 'native') {
+                  outcomes.set(slot.slot, launched);
+                  pendingRemains = true;
+                } else {
+                  const savedLaunched = await saveLogical(slot, launched);
+                  outcomes.set(slot.slot, savedLaunched);
+                }
+                continue;
+              }
+            }
+            outcomes.set(slot.slot, await saveLogical(slot, failed));
+            continue;
+          }
           const checked = input.validate(text, slot.slot);
           emit(slot,{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
           if (checked.ok) {
@@ -1300,6 +1414,32 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
           const {isBlocked, raw} = parseBlockedFile(text);
           if (isBlocked) {
+            if (isCurrentHost(nativeSaved.provider)) {
+              const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: (nativeSaved as {model?: string | readonly string[]}).model}), raw);
+              emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:'blocked'});
+              emit(attemptOf(slot,nativeSaved),{kind:'native',state:'failed',replay:true});
+              invalidateReply(nativeSaved.replyPath);
+              const blocked = mergeBlocked(nativeSaved.blocked, [entry]);
+              const failed: Extract<SlotOutcome, {state: 'failed'}> = {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + entry.reason, ...(blocked.length ? {blocked} : {})};
+              const attemptSlot = nativeSaved.attempt.split('#')[0] ?? '';
+              const isSubstitute = attemptSlot !== slot.slot;
+              if (!isSubstitute && reserveAllowed(slot.slot, failed.cls)) {
+                const baseFile = basePathOf(slot.slot);
+                fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
+                const launched = await takeReserve(slot, failed, baseFile);
+                if (launched) {
+                  if (launched.state === 'native') {
+                    outcomes.set(slot.slot, launched);
+                    pendingRemains = true;
+                  } else {
+                    outcomes.set(slot.slot, await saveLogical(slot, launched));
+                  }
+                  continue;
+                }
+              }
+              outcomes.set(slot.slot, await saveLogical(slot, failed));
+              continue;
+            }
             const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: (nativeSaved as {model?: string | readonly string[]}).model}), raw);
             emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:'blocked'});
             emit(attemptOf(slot,nativeSaved),{kind:'native',state:'invalid',replay:true});
@@ -1388,14 +1528,22 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
         retryTasks.push((async () => {
           // Carry forward the saved blocked evidence: a retry that settles
           // the last pending voice must not drop it.
-          const priorBlocked = readSaved(slot.slot)?.blocked;
+          const savedFailed = readSaved(slot.slot);
+          const priorBlocked = savedFailed?.blocked;
           // A native-only reserve mint appends its reply section to this same
           // file: rewrite the base prompt unconditionally, as the CLI-only
           // path does, so the retry never reads a native reply section.
           const baseFile = basePathOf(slot.slot);
           fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
-          let retryOutcome = await voiceCLI(slot, slot.slot, baseFile);
-          if (priorBlocked?.length) retryOutcome = {...retryOutcome, blocked: mergeBlocked(priorBlocked, retryOutcome.blocked)};
+          let retryOutcome: SlotOutcome;
+          if (isCurrentHost(slot.provider)) {
+            retryOutcome = savedFailed?.state === 'failed'
+              ? (savedFailed as Extract<SlotOutcome, {state: 'failed'}>)
+              : {slot: slot.slot, state: 'failed', cls: 'refusal', reason: 'refusal: host voice unavailable', ...(priorBlocked?.length ? {blocked: priorBlocked} : {})} as Extract<SlotOutcome, {state: 'failed'}>;
+          } else {
+            retryOutcome = await voiceCLI(slot, slot.slot, baseFile);
+            if (priorBlocked?.length) retryOutcome = {...retryOutcome, blocked: mergeBlocked(priorBlocked, retryOutcome.blocked)};
+          }
           if (retryOutcome.state === 'failed' && reserveAllowed(slot.slot, retryOutcome.cls)) {
             const launched = await takeReserve(slot, retryOutcome, baseFile);
             if (launched) retryOutcome = launched;

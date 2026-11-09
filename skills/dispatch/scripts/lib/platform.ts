@@ -70,6 +70,15 @@ const MODEL_ENV: Readonly<Record<ProviderKey, readonly string[]>> = {
 
 export type Orchestrator = { platform: ProviderKey; model: string | null };
 
+/** OpenCode `subagent` model value: `P/M#E` with effort, otherwise `P/M`. */
+export const opencodeModelValue = (model: string, effort?: string | null): string => effort ? `${model}#${effort}` : model;
+
+/** OpenCode `subagentModels` for a launch: one value per model; absent when no model resolves. */
+export const opencodeSubagentModels = (models: readonly string[] | undefined, effort?: string | null): string[] | undefined => {
+  if (!models || models.length === 0) return undefined;
+  return models.map((model) => opencodeModelValue(model, effort ?? undefined));
+};
+
 /** The orchestrator for a recorded host, or null when the value is not a ProviderKey. */
 export function orchestratorFor(host: unknown, env: EnvGet): Orchestrator | null {
   if (typeof host !== 'string' || !Object.hasOwn(MODEL_ENV, host)) return null;

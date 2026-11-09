@@ -8,18 +8,19 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
 import { createDiscovery } from '../providers/discovery.ts';
-import { SPECS } from '../providers/index.ts';
+import { SPECS, isProviderId } from '../providers/index.ts';
 import { runDelegate, sandboxBlocked } from '../providers/runner.ts';
 import { nodeProcess, nodeRunnerFs } from '../providers/node-process.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
+import { normalizeProvider } from '../policy/roster.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
 import { renderBrief, renderExplorerBrief, renderTestCleanupBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
-import { readManifest, type Manifest } from '../lib/session.ts';
+import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { lintArtifact } from './lint.ts';
 import { appendRecords, foldLedger, queryLedger } from './ledger.ts';
@@ -215,7 +216,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
       'test-cleanup': {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
-      'native-failed': {type: 'string', multiple: true},
+      'native-failed': {type: 'string', multiple: true}, host: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
@@ -253,6 +254,18 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);
+    const hostSensitive = (tool === 'doctor' && action === 'run') || (tool === 'review' && action === 'run')
+      || (tool === 'ask' && action === 'run') || (tool === 'brief' && (action === 'render' || action === 'explorer' || action === 'test-cleanup'));
+    const hostRaw = parsed.values['host'];
+    if (hostSensitive) {
+      if (typeof hostRaw !== 'string') throw new Error('Missing --host');
+      const normalized = normalizeProvider(hostRaw);
+      if (!isProviderId(normalized)) throw new Error(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
+      recordHost(session, normalized);
+      manifest = { ...manifest, host: normalized };
+    } else if (hostRaw !== undefined) {
+      throw new Error('--host is only for doctor run, review run, ask run, brief render, brief explorer and brief test-cleanup');
+    }
   } catch (error) {
     if (error instanceof ToolError) return print({ ok: false, summary: error.message, path: null, reason: error.reason, exit: error.exit });
     return print({ ok: false, summary: error instanceof Error ? error.message : String(error), path: null, reason: 'usage', exit: 1 });

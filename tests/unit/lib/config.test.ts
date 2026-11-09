@@ -70,17 +70,10 @@ test('write-concurrency validates positive integers and accepts omission', () =>
 
 // SECTION: Read delegates nativeSubagents opt-out
 
-test('nativeSubagents opt-out accepts booleans and refuses non-booleans or native-only mode', () => {
+test('config rejects removed nativeSubagents with delete instruction', () => {
   const targets = [{ low: { model: 'm' } }];
-  assert.deepEqual(validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: false, targets } } }), []);
-  assert.deepEqual(validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: true, targets } } }), []);
-  for (const value of ['yes', 1, 0, null]) {
-    assert.match(validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: value, targets } } }).join(' '), /nativeSubagents must be a boolean/);
-  }
-  assert.match(
-    validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: false, nativeSubagentsOnly: true, targets: [{ low: { model: 'm', effort: 'low' } }] } } }).join(' '),
-    /read-delegates\.codex\.nativeSubagents cannot be false with nativeSubagentsOnly true/,
-  );
+  const problems = validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: false, targets } } });
+  assert.deepEqual(problems, ['read-delegates.codex.nativeSubagents was removed; delete the key (diff against config.sample.jsonc).']);
 });
 
 // SECTION: Read commands

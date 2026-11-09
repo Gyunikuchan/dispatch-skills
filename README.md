@@ -58,7 +58,7 @@ Nothing is enabled until you create a config. Copy `skills/dispatch/config.sampl
 
 ```bash
 node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
-node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
+node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
 > [!NOTE]

@@ -18,7 +18,7 @@ When inspecting a file for a pre-spec map (`Commit: <sha>`), resolve any symlink
 
 ## Host rules and tools
 
-Apply the host rule discovery rule below. Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow the native slots rule; a host that cannot launch the configured slot is a blocker, not permission to substitute. Launch the map explorer on an agent type that can write files.
+Apply the host rule discovery rule below. Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow the native slots rule. Launch the map explorer on an agent type that can write files.
 
 ## Tool order
 

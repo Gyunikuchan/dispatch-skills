@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_CANDIDATES, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
-import type { ProviderKey } from '../lib/platform.ts';
+import { opencodeSubagentModels, type ProviderKey } from '../lib/platform.ts';
 import { resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
@@ -20,7 +20,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   let problems: string[] = [];
   const writers: Record<string, ResolvedSubagent> = {};
   const explorers: Record<string, ResolvedSubagent> = {};
-  let utility: Record<string, ResolvedSubagent> = {};
+  let utility: Record<string, ResolvedSubagent & { subagentModels?: string[] }> = {};
   let sandboxRemoved: string[] = [];
   try {
     const loaded = loadConfig(skillRoot);
@@ -32,6 +32,11 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
       const explorerTable = loaded.config['explore-subagents'] as Record<string, SubagentEntry>;
       for (const [platform, entry] of Object.entries(explorerTable)) explorers[platform] = resolveSubagent(entry);
       utility = resolveUtility(explorerTable, writerTable);
+      const opencode = utility['opencode'];
+      if (opencode) {
+        const subagentModels = opencodeSubagentModels(opencode.models, opencode.effort);
+        if (subagentModels !== undefined) utility['opencode'] = {...opencode, subagentModels};
+      }
       sandboxRemoved = resolveRoster({
         level, readDelegates: loaded.config['read-delegates'] as Record<string, ReadDelegate>, orchestrator: host ? { platform: host } : null,
         ...(liveness ? { liveness } : {}), ...(sandboxSupported ? { sandboxSupported } : {}),

@@ -36,7 +36,10 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
     await assert.rejects(add('bind', {spec: 'mission.spec.md', design: 'missing.design.md'}), {reason: 'invalid-record'});
     const call = async (args: string[]) => {
       f.lines.length = 0;
-      const exit = await main([...args, '--session', f.session], f.deps);
+      const hostSensitive = (args[0] === 'doctor' && args[1] === 'run') || (args[0] === 'review' && args[1] === 'run')
+        || (args[0] === 'ask' && args[1] === 'run') || (args[0] === 'brief' && (args[1] === 'render' || args[1] === 'explorer' || args[1] === 'test-cleanup'));
+      const withHost = hostSensitive && !args.includes('--host') ? [...args, '--host', 'codex'] : args;
+      const exit = await main([...withHost, '--session', f.session], f.deps);
       return {exit, output: f.output()};
     };
     for (const args of [['worktree', 'create', 'T1'], ['brief', 'render', 'T1'], ['worktree', 'integrate', 'T1'],

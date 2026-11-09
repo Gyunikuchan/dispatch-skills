@@ -73,16 +73,16 @@ From the Dispatch skill folder, run:
 
 ```bash
 node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
-node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
+node scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
 Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports explorers per platform independent of level. Its `utility` field gives the one model and effort per platform that explorer and utility subagents use: the `explore-subagents` entry, else the lowest `write-subagents` entry. A platform with neither has no `utility` entry. It does not probe provider executables, authentication or runtime sandbox activation; provider launches expose those failures.
 
-If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
+If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer. A review or ask voice on the host platform always runs as a native subagent; a native failure takes a reserve, then `failed`.
 
 ## Sandboxing and provider details
 
-Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. An unpinned roster drops a provider whose sandbox cannot run on the host, and Doctor lists it in `sandboxRemoved`. If a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
+Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. An unpinned roster drops only a non-host provider whose sandbox cannot run on the host, and Doctor lists it in `sandboxRemoved`. If a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
 
 For Node.js requirements and supported provider CLIs, see the [repository README](../../../../README.md).
 
@@ -100,7 +100,6 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 <summary>Advanced provider settings</summary>
 
 - `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches the host declared with `--host`. On other platforms, those targets are skipped.
-- `nativeSubagents: false` keeps a provider's slots on the CLI even when the provider matches the session host. By default a review or ask voice on your host platform runs as a native subagent so you can watch it in the host UI: the first call returns its descriptor before any CLI launch, the next call runs the CLI wave alongside it, and a later call consumes its reply. A native voice that cannot complete falls back to its CLI cascade, then reserves, then `failed`, so a round that passes today still passes. Set the opt-out for providers whose code you do not trust a write-capable agent to read.
 - OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
 - Doctor reports configured writer models without launching writers; it does not establish native capacity.
 

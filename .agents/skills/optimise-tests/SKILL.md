@@ -44,10 +44,10 @@ Resolve models once per run, with `<platform>` the canonical host (`claude`, `ag
 
 ```bash
 node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "optimise-tests <run>" --host <platform>
-node <skills-dir>/dispatch/scripts/dispatch.ts doctor run --session <session> --level medium
+node <skills-dir>/dispatch/scripts/dispatch.ts doctor run --session <session> --host <platform> --level medium
 ```
 
-Read the result file at the printed `path`. Apply the rules of [Dispatch routing](../../../skills/dispatch/SKILL.md#routing): `ok` false stops the run; no entry for the host means inline work, recorded as a coverage gap; an entry the host cannot launch is a blocker. Unit writers use the `utility` entry: launch on the first listed model the host accepts, at the listed effort.
+Read the result file at the printed `path`. Apply the rules of [Dispatch routing](../../../skills/dispatch/SKILL.md#routing) and [launch and continue](../../../skills/dispatch/SKILL.md#launch-and-continue): `ok` false stops the run; no entry for the host means inline work, recorded as a coverage gap; an entry the host cannot launch is a blocker. Unit writers use the `utility` entry.
 
 Launch one native writer per packet, in parallel, at most `maxParallelWriters` at once; queue the rest and start the next as each returns. When no `utility` entry resolves for the host, process packets one at a time yourself. Brief each writer:
 

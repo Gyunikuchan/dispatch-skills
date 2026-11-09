@@ -73,13 +73,18 @@ test('grammar-native-subagents-only: such platforms serve only as the orchestrat
   const policy = { rounds: { low: 1 }, targets: { low: 'all' as const } };
   const elsewhere = resolveRoster({ ...base, readDelegates, policy });
   assert.ok(!elsewhere.targets.some((slot) => slot.provider === 'copilot'));
+  assert.ok(!elsewhere.reserves.some((slot) => slot.provider === 'copilot'));
+  const limited = resolveRoster({ ...base, readDelegates, policy: { rounds: { low: 1 }, targets: { low: 2 } }, orchestrator: { platform: 'claude' } });
+  assert.ok(limited.targets.length > 0 && limited.reserves.length > 0, 'limited roster keeps reserves: ' + JSON.stringify(limited));
+  assert.ok(!limited.targets.some((slot) => slot.provider === 'copilot'));
+  assert.ok(!limited.reserves.some((slot) => slot.provider === 'copilot'));
   const native = resolveRoster({ ...base, readDelegates, policy, orchestrator: { platform: 'copilot' } });
   assert.deepEqual(native.targets.filter((slot) => slot.provider === 'copilot').map((slot) => [slot.slot, slot.native]), [['copilot[0]', true]]);
 });
 
 // SECTION: Native-first route
 
-test('native-first route runs a host delegate unless it opts out or stays native-only', () => {
+test('native-first route runs a host delegate unless it stays native-only', () => {
   const targets = [{ low: { model: 'm' } }];
   const cases: Array<[string, string, Record<string, ReadDelegate>, { platform: string } | null, boolean]> = [
     ['host default', 'claude', { claude: { targets } }, { platform: 'claude' }, true],
@@ -87,7 +92,6 @@ test('native-first route runs a host delegate unless it opts out or stays native
     ['normalized host', 'Claude-Code', { 'Claude-Code': { targets } }, { platform: 'claude' }, true],
     ['another provider', 'codex', { claude: { targets }, codex: { targets } }, { platform: 'claude' }, false],
     ['no host', 'claude', { claude: { targets } }, null, false],
-    ['opt-out', 'claude', { claude: { nativeSubagents: false, targets } }, { platform: 'claude' }, false],
     ['native-only', 'claude', { claude: { nativeSubagentsOnly: true, targets } }, { platform: 'claude' }, false],
   ];
   for (const [name, provider, readDelegates, orchestrator, expected] of cases) {
@@ -115,8 +119,8 @@ test('sandbox-unsupported provider leaves targets and reserves unless opted out 
   assert.deepEqual(ids(resolveRoster({ ...base, policy })), [['codex[0]', 'agy[0]'], ['codex[1]', 'claude[0]', 'claude[1]']]);
   // The next candidate takes the slot, and an absent entry means supported.
   assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { codex: false } })), [['agy[0]', 'claude[0]'], ['claude[1]']]);
-  // The orchestrator's own platform has no exemption.
-  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { claude: false } })), [['codex[0]', 'agy[0]'], ['codex[1]']]);
+  // The orchestrator's own platform stays native, so its sandbox never drops it.
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { claude: false } })), [['codex[0]', 'agy[0]'], ['codex[1]', 'claude[0]', 'claude[1]']]);
 
   const optedOut = { ...base.readDelegates, codex: { sandbox: false, targets: [{ low: { model: 'gpt-5' } }] } };
   assert.deepEqual(ids(resolveRoster({ ...base, policy, readDelegates: optedOut, sandboxSupported: { codex: false } })), [['codex[0]', 'agy[0]'], ['claude[0]', 'claude[1]']]);
@@ -134,7 +138,28 @@ test('sandbox-unsupported provider leaves targets and reserves unless opted out 
 test('underfill names the sandbox gap once per provider and only when a provider left', () => {
   const dropped = resolveRoster({ ...base, sandboxSupported: { codex: false } });
   assert.deepEqual(dropped.underfill, { host: 'claude', configured: 3, resolved: 3, excluded: [], sandboxUnsupported: ['codex'] });
-  assert.deepEqual(resolveRoster({ ...base, sandboxSupported: { codex: false, claude: false } }).underfill, { host: 'claude', configured: 3, resolved: 1, excluded: [], sandboxUnsupported: ['claude', 'codex'] });
+  assert.deepEqual(resolveRoster({ ...base, sandboxSupported: { codex: false, claude: false } }).underfill, { host: 'claude', configured: 3, resolved: 3, excluded: [], sandboxUnsupported: ['codex'] });
   assert.equal(resolveRoster({ ...base, sandboxSupported: { codex: true } }).underfill, undefined);
   assert.deepEqual(resolveRoster({ ...base, policy: { rounds: { low: 1 }, targets: { low: 9 } }, sandboxSupported: {} }).underfill, { host: 'claude', configured: 9, resolved: 5, excluded: [] });
+});
+
+test('host provider slots survive missing CLI and unsupported sandbox', () => {
+  const policy = { rounds: { low: 1 }, targets: { low: 2 } };
+  const readDelegates = {
+    claude: { targets: [{ low: { model: 'c1' } }, { low: { model: 'c2' } }] },
+    codex: { targets: [{ low: { model: 'g1' } }] },
+  };
+  const hasHost = (roster: ReturnType<typeof resolveRoster>) =>
+    roster.targets.some((slot) => slot.provider === 'claude') || roster.reserves.some((slot) => slot.provider === 'claude');
+  const missingCli = resolveRoster({
+    level: 'low', readDelegates, policy,
+    orchestrator: { platform: 'claude' }, liveness: { claude: false, codex: true },
+  });
+  assert.ok(hasHost(missingCli), 'host stays with missing CLI: ' + JSON.stringify(missingCli));
+  const unsupported = resolveRoster({
+    level: 'low', readDelegates, policy,
+    orchestrator: { platform: 'claude' }, sandboxSupported: { claude: false, codex: true },
+  });
+  assert.ok(hasHost(unsupported), 'host stays with unsupported sandbox: ' + JSON.stringify(unsupported));
+  assert.ok(!(unsupported.underfill?.sandboxUnsupported ?? []).includes('claude'), 'host leaves sandboxUnsupported');
 });

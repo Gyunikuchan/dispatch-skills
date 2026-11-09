@@ -8,6 +8,7 @@ import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts'
 import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
 import type { DelegateRequest, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { main, nodeDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { HandlerContext, HandlerResult } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
@@ -113,9 +114,9 @@ describe('toolkit CLI contract', () => {
     try {
       const q = f.artifact('q.md', 'why');
       for (const args of [
-        ['ask', 'run', q, '--session', f.session, '--native-failed', 'no-equals'],
-        ['review', 'run', 'worktree', '--session', f.session, '--native-failed', '=reason'],
-        ['review', 'run', 'worktree', '--session', f.session, '--native-failed', 'a#1='],
+        ['ask', 'run', q, '--session', f.session, '--host', 'codex', '--native-failed', 'no-equals'],
+        ['review', 'run', 'worktree', '--session', f.session, '--host', 'codex', '--native-failed', '=reason'],
+        ['review', 'run', 'worktree', '--session', f.session, '--host', 'codex', '--native-failed', 'a#1='],
       ]) {
         f.lines.length = 0;
         assert.equal(await main(args, f.deps), 1);
@@ -145,6 +146,75 @@ test('lint run summary lists first defects with remaining count', async () => {
     assert.equal(await main(['lint', 'run', file, '--session', f.session], f.deps), 4);
     assert.equal(f.output().reason, 'lint-errors');
     assert.match(f.output().summary, /^plan: 4 errors, 2 warnings; sha256:[0-9a-f]{64}; first 5: L- proposed-changes: .*; L4 task-map: .*; L- verification-plan: .*; L5 success-criteria: .*; L- missing-section: .*; \+1 more in result$/);
+  } finally { f.cleanup(); }
+});
+
+test('host-sensitive actions refuse missing or unknown host without manifest change', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const q = f.artifact('q.md', 'why');
+    const values = f.artifact('explorer.json', JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: 'out.md'}));
+    const cleanupValues = f.artifact('cleanup.json', JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
+    const cases: string[][] = [
+      ['doctor', 'run'],
+      ['review', 'run', q, '--kind', 'plan'],
+      ['ask', 'run', q],
+      ['brief', 'render', 'T1'],
+      ['brief', 'explorer', values],
+      ['brief', 'test-cleanup', cleanupValues],
+    ];
+    for (const args of cases) {
+      const before = fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8');
+      f.lines.length = 0;
+      assert.equal(await main([...args, '--session', f.session], f.deps), 1, args.join(' '));
+      assert.equal(f.output().reason, 'usage', args.join(' '));
+      assert.equal(fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8'), before, args.join(' '));
+      f.lines.length = 0;
+      assert.equal(await main([...args, '--session', f.session, '--host', 'unknown-x'], f.deps), 1, args.join(' '));
+      assert.equal(f.output().reason, 'usage', args.join(' '));
+      assert.equal(fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8'), before, args.join(' '));
+    }
+  } finally { f.cleanup(); }
+});
+
+test('host flag refused on other actions', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const before = fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8');
+    for (const args of [
+      ['status', 'show'],
+      ['ledger', 'query'],
+      ['verify', 'run'],
+      ['report', 'render'],
+      ['diagnostics', 'render'],
+      ['worktree', 'create', 'T1'],
+    ]) {
+      f.lines.length = 0;
+      assert.equal(await main([...args, '--session', f.session, '--host', 'claude'], f.deps), 1, args.join(' '));
+      assert.equal(f.output().reason, 'usage', args.join(' '));
+      assert.equal(fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8'), before, args.join(' '));
+    }
+  } finally { f.cleanup(); }
+});
+
+test('host flag replaces recorded host and reroutes voices', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const manifestFile = path.join(f.session, 'manifest.json');
+    fs.writeFileSync(manifestFile, JSON.stringify({...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'claude'}));
+    let seen: {manifestHost: unknown; orchestrator: unknown} | null = null;
+    const deps = {...f.deps, handler: async (context: HandlerContext): Promise<HandlerResult> => {
+      seen = {manifestHost: context.manifest.host, orchestrator: context.deps.orchestrator};
+      return {ok: true, summary: 'done', value: {}, exit: 0};
+    }};
+    f.lines.length = 0;
+    assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'opencode'], deps), 0);
+    assert.equal(readManifest(f.session).host, 'opencode');
+    assert.deepEqual((seen as unknown as {manifestHost: unknown}).manifestHost, 'opencode');
+    assert.equal((seen as unknown as {orchestrator: {platform: string}}).orchestrator.platform, 'opencode');
+    f.lines.length = 0;
+    assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'github-copilot'], deps), 0);
+    assert.equal(readManifest(f.session).host, 'copilot');
   } finally { f.cleanup(); }
 });
 

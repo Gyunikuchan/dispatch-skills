@@ -4,6 +4,7 @@
 // Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
 
 import { classifyFailure, failOutcome } from './runner.ts';
+import { opencodeModelValue } from '../lib/platform.ts';
 import { opencodeUsage } from '../lib/diagnostic-usage.ts';
 import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from './types.ts';
@@ -107,7 +108,7 @@ export const opencode: ProviderSpec = {
     // Standalone owns the server lifecycle; `--pure` and `--variant` are v1-only and never emitted.
     const inner = [req.binary, '--standalone', 'run', '--auto', '--format', 'json'];
     if (req.agent) inner.push('--agent', req.agent);
-    if (req.model) inner.push('-m', req.effort ? `${req.model}#${req.effort}` : req.model);
+    if (req.model) inner.push('-m', opencodeModelValue(req.model, req.effort));
     if (req.resume) inner.push('--session', req.resume);
     inner.push('--', req.prompt);
     return { argv: req.sandbox ? bwrapArgv(req, inner) : inner, stdin: null, env: {}, cwd: req.cwd };

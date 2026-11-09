@@ -364,12 +364,12 @@ test('root skill routes work and guards orchestrator context', () => {
   assert.equal(route('retro'), undefined);
   assert.equal(rows.length, 5, 'five routes');
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
-  for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'A configured launch failure is a blocker, not a fallback trigger', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
+  for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
   for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'A follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'A follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -391,7 +391,7 @@ test('references keep branch detail and use the utility entry', () => {
   assert.ok(links(ref('verbs/ask')).includes('../../SKILL.md#routing'));
   const step6 = ref('verbs/implement').split('\n6. ')[1]?.split('\n7. ')[0] ?? '';
   assert.doesNotMatch(step6, /--level low/);
-  assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on doctor's `utility` host entry/);
+  assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/);
   assert.match(step6, /runs only its edited test files/);
 });
 
@@ -399,7 +399,7 @@ test('native voice launch order failure reports and change rules are documented'
   const providers = read(root + 'references/providers.md');
   for (const term of [
     '`cliWave: "pending"`', 'no retained handle', 'every retained handle finished or was reported',
-    'Stop a timed-out handle', '30-minute', '--native-failed', 'ordered model attempts', 'work in `cwd`',
+    'Stop a timed-out handle', '30-minute', '--native-failed', 'takes its reserve or saves `failed`', 'work in `cwd`',
   ]) assert.ok(providers.includes(term), term);
   const coverage = read(root + 'references/review-coverage.md');
   for (const term of [
@@ -466,7 +466,7 @@ test('failed plan slot rule has one home', () => {
   assert.match(step(3), /`worktree create` refuses a task until its prerequisites have integrated; verify an integrated prerequisite before creating its dependents/);
   const toolkit = read(root + 'references/toolkit.md');
   assert.ok(section(toolkit, 'worktree create').includes('prerequisite-pending'));
-  const removal = /unpinned roster drops a provider whose sandbox cannot run/;
+  const removal = /drops only a non-host provider whose sandbox cannot run/;
   assert.match(read(root + 'references/readme/configuration.md'), removal);
   assert.match(read(root + 'references/readme/troubleshooting.md'), removal);
 });

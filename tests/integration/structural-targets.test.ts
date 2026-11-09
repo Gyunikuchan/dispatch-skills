@@ -16,20 +16,20 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 14900 ceiling per factory.plan.md Decide (raised 14600 to 14900 by user authorization "Raise ceiling to 14900"; covers measured 14790 with headroom).
+  // NOTE: 15100 ceiling per host-routing.plan.md (raised 14900 to 15100 by user authorization "Raise to 15100"; covers measured 15014 with headroom).
   assert.ok(
-    lines <= 14900,
-    `driver TS LOC ${lines} exceeds 14900 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    lines <= 15100,
+    `driver TS LOC ${lines} exceeds 15100 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   assert.ok(
     KINDS.length <= 14,
     `ledger kinds ${KINDS.length} exceeds 14 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 7,488 keeps rules that every branch needs inline, because a must-load reference adds a tool call each run.
+  // NOTE: 8,064 fits the single launch-and-continue rule (exact model/effort, order, no substitution, OpenCode subagentModels, --host) that every branch needs inline, because a must-load reference adds a tool call each run.
   assert.ok(
-    bytes <= 7488,
-    `SKILL.md bytes ${bytes} exceeds 7488 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
+    bytes <= 8064,
+    `SKILL.md bytes ${bytes} exceeds 8064 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
   );
 });
 

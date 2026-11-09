@@ -24,7 +24,7 @@ test('doctor report resolves writers and level and reports integrity and config 
     }));
     const run = async (args: string[] = []) => {
       f.lines.length = 0;
-      assert.equal(await main(['doctor', 'run', '--session', f.session, ...args], { ...f.deps, skillRoot: skill }), 0);
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], { ...f.deps, skillRoot: skill }), 0);
       return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
     };
     let report = await run();
@@ -70,7 +70,7 @@ test('doctor reports explorers independent of level', async () => {
     }));
     const run = async (args: string[] = []) => {
       f.lines.length = 0;
-      assert.equal(await main(['doctor', 'run', '--session', f.session, ...args], { ...f.deps, skillRoot: skill }), 0);
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], { ...f.deps, skillRoot: skill }), 0);
       return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
     };
 
@@ -104,7 +104,7 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
     }));
     const run = async (args: string[] = []) => {
       f.lines.length = 0;
-      assert.equal(await main(['doctor', 'run', '--session', f.session, ...args], { ...f.deps, skillRoot: skill }), 0);
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], { ...f.deps, skillRoot: skill }), 0);
       return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
     };
     const expected = {
@@ -144,20 +144,14 @@ test('doctor reports the session host and keeps it inside the capped summary', a
       'explore-subagents': Object.fromEntries(platforms.map(name => [name, { model: name + '-explorer-with-a-long-identifier', effort: 'low' }])),
     }));
     const manifestFile = path.join(f.session, 'manifest.json');
-    const run = async () => {
+    const run = async (host: string) => {
       f.lines.length = 0;
-      assert.equal(await main(['doctor', 'run', '--session', f.session], { ...f.deps, skillRoot: skill }), 0);
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', host], { ...f.deps, skillRoot: skill }), 0);
       const out = f.output();
       return { out, value: JSON.parse(fs.readFileSync(out.path!, 'utf8')) };
     };
-    let { value } = await run();
-    assert.deepEqual(value.host, { platform: null, source: 'none' });
-    for (const host of ['github-copilot', 'toString']) {
-      fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host }));
-      assert.deepEqual((await run()).value.host, { platform: null, source: 'none' }, host);
-    }
     fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'copilot' }));
-    const declared = await run();
+    const declared = await run('copilot');
     assert.deepEqual(declared.value.host, { platform: 'copilot', source: 'declared' });
     assert.ok(Buffer.byteLength(JSON.stringify(declared.value)) > 1024);
     assert.ok(Buffer.byteLength(declared.out.summary) <= 1024);
@@ -178,7 +172,7 @@ test('doctor lists sandbox removals only for delegates the live roster drops', a
     }));
     const run = async (sandboxSupported: Record<string, boolean> | undefined, liveness: Record<string, boolean>) => {
       f.lines.length = 0;
-      await main(['doctor', 'run', '--session', f.session], { ...f.deps, skillRoot: skill, liveness, ...(sandboxSupported ? { sandboxSupported } : {}) });
+      await main(['doctor', 'run', '--session', f.session, '--host', 'agy'], { ...f.deps, skillRoot: skill, liveness, ...(sandboxSupported ? { sandboxSupported } : {}) });
       return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
     };
     const live = { opencode: true, claude: true, codex: true, copilot: true };
@@ -189,5 +183,59 @@ test('doctor lists sandbox removals only for delegates the live roster drops', a
     assert.equal(report.reason, undefined);
     assert.deepEqual((await run(unsupported, { ...live, opencode: false })).sandboxRemoved, ['claude']);
     assert.deepEqual((await run(undefined, live)).sandboxRemoved, []);
+  } finally { f.cleanup(); }
+});
+
+test('doctor sandboxRemoved excludes the host provider', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    const targets = [{ low: { model: 'reader' } }];
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
+    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+      'read-delegates': { claude: { targets }, codex: { targets } },
+    }));
+    const run = async () => {
+      f.lines.length = 0;
+      const { doctorReport } = await import('../../../skills/dispatch/scripts/toolkit/doctor.ts');
+      return doctorReport(f.session, skill, undefined, 'claude', { claude: true, codex: true }, { claude: false, codex: false });
+    };
+    const report = await run();
+    assert.ok(!report.sandboxRemoved.includes('claude'), 'host leaves sandboxRemoved: ' + JSON.stringify(report.sandboxRemoved));
+    assert.ok(report.sandboxRemoved.includes('codex'), 'non-host stays: ' + JSON.stringify(report.sandboxRemoved));
+  } finally { f.cleanup(); }
+});
+
+test('doctor utility names the opencode subagent model value', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
+    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': { opencode: { targets: [{ low: { model: 'reader' } }] }, codex: { targets: [{ low: { model: 'reader' } }] } },
+      'write-subagents': { opencode: { low: { model: 'prov/model', effort: 'my-eff' } } },
+      'explore-subagents': { opencode: { model: 'prov/model', effort: 'my-eff' }, codex: { model: 'plain', effort: 'low' } },
+    }));
+    const run = async (args: string[] = []) => {
+      f.lines.length = 0;
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'opencode', ...args], { ...f.deps, skillRoot: skill }), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    };
+    const report = await run();
+    assert.deepEqual(report.utility.opencode.models, ['prov/model']);
+    assert.equal(report.utility.opencode.effort, 'my-eff');
+    assert.deepEqual(report.utility.opencode.subagentModels, ['prov/model#my-eff']);
+    assert.equal('subagentModels' in report.utility.codex, false);
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': { opencode: { targets: [{ low: { model: 'reader' } }] } },
+      'write-subagents': { opencode: { low: { model: 'prov/plain' } } },
+    }));
+    const plain = await run();
+    assert.deepEqual(plain.utility.opencode.subagentModels, ['prov/plain']);
   } finally { f.cleanup(); }
 });

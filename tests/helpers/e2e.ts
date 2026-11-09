@@ -60,8 +60,14 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete (env as Record<string, string | undefined>)[key];
   const entry = path.join(skill, 'scripts/dispatch.ts');
   const running = new Set<ReturnType<typeof spawn>>();
+  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup']);
+  function withHost(args: readonly string[]): readonly string[] {
+    if (args.includes('--host')) return args;
+    if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;
+    return [...args, '--host', 'codex'];
+  }
   function launch(args: readonly string[]) {
-    const child = spawn(process.execPath, [entry, ...args], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); running.add(child);
+    const child = spawn(process.execPath, [entry, ...withHost(args)], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); running.add(child);
     let stdout = '', stderr = ''; child.stdout?.on('data', (bytes: Buffer) => { stdout += bytes; }); child.stderr?.on('data', (bytes: Buffer) => { stderr += bytes; });
     const done = new Promise<{ exit: number; stdout: string; stderr: string }>((resolve, reject) => {
       const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`CLI timeout: ${args.join(' ')}\n${stderr}`)); }, 25_000);

@@ -87,7 +87,7 @@ export function diversitySort<T>(candidates: readonly T[], key: (candidate: T) =
 // SECTION: Roster
 
 export type TargetEntry = { model?: string | readonly string[]; effort?: string };
-export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagents?: boolean; nativeSubagentsOnly?: boolean; sandbox?: boolean };
+export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagentsOnly?: boolean; sandbox?: boolean };
 export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
 export type Overrides = { model?: string; effort?: string };
 export type Orchestrator = { platform: string };
@@ -172,7 +172,6 @@ export function nativeFirstRoute(
   const host = normalizeProvider(orchestrator.platform);
   if (normalizeProvider(provider) !== host) return false;
   const delegate = Object.entries(readDelegates).find(([key]) => normalizeProvider(key) === host)?.[1];
-  if (delegate?.nativeSubagents === false) return false;
   if (delegate?.nativeSubagentsOnly === true) return false;
   return true;
 }
@@ -198,8 +197,9 @@ export function resolveRoster(input: RosterInput): Roster {
     return { rounds, targets, reserves: [] };
   }
   const explicit = pins !== null;
-  const live = usable.filter((item) => explicit || input.liveness === undefined || input.liveness[item.provider] === true || item.native);
-  const blocked = (item: Candidate) => !explicit && !item.native && item.sandbox === true && input.sandboxSupported?.[item.provider] === false;
+  const hostProvider = orchestrator?.platform ?? null;
+  const live = usable.filter((item) => explicit || input.liveness === undefined || input.liveness[item.provider] === true || item.native || item.provider === hostProvider);
+  const blocked = (item: Candidate) => !explicit && !item.native && item.provider !== hostProvider && item.sandbox === true && input.sandboxSupported?.[item.provider] === false;
   const ordered = collapse(demote(live.filter((item) => !blocked(item)), orchestrator, !explicit), input.overrides);
   const count = wanted === 'all' ? ordered.length : Math.min(wanted, ordered.length);
   const [targets = [], reserves = []] = identify(ordered.slice(0, count), ordered.slice(count));

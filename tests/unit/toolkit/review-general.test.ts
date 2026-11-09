@@ -171,7 +171,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     };
     const call=async(kind:string,target:string,spec:string|null='mission.spec.md')=>{
       f.lines.length=0;
-      const exit=await main(['review','run',target,'--kind',kind,'--level','medium','--session',f.session,...(spec===null?[]:['--spec',spec])],f.deps);
+      const exit=await main(['review','run',target,'--kind',kind,'--level','medium','--session',f.session,'--host','codex',...(spec===null?[]:['--spec',spec])],f.deps);
       const output=f.output();return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};
     };
     const finish=async(result:Awaited<ReturnType<typeof call>>,kind:string,target:string,spec?:string)=>{
@@ -216,7 +216,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','rev-parse','--verify','--end-of-options','feature^{commit}'])));
     assert.ok(calls.some(row=>JSON.stringify(row.argv)===JSON.stringify(['git','merge-base','main-id','head-id'])));
     const unresolved=await call('code','T1');assert.equal(unresolved.output.reason,'invalid-input');assert.equal(unresolved.output.summary,'Cannot resolve revision T1; '+ACCEPTED);
-    f.lines.length=0;assert.equal(await main(['review','run','--session',f.session],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'One review target is required: '+ACCEPTED+'; plan and design targets are artifact paths');
+    f.lines.length=0;assert.equal(await main(['review','run','--session',f.session,'--host','codex'],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'One review target is required: '+ACCEPTED+'; plan and design targets are artifact paths');
     unrelated=true;const orphan=await call('code','orphan');assert.equal(orphan.output.reason,'invalid-input');assert.match(orphan.output.summary,/common ancestor/);unrelated=false;
     missing=true;const headUnresolved=await call('code','worktree');assert.equal(headUnresolved.output.reason,'invalid-input');assert.equal(headUnresolved.output.summary,'Cannot resolve revision HEAD; '+ACCEPTED);missing=false;
     assert.equal((await call('plan',f.plan,'absent.spec.md')).output.reason,'invalid-input');
@@ -251,7 +251,7 @@ test('standalone Git reviews explain unsupported three dot ranges',async()=>{
   try {
     f.deps.run=async()=>({exit:1,stdout:'',stderr:'unknown revision'});
     f.lines.length=0;
-    const exit=await main(['review','run','main...feature','--kind','code','--spec',f.spec,'--session',f.session],f.deps);
+    const exit=await main(['review','run','main...feature','--kind','code','--spec',f.spec,'--session',f.session,'--host','opencode'],f.deps);
     const output=f.output();assert.equal(exit,1);assert.equal(output.reason,'invalid-input');
     assert.match(output.summary,/three-dot.*not supported.*a\.\.b/i);
   }finally{f.cleanup();}
@@ -456,7 +456,7 @@ test('review rounds exclusive claim and late native replies stay isolated',async
     const ready=new Promise<void>(resolve=>started=resolve), held=new Promise<void>(resolve=>release=resolve);
     f.deps.delegate=async()=>{started();await held;return {outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]};};
     f.deps.isAlive=()=>true;
-    const first=main(['review','run',f.plan,'--kind','plan','--session',f.session],{...f.deps,stdout:()=>{}});
+    const first=main(['review','run',f.plan,'--kind','plan','--session',f.session,'--host','opencode'],{...f.deps,stdout:()=>{}});
     assert.equal(await Promise.race([ready.then(()=>true),first.then(()=>false)]),true);
     const other=await f.call(); assert.equal(other.exit,3);assert.equal(other.output.reason,'lock-held');
     release(); assert.equal(await first,0);
@@ -633,26 +633,6 @@ test('review run summary lists first findings by severity', async () => {
     assert.match(first.output.summary, /; \+2 more in result$/);
     assert.ok(Buffer.byteLength(first.output.summary, 'utf8') <= 1024);
   } finally { f.cleanup(); }
-});
-
-test('review refuses host-undetected without a recorded host when native-only providers would drop and otherwise keeps the undetected-host summary', async () => {
-  const f = await underfillFixture();
-  try {
-    f.deps.orchestrator = null;
-    const refused = await f.call();
-    assert.equal(refused.exit, 4); assert.equal(refused.output.reason, 'host-undetected');
-    assert.match(refused.output.summary, /codex, copilot/);
-    assert.match(refused.output.summary, /session reactivate --session-dir <session> --host <platform>/);
-    assert.equal(f.launches.length, 0);
-
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
-      'read-delegates': {agy: {targets: [{low: {model: 'fake'}}]}},
-      phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}},
-    }));
-    const short = await f.call();
-    assert.equal(short.exit, 0, JSON.stringify(short.output));
-    assert.match(short.output.summary, /underfill 1\/2 targets, host undetected, excluded native-only: none/);
-  } finally {f.cleanup();}
 });
 
 test('review run reports native-pending for the recorded host when env carries no platform marker', async () => {

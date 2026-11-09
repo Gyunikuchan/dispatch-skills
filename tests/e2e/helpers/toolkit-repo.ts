@@ -4,6 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { main, nodeDeps, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { normalizeProvider } from '../../../skills/dispatch/scripts/policy/roster.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 export const planSource = ['# Work', '', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '', '## Proposed Changes', '### T1 — File', '#### [MODIFY] src/file.ts', '- Purpose: implements behavior.', '', '## Success Criteria', '- [SC1] File works', '  - Changes: src/file.ts', '  - Verify: `node -e "process.exit(0)"`', '  - Evidence: verify', '', '## Verification Plan', '### Automated Tests', '- `node -e "process.stdout.write(\'contract\')"`', ''].join('\n');
 
@@ -59,10 +60,26 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   };
   const level = async (value='low') => appendRecord(session,{kind:'level',by:'orchestrator',key:'level:' + foldLedger(session).lastSeq,data:{level:value}},deps);
   const edit = async (data: object) => appendRecord(session,{kind:'edit',by:'orchestrator',key:'edit:' + foldLedger(session).lastSeq,data},deps);
-  const run = async (args: string[], hook?: CliDeps['hook']) => { const lines: string[]=[]; const exit=await main([...args,'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };
-  const spawned = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => spawnSync(process.execPath,[entry,...args,'--session',session],{encoding:'utf8',windowsHide:true,env:env ?? process.env});
+  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup']);
+  const withHost = (args: string[]) => {
+    if (args.includes('--host')) return args;
+    if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;
+    const platform = (deps.orchestrator as {platform: string} | null)?.platform;
+    let host: string;
+    if (typeof platform === 'string' && platform) host = normalizeProvider(platform);
+    else {
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(deps.skillRoot, 'config.jsonc'), 'utf8')) as {['read-delegates']?: Record<string, unknown>};
+        const present = new Set(Object.keys(config['read-delegates'] ?? {}).map(key => normalizeProvider(key)));
+        host = ['opencode', 'claude', 'agy', 'copilot', 'codex'].find(candidate => !present.has(candidate)) ?? 'opencode';
+      } catch { host = 'opencode'; }
+    }
+    return [...args, '--host', host];
+  };
+  const run = async (args: string[], hook?: CliDeps['hook']) => { const lines: string[]=[]; const exit=await main([...withHost(args),'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };
+  const spawned = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => spawnSync(process.execPath,[entry,...withHost(args),'--session',session],{encoding:'utf8',windowsHide:true,env:env ?? process.env});
   const concurrent = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => new Promise<{exit:number; output:any; value:any}>((resolve,reject)=>{
-    const child=spawn(process.execPath,[entry,...args,'--session',session],{windowsHide:true,env:env ?? process.env});
+    const child=spawn(process.execPath,[entry,...withHost(args),'--session',session],{windowsHide:true,env:env ?? process.env});
     let stdout=''; let stderr=''; child.stdout.on('data',b=>stdout+=b); child.stderr.on('data',b=>stderr+=b); child.on('error',reject);
     child.on('close',exit=>{try {const lines=stdout.trim().split(/\r?\n/); assert.equal(lines.length,1,stderr); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); resolve({exit:exit??1,output,value:JSON.parse(fs.readFileSync(output.path,'utf8'))});} catch(error){reject(error);}});
   });

@@ -41,7 +41,7 @@ From the Dispatch skill folder:
 
 ```bash
 node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
-node scripts/dispatch.ts doctor run --session <returned-session-path> --level high
+node scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
 Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, explorers per platform, and the `utility` entry per platform that explorer and utility subagents use. Explorer and `utility` output do not vary with level. Doctor does not probe provider executables, authentication, native capacity or runtime sandbox activation; inspect provider launch failures for those limits.
@@ -52,11 +52,11 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 |---|---|
 | No delegates are available | Add at least one entry to `read-delegates`. Confirm the provider CLI is installed and authenticated, and that a model is configured for the requested level. |
 | The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see the declared host, resolved writer models and the `utility` entry for explorer and utility subagents. |
-| Fewer reviewers than configured, or review or ask refuses `host-undetected` | A native-only provider needs a declared host. Run `session reactivate --session-dir <session> --host <platform>` with your current platform, then rerun. Doctor shows `host`. |
+| Fewer reviewers than configured, or a host-sensitive action refuses `usage` for a missing or unknown host | Pass `--host <platform>` with your current host on `doctor run`, `review run`, `ask run` and the `brief` actions, then rerun. Doctor shows `host`. |
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that the plan is settled and required design approval is complete. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |
 | Review findings are reported but no files changed | Review applies accepted, fixable in-scope findings by default. No changes may mean that no fixable in-scope finding was accepted, opt-in findings were declined, or a fix failed before writing. Follow the decision and named log. Verification can fail after changes are written, so inspect the working tree. |
-| A provider reports sandbox problems | An unpinned roster drops a provider whose sandbox cannot run on the host; see [sandboxing](configuration.md#sandboxing-and-provider-details). Otherwise, follow the diagnostic to identify the provider and execution mode. Setting `sandbox: false` opts that provider out of OS isolation; read-only controls may still apply, but they do not provide the same boundary. |
+| A provider reports sandbox problems | An unpinned roster drops only a non-host provider whose sandbox cannot run on the host; see [sandboxing](configuration.md#sandboxing-and-provider-details). Otherwise, follow the diagnostic to identify the provider and execution mode. Setting `sandbox: false` opts that provider out of OS isolation; read-only controls may still apply, but they do not provide the same boundary. |
 | A verification step fails | Open the named log and follow the decision Dispatch presents. Keep the working tree and session folder so the failed check can be repaired or resumed. |
 | A run is interrupted | Continue in the same chat and follow its recovery prompt. Preserve the session folder; it contains the recorded progress and work needed to resume. |
 

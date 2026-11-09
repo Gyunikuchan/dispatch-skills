@@ -10,7 +10,46 @@ import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
-import { normalizeProvider, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
+import { opencodeSubagentModels } from '../lib/platform.ts';
+import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
+import type { Level } from './types.ts';
+
+type LaunchValues = { model: string[] | null; effort: string | null; subagentModels?: string[] };
+
+/** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
+function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {
+  const none: LaunchValues = {model: null, effort: null};
+  try {
+    if (!host) return none;
+    const normalized = normalizeProvider(host);
+    const {config} = loadConfig(skillRoot);
+    if (validateConfig(config).length) return none;
+    const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined;
+    const key = writerTable ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized) : undefined;
+    const entry = key && writerTable ? resolveLevel(writerTable[key], level) : undefined;
+    if (!entry) return none;
+    const resolved = resolveSubagent(entry);
+    const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
+    return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
+  } catch { return none; }
+}
+
+/** Explorer and test-cleanup launch values from the `utility` entry; null when the host or config does not resolve. */
+function utilityLaunchValues(skillRoot: string, host: string | undefined): LaunchValues {
+  const none: LaunchValues = {model: null, effort: null};
+  try {
+    if (!host) return none;
+    const normalized = normalizeProvider(host);
+    const {config} = loadConfig(skillRoot);
+    if (validateConfig(config).length) return none;
+    const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined ?? {};
+    const explorerTable = config['explore-subagents'] as Record<string, SubagentEntry> | undefined ?? {};
+    const resolved = resolveUtility(explorerTable, writerTable)[normalized];
+    if (!resolved) return none;
+    const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
+    return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
+  } catch { return none; }
+}
 
 function taskParts(source: string, selected: NonNullable<ReturnType<typeof selectTaskBrief>>) {
   const lines = source.split(/\r?\n/);
@@ -173,9 +212,10 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     const launch = launches(tx.fold, task).at(-1);
     if (!launch || launch.finished || launch.abandoned || launch.superseded) throw new ToolError(4, 'no-open-launch', 'No open launch for ' + task);
     await ctx.deps.hook?.('brief:after-gate');
-    return {bind, snapshot, launch, source, parsed, selected};
+    const level = (latest(tx.fold, 'level')?.data['level'] ?? 'medium') as Level;
+    return {bind, snapshot, launch, source, parsed, selected, level};
   });
-  const {bind, snapshot, launch, source, parsed, selected} = gated;
+  const {bind, snapshot, launch, source, parsed, selected, level} = gated;
   const markdown = taskMarkdown(source, selected);
   const {section} = taskParts(source, selected);
   const criteria = markdown.slice(section.length).trim();
@@ -201,7 +241,8 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   fs.mkdirSync(directory, {recursive: true});
   const file = path.join(directory, task + '-' + launch.launch + '.md');
   fs.writeFileSync(file, text);
-  const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text)};
+  const launchValues = writerLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform, level);
+  const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text), ...launchValues};
   return {ok: true, exit: 0, value, summary: task + ' launch ' + launch.launch + ': ' + file + ' (' + value.bytes + ' bytes)'};
 }
 
@@ -230,7 +271,8 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   fs.mkdirSync(directory, {recursive: true});
   const file = nextBriefPath(directory, 'explorer');
   fs.writeFileSync(file, text);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text)};
+  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
   return {ok: true, exit: 0, value, summary: 'explorer brief: ' + file + ' (' + value.bytes + ' bytes)'};
 }
 
@@ -254,6 +296,7 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   fs.mkdirSync(directory, {recursive: true});
   const file = nextBriefPath(directory, 'test-cleanup');
   fs.writeFileSync(file, text);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text)};
+  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
   return {ok: true, exit: 0, value, summary: 'test-cleanup brief: ' + file + ' (' + value.bytes + ' bytes)'};
 }

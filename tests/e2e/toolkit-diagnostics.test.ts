@@ -37,10 +37,10 @@ test('diagnostics stay observational across CLI recovery and report completion',
         assert.ok(Buffer.byteLength(output.summary) <= 1024);
         return { output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
       };
-      assert.equal(run(['doctor', 'run']).value.config.path, configPath);
+      assert.equal(run(['doctor', 'run', '--host', 'codex']).value.config.path, configPath);
       const question = path.join(f.session, 'question.md');
       fs.writeFileSync(question, 'Explain the fixture behavior');
-      const pending = run(['ask', 'run', question], 4);
+      const pending = run(['ask', 'run', question, '--host', 'codex'], 4);
       assert.equal(pending.output.reason, 'native-pending');
       assert.equal(pending.value.native.length, 1);
       const reply = pending.value.native[0].replyPath;
@@ -51,7 +51,7 @@ test('diagnostics stay observational across CLI recovery and report completion',
         // An interrupted optional collection must survive process readback as partial evidence.
         fs.writeFileSync(path.join(captures, 'interrupted.json'), JSON.stringify({ phases: [], invocations: [], reviews: [], capture: { state: 'opened', start: 1 } }));
       } else assert.equal(fs.existsSync(captures), false);
-      const answered = run(['ask', 'run', question]);
+      const answered = run(['ask', 'run', question, '--host', 'codex']);
       assert.deepEqual(answered.value.answers.map((answer: {text: string}) => answer.text), ['Retained native answer']);
       assert.equal(fs.readFileSync(reply, 'utf8'), 'Retained native answer');
       fs.writeFileSync(path.join(f.session, '.state/retro.json'), '[]');

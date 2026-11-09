@@ -43,7 +43,7 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
   f.deps.skillRoot=setupTestSkill(f.deps,f.session,'confirmation-skill',{'read-delegates':{codex:{nativeSubagentsOnly:true,targets:[{low:{model:'native'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:1}}}});
   f.deps.orchestrator={platform:'codex',model:'native'};f.deps.liveness={};
   fs.writeFileSync(path.join(f.root,'src/file.ts'),'first captured change\n');
-  const run=()=>f.run(['review','run','worktree','--kind','code','--spec','work.spec.md','--level','low']);
+  const run=()=>f.run(['review','run','worktree','--kind','code','--spec','work.spec.md','--level','low','--host','codex']);
   const first=await run();assert.equal(first.output.reason,'native-pending');
   fs.writeFileSync(first.value.pending[0].replyPath,JSON.stringify({status:'FINDINGS',findings:[{impact:'blocks',trigger:'realistic',tag:'correctness',locus:'src/file.ts:L1',defect:'Writes are unbounded',requiredChange:'Bound the writes'}]}));
   const finding=await run();assert.equal(finding.exit,0);const saved=JSON.parse(fs.readFileSync(finding.value.path,'utf8'));
@@ -122,7 +122,7 @@ test('toolkit worktree review excludes unignored session state and preserves com
     f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
     f.deps.liveness = {};
     const run = async (expected: number) => {
-      const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+      const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low', '--host', 'codex']);
       assert.equal(result.exit, expected, JSON.stringify(result.output));
       for (const key of ['v', 'run', 'reply', 'await', 'at']) assert.equal(Object.hasOwn(result.output, key), false, key);
       return result;
@@ -168,7 +168,7 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'native-skill', { 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } }, phases: { 'code-review': { targets: { low: 1 }, rounds: { low: 2 } } } });
     f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
     f.deps.liveness = {};
-    const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
+    const result = await f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low', '--host', 'codex']);
     assert.equal(result.output.reason, 'native-pending', JSON.stringify(result.output));
     const slug = 'code-worktree-' + crypto.createHash('sha256').update('worktree@' + f.git(['rev-parse', 'HEAD']).trim()).digest('hex');
     const target = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews', slug, 'round-1/round.json'), 'utf8')).target;
@@ -977,7 +977,7 @@ test('repository changes list edits from a native-only round', async () => {
     const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
     fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
+    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low','--host','codex']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
     assert.equal(launched.value.pending.length, 1);
@@ -1308,7 +1308,7 @@ test('cli-only superseded round runs no repository check and opens no report', a
   } finally {f.cleanup();}
 });
 
-test('successful retry after all-failed keeps the first report until a closing note', async () => {
+test('retry after all-failed uses no host CLI and keeps the first report until a closing note', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -1325,8 +1325,8 @@ test('successful retry after all-failed keeps the first report until a closing n
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'change before all-failed\n');
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
     assert.equal((await run()).output.reason, 'review-failed');
-    // Restore the changed path, then retry while the CLI still fails: the new
-    // compare is clean, but the first unacknowledged report must stay open.
+    // Restore the changed path, then retry: the new compare is clean,
+    // but the first unacknowledged report must stay open.
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'initial\n');
     const retry = await run();
     assert.equal(retry.output.reason, 'review-failed', JSON.stringify(retry.output));
@@ -1334,12 +1334,13 @@ test('successful retry after all-failed keeps the first report until a closing n
     assert.ok((kept.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths).includes('src/file.ts'));
     const retryStatus = await f.run(['status','show']);
     assert.ok((retryStatus.value.openRepositoryChanges ?? []).flatMap((row: {repositoryChanges?: {paths: string[]}[]}) => (row.repositoryChanges ?? []).flatMap(entry => entry.paths)).includes('src/file.ts'), 'the first report survives a clean retry: ' + JSON.stringify(retryStatus.value.openRepositoryChanges));
-    // Recover the CLI: the retry finalizes cleanly, but
-    // the failed report stays open until the orchestrator closes it.
+    // Recover the CLI: the failed native slot still must not use it
+    // (REQ-3: the host CLI never runs for the host provider), so the
+    // retry stays failed and the first report stays open until the
+    // orchestrator closes it with a note.
     f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
     const done = await run();
-    assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(!done.value.repositoryChanges, 'the retry compare is clean: ' + JSON.stringify(done.value));
+    assert.equal(done.output.reason, 'review-failed', 'no host CLI on retry: ' + JSON.stringify(done.output));
     let status = await f.run(['status','show']);
     assert.ok((status.value.openRepositoryChanges ?? []).some((entry: {review: string; round: number}) => entry.review === review && entry.round === 1),
       'the failed report stays open after a clean success: ' + JSON.stringify(status.value.openRepositoryChanges));

@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { main, type CliDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
+import { normalizeProvider } from '../../skills/dispatch/scripts/policy/roster.ts';
 import { appendRecord } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../skills/dispatch/scripts/toolkit/artifacts.ts';
 import { memoryNodeFs } from './memory-node-fs.ts';
@@ -54,7 +55,20 @@ export async function fixture(bound=true, confirmed=true) {
   };
   const call=async(kind='plan',target=plan,level='medium')=>{
     f.lines.length=0;
-    const exit=await main(['review','run',target,'--kind',kind,'--level',level,'--session',f.session],f.deps);
+    const host = (() => {
+      const platform = (f.deps.orchestrator as {platform: string} | null)?.platform;
+      if (typeof platform === 'string' && platform) return normalizeProvider(platform);
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8')) as {host?: unknown};
+        if (typeof manifest.host === 'string' && manifest.host) return normalizeProvider(manifest.host);
+      } catch {}
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), 'utf8')) as {['read-delegates']?: Record<string, unknown>};
+        const present = new Set(Object.keys(config['read-delegates'] ?? {}).map(key => normalizeProvider(key)));
+        return ['opencode', 'claude', 'agy', 'copilot', 'codex'].find(candidate => !present.has(candidate)) ?? 'opencode';
+      } catch { return 'opencode'; }
+    })();
+    const exit=await main(['review','run',target,'--kind',kind,'--level',level,'--session',f.session,'--host',host],f.deps);
     const output=f.output();
     return {exit,output,value:output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null};
   };

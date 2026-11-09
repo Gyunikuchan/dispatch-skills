@@ -274,7 +274,7 @@ test('RED capture from a shell-unsafe session path writes logs without substitut
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     fs.mkdirSync(path.join(session, '.state/worktrees/T1-1'), {recursive: true});
     const lines: string[] = [];
-    const exit = await main(['brief', 'render', 'T1', '--session', session], {...f.deps, stdout: line => lines.push(line)});
+    const exit = await main(['brief', 'render', 'T1', '--session', session, '--host', 'opencode'], {...f.deps, stdout: line => lines.push(line)});
     assert.equal(exit, 0, lines.join('\n'));
     const output = JSON.parse(lines[0]!);
     const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));

@@ -63,7 +63,8 @@ test('summary byte cap preserves large ask answers review findings and native sl
       await appendRecord(f.session, {kind: 'confirm', by: 'user', quote: 'Approved', key: 'confirm',
         data: {spec: currentHashes(f.root, latest(foldLedger(f.session), 'bind')).spec}}, f.deps);
       const args = scenario === 'ask' ? ['ask', 'run', target] : ['review', 'run', target, '--kind', 'plan'];
-      assert.equal(await main([...args, '--session', f.session], f.deps), native ? 4 : 0, f.lines.join('\n'));
+      const host = (f.deps.orchestrator as {platform: string} | null)?.platform ?? 'claude';
+      assert.equal(await main([...args, '--session', f.session, '--host', host], f.deps), native ? 4 : 0, f.lines.join('\n'));
       const output = f.output();
       assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
       assert.equal(output.ok, !native);
@@ -110,7 +111,7 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
     await add('confirm',{spec:currentHashes(f.root,latest(foldLedger(f.session),'bind')).spec},{by:'user',quote:'Approved'});
     await add('approval',currentHashes(f.root,latest(foldLedger(f.session),'bind')),{by:'user',quote:'Approved'});
     await add('writer',{phase:'launched',task:'T1',path:'.state/worktrees/T1-1',base:{commit:'a'.repeat(40),taskSection:'sha256:'+'b'.repeat(64),seq:1}});
-    assert.equal(await main(['brief','render','T1','--session',f.session],{...f.deps,skillRoot:skill,hook:point=>{if(point==='brief:after-gate') fs.writeFileSync(plan,'UNGATED');}}),0);
+    assert.equal(await main(['brief','render','T1','--session',f.session, '--host', 'codex'],{...f.deps,skillRoot:skill,hook:point=>{if(point==='brief:after-gate') fs.writeFileSync(plan,'UNGATED');}}),0);
     const output=f.output(); assert.ok(Buffer.byteLength(output.summary)<=1024); const result=JSON.parse(fs.readFileSync(output.path!,'utf8'));
     const brief=fs.readFileSync(result.path,'utf8'); assert.equal(result.bytes,Buffer.byteLength(brief)); assert.match(brief,/\[SC200\] 日本語 works/); assert.ok(!brief.includes('UNGATED'));
   } finally {f.cleanup();}
@@ -131,7 +132,7 @@ test('summary byte cap applies to every tool with full result files including re
     fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify(Object.fromEntries(Array.from({ length: 200 }, (_, i) => ['bad' + i, true]))));
     for (const [args, exit] of [
       [['ledger', 'append', input], 0], [['ledger', 'query'], 0], [['lint', 'run', plan], 4],
-      [['doctor', 'run'], 0], [['status', 'show'], 0], [['ledger', 'append', invalid], 1],
+      [['doctor', 'run', '--host', 'codex'], 0], [['status', 'show'], 0], [['ledger', 'append', invalid], 1],
       [['ledger', 'query', '--kind', 'unknown'], 1], [['lint', 'run', 'missing.plan.md'], 1],
     ] as const) {
       f.lines.length = 0;

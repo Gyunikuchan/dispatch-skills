@@ -46,7 +46,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
     await tool(['ledger', 'append', confirmFile]);
     await tool(['lint', 'run', 'work.plan.md']);
     const review = async (args: string[]) => {
-      const result = await tool(['review', 'run', ...args]);
+      const result = await tool(['review', 'run', ...args, '--host', 'codex']);
       assert.equal(result.skipped, undefined);
       return JSON.parse(fs.readFileSync(result.path, 'utf8'));
     };
@@ -55,7 +55,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
     assert.deepEqual(reviewed.findings, []);
     assert.equal(f.launches().length, 1, 'plan review launches the stub');
     const writer = await tool(['worktree', 'create', 'T1']);
-    const brief = await tool(['brief', 'render', 'T1']);
+    const brief = await tool(['brief', 'render', 'T1', '--host', 'codex']);
     assert.ok(fs.readFileSync(brief.path, 'utf8').includes('src/a.ts'));
     fs.writeFileSync(path.resolve(session, writer.path, 'src/a.ts'), 'export const value = 2;\n');
     await tool(['worktree', 'submit', 'T1']);

@@ -68,7 +68,7 @@ From the repository root, check your setup, with `<platform>` set to your host (
 
 ```bash
 node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
-node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --level high
+node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
 Questions and reviews use `read-delegates`. Implementation also needs a `write-subagents` entry for the platform running your host agent. See [Configure Dispatch](references/readme/configuration.md).

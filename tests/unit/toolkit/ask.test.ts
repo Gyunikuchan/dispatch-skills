@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { normalizeProvider } from '../../../skills/dispatch/scripts/policy/roster.ts';
 import { foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
 
@@ -16,9 +17,20 @@ function fixture(native = false) {
   f.deps.skillRoot = skill;
   if (native) f.deps.orchestrator = {platform: 'codex', model: null};
   const question = f.artifact('q.md', 'Why does this work?');
+  const hostFor = () => {
+    const platform = (f.deps.orchestrator as {platform: string} | null)?.platform;
+    if (typeof platform === 'string' && platform) return normalizeProvider(platform);
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), 'utf8')) as {['read-delegates']?: Record<string, unknown>};
+      const present = new Set(Object.keys(config['read-delegates'] ?? {}).map(key => normalizeProvider(key)));
+      return ['opencode', 'claude', 'agy', 'copilot', 'codex'].find(candidate => !present.has(candidate)) ?? 'opencode';
+    } catch { return 'opencode'; }
+  };
   const call = async (...options: string[]) => {
     f.lines.length = 0;
-    const exit = await main(['ask', 'run', question, '--session', f.session, ...options], f.deps);
+    const args = [...options];
+    if (!args.includes('--host')) args.push('--host', hostFor());
+    const exit = await main(['ask', 'run', question, '--session', f.session, ...args], f.deps);
     const output = f.output();
     return {exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null};
   };
@@ -73,7 +85,7 @@ test('ask run holds an exclusive claim while a delegate is active', async () => 
     const waiting = new Promise<void>(resolve => {release = resolve;});
     f.deps.delegate = async () => {started(); await waiting; return {outcome: {status: 'ok', text: 'done', resume: null, sessionId: null}, invocations: []};};
     f.deps.isAlive = () => true;
-    const first = main(['ask', 'run', f.question, '--session', f.session], {...f.deps, stdout: () => {}});
+    const first = main(['ask', 'run', f.question, '--session', f.session, '--host', 'opencode'], {...f.deps, stdout: () => {}});
     await Promise.race([active, first.then(exit => {assert.equal(exit, 0);})]);
     const held = await f.call();
     assert.equal(held.exit, 3); assert.equal(held.output.reason, 'lock-held');
@@ -183,18 +195,7 @@ test('ask summary reports underfill for native-only providers excluded for anoth
   } finally {f.cleanup();}
 });
 
-test('ask run refuses host-undetected without a recorded host when a native-only provider would drop', async () => {
-  const f = fixture(true); try {
-    f.deps.orchestrator = null;
-    const refused = await f.call();
-    assert.equal(refused.exit, 4);
-    assert.equal(refused.output.reason, 'host-undetected');
-    assert.match(refused.output.summary, /codex.*session reactivate --session-dir <session> --host <platform>/);
-    assert.equal(f.launches.length, 0);
-  } finally {f.cleanup();}
-});
-
-test('ask run quarantines a blocked native reply and returns the cli answer', async () => {
+test('ask run saves failed when a host native reply is blocked with no reserve', async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -208,19 +209,18 @@ test('ask run quarantines a blocked native reply and returns the cli answer', as
     assert.equal(waved.output.reason, 'native-pending');
     assert.equal(waved.value.cliWave, 'done');
     const replyPath = waved.value.native[0].replyPath as string;
-    f.script('claude', 'target', 'CLI answer');
     fs.writeFileSync(replyPath, 'BLOCKED: cannot access\npartial');
     const done = await f.call();
-    assert.equal(done.exit, 0);
-    assert.equal(done.value.answers.length, 1);
-    assert.equal(done.value.answers[0].text, 'CLI answer');
-    assert.ok(!done.value.answers[0].text.includes('cannot access'));
+    assert.equal(done.exit, 2);
+    assert.equal(done.output.reason, 'ask-failed');
+    assert.equal(done.value.failed[0].cls, 'blocked');
+    assert.equal((done.value.answers ?? []).length, 0);
     assert.ok(fs.existsSync(replyPath + '.invalid-1'));
-    assert.ok(f.launches.some(launch => launch.provider === 'claude'));
+    assert.equal(f.launches.length, 0);
   } finally {f.cleanup();}
 });
 
-test('ask run runs the reserve cli when a native attempt fails', async () => {
+test('ask run saves failed when a host reserve native attempt fails', async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -234,19 +234,16 @@ test('ask run runs the reserve cli when a native attempt fails', async () => {
     const waved = await f.call();
     assert.equal(waved.output.reason, 'native-pending');
     const attempt = waved.value.native[0].attempt as string;
-    assert.ok(attempt.startsWith('codex[0]#'));
-    f.script('codex', 'reserve', 'Reserve answer');
+    assert.ok(attempt.startsWith('codex[0]#'), JSON.stringify(waved.value.native));
     const done = await f.call('--native-failed', attempt + '=voice unavailable');
-    assert.equal(done.exit, 0);
-    assert.equal(done.value.answers.length, 1);
-    assert.equal(done.value.answers[0].text, 'Reserve answer');
-    assert.equal(done.value.answers[0].responder.provider, 'codex');
+    assert.equal(done.exit, 2, JSON.stringify(done.output));
+    assert.equal(done.output.reason, 'ask-failed');
     assert.ok(f.launches.some(launch => launch.provider === 'claude'));
-    assert.ok(f.launches.some(launch => launch.provider === 'codex'));
+    assert.ok(!f.launches.some(launch => launch.provider === 'codex'));
   } finally {f.cleanup();}
 });
 
-test('ask run prefers a failure report over a partial native file', async () => {
+test('ask run records the failure report when a host native attempt fails with no reserve', async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -259,12 +256,12 @@ test('ask run prefers a failure report over a partial native file', async () => 
     const pending = waved.value.native[0];
     fs.writeFileSync(pending.replyPath, 'partial answer');
     const attempt = pending.attempt as string;
-    f.script('claude', 'target', 'CLI answer');
     const done = await f.call('--native-failed', attempt + '=voice gone');
-    assert.equal(done.exit, 0);
-    assert.equal(done.value.answers[0].text, 'CLI answer');
-    assert.ok(!done.value.answers[0].text.includes('partial'));
+    assert.equal(done.exit, 2);
+    assert.equal(done.output.reason, 'ask-failed');
+    assert.ok(!JSON.stringify(done.value.answers ?? []).includes('partial'));
     assert.ok(fs.existsSync((pending.replyPath as string) + '.invalid-1'));
+    assert.equal(f.launches.length, 0);
   } finally {f.cleanup();}
 });
 

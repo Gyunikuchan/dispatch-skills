@@ -112,7 +112,8 @@ async function fixture(design = false, source = PLAN) {
   f.deps.run = async () => { processes++; throw new Error('Brief must not run Git'); };
   const call = async (level?: string, task = 'T1') => {
     f.lines.length = 0;
-    const exit = await main(['brief', 'render', task, '--session', f.session, ...(level ? ['--level', level] : [])], f.deps);
+    const host = (f.deps.orchestrator as {platform: string} | null)?.platform ?? 'codex';
+    const exit = await main(['brief', 'render', task, '--session', f.session, '--host', host, ...(level ? ['--level', level] : [])], f.deps);
     assert.equal(processes, 0);
     const output = f.output();
     return {exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null};
@@ -398,8 +399,8 @@ test('writer brief states the host explorer model and effort or that none resolv
   try {
     await f.approve(); await f.launch();
     f.deps.skillRoot = skill;
-    const render = async (host: string | null) => {
-      f.deps.orchestrator = host ? {platform: host as 'claude', model: null} : null;
+    const render = async (host: string) => {
+      f.deps.orchestrator = {platform: host as 'claude', model: null};
       const result = await f.call('high');
       assert.equal(result.exit, 0, JSON.stringify(result.output));
       const brief = fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
@@ -410,7 +411,7 @@ test('writer brief states the host explorer model and effort or that none resolv
     fs.writeFileSync(config, valid);
     assert.equal(await render('claude'), 'model `cheap-a` or `cheap-b`, effort `medium`');
     assert.equal(await render('codex'), 'model `codex-mid`, no effort set');
-    for (const host of [null, 'copilot']) assert.equal(await render(host), 'none resolves', String(host));
+    assert.equal(await render('copilot'), 'none resolves');
     fs.writeFileSync(config, '{"unknown":true}');
     assert.equal(await render('claude'), 'none resolves');
     fs.writeFileSync(config, '{');
@@ -433,7 +434,7 @@ describe('explorer brief', () => {
       const valuesPath = path.join(f.session, 'explorer-values.json');
       fs.writeFileSync(valuesPath, JSON.stringify(values));
       f.lines.length = 0;
-      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session], f.deps);
+      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const output = f.output();
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
@@ -463,14 +464,14 @@ describe('explorer brief', () => {
         const valuesPath = path.join(f.session, `explorer-bad-${index}.json`);
         fs.writeFileSync(valuesPath, JSON.stringify(values));
         f.lines.length = 0;
-        const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session], f.deps);
+        const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
         assert.equal(exit, 1, JSON.stringify(values));
         assert.equal(f.output().reason, 'invalid-input');
       }
       const malformed = path.join(f.session, 'explorer-malformed.json');
       fs.writeFileSync(malformed, '{');
       f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', malformed, '--session', f.session], f.deps), 1);
+      assert.equal(await main(['brief', 'explorer', malformed, '--session', f.session, '--host', 'codex'], f.deps), 1);
       assert.equal(f.output().reason, 'invalid-input');
       const after = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       assert.deepEqual(after, before);
@@ -488,7 +489,7 @@ describe('test-cleanup brief', () => {
       const valuesPath = path.join(f.session, 'cleanup-values.json');
       fs.writeFileSync(valuesPath, JSON.stringify({base, integrationPath}));
       f.lines.length = 0;
-      const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session], f.deps);
+      const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const output = f.output();
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
@@ -521,7 +522,7 @@ describe('test-cleanup brief', () => {
         const valuesPath = path.join(f.session, `cleanup-bad-${index}.json`);
         fs.writeFileSync(valuesPath, JSON.stringify(values));
         f.lines.length = 0;
-        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session], f.deps);
+        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
         assert.equal(exit, 1, JSON.stringify(values));
         assert.equal(f.output().reason, 'invalid-input');
       }
@@ -529,7 +530,7 @@ describe('test-cleanup brief', () => {
       try {
         const valuesPath = path.join(g.session, 'cleanup-values.json');
         fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
-        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', g.session], g.deps);
+        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', g.session, '--host', 'codex'], g.deps);
         assert.equal(exit, 4);
         assert.equal(g.output().reason, 'lint-errors');
         assert.equal(fs.existsSync(path.join(g.session, '.state', 'briefs')), false);
@@ -538,4 +539,139 @@ describe('test-cleanup brief', () => {
       assert.deepEqual(after, before);
     } finally { f.cleanup(); }
   });
+});
+
+test('brief results name the host model and effort', async () => {
+  const f = await fixture(false, PLAN);
+  const {skillRoot, orchestrator} = f.deps;
+  const skill = path.join(f.root, 'launch-skill');
+  const templates = path.join(skill, 'references', 'templates');
+  fs.mkdirSync(templates, {recursive: true});
+  for (const name of ['writer-brief.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'quality-bar.md', 'context-map.md']) {
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
+  }
+  fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
+  const configPath = path.join(skill, 'config.jsonc');
+  const writeConfig = () => fs.writeFileSync(configPath, JSON.stringify({
+    'read-delegates': {
+      codex: {targets: [{low: {model: 'reader'}}]},
+      opencode: {targets: [{low: {model: 'reader'}}]},
+      copilot: {targets: [{low: {model: 'reader'}}]},
+      agy: {targets: [{low: {model: 'reader'}}]},
+    },
+    'write-subagents': {
+      codex: {low: {model: 'codex-low', effort: 'low-eff'}, high: {model: ['codex-high-a', 'codex-high-b'], effort: 'high-eff'}},
+      opencode: {low: {model: 'prov/model', effort: 'my-eff'}, high: {model: 'prov/plain'}},
+      agy: {low: {model: 'agy-low', effort: 'low'}},
+    },
+    'explore-subagents': {
+      opencode: {model: 'exp/model', effort: 'exp-eff'},
+      codex: {model: 'codex-exp'},
+    },
+  }));
+  try {
+    await f.approve();
+    await f.launch();
+    f.deps.skillRoot = skill;
+    const writerValue = async (host: string, level: string) => {
+      await f.add('level', {level}, {by: level === 'low' ? 'orchestrator' : 'orchestrator'});
+      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      f.lines.length = 0;
+      const exit = await main(['brief', 'render', 'T1', '--session', f.session, '--host', host], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+    };
+    writeConfig();
+    // Two distinct levels for the same host.
+    assert.deepEqual((await writerValue('codex', 'low')).model, ['codex-low']);
+    assert.equal((await writerValue('codex', 'low')).effort, 'low-eff');
+    const high = await writerValue('codex', 'high');
+    assert.deepEqual(high.model, ['codex-high-a', 'codex-high-b']);
+    assert.equal(high.effort, 'high-eff');
+    assert.equal('subagentModels' in high, false);
+    // Level fallback through resolveLevel: medium resolves to the nearest defined below (low).
+    await f.add('level', {level: 'medium'});
+    f.deps.orchestrator = {platform: 'codex', model: null} as never;
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'render', 'T1', '--session', f.session, '--host', 'codex'], f.deps), 0);
+    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown};
+    assert.deepEqual(fallback.model, ['codex-low']);
+    assert.equal(fallback.effort, 'low-eff');
+    // OpenCode writer carries the exact subagent value with effort.
+    const openLow = await writerValue('opencode', 'low');
+    assert.deepEqual(openLow.model, ['prov/model']);
+    assert.equal(openLow.effort, 'my-eff');
+    assert.deepEqual(openLow.subagentModels, ['prov/model#my-eff']);
+    // OpenCode writer without effort carries the plain value.
+    const openHigh = await writerValue('opencode', 'high');
+    assert.deepEqual(openHigh.model, ['prov/plain']);
+    assert.equal(openHigh.effort, null);
+    assert.deepEqual(openHigh.subagentModels, ['prov/plain']);
+    // Missing entry resolves to null without refusing.
+    const missing = await writerValue('copilot', 'low');
+    assert.equal(missing.model, null);
+    assert.equal(missing.effort, null);
+    assert.equal('subagentModels' in missing, false);
+    // Explorer and test-cleanup read the utility entry.
+    const explorerValue = async (host: string) => {
+      const valuesPath = path.join(f.session, `explorer-${host}.json`);
+      fs.writeFileSync(valuesPath, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: 'out.md'}));
+      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      f.lines.length = 0;
+      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', host], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+    };
+    const expOpen = await explorerValue('opencode');
+    assert.deepEqual(expOpen.model, ['exp/model']);
+    assert.equal(expOpen.effort, 'exp-eff');
+    assert.deepEqual(expOpen.subagentModels, ['exp/model#exp-eff']);
+    const expCodex = await explorerValue('codex');
+    assert.deepEqual(expCodex.model, ['codex-exp']);
+    assert.equal(expCodex.effort, null);
+    assert.equal('subagentModels' in expCodex, false);
+    // Utility falls back to the lowest writer when no explorer entry exists, independent of level.
+    await f.add('level', {level: 'high'});
+    const expAgyHigh = await explorerValue('agy');
+    await f.add('level', {level: 'low'});
+    const expAgyLow = await explorerValue('agy');
+    for (const value of [expAgyHigh, expAgyLow]) {
+      assert.deepEqual(value.model, ['agy-low']);
+      assert.equal(value.effort, 'low');
+    }
+    const expMissing = await explorerValue('copilot');
+    assert.equal(expMissing.model, null);
+    assert.equal(expMissing.effort, null);
+    // Test-cleanup shares the utility entry, including the OpenCode value.
+    const cleanupValue = async (host: string) => {
+      const valuesPath = path.join(f.session, `cleanup-${host}.json`);
+      fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
+      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      f.lines.length = 0;
+      const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', host], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+    };
+    const cleanOpen = await cleanupValue('opencode');
+    assert.deepEqual(cleanOpen.model, ['exp/model']);
+    assert.deepEqual(cleanOpen.subagentModels, ['exp/model#exp-eff']);
+    const cleanMissing = await cleanupValue('copilot');
+    assert.equal(cleanMissing.model, null);
+    assert.equal(cleanMissing.effort, null);
+    // Missing or invalid config never refuses a render; launch values are null.
+    fs.unlinkSync(configPath);
+    const nullWriter = await writerValue('codex', 'low');
+    assert.equal(nullWriter.model, null);
+    assert.equal(nullWriter.effort, null);
+    const nullExplorer = await explorerValue('codex');
+    assert.equal(nullExplorer.model, null);
+    fs.writeFileSync(configPath, '{');
+    const invalidWriter = await writerValue('codex', 'low');
+    assert.equal(invalidWriter.model, null);
+    assert.equal(invalidWriter.effort, null);
+  } finally {
+    f.deps.skillRoot = skillRoot;
+    f.deps.orchestrator = orchestrator;
+    f.cleanup();
+  }
 });

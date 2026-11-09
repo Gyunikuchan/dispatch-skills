@@ -360,7 +360,7 @@ test('enabled toolkit diagnostics retain attempts, normalized usage, time and re
     };
     for (let i=0; i<2; i++) {
       f.lines.length = 0;
-      assert.equal(await main(['ask','run','--session',f.session], f.deps), 0);
+      assert.equal(await main(['ask','run','--session',f.session, '--host', 'claude'], f.deps), 0);
     }
     const facts = sessionFacts(f.session, {records:[], lastSeq:0, torn:null}, 'complete');
     assert.deepEqual(facts.invocations.map(i => [i.provider,i.model,i.outcome,i.durationMs,i.usage?.input,i.usage?.cacheRead,i.usage?.output]), [
@@ -389,7 +389,7 @@ test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O
         assert.equal(deps.delegate === f.deps.delegate, !enabled);
         return {ok:false,exit:4,reason:'native-pending',summary:'pending',value:{pending:[]}};
       };
-      assert.equal(await main(['review','run','--session',f.session],f.deps),4);
+      assert.equal(await main(['review','run','--session',f.session, '--host', 'codex'],f.deps),4);
       assert.equal(f.output().reason,'native-pending');
       assert.doesNotMatch(f.lines[0]!, /diagnostic|retro/);
       if (!enabled) assert.equal(fs.existsSync(path.join(f.session,'.state','diagnostics')),false);
@@ -418,7 +418,7 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
       assert.equal(facts.invocations.length,2,'attempts persisted before handler completion');
       throw new Error('after durable slot boundary');
     };
-    assert.equal(await main(['review','run','example.plan.md','--session',f.session],f.deps),2);
+    assert.equal(await main(['review','run','example.plan.md','--session',f.session, '--host', 'codex'],f.deps),2);
     const dir=path.join(f.session,'.state','diagnostics');
     fs.writeFileSync(path.join(dir,'corrupt.json'),'{invalid');
     const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'fault');
