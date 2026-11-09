@@ -216,10 +216,11 @@ function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRec
     }
   }
   if (record.kind === 'approval') {
+    if (!bind) throw new ToolError(1, 'invalid-record', 'approval needs bound artifacts; append a bind record for the spec and plan or design first.');
     const hashes = currentHashes(root, bind);
-    const artifacts = Object.keys(bind?.data ?? {}).sort();
+    const artifacts = Object.keys(bind.data).sort();
     const approvedArtifacts = Object.keys(record.data).sort();
-    if (!bind || stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
+    if (stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
       !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed)) {
       const current = Object.entries(hashes).map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`).join('; ');
       throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''));

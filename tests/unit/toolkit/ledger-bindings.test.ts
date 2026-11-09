@@ -77,6 +77,7 @@ test('ledger bindings approvals and input filters preserve validation and retrie
  f.artifact('s.spec.md','spec');f.artifact('p.plan.md','plan');
  for(const spec of ['../escape','C:/absolute','missing'])await assert.rejects(add('bind',{spec,plan:'p.plan.md'}),{reason:'invalid-record'});
  const badBind=await call({kind:'bind',key:'bad-bind',by:'orchestrator',data:{spec:'missing',plan:'p.plan.md'}});assert.equal(badBind.exit,1);assert.equal(badBind.output.reason,'invalid-record');
+ await assert.rejects(add('approval',{spec:hash,plan:hash},{by:'user',quote:'yes'}),{reason:'invalid-record',message:/append a bind record/});
  const binding={kind:'bind',key:'bind',by:'orchestrator',data:{spec:'s.spec.md',plan:'p.plan.md'}};
  assert.equal((await call(binding)).exit,0);const hashes=currentHashes(f.root,latest(foldLedger(f.session),'bind'));
  await assert.rejects(add('approval',{...hashes,design:hash},{by:'user',quote:'yes'}),{reason:'approval-stale'});

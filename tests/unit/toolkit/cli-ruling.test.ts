@@ -93,4 +93,38 @@ describe('toolkit CLI rulings contract', () => {
       assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
     } finally { restoreAtomicWrite(); f.cleanup(); }
   });
+
+  test('bind after a completed review renders its findings section', async () => {
+    const f = sessionFixture({memory:true});
+    const restoreAtomicWrite = useMemoryAtomicWrite();
+    try {
+      f.artifact('mission.spec.md', '# Mission\n');
+      const plan = f.artifact('work.plan.md', '# Work\n\n## Review Findings & Resolutions\n*No reviews conducted yet.*\n');
+      const directory = path.join(f.session, '.state', 'reviews', 'plan-work.plan', 'round-1');
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ round: 1, generation: 1, cap: 2, roster: [] }));
+      fs.writeFileSync(path.join(directory, 'findings.json'), JSON.stringify({ review: 'plan-work.plan', round: 1, findings: [{ id: 'R1-F001', severity: 'SHOULD' }] }));
+      const file = path.join(f.root, 'bind.json');
+      fs.writeFileSync(file, JSON.stringify({ kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }));
+      assert.equal(await main(['ledger', 'append', file, '--session', f.session], f.deps), 0);
+      const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as Record<string, unknown>;
+      assert.equal(value['findingsSection'], 'updated', JSON.stringify(value));
+      assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
+    } finally { restoreAtomicWrite(); f.cleanup(); }
+  });
+
+  test('bind before any review leaves the artifact unchanged', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      f.artifact('mission.spec.md', '# Mission\n');
+      const source = '# Work\n\nNo findings section yet.\n';
+      const plan = f.artifact('work.plan.md', source);
+      const file = path.join(f.root, 'bind.json');
+      fs.writeFileSync(file, JSON.stringify({ kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }));
+      assert.equal(await main(['ledger', 'append', file, '--session', f.session], f.deps), 0);
+      const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as Record<string, unknown>;
+      assert.equal('findingsSection' in value, false);
+      assert.equal(fs.readFileSync(plan, 'utf8'), source);
+    } finally { f.cleanup(); }
+  });
 });

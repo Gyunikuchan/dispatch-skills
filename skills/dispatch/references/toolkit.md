@@ -146,8 +146,8 @@ Refusals: unknown criterion, which names each unknown ID and the valid IDs; expl
 ### ledger append
 
 Arguments: `ledger append <record.json> --session <session>`. `<record.json>` is a file path, not inline JSON, holding a single record object or a non-empty JSON array of record objects. A leading UTF-8 BOM in the record file is ignored.
-Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
-Refusals: unreadable JSON, invalid-record (including an empty array), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
+Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, or a bind of a plan/design that has saved review rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
+Refusals: unreadable JSON, invalid-record (including an empty array and an approval with no bind record), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
 ### ledger query
 

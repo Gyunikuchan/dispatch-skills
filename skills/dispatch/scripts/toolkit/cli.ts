@@ -33,6 +33,7 @@ import { reportComplete, reportRender } from './report.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { diagnosticsRender, observeTool } from './diagnostics.ts';
 import { refreshFindingsSection, rulingReview } from './review-findings.ts';
+import { reviewId } from './confirmations.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
@@ -153,7 +154,18 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
         const record = item as Record<string, unknown>;
         const data = record['data'];
-        if (record['kind'] !== 'ruling' || !data || typeof data !== 'object' || Array.isArray(data)) continue;
+        if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+        // A bind that follows a review renders the rounds its refreshes skipped; a bind before any review leaves the artifact alone.
+        if (record['kind'] === 'bind') {
+          for (const kind of ['plan', 'design'] as const) {
+            const relative = (data as Record<string, unknown>)[kind];
+            if (typeof relative !== 'string') continue;
+            const review = reviewId(kind, path.resolve(manifest.repositoryRoot, relative));
+            if (fs.existsSync(path.join(session, '.state', 'reviews', review))) reviews.add(review);
+          }
+          continue;
+        }
+        if (record['kind'] !== 'ruling') continue;
         const subject = (data as Record<string, unknown>)['subject'];
         const review = typeof subject === 'string' ? rulingReview(subject) : null;
         if (review) reviews.add(review);
