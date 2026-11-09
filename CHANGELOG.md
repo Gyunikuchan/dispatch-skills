@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-10
+
+- Native subagent execution runs same-platform read delegates and size-triggered exploratory research directly within the host harness, saving tokens and speeding up grounding.
+- Resilient delegate management automatically detects stalled or capacity-limited delegates and resumes sessions before failing over.
+- Spec, design, and plan binding ensures review rounds and revisions maintain a verified audit chain across all planning stages.
+- Per-actor context packs and strict byte budgeting prevent context bloat across multi-agent workflows.
+- Plan task specifications admit optional visual aids and preview diagrams without interfering with automated linter checks.
+
 ## [0.8.3] - 2026-11-05
 
 - Spec planning offers grounded approach options with explicit recommendations, and combines interview-style grilling and confirmation into a single user interaction.
