@@ -812,7 +812,9 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[
     task.behaviour.push(behaviour[1].trim());
     return;
   }
-  if (entry.text.trim()) out.push(lint('task-map', entry.line, `Task ${task.id} outcome belongs in Task Map; keep task-specific detail under Constraints or Overlap.`));
+  const trimmed = entry.text.trim();
+  if (trimmed.startsWith('|') || /^Text summary:\s*\S/i.test(trimmed)) return;
+  if (trimmed) out.push(lint('task-map', entry.line, `Task ${task.id} outcome belongs in Task Map; keep task-specific detail under Constraints or Overlap.`));
 }
 
 export function hasBehaviour(behaviour: readonly string[]): boolean {

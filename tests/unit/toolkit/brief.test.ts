@@ -3,6 +3,8 @@ import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { taskMarkdown } from '../../../skills/dispatch/scripts/toolkit/brief.ts';
+import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { qualityCriteria } from '../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -675,3 +677,63 @@ test('brief results name the host model and effort', async () => {
     f.cleanup();
   }
 });
+
+  test('task markdown and brief render preserve fenced heading blocks and file entries', async () => {
+    const fencedHeadingPlan = PLAN.replace(
+      '### T1 — First\n- Constraints: Preserve the first invariant.',
+      '### T1 — First\n- Constraints: Preserve the first invariant.\n```markdown\n## Fenced Heading Two\n### Fenced Heading Three\n```',
+    );
+    const parsed = parsePlan(fencedHeadingPlan);
+    assert.equal(parsed.ok, true);
+    const selected = selectTaskBrief(parsed.plan, 'T1');
+    assert.ok(selected);
+    const markdown = taskMarkdown(fencedHeadingPlan, selected);
+    assert.match(markdown, /## Fenced Heading Two/);
+    assert.match(markdown, /### Fenced Heading Three/);
+    assert.match(markdown, /#### \[NEW\] src\/first\.ts/);
+    assert.match(markdown, /- Purpose: First implementation detail\./);
+
+    const f = await fixture(false, fencedHeadingPlan);
+    try {
+      await f.approve();
+      await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const brief = fs.readFileSync(result.value.path, 'utf8');
+      assert.match(brief, /## Fenced Heading Two/);
+      assert.match(brief, /### Fenced Heading Three/);
+      assert.match(brief, /#### \[NEW\] src\/first\.ts/);
+      assert.match(brief, /- Purpose: First implementation detail\./);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test('task markdown and brief render preserve trailing lines when fenced criterion bullet appears', async () => {
+    const fencedCriterionPlan = PLAN.replace(
+      '  - Changes: src/first.ts',
+      '```markdown\n- [SC99] Fenced criterion bullet\n```\n  - Changes: src/first.ts',
+    );
+    const parsed = parsePlan(fencedCriterionPlan);
+    assert.equal(parsed.ok, true);
+    const selected = selectTaskBrief(parsed.plan, 'T1');
+    assert.ok(selected);
+    const markdown = taskMarkdown(fencedCriterionPlan, selected);
+    assert.match(markdown, /- \[SC99\] Fenced criterion bullet/);
+    assert.match(markdown, /node first-check/);
+    assert.match(markdown, /node first-red/);
+
+    const f = await fixture(false, fencedCriterionPlan);
+    try {
+      await f.approve();
+      await f.launch();
+      const result = await f.call();
+      assert.equal(result.exit, 0);
+      const brief = fs.readFileSync(result.value.path, 'utf8');
+      assert.match(brief, /- \[SC99\] Fenced criterion bullet/);
+      assert.match(brief, /node first-check/);
+      assert.match(brief, /node first-red/);
+    } finally {
+      f.cleanup();
+    }
+  });

@@ -371,6 +371,67 @@ test('task behaviour: warns on hidden, missing, count-only, and placeholder bull
   assert.ok(taskField.warnings.some((item) => item.code === 'task-behaviour'));
   const prose = parsePlan(sourceFor('Visible prose remains invalid.'));
   assert.ok(!prose.ok && prose.defects.some((item) => item.code === 'task-map'));
+  const emptySummary = parsePlan(sourceFor('Text summary:   '));
+  assert.ok(!emptySummary.ok && emptySummary.defects.some((item) => item.code === 'task-map'));
+});
+
+test('task visuals pass lint: admits markdown table, fenced mermaid and text summary', () => {
+  const tableTask = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '| Attempt | Delay |',
+      '| --- | --- |',
+      '| 1 | 100ms |',
+    ].join('\n'),
+  );
+  const tableResult = parsePlan(tableTask);
+  assert.ok(tableResult.ok, JSON.stringify(tableResult));
+
+  const diagramTask = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  Attempt --> Exhausted',
+      '```',
+      '',
+      'Text summary: Attempt sequence leading to exhaustion.',
+    ].join('\n'),
+  );
+  const diagramResult = parsePlan(diagramTask);
+  assert.ok(diagramResult.ok, JSON.stringify(diagramResult));
+});
+
+test('task visuals stay out of behaviour: table and text summary do not enter task behaviour', () => {
+  const source = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '| Attempt | Delay |',
+      '| --- | --- |',
+      '| 1 | 100ms |',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  Attempt --> Exhausted',
+      '```',
+      '',
+      'Text summary: Attempt sequence leading to exhaustion.',
+    ].join('\n'),
+  );
+  const result = parsePlan(source);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.plan.tasks[0]?.behaviour, [
+    'The retry loop stops after three attempts.',
+  ]);
 });
 
 test('task-plan: rejects graph defects', () => {

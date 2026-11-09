@@ -48,7 +48,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
     if (name === 'walkthrough.md') assert.match(skeleton, /<summary>Audit records<\/summary>/, name);
     if (name === 'plan.md') {
       const task = skeleton.split('### T<n> — <Task title>')[1]!.split('\n## Success Criteria')[0]!;
-      assert.match(task, /- <Observable behaviour this task implements and how it works\.>\n\n<details>/);
+      assert.match(task, /- <Observable behaviour this task implements and how it works\.>[\s\S]*?<details>/);
       assert.doesNotMatch(task, /<summary>/);
       const criteria = skeleton.split('## Success Criteria\n')[1]!.split('\n## Verification Plan')[0]!;
       assert.match(criteria, /- \[SC1\] <checkable outcome>\n  <details>\n\n  - Satisfies:/);

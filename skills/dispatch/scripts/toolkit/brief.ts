@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { currentSnapshot, foldLedger, gate, latest, withLedger } from './ledger.ts';
-import { parsePlan, selectTaskBrief } from './domain/plan.ts';
+import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
 import { qualityCriteria } from './domain/prompt.ts';
 import { DEFAULT_MAP_BUDGET } from './domain/context.ts';
 import { checks } from './plan-view.ts';
@@ -16,47 +16,46 @@ import type { Level } from './types.ts';
 
 type LaunchValues = { model: string[] | null; effort: string | null; subagentModels?: string[] };
 
+function launchValues(resolved: ResolvedSubagent | undefined, normalized: string): LaunchValues {
+  if (!resolved) return {model: null, effort: null};
+  const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
+  return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
+}
+
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {
-  const none: LaunchValues = {model: null, effort: null};
   try {
-    if (!host) return none;
+    if (!host) return {model: null, effort: null};
     const normalized = normalizeProvider(host);
     const {config} = loadConfig(skillRoot);
-    if (validateConfig(config).length) return none;
+    if (validateConfig(config).length) return {model: null, effort: null};
     const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined;
     const key = writerTable ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized) : undefined;
     const entry = key && writerTable ? resolveLevel(writerTable[key], level) : undefined;
-    if (!entry) return none;
-    const resolved = resolveSubagent(entry);
-    const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
-    return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
-  } catch { return none; }
+    return launchValues(entry ? resolveSubagent(entry) : undefined, normalized);
+  } catch { return {model: null, effort: null}; }
 }
 
 /** Explorer and test-cleanup launch values from the `utility` entry; null when the host or config does not resolve. */
 function utilityLaunchValues(skillRoot: string, host: string | undefined): LaunchValues {
-  const none: LaunchValues = {model: null, effort: null};
   try {
-    if (!host) return none;
+    if (!host) return {model: null, effort: null};
     const normalized = normalizeProvider(host);
     const {config} = loadConfig(skillRoot);
-    if (validateConfig(config).length) return none;
+    if (validateConfig(config).length) return {model: null, effort: null};
     const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined ?? {};
     const explorerTable = config['explore-subagents'] as Record<string, SubagentEntry> | undefined ?? {};
-    const resolved = resolveUtility(explorerTable, writerTable)[normalized];
-    if (!resolved) return none;
-    const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
-    return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
-  } catch { return none; }
+    return launchValues(resolveUtility(explorerTable, writerTable)[normalized], normalized);
+  } catch { return {model: null, effort: null}; }
 }
 
 function taskParts(source: string, selected: NonNullable<ReturnType<typeof selectTaskBrief>>) {
   const lines = source.split(/\r?\n/);
-  const taskEnd = lines.findIndex((line, i) => i >= selected.task.line && /^#{2,3} /.test(line));
+  const structural = structuralLines(source);
+  const taskEnd = structural.findIndex((entry, i) => i >= selected.task.line && /^#{2,3} /.test(entry.text));
   const section = lines.slice(selected.task.line - 1, taskEnd < 0 ? undefined : taskEnd).join('\n').trim();
   const criteria = selected.criteria.map(criterion => {
-    const end = lines.findIndex((line, i) => i >= criterion.line && (/^## /.test(line) || /^- \[SC\d+\]/.test(line)));
+    const end = structural.findIndex((entry, i) => i >= criterion.line && (/^## /.test(entry.text) || /^- \[SC\d+\]/.test(entry.text)));
     return lines.slice(criterion.line - 1, end < 0 ? undefined : end).join('\n').trim();
   }).join('\n\n');
   return {section, criteria};
@@ -166,11 +165,8 @@ function assertFilled(label: string, text: string): void {
 
 function nextBriefPath(directory: string, base: string): string {
   let index = 1;
-  for (;;) {
-    const file = path.join(directory, `${base}-${index}.md`);
-    if (!fs.existsSync(file)) return file;
-    index++;
-  }
+  while (fs.existsSync(path.join(directory, `${base}-${index}.md`))) index++;
+  return path.join(directory, `${base}-${index}.md`);
 }
 
 /** Reads a JSON values file; a missing, unreadable, unknown or blank value refuses before anything is written. */

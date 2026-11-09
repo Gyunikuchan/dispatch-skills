@@ -67,6 +67,13 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 - Overlap: <path> — <why this unordered task also writes the path>
 - <Observable behaviour this task implements and how it works.>
 
+```mermaid
+flowchart LR
+  Start --> Done
+```
+
+Text summary: Optional visual under the visual-aid bar.
+
 <details>
 
 - #### [NEW] <relative-path>
@@ -136,7 +143,7 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Shared range: At a Glance, Background, optional Key Interfaces & Data, decisions, shared Constraints and Task Map precede task detail. Every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. The authored map is part of the governed plan hash and shared writer context. Put context that all tasks need in the shared range and task-specific detail under the task. For document-writing tasks, name actionable authoring-reference paths in shared context or the assigned task, relative to the repository/worktree or explicitly to the governing plan; check each path before launch.
 
-- Visual placement: put common orientation in the shared range, data shapes in Key Interfaces & Data, and task-local views after behaviour bullets. A depicted unchanged component is context, not a writer-owned path. A plan may include diagrams with or without a parent design; judge each visual with the [visual-aid bar](quality-bar.md#visual-aid-bar).
+- Visual placement: put common orientation in the shared range, data shapes in Key Interfaces & Data, and task-local views after behaviour bullets. A task diagram's text summary is a `Text summary:` line and not a bullet. A depicted unchanged component is context, not a writer-owned path. A plan may include diagrams with or without a parent design; judge each visual with the [visual-aid bar](quality-bar.md#visual-aid-bar).
 
 - Format changes: when a task introduces a format, show its exact shape and producer/consumer contracts; when it changes one, show concrete proposed before and after shapes and affected contracts when useful. Label verification as planned until executed.
 
