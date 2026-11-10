@@ -9,7 +9,7 @@ Investigate before consulting the user. Present four parts:
 
 ## User Gate Boundaries
 
-At medium and above, implementation approval is one approval tuple of spec hash, plan hash and optional design hash, recorded with `by: "user"` and a verbatim quote. Waivers, manual completion and selection of xhigh/max also require user quotes.
+At medium and above, implementation approval is one approval tuple of spec hash, plan hash and optional design hash, recorded with `by: "user"` and a verbatim quote. Waivers, manual completion and selection of xhigh/max also require verbatim user quotes.
 
 Other user gates are changed intent or settled decisions, a suspected user mistake that changes the outcome, a new external dependency or runtime prerequisite, and discarded accepted work. Technical repairs, review adjudication and non-intent plan/design edits within approved scope are orchestrator decisions. Preserve evidence and continue independent work.
 
@@ -35,7 +35,7 @@ Present the needed paths, rationale, verified ownership and interface impact. Ap
 
 ### Red baseline
 
-Present exact failed commands, logs and root cause. Recommend repair, retained known failure or stop, with confidence limits. A known failure is not a pass or a criterion waiver. Obtain a user quote for any actual waiver.
+Present exact failed commands, logs and root cause. Recommend repair, retained known failure or stop, with confidence limits. A known failure is not a pass or a criterion waiver.
 
 ### Failed task
 
@@ -57,7 +57,7 @@ A `review-ceiling` refusal is the ceiling branch of the [continuation rule](revi
 
 - Re-author the artifact from current knowledge under a different approach.
 - Raise the level, or use a higher model or effort, for one more round.
-- Relax or split the failing requirement; intent changes follow [spec operation](spec-stage.md#revision-protocol).
+- Relax or split the failing requirement.
 - Defer remaining accepted MUST findings as follow-ups. Offer this only for plan and design reviews, and only when no MUST rejection is pending.
 
 Record the user decision as a resolved ceiling escalation: `{kind: "escalation", by: "user", quote, key: "ceiling:<review>:<ceiling>:resolved", data: {id: "ceiling:<review>:<ceiling>", state: "resolved", summary: "<re-author|model-effort|relax-split|defer>: <evidence>"}}`. See the [escalation record](toolkit.md#escalation).

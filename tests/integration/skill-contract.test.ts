@@ -618,3 +618,24 @@ test('SKILL.md read rule loads the call table once and each tool section through
   assert.ok(!skill.includes('For each call read its action section'));
   assert.ok(!skill.includes('for ledger calls also read the matching record-kind section'));
 });
+
+test('merged rules keep one home', () => {
+  const ref = (file: string) => read(root + 'references/' + file);
+  const homes: Array<[string, string, string, string]> = [
+    ['review-rules.md', 'plan and design only', 'decision-frame.md', 'Offer this only for plan and design reviews'],
+    ['decision-frame.md', 'Obtain a user quote for any actual waiver', 'decision-frame.md', 'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes'],
+    ['verbs/implement.md', 'Waivers and manual-completion records must quote', 'decision-frame.md', 'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes'],
+    ['verbs/verify.md', 'commit fixes and verifier-added tests', 'verbs/implement.md', 'Commit verifier-added tests and fixes with `worktree commit`'],
+    ['verbs/verify.md', 'A post-review re-check adds no tests', 'verbs/implement.md', 'Never re-check between rounds or add tests in a re-check'],
+    ['worktree-cleanup.md', 'Report every retained owned path', 'worktree-cleanup.md', 'Resolve owned retained paths before a successful handoff'],
+    ['verbs/review.md', 'worktree captures tracked and untracked', 'toolkit.md', 'Worktree captures HEAD plus tracked/untracked changes'],
+    ['verbs/review.md', 'Verify claims against intent and current source', 'review-rules.md', 'Verify every claim against current source and governing outcomes'],
+    ['verbs/review.md', 'Preserve prior findings, rulings', 'review-rules.md', 'Retain reviewed revision, scope, findings, rulings'],
+    ['verbs/plan.md', 'Settle the approval tuple', 'decision-frame.md', 'one approval tuple of spec hash, plan hash and optional design hash'],
+    ['grounding.md', 'resolve any symlinked cited path', 'templates/explorer-brief.md', 'resolve any symlinked path with `realpath`'],
+  ];
+  for (const [oldFile, repeat, homeFile, home] of homes) {
+    assert.ok(!ref(oldFile).includes(repeat), `${oldFile} repeats: ${repeat}`);
+    assert.ok(ref(homeFile).includes(home), `${homeFile} lacks: ${home}`);
+  }
+});
