@@ -1,6 +1,6 @@
 # ADR 0001: Strict dispatch config format
 
-- **Status**: Accepted; implemented in v0.5.0; updated for [ADR 0006](0006-dispatch-state-machine.md)
+- **Status**: Accepted; implemented in v0.5.0
 - **Date**: 2026-09-24
 
 ## Context
@@ -24,7 +24,7 @@ without serving current use. Later optional root tables (`diagnostics`, `write-c
 - Each provider is `{ sandbox?, targets: [...] }`. The non-empty `targets` array contains level
   maps, one per independent voice. Voices have positional identity `<provider>[<index>]`; provider
   declaration order, then target order, determines counts, `all`, reserves, completion, and
-  review affinity (ADR 0006 D31). `only` selects providers, not individual targets. Names would add schema without
+  review affinity ([review rules](../../skills/dispatch/references/review-rules.md#rulings-and-fix-scope)). `only` selects providers, not individual targets. Names would add schema without
   changing selection; structurally identical targets are rejected.
 - Level maps are non-empty and sparse, with keys drawn from `low`, `medium`, `high`, `xhigh`, and
   `max`. Resolution uses the exact level, otherwise the nearest lower, otherwise the lowest higher.
@@ -46,7 +46,7 @@ without serving current use. Later optional root tables (`diagnostics`, `write-c
 accepted for Claude, Copilot, OpenCode, and Codex, but not `agy`. With `sandbox: true`, a provider
 that rejects or cannot activate its sandbox on the host fails the slot as `sandbox-unsupported`,
 and the cascade moves to reserves, then `failed`; a delegate never reruns unsandboxed
-(ADR 0006 D28). Running without isolation requires an explicit `sandbox: false`. This favors least
+(`runDelegate` in the [delegate runner](../../skills/dispatch/scripts/providers/runner.ts)). Running without isolation requires an explicit `sandbox: false`. This favors least
 privilege over availability and makes every unsandboxed run a deliberate configuration choice.
 OpenCode's Bubblewrap follows the effective sandbox value.
 

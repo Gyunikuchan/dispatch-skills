@@ -13,6 +13,21 @@ const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map
 const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
 const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
 
+test('decision records resolve local links and headings', () => {
+  for (const file of markdown('docs/decisions')) for (const target of links(read(file))) {
+    if (/^(?:[a-z][a-z0-9+.-]*:|<)/i.test(target)) continue;
+    const [local, fragment] = target.split('#');
+    const resolved = path.resolve(OVERLAY_ROOT, path.dirname(file), local || path.basename(file));
+    const label = file + ' -> ' + target;
+    assert.ok(fs.existsSync(resolved), label);
+    if (fragment && resolved.endsWith('.md')) {
+      const headings = fs.readFileSync(resolved, 'utf8').match(/^#{1,6}\s+.+$/gm) ?? [];
+      const slugs = headings.map(heading => heading.replace(/^#{1,6}\s+/, '').toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-'));
+      assert.ok(slugs.includes(decodeURIComponent(fragment)), label);
+    }
+  }
+});
+
 test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
   assert.match(skill, /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./);

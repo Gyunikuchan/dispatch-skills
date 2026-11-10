@@ -1,6 +1,6 @@
 # ADR 0003: Chat session artifact governance
 
-- **Status**: Accepted; recovery architecture replaced by [ADR 0013](0013-toolkit-and-ledger.md)
+- **Status**: Accepted
 - **Date**: 2026-09-28
 - **Audience**: Maintainers
 
@@ -18,4 +18,4 @@ Canonical spec ownership follows [ADR 0010](0010-canonical-session-intent.md); d
 
 ## Consequences
 
-Deliverables and evidence remain available together, at the cost of explicit cleanup. The old per-run journal layout and replay recovery have been replaced by the toolkit and ledger. Current initialization, reactivation and artifact paths belong to the [toolkit contract](../../skills/dispatch/references/toolkit.md) and [Dispatch recovery rules](../../skills/dispatch/SKILL.md#invariants-and-recovery).
+Deliverables and evidence remain available together, at the cost of explicit cleanup. Current initialization, reactivation and artifact paths belong to the [toolkit contract](../../skills/dispatch/references/toolkit.md) and [Dispatch recovery rules](../../skills/dispatch/SKILL.md#invariants-and-recovery).

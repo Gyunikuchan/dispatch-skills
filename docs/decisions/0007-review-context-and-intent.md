@@ -1,6 +1,6 @@
 # ADR 0007: Review context and intent composition
 
-- **Status**: Accepted principle; intent ownership updated by [ADR 0010](0010-canonical-session-intent.md)
+- **Status**: Accepted principle
 - **Date**: 2026-10-02
 - **Audience**: Maintainers
 
@@ -16,4 +16,4 @@ Standalone review reuses governing intent or authors a spec from chat and inspec
 
 ## Consequences
 
-Reviewers share intent with authors and writers, at the cost of reading the full spec and authoring it when missing. Changed intent requires a recorded user decision and updated downstream obligations. [Spec operation](../../skills/dispatch/references/spec-stage.md) owns resolution and revision; [review rules](../../skills/dispatch/references/review-rules.md) own adjudication and review history. The old context flag, commit-log synthesis and automatic plan/walkthrough discovery rules have been retired from this record.
+Reviewers share intent with authors and writers, at the cost of reading the full spec and authoring it when missing. Changed intent requires a recorded user decision and updated downstream obligations. [Spec operation](../../skills/dispatch/references/spec-stage.md) owns resolution and revision; [review rules](../../skills/dispatch/references/review-rules.md) own adjudication and review history.

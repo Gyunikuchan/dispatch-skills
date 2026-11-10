@@ -3,7 +3,6 @@
 - **Status**: Accepted
 - **Date**: 2026-10-16
 - **Audience**: Maintainers
-- **Supersedes**: Document-format ownership in [ADR 0008](0008-task-based-plans-and-bounded-parallel-writers.md#2-human-readable-plans-with-precise-ownership)
 
 ## Context
 
