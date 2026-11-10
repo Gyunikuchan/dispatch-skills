@@ -57,6 +57,10 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 
 - <SC> · <reason>
 
+## Runtime Proof
+
+Not recorded.
+
 ## Deviations & Follow-ups
 
 - Deviation: <recorded plan edit and diff reference>
@@ -102,5 +106,6 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 - Review Focus: after Risk, list open escalations, open findings, manual/waived/missing criteria, cap-ending SHOULD fixes verified without re-review or not verified, unplanned paths, rejected MUST/SHOULD findings, downgraded findings, and intent-class edits as one-line pointers to their owning sections. Keep authored `focus` bullets with evidence links. When no derived item applies, state on the Risk line that delivery matched the plan and all criteria are verified.
 - Behaviour Changes: give each task its `### T<n> — <task title>` heading and visible behaviour bullets, followed by a label-free `<details>` block with compact `path · action` lines. Do not add per-file headings or repeat task titles. Put unplanned paths under Unplanned changes; omit empty entries.
 - Verification: show one status line. Keep Manual, Waived and Missing criteria visible outside `<details>`; omit empty subsections. Keep verified evidence in the Appendix.
+- Runtime Proof: list the outcome, proved HEAD, reason, evidence links and later fixes.
 - Deviations & Follow-ups: list recorded edits with diff references, unplanned paths, cap-ending SHOULD fixes, open escalations and deferred rulings, or `None.`.
 - Appendix: keep verified evidence, user-attributed records and quotes, and provenance with spec/plan paths, 12-character hashes, and integration source/ref. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.

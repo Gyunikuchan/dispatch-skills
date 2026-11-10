@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added runtime verification before test cleanup and the standalone verify verb.
+
 ## [0.8.4] - 2026-11-10
 
 - Native subagent execution runs same-platform read delegates and size-triggered exploratory research directly within the host harness, saving tokens and speeding up grounding.

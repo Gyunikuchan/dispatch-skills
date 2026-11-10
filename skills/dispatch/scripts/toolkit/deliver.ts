@@ -61,7 +61,11 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const started=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='deliver-started'&&r.data['dest'].path===dest.path&&r.data['dest'].branch===dest.branch);
     if(started&&(started.data['source']!==source||started.data['from']!==from))blocked('Unfinished delivery has a different source or caller base');
     // A started delivery recovers under existing rules; a new one needs settled coverage before any caller write.
-    if(!started){const applies=applicableReviewIds(ctx.manifest,tx.fold).get('code-integration'),c=coverageState(ctx.session,tx.fold,'code-integration',applies);
+    if(!started){
+      const records=tx.fold.records.filter(r=>r.seq>opened.seq);
+      const proof=records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='verification');
+      if(!proof || proof.data['open'].length || records.some(r=>r.seq>proof.seq&&r.kind==='ruling'&&r.data['subject'].startsWith('verification:')&&r.data['ruling']==='accepted')) refuse('verification-required');
+      const applies=applicableReviewIds(ctx.manifest,tx.fold).get('code-integration'),c=coverageState(ctx.session,tx.fold,'code-integration',applies);
       // The message follows launch admission, which can stop a rerun for a user decision once the coverage round is used.
       const budget=c.open.length?admission(ctx.session,tx.fold,'code-integration',0,applies).budget:null,user=budget?.state==='requires-coverage-decision';
       if(c.decision==='rerun'||c.decision==='user')refuse('coverage-required','Review coverage: '+(c.open.length?'open slots '+c.open.join(', ')+(user?'; needs a user decision: accept reduced coverage'+(budget!.nextRound>budget!.ceiling?'':' or grant one more coverage round'):'; rerun them'):'round '+c.incomplete+' is incomplete'));}

@@ -7,7 +7,7 @@ import {KINDS} from '../../skills/dispatch/scripts/toolkit/records.ts';
 import {OVERLAY_ROOT} from './scan.ts';
 const root = 'skills/dispatch/';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
-const refs = ['toolkit', 'spec-stage', 'review-rules', 'decision-frame', 'providers', 'worktree-cleanup', 'diagnostics', 'glossary', 'self-build', ...['ask', 'design', 'plan', 'implement', 'review'].map(v => 'verbs/' + v)];
+const refs = ['toolkit', 'spec-stage', 'review-rules', 'decision-frame', 'providers', 'worktree-cleanup', 'diagnostics', 'glossary', 'self-build', ...['ask', 'design', 'plan', 'implement', 'review', 'verify'].map(v => 'verbs/' + v)];
 const scanned = ['SKILL.md', ...refs.map(v => 'references/' + v + '.md')];
 const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(m => m[1]!);
 const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
@@ -16,8 +16,9 @@ const section = (text: string, heading: string) => text.split('### ' + heading +
 test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
   assert.match(skill, /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./);
-  assert.match(skill, /Keep `ask`, `review` and `implement` on their requested verb/);
-  assert.ok(skill.indexOf('Read the selected phase') < skill.indexOf('## Tool loop'));
+  assert.match(skill, /Keep `ask`, `review`, `verify` and `implement` on their requested verb/);
+  const readPhase = skill.indexOf('Read the phase first');
+  assert.ok(readPhase >= 0 && readPhase < skill.indexOf('## Tool loop'));
   assert.match(skill, /Ask needs no spec, plan or approval/);
   assert.match(skill, /Standalone review adds no approval gate/);
   for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
@@ -50,11 +51,11 @@ test('skill contract keeps router entries and resolving reference links', () => 
   const fields: Record<string, string[]> = {
     bind: ['spec', 'plan', 'design'], approval: ['spec', 'plan', 'design'],
     level: ['level'], waiver: ['criterion', 'reason'], 'manual-complete': ['criterion', 'evidence'],
-    escalation: ['id', 'state', 'summary'], ruling: ['subject', 'ruling', 'rationale'], note: ['text'],
+    escalation: ['id', 'state', 'summary'], ruling: ['subject', 'ruling', 'rationale', 'verification:<cycle>:V<n>'], note: ['text'],
     edit: ['artifact', 'before', 'after', 'class', 'affects', 'rationale', 'diffRef'],
     evidence: ['criterion', 'commandDigest', 'tree', 'clean', 'before', 'after', 'exit', 'path'],
     writer: ['phase', 'task', 'launched', 'path', 'base', 'commit', 'taskSection', 'seq', 'finished', 'launch', 'candidate', 'abandoned', 'reason'],
-    integrate: ['phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'from', 'source', 'delivered', 'closed'],
+    integrate: ['verification', 'cycle', 'outcome', 'head', 'open', 'report', 'artifacts', 'dirty', 'phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'from', 'source', 'delivered', 'closed'],
   };
   for (const [kind, names] of Object.entries(fields)) {
     const body = section(ledger, kind);
@@ -250,15 +251,17 @@ test('spec stage docs describe approach options', () => {
 });
 
 test('aliases preserve entry mappings', () => {
-  const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code'};
+  const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code', 'dispatch-verify': 'verify'};
   for (const [name, verb] of Object.entries(mapping)) {
     const text = read('skills/' + name + '/SKILL.md');
     assert.ok(text.includes('`' + verb + '`'), name);
     assert.ok(text.includes('Missing dependency: dispatch is required by ' + name));
+    assert.match(text, new RegExp('name: ' + name));
+    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, '.agents/skills', name, 'SKILL.md')), name + ': host link');
   }
   const review = read('skills/dispatch-code-review/SKILL.md');
   assert.ok(review.includes('--spec'));
-  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review)\b/, file);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review|dispatch-verify)\b/, file);
 });
 
 test('human manuals retain portable links and current operational guidance', () => {
@@ -389,7 +392,7 @@ test('references keep branch detail and use the utility entry', () => {
   assert.doesNotMatch(providers, /^## Subagent context$/m);
   assert.ok(links(providers).includes('../SKILL.md#launch-and-continue'));
   assert.ok(links(ref('verbs/ask')).includes('../../SKILL.md#routing'));
-  const step6 = ref('verbs/implement').split('\n6. ')[1]?.split('\n7. ')[0] ?? '';
+  const step6 = ref('verbs/implement').split('\n').find(line => line.includes('Apply [shared]')) ?? '';
   assert.doesNotMatch(step6, /--level low/);
   assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/);
   assert.match(step6, /runs only its edited test files/);
@@ -582,3 +585,7 @@ test('toolkit doctor run documents writeConcurrency in result shape', () => {
   const toolkit = read(root + 'references/toolkit.md');
   assert.match(section(toolkit, 'doctor run'), /writeConcurrency/);
 });
+
+test('implement runs verification before test cleanup', () => { const s = read(root + 'references/verbs/implement.md'); assert.ok(s.indexOf('verification step') < s.indexOf('Apply [shared]')); for (const term of ['criterion and contract checks must pass on the new HEAD', 'Any verifier-added test launches cleanup', 'all review rounds settle', 'accepted review fixes changed proved behaviour', 'V0', 'before launching', 'covering those fixes together', 'Never re-check between rounds', 'add tests in a re-check', 'another code review round', 'three fix rounds per issue']) assert.ok(s.includes(term), term); });
+test('verify guide states approval and issue loop', () => { const s = read(root + 'references/verbs/verify.md'); for (const term of ['finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(s.includes(term), term); });
+test('verify manual describes proof and host guidance', () => { const s = read(root + 'references/readme/verify.md'); assert.match(s, /verification\/report.md/); assert.match(s, /Verification/); });

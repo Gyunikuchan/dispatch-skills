@@ -96,6 +96,7 @@ const writers: Record<string, Record<string, Rule>> = {
 };
 const integrations: Record<string, Record<string, Rule>> = {
   opened: { path: text, branch: text, base: git, dest },
+  verification: { cycle: positive, outcome: choice('proved', 'partial', 'no-op'), head: git, reason: text, open: array, report: focusEvidence, artifacts: shaped('an array of evidence paths', (value, field) => { if (!Array.isArray(value)) invalid(field, 'an array of evidence paths'); value.forEach((item, index) => focusEvidence(item, field + '.' + index)); }), dirty: bool },
   'test-cleanup': { from: git, fromTree: git, to: git, removed: array, deleted: seq, merged: seq },
   started: { task: text, candidate: git },
   conflict: { task: text, paths: array },
@@ -135,11 +136,17 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
+  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='verification' ? ['report', 'artifacts', 'dirty'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
     invalid('data', 'a spec and at least one plan or design');
-  if (value.kind === 'ruling' && value.data['subject'].startsWith('review:')) {
+  if (value.kind === 'integrate' && value.data['phase'] === 'verification') {
+    const data = value.data;
+    if (data['open'].some((item: string) => !new RegExp('^' + data['cycle'] + ':V[0-9]+$').test(item))) invalid('data.open', 'issue IDs for the verification cycle');
+    if (data['outcome'] !== 'partial' && data['open'].length) invalid('data.open', 'empty for proved or no-op');
+    if (data['outcome'] !== 'no-op' && !data['report']) invalid('data.report', 'required for proved or partial');
+  }
+  if (value.kind === 'ruling' && (value.data['subject'].startsWith('review:') || value.data['subject'].startsWith('verification:'))) {
     choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
   }
   if (value.kind === 'ruling' && ('impact' in value.data || 'trigger' in value.data)) {

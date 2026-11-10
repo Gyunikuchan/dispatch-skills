@@ -280,3 +280,19 @@ test('approval accepts a recorded non-intent chain and stale approvals list curr
     await assertStale(() => approve(approved), current);
   });
 });
+
+test('integrate verification records validate outcomes and cycle identity', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    let n = 0;
+    const add = (kind: string, data: object) => appendRecord(f.session, {kind, data, by: 'orchestrator', key: 'verification-' + n++}, f.deps);
+    const valid = {phase: 'verification', cycle: 1, outcome: 'proved', head: 'a'.repeat(40), reason: 'exercised', open: [], report: 'verification/report.md'};
+    await add('integrate', valid);
+    for (const change of [{outcome:'bad'}, {head:'bad'}, {open:undefined}, {report:'/absolute'}, {open:['1:V1']}, {report:undefined}, {open:['bad']}, {cycle:undefined}])
+      await assert.rejects(add('integrate', {...valid, ...change}), {reason:'invalid-record'});
+    await assert.rejects(add('integrate', {...valid, outcome:'no-op', open:['1:V1']}), {reason:'invalid-record'});
+    await assert.rejects(add('integrate', {...valid, outcome:'partial', report:undefined}), {reason:'invalid-record'});
+    for (const cycle of [1, 2]) await add('ruling', {subject:`verification:${cycle}:V1`, ruling:'accepted', rationale:'valid'});
+    await assert.rejects(add('ruling', {subject:'verification:1:V1', ruling:'unknown', rationale:'invalid'}), {reason:'invalid-record'});
+  } finally { f.cleanup(); }
+});

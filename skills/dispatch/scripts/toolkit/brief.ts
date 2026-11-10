@@ -296,3 +296,22 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
   return {ok: true, exit: 0, value, summary: 'test-cleanup brief: ' + file + ' (' + value.bytes + ' bytes)'};
 }
+
+const VERIFIER_VALUES = ['checkoutPath', 'base', 'specPath', 'focus'] as const;
+export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerResult> {
+  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
+  const values = readValues(ctx.args[0]!, VERIFIER_VALUES);
+  const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
+  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
+  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
+  const evidenceDir = path.join(ctx.session, 'verification');
+  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: qualityCriteria(bar, 'cleanup', 0, specStage)});
+  assertFilled('verifier', text);
+  const directory = path.join(ctx.session, '.state', 'briefs');
+  fs.mkdirSync(directory, {recursive: true});
+  fs.mkdirSync(evidenceDir, {recursive: true});
+  const file = nextBriefPath(directory, 'verifier');
+  fs.writeFileSync(file, text);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text), evidenceDir, ...utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform)};
+  return {ok: true, exit: 0, value, summary: 'verifier brief: ' + file + ' (' + value.bytes + ' bytes)'};
+}

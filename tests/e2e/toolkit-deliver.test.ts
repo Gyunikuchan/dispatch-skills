@@ -453,6 +453,23 @@ describe('deliver coverage gate',()=>{
  it('deliver coverage gate leaves a started delivery to existing recovery',async()=>{const {r}=await prepared();try{
   const crash=await r.run(['worktree','deliver'],p=>{if(p==='deliver:after-started')throw Error('injected');});assert.equal(crash.exit,2);assert.equal(rows(r,'deliver-started').length,1);
   coverageRound(r,{n:1,roster:[A,B,C],done:[B,C],failed:[A]});
+  await appendRecord(r.session,{kind:'integrate',by:'orchestrator',data:{phase:'verification',cycle:2,outcome:'partial',head:r.git(['rev-parse','HEAD'],r.integration),reason:'re-check',open:['2:V0'],report:'verification/report.md'}},r.deps);
   const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,JSON.stringify(retry));assert.equal(retry.value.delivered,true);
  }finally{r.cleanup();}});
 });
+
+it('deliver verification gate refuses an absent outcome before caller writes', async()=>{const {r}=await prepared();try{
+ const before=caller(r), result=await r.run(['worktree','deliver'], undefined, false);
+ assert.equal(result.output.reason,'verification-required');assert.deepEqual(caller(r),before);assert.equal(rows(r,'deliver-started').length,0);
+}finally{r.cleanup();}});
+
+it('deliver verification gate follows latest outcome and later rulings',async()=>{const {r}=await prepared();try{
+ let n=0; const head=r.git(['rev-parse','HEAD'],r.integration);
+ const proof=(cycle:number,outcome:string,open:string[])=>appendRecord(r.session,{kind:'integrate',by:'orchestrator',key:'proof-'+n++,data:{phase:'verification',cycle,outcome,head,reason:'test',open,...(outcome==='no-op'?{}:{report:'verification/report.md'})}},r.deps);
+ const ruling=()=>appendRecord(r.session,{kind:'ruling',by:'orchestrator',key:'ruling-'+n++,data:{subject:'verification:2:V1',ruling:'accepted',rationale:'valid'}},r.deps);
+ const refuse=async()=>{const before=caller(r);const result=await r.run(['worktree','deliver'],undefined,false);assert.equal(result.output.reason,'verification-required');assert.deepEqual(caller(r),before);assert.equal(rows(r,'deliver-started').length,0);};
+ await proof(1,'proved',[]);await proof(2,'partial',['2:V1']);await refuse();
+ await proof(2,'partial',[]);await ruling();await refuse();
+ await proof(3,'partial',['3:V0']);await refuse();
+ await proof(3,'partial',[]);assert.equal((await r.run(['worktree','deliver'],undefined,false)).exit,0);
+}finally{r.cleanup();}});

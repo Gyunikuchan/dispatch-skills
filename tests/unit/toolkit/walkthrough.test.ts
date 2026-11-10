@@ -44,7 +44,7 @@ test('walkthrough follows reviewer order and states counts once', () => {
   }));
 
   assert.deepEqual([...rendered.matchAll(/^## .+$/gm)].map((match) => match[0]), [
-    '## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix',
+    '## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Runtime Proof', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix',
   ]);
   const glance = section(rendered, '## At a Glance', '## Visuals');
   assert.match(glance, /- \*\*What:\*\* The plan behaviour is visible to readers\./);

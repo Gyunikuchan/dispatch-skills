@@ -60,7 +60,7 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   };
   const level = async (value='low') => appendRecord(session,{kind:'level',by:'orchestrator',key:'level:' + foldLedger(session).lastSeq,data:{level:value}},deps);
   const edit = async (data: object) => appendRecord(session,{kind:'edit',by:'orchestrator',key:'edit:' + foldLedger(session).lastSeq,data},deps);
-  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup']);
+  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup', 'brief verifier']);
   const withHost = (args: string[]) => {
     if (args.includes('--host')) return args;
     if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;
@@ -76,7 +76,7 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
     }
     return [...args, '--host', host];
   };
-  const run = async (args: string[], hook?: CliDeps['hook']) => { const lines: string[]=[]; const exit=await main([...withHost(args),'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };
+  const run = async (args: string[], hook?: CliDeps['hook'], seedVerification = true) => { if (seedVerification && args[0] === 'worktree' && args[1] === 'deliver') { const fold = foldLedger(session); const opened = fold.records.findLast(r => r.kind === 'integrate' && r.data['phase'] === 'opened'); if (opened && !fold.records.some(r => r.seq > opened.seq && r.kind === 'integrate' && r.data['phase'] === 'verification')) await appendRecord(session, {kind:'integrate',by:'orchestrator',data:{phase:'verification',cycle:1,outcome:'no-op',head:opened.data['base'],reason:'fixture',open:[]}}, deps); } const lines: string[]=[]; const exit=await main([...withHost(args),'--session',session],{...deps,stdout:line=>lines.push(line),...(hook ? {hook} : {})}); assert.equal(lines.length,1); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); return {exit,output,value: output.path ? JSON.parse(fs.readFileSync(output.path,'utf8')) : null}; };
   const spawned = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => spawnSync(process.execPath,[entry,...withHost(args),'--session',session],{encoding:'utf8',windowsHide:true,env:env ?? process.env});
   const concurrent = (args: string[], entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'), env?: NodeJS.ProcessEnv) => new Promise<{exit:number; output:any; value:any}>((resolve,reject)=>{
     const child=spawn(process.execPath,[entry,...withHost(args),'--session',session],{windowsHide:true,env:env ?? process.env});

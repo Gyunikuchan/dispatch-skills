@@ -105,6 +105,8 @@ Inspect with `git diff` and `git status`; restore retained source with `git rest
 
 A completed same-source retry returns the recorded outcome without checking or changing later caller work; a changed source needs a new run. Conflicting ref, changed pending source or unsupported pending mode refuses recovery-blocked. Preserve refs, records and worktrees for inspection; never reset caller work.
 
+`verification-required` refuses delivery before caller writes when no verification outcome follows integration opening, its open list is nonempty, or a later accepted verification ruling exists. A started delivery uses recovery.
+
 ### worktree close
 
 Arguments: `worktree close --session <session> --reason <reason>`.
@@ -142,6 +144,12 @@ Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--cr
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
 Refusals: unknown criterion, which names each unknown ID and the valid IDs; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
+
+### brief verifier
+
+Arguments: `brief verifier <values.json> --session <session> --host <platform>`; values are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. No plan binding is required.
+Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
+Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
 ### ledger append
 
@@ -213,7 +221,7 @@ data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. 
 
 ### ruling
 
-data: `subject`, `ruling`, `rationale`, optional `impact` and `trigger`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, with ruling accepted/rejected/duplicate/deferred. `impact` and `trigger` correct the finding's rating as a pair, only on an `accepted` ruling of a review finding; the toolkit derives the severity. Refused with `invalid-record`: a lone dimension, an invalid value, a `severity` key, a non-accepted or non-review ruling, a subject outside `review:<review>:R<n>-F|RED<n>`, a finding that is absent, unreadable or lacks a stored `impact`, a lowered `critical` impact (rule the finding rejected instead), an unchanged rating, and a rationale that omits a changed dimension name.
+data: `subject`, `ruling`, `rationale`, optional `impact` and `trigger`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, and a verification subject is `verification:<cycle>:V<n>`; both use ruling accepted/rejected/duplicate/deferred. `impact` and `trigger` correct the finding's rating as a pair, only on an `accepted` ruling of a review finding; the toolkit derives the severity. Refused with `invalid-record`: a lone dimension, an invalid value, a `severity` key, a non-accepted or non-review ruling, a subject outside `review:<review>:R<n>-F|RED<n>`, a finding that is absent, unreadable or lacks a stored `impact`, a lowered `critical` impact (rule the finding rejected instead), an unchanged rating, and a rationale that omits a changed dimension name.
 
 ### note
 
@@ -237,7 +245,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged}. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged}; verification {cycle,outcome,head,reason,open,report?,artifacts?,dirty?}. Verification has a positive cycle, outcome `proved`, `partial` or `no-op`, a full commit head, and open issue IDs `<cycle>:V<n>`; proved and no-op require an empty open list. Proved and partial require report. Report and artifacts follow the focus evidence path rule; dirty marks uncommitted changes. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

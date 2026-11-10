@@ -53,6 +53,7 @@ export type WalkthroughView = {
   reviewFixes?: readonly ReviewFixReport[];
   coverage?: CoverageState | 'unreadable';
   reviewedCodeBaseline?: string;
+  runtimeProof?: { outcome: string; head: string; reason: string; report?: string; artifacts?: string[]; dirty?: boolean; fixes: {commit: string; reason: string; beforeLatest: boolean}[] };
   /** Criteria whose tests the cleanup commit removed keep evidence verified at `from`. */
   testCleanup?: { from: string; removed: readonly string[]; deleted: number; merged: number };
 };
@@ -222,6 +223,16 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   }
   out.push('');
   out.push(...exceptionSection(statuses, 'manual'), ...exceptionSection(statuses, 'waived'), ...exceptionSection(statuses, 'missing'));
+
+  out.push('## Runtime Proof', '');
+  if (!view.runtimeProof) out.push('Not recorded.', '');
+  else {
+    const proof = view.runtimeProof;
+    out.push(`- **Outcome:** ${line(proof.outcome)}`, `- **HEAD:** ${code(proof.head)}${proof.dirty ? ' plus uncommitted changes' : ''}`, `- **Reason:** ${line(proof.reason)}`);
+    for (const link of [proof.report, ...(proof.artifacts ?? [])]) if (link) out.push(`- [${line(link)}](${link})`);
+    for (const fix of proof.fixes) out.push(`- Fix ${code(fix.commit)}: ${line(fix.reason)}${fix.beforeLatest ? ' (before latest re-check; see report)' : ''}`);
+    out.push('');
+  }
 
   const deviations = view.edits.map((edit) =>
     `- Deviation: ${line(edit.artifact)} edit (${line(edit.class)}) seq ${edit.seq}: ${line(edit.rationale)}; diff ${line(edit.diffRef)}; affects ${edit.affects.length ? edit.affects.map(line).join(', ') : 'none'}`);

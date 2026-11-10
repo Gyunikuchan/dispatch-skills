@@ -14,7 +14,7 @@ import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthr
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
-  'writer-brief.md', 'quality-bar.md', 'review-severity.md', 'context-map.md', 'explorer-brief.md', 'test-cleanup-brief.md',
+  'writer-brief.md', 'quality-bar.md', 'review-severity.md', 'context-map.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'verifier-brief.md',
   'plan-field-notes.md',
 ];
 
@@ -97,7 +97,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
     const labels = [...skeleton.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(labels, ['What', 'How it works', 'Counts']);
     const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
-    assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix']);
+    assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Runtime Proof', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix']);
     const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(boxLabels(template), []);
     assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);

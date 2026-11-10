@@ -71,6 +71,9 @@ test('uncommitted delivery through public entry preserves standalone review', as
     assert.deepEqual(toolEvidence.map(record => record.data['criterion']), ['SC1', 'contract']);
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);
 
+    const proofFile=path.join(f.dir,'proof.json');
+    fs.writeFileSync(proofFile,JSON.stringify({kind:'integrate',by:'orchestrator',data:{phase:'verification',cycle:1,outcome:'no-op',head:foldLedger(session).records.find(r=>r.data['phase']==='opened')!.data['base'],reason:'fixture',open:[]}}));
+    await tool(['ledger','append',proofFile]);
     const callerHead=f.git('rev-parse','HEAD').trim();const delivered=await tool(['worktree', 'deliver']);assert.equal(typeof delivered.source,'string');assert.equal(f.git('rev-parse','HEAD').trim(),callerHead);assert.equal(delivered.from,callerHead);assert.equal(fs.readFileSync(path.join(f.repo,'src/a.ts'),'utf8'),'export const value = 2;\n');
     const incomplete = await run(['report', 'complete', '--session', session], 4);
     assert.equal(incomplete.reason, 'criteria-unmet');

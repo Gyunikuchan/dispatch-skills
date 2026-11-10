@@ -16,7 +16,7 @@ import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffecti
 import { normalizeProvider } from '../policy/roster.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
 import { verifyRun } from './verify.ts';
-import { renderBrief, renderExplorerBrief, renderTestCleanupBrief } from './brief.ts';
+import { renderBrief, renderExplorerBrief, renderTestCleanupBrief, renderVerifierBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
@@ -126,6 +126,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'brief render': renderBrief,
   'brief explorer': renderExplorerBrief,
   'brief test-cleanup': renderTestCleanupBrief,
+  'brief verifier': renderVerifierBrief,
   'worktree integrate': integrate,
   'worktree continue': continueIntegration,
   'worktree commit': commit,
@@ -267,7 +268,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);
     const hostSensitive = (tool === 'doctor' && action === 'run') || (tool === 'review' && action === 'run')
-      || (tool === 'ask' && action === 'run') || (tool === 'brief' && (action === 'render' || action === 'explorer' || action === 'test-cleanup'));
+      || (tool === 'ask' && action === 'run') || (tool === 'brief' && (action === 'render' || action === 'explorer' || action === 'test-cleanup' || action === 'verifier'));
     const hostRaw = parsed.values['host'];
     if (hostSensitive) {
       if (typeof hostRaw !== 'string') throw new Error('Missing --host');
@@ -276,7 +277,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       recordHost(session, normalized);
       manifest = { ...manifest, host: normalized };
     } else if (hostRaw !== undefined) {
-      throw new Error('--host is only for doctor run, review run, ask run, brief render, brief explorer and brief test-cleanup');
+      throw new Error('--host is only for doctor run, review run, ask run, brief render, brief explorer, brief test-cleanup and brief verifier');
     }
   } catch (error) {
     if (error instanceof ToolError) return print({ ok: false, summary: error.message, path: null, reason: error.reason, exit: error.exit });

@@ -52,7 +52,7 @@ Use the procedure's bounded manual repair fallback only when a demonstrated cont
 
 ## Product Architecture and Key Areas
 
-`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. `dispatch-plan`, `dispatch-implement`, and `dispatch-code-review` are thin compatibility aliases mapping arguments to one verb; `dispatch` never references them.
+`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. `dispatch-plan`, `dispatch-implement`, `dispatch-code-review`, and `dispatch-verify` are thin compatibility aliases mapping arguments to one verb; `dispatch` never references them.
 
 Key boundaries:
 - Reference skills by name or sibling-relative `<skills-dir>` paths, never host-specific paths.

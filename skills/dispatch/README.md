@@ -81,6 +81,7 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 | [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A spec, strategy and delivery outline with configured reviews |
 | [`plan`](references/readme/plan.md) | The change is one coherent unit | A spec and tactical plan after configured review and fixes |
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
+| [`verify`](references/readme/verify.md) | You want runtime proof | Evidence, issues and limits |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
 Not sure between `plan` and `design`? Dispatch checks the scope and recommends one; if your choice looks wrong for the scope, it says why and suggests a switch. You can start at any step — for example, `implement` an existing plan.
@@ -93,7 +94,7 @@ Not sure between `plan` and `design`? Dispatch checks the scope and recommends o
 
 - **Level**: `low`, `medium`, `high`, `xhigh`, or `max` — which configured models and how much review. If omitted, Dispatch proposes `low`–`high` for you to confirm; `xhigh` and `max` are only used when you ask. See [levels](references/readme/configuration.md#understand-levels-and-pins).
 - **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
-- **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, and `implement`.
+- **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, `verify`, and `implement`.
 - **Argument**: a question, requirement, artifact path, or Git range.
 
 ## Common workflows

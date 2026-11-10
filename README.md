@@ -68,7 +68,7 @@ node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-
 ## Quick start
 
 ```text
-/dispatch [level] [(pins)] [ask|design|plan|review|implement]: <argument>
+/dispatch [level] [(pins)] [ask|design|plan|review|implement|verify]: <argument>
 ```
 
 Only the argument is required; the default verb is `ask`.
@@ -108,6 +108,7 @@ Only `dispatch` does the work, and it runs only when you invoke it. The aliases 
 | Skill | Use it for |
 |---|---|
 | [`dispatch`](skills/dispatch/README.md) | Every verb above, including one-off delegation |
+| [`dispatch-verify`](skills/dispatch/references/readme/verify.md) | Alias for `/dispatch verify:` |
 | [`dispatch-plan`](skills/dispatch/references/readme/plan.md) | Alias for `/dispatch plan:` |
 | [`dispatch-code-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review code:` |
 | [`dispatch-implement`](skills/dispatch/references/readme/implement.md) | Alias for `/dispatch implement:` |

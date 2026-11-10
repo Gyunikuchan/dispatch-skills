@@ -98,6 +98,7 @@ test('report render writes every missing criterion without Git and rewrites the 
     assert.equal(first.exit, 0);
     const walkthrough = path.join(f.session, 'report.walkthrough.md');
     const initial = fs.readFileSync(walkthrough, 'utf8');
+    assert.match(initial, /## Runtime Proof\n\nNot recorded\./);
     const verification = initial.slice(initial.indexOf('## Verification'), initial.indexOf('## Deviations & Follow-ups'));
     for (const id of ['SC1', 'SC2', 'SC3', 'SC4', 'contract']) {
       assert.match(verification, new RegExp(`- ${id} · no eligible evidence`));
@@ -371,5 +372,34 @@ test('walkthrough reports coverage unreadable state and open slots beside review
   assert.match(unreadable,/^- Coverage state unreadable$/m);assert.match(unreadable,/R1-F001/);
   writeJson(path.join(dir,'gen-1/attempts.json'),[{slot:'codex[0]',seq:1,wholeTarget:true,outcome:'timeout'}]);
   assert.match(await render(),/^- Open coverage slots: codex\[0\]$/m);
+ }finally{f.cleanup();}
+});
+
+test('report render shows runtime proof', async () => {
+ const f=await fixture();try{
+  await completeFixture(f);
+  const add=(data:object)=>appendRecord(f.session,{kind:'integrate',by:'orchestrator',data},f.deps);
+  await add({phase:'verification',cycle:1,outcome:'proved',head:HEAD,reason:'exercised',open:[],report:'verification/report.md',artifacts:['verification/proof.png'],dirty:true});
+  assert.equal((await invoke(f,'report','render')).exit,0);
+  const first=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+  assert.ok(!first.includes('Not recorded.'));
+  assert.ok(first.includes('- **Outcome:** proved'));
+  assert.ok(first.includes(`- **HEAD:** \`${HEAD}\` plus uncommitted changes`));
+  assert.ok(first.includes('- **Reason:** exercised'));
+  assert.ok(first.includes('- [verification/report.md](verification/report.md)'));
+  assert.ok(first.includes('- [verification/proof.png](verification/proof.png)'));
+  const cleanupCommit='f'.repeat(40);
+  await add({phase:'test-cleanup',from:HEAD,fromTree:TREE,to:cleanupCommit,removed:['SC1'],deleted:1,merged:0});
+  await add({phase:'fix',commit:TREE,reason:'repair'});
+  await add({phase:'verification',cycle:2,outcome:'partial',head:TREE,reason:'limited',open:[],report:'verification/report.md'});
+  assert.equal((await invoke(f,'report','render')).exit,0);
+  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+  assert.ok(text.includes('- **Outcome:** partial'));
+  assert.ok(!text.includes('- **Outcome:** proved'));
+  assert.ok(text.includes(`- **HEAD:** \`${TREE}\``));
+  assert.ok(text.includes('- **Reason:** limited'));
+  assert.ok(text.includes('- [verification/report.md](verification/report.md)'));
+  assert.ok(text.includes(`- Fix \`${TREE}\`: repair (before latest re-check; see report)`));
+  assert.ok(!text.includes(cleanupCommit));
  }finally{f.cleanup();}
 });

@@ -100,12 +100,19 @@ describe('toolkit session flow', () => {
     } finally {f.cleanup();}
   });
   test('lets submit complete while a spawned verification command runs unlocked',async()=>{
-    const command=`node -e "require('fs').writeFileSync('ignored','started');setTimeout(()=>{},1500)"`;
+    const command=`node -e "const fs=require('fs');fs.writeFileSync('ignored/started','');const deadline=Date.now()+15000;const timer=setInterval(()=>{if(fs.existsSync('ignored/release'))clearInterval(timer);else if(Date.now()>=deadline)process.exit(1)},20)"`;
     const f=await toolkitRepo(planSource.replace('node -e "process.exit(0)"',command)); try {
       await f.level(); const created=await f.run(['worktree','create','T1']); fs.writeFileSync(path.resolve(f.session,created.value.path,'src/file.ts'),'writer\n');
+      const signal=path.join(f.integration,'ignored'); fs.mkdirSync(signal);
       const verify=f.concurrent(['verify','run']);
-      const deadline=Date.now()+15000; while(!fs.existsSync(path.join(f.integration,'ignored'))) {assert.ok(Date.now()<deadline); await new Promise(resolve=>setTimeout(resolve,20));}
-      const submit=await f.concurrent(['worktree','submit','T1']); assert.equal(submit.exit,0); const checked=await verify; assert.equal(checked.exit,0);
+      try {
+        const deadline=Date.now()+15000;
+        while(!fs.existsSync(path.join(signal,'started'))) {assert.ok(Date.now()<deadline); await new Promise(resolve=>setTimeout(resolve,20));}
+        const submit=await f.concurrent(['worktree','submit','T1']); assert.equal(submit.exit,0);
+      } finally {
+        fs.writeFileSync(path.join(signal,'release'),'');
+        const checked=await verify; assert.equal(checked.output.ok,true,JSON.stringify(checked.output));
+      }
       const rows=foldLedger(f.session).records; const seqs=rows.map(row=>row.seq); assert.equal(new Set(seqs).size,seqs.length); assert.deepEqual(seqs,[...seqs].sort((a,b)=>a-b));
       assert.ok(rows.find(row=>row.data['phase']==='finished')!.seq<rows.find(row=>row.kind==='evidence')!.seq);
     } finally {f.cleanup();}

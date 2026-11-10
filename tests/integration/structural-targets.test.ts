@@ -16,26 +16,26 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 15100 ceiling per host-routing.plan.md (raised 14900 to 15100 by user authorization "Raise to 15100"; covers measured 15014 with headroom).
+  // NOTE: 15200 ceiling covers the approved runtime verification stage.
   assert.ok(
-    lines <= 15100,
-    `driver TS LOC ${lines} exceeds 15100 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    lines <= 15200,
+    `driver TS LOC ${lines} exceeds 15200 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   assert.ok(
     KINDS.length <= 14,
     `ledger kinds ${KINDS.length} exceeds 14 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8,064 fits the single launch-and-continue rule (exact model/effort, order, no substitution, OpenCode subagentModels, --host) that every branch needs inline, because a must-load reference adds a tool call each run.
+  // NOTE: 8256 covers the verification route needed by every branch.
   assert.ok(
-    bytes <= 8064,
-    `SKILL.md bytes ${bytes} exceeds 8064 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
+    bytes <= 8256,
+    `SKILL.md bytes ${bytes} exceeds 8256 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
   );
 });
 
 const STEP_BUDGET = 37067;
 const PLAN_AUTHORING_BUDGET = 36914;
-const GUIDES = ['ask', 'design', 'plan', 'implement', 'review'] as const;
+const GUIDES = ['ask', 'design', 'plan', 'implement', 'review', 'verify'] as const;
 
 function slug(heading: string): string {
   return heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -110,6 +110,7 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   assert.ok(explorer <= 12638, `explorer pack ${explorer} exceeds 12638 budget`);
   const cleanupQuality = qualityBytes('cleanup');
   assert.ok(cleanupQuality <= 7653, `test-cleanup rendered quality ${cleanupQuality} exceeds 7653 budget`);
+  assert.ok(templateBytes('verifier-brief.md') <= 4096, 'verifier brief exceeds 4096 bytes');
   const cleanupBrief = templateBytes('test-cleanup-brief.md');
   assert.ok(cleanupBrief <= 1870, `test-cleanup brief template ${cleanupBrief} exceeds 1870 budget`);
   const cleanup = cleanupBrief + cleanupQuality;
@@ -138,6 +139,7 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
     ],
     integrate: [
       { phase: 'opened', path: '/integration', branch: 'session', base: commit, dest },
+      { phase: 'verification', cycle: 1, outcome: 'no-op', head: commit, reason: 'Nothing runnable', open: [] },
       { phase: 'started', task: 'task', candidate: commit },
       { phase: 'conflict', task: 'task', paths: ['source.ts'] },
       { phase: 'done', task: 'task', commit },

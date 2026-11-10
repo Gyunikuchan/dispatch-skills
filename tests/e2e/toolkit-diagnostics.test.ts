@@ -67,7 +67,10 @@ test('diagnostics stay observational across CLI recovery and report completion',
       const writer = run(['worktree', 'create', 'T1']);
       fs.writeFileSync(path.resolve(f.session, writer.value.path, 'src/file.ts'), 'delivered\n');
       run(['worktree', 'submit', 'T1']); run(['worktree', 'integrate', 'T1']);
-      run(['verify', 'run']); run(['worktree', 'deliver']);
+      run(['verify', 'run']);
+      const proof = path.join(f.session, 'proof.json');
+      fs.writeFileSync(proof, JSON.stringify({kind:'integrate',by:'orchestrator',data:{phase:'verification',cycle:1,outcome:'no-op',head:f.git(['rev-parse','HEAD'],f.integration),reason:'fixture',open:[]}}));
+      run(['ledger','append',proof]); run(['worktree', 'deliver']);
       const complete = run(['report', 'complete']);
       assert.ok(fs.existsSync(path.resolve(f.session, complete.value.path)));
       assert.equal('diagnostics' in complete.value, enabled);

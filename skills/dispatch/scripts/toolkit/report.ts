@@ -241,6 +241,11 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     if (source !== null) visuals = parseGlance(structuralLines(source))?.visuals ?? '';
   }
 
+  const integrationSeq = snapshot.integration?.seq ?? 0;
+  const proofRecords = snapshot.fold.records.filter(r => r.seq > integrationSeq && r.kind === 'integrate' && r.data['phase'] === 'verification');
+  const proof = proofRecords.at(-1);
+  const settled = proofRecords.find(r => r.data['open'].length === 0);
+  const runtimeProof = proof ? {outcome: proof.data['outcome'], head: proof.data['head'], reason: proof.data['reason'], report: proof.data['report'], artifacts: proof.data['artifacts'], dirty: proof.data['dirty'], fixes: settled ? snapshot.fold.records.filter(r => r.seq > settled.seq && r.kind === 'integrate' && r.data['phase'] === 'fix').map(r => ({commit: r.data['commit'], reason: r.data['reason'], beforeLatest: r.seq < proof.seq})) : []} : undefined;
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
     specPath: snapshot.specPath,
@@ -256,6 +261,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       ref: deliveredSourceRef(ctx.manifest.safeSessionId),
     } : null,
     glance,
+    ...(runtimeProof ? {runtimeProof} : {}),
     visuals,
     focus: focusRecord ? { bullets: focusBullets, ...(focusVisual ? { visual: focusVisual } : {}) } : null,
     tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary, behaviour: task.behaviour })),

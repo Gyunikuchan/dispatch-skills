@@ -549,7 +549,7 @@ test('brief results name the host model and effort', async () => {
   const skill = path.join(f.root, 'launch-skill');
   const templates = path.join(skill, 'references', 'templates');
   fs.mkdirSync(templates, {recursive: true});
-  for (const name of ['writer-brief.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'quality-bar.md', 'context-map.md']) {
+  for (const name of ['writer-brief.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'verifier-brief.md', 'quality-bar.md', 'context-map.md']) {
     fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
   }
   fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
@@ -657,6 +657,14 @@ test('brief results name the host model and effort', async () => {
     const cleanOpen = await cleanupValue('opencode');
     assert.deepEqual(cleanOpen.model, ['exp/model']);
     assert.deepEqual(cleanOpen.subagentModels, ['exp/model#exp-eff']);
+    const verifierValuesPath = path.join(f.session, 'verifier-opencode.json');
+    fs.writeFileSync(verifierValuesPath, JSON.stringify({checkoutPath: 'integration', base: 'a'.repeat(40), specPath: 'work.spec.md', focus: 'Cycle 2. Re-check the proof.'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'verifier', verifierValuesPath, '--session', f.session, '--host', 'opencode'], f.deps), 0, JSON.stringify(f.lines));
+    const verifier = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    assert.deepEqual(verifier.model, cleanOpen.model);
+    assert.equal(verifier.effort, cleanOpen.effort);
+    assert.deepEqual(verifier.subagentModels, cleanOpen.subagentModels);
     const cleanMissing = await cleanupValue('copilot');
     assert.equal(cleanMissing.model, null);
     assert.equal(cleanMissing.effort, null);
@@ -737,3 +745,28 @@ test('brief results name the host model and effort', async () => {
       f.cleanup();
     }
   });
+
+test('verifier brief launch works without a bound plan and refuses blanks; verifier brief contract describes proof and boundaries', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    const values = {checkoutPath:'checkout', base:'base', specPath:'spec.md', focus:'Cycle 2. Re-check the proof. No test edits.'};
+    const file = path.join(f.session, 'values.json');
+    fs.writeFileSync(file, JSON.stringify({...values, focus:' '}));
+    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 1);
+    assert.equal(fs.existsSync(path.join(f.session,'verification')), false);
+    assert.equal(fs.existsSync(path.join(f.session,'.state','briefs')), false);
+    fs.writeFileSync(file, JSON.stringify(values));
+    f.lines.length = 0;
+    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 0, JSON.stringify(f.lines));
+    const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    assert.ok(fs.existsSync(value.evidenceDir)); assert.ok(value.briefPath); assert.ok('model' in value && 'effort' in value);
+    const brief = fs.readFileSync(value.briefPath, 'utf8');
+    assert.ok(brief.includes(`Your write scope is evidence under \`${value.evidenceDir}\` and, only with \`test edits permitted\` in the focus, gap-filling tests in dedicated test files`));
+    assert.ok(brief.includes(`Store artifacts in \`${value.evidenceDir}/<n>/\`, where \`<n>\` is the cycle number from the focus.`));
+    for (const phrase of ['best-effort', 'substantial', 'NEEDS_APPROVAL', 'not proved', 'dedicated test files', 'Host rule files:', 'Verification', 'install', values.focus, 'Give each artifact a new path.', 'If a report exists, append `## Cycle <n>` and leave earlier content unchanged']) assert.ok(brief.includes(phrase), phrase);
+    const before = fs.readdirSync(path.join(f.session, '.state', 'briefs'));
+    fs.writeFileSync(file, JSON.stringify({...values, focus:' '}));
+    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 1);
+    assert.deepEqual(fs.readdirSync(path.join(f.session, '.state', 'briefs')), before);
+  } finally { f.cleanup(); }
+});

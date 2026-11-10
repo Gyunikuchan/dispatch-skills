@@ -162,6 +162,7 @@ test('host-sensitive actions refuse missing or unknown host without manifest cha
       ['brief', 'render', 'T1'],
       ['brief', 'explorer', values],
       ['brief', 'test-cleanup', cleanupValues],
+      ['brief', 'verifier', values],
     ];
     for (const args of cases) {
       const before = fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8');
