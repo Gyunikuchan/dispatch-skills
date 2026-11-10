@@ -2075,3 +2075,22 @@ test('checkout report reads treat a missing generation as closed but surface oth
     assert.throws(() => checkoutReportsFor(root, 'blocker'), /ENOTDIR/);
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });
+
+test('inter-round diff holds governed text from real Git', async () => {
+  const f = await toolkitRepo(); try {
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'inter-round-skill', {'read-delegates': {agy: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'plan-review': {targets: {low: 1}, rounds: {low: 2}}}});
+    f.deps.liveness = {agy: true};
+    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
+    await f.level('low'); await f.approve();
+    const run = () => f.run(['review','run','work.plan.md','--kind','plan','--spec','work.spec.md','--level','low']);
+    const first = await run(); assert.equal(first.exit, 0, JSON.stringify(first.output));
+    const plan = path.join(f.root, 'work.plan.md');
+    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- Purpose: implements behavior.', '- Purpose: implements behavior with a guard.'));
+    const second = await run(); assert.equal(second.exit, 0, JSON.stringify(second.output));
+    const roundDir = path.join(path.dirname(path.dirname(second.value.path)), 'round-2');
+    const diff = fs.readFileSync(path.join(roundDir, 'inter-round.diff'), 'utf8');
+    assert.match(diff, /^\+- Purpose: implements behavior with a guard\.$/m);
+    assert.doesNotMatch(diff, /Review Findings & Resolutions|Budget \(/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).interRound.diff, '`' + path.join(roundDir, 'inter-round.diff') + '` (unified diff of the governed text)');
+  } finally {f.cleanup();}
+});

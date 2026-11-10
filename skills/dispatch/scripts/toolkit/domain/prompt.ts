@@ -48,6 +48,16 @@ export function settledSection(settled: readonly Settled[], revisions = false): 
   return `\n\n### Settled in earlier rounds\n${settled.map(row).join('\n')}\n`;
 }
 
+export type InterRound = { diff: string; accepted: readonly { id: string; locus: string }[] };
+
+/** The section's text serves both prompt builders; the compact confirmation prompt has no template to carry it. */
+export function interRoundSection(info: InterRound): string {
+  const list = info.accepted.length
+    ? ['Check these accepted-finding loci and their interactions first:', ...info.accepted.map(entry => `- ${entry.id} ${entry.locus}`)]
+    : ['No accepted findings since the previous round.'];
+  return ['### Since the previous round', `Inter-round diff: ${info.diff}`, ...list].join('\n');
+}
+
 export function askPrompt(question: string, context: string): string {
   return [
     '# Ask', '', '### Objective', question.trim() || '(empty question)', '',

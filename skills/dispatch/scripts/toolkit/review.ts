@@ -13,6 +13,7 @@ import { parsePlan, selectTaskBrief, structuralLines, governedPlanText } from '.
 import { parseIncrementGraph, governedDesignText } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
+import type { InterRound } from './domain/prompt.ts';
 import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
 import { admission, finalizeRound, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
 import { git, gitOk, splitPaths } from './git.ts';
@@ -34,7 +35,7 @@ import type { LedgerRecord } from './records.ts';
 const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
-type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'};
+type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
 function atomic(file: string, value: unknown) {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
@@ -42,6 +43,8 @@ function atomic(file: string, value: unknown) {
 }
 const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
+const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
+const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
 
 // Reviewer input holds governed plan/design text; code reviews read the working tree directly.
 const reviewerInputPath = (reviewDir: string, roundNumber: number): string => path.join(reviewDir, 'round-' + roundNumber + '.input.md');
@@ -479,6 +482,34 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (open.length && n > 1) return {targets: target && !decisive ? open.flatMap(name => { const slot = savedSlot(name); return slot ? [{...slot, reserve: false}] : []; }) : roster.targets, narrowed: false, coverage: target && !decisive ? 'open' : 'full'};
       return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
     }
+    // Accepted findings that no reviewer has checked yet: accepted after the latest round that reviewed a target.
+    function acceptedSinceReview(): InterRound['accepted'] {
+      const window = latestSubstantive()?.metadata.startSeq;
+      if (window === undefined) return [];
+      const rows = rulingRows();
+      return prior.flatMap(value => value.findings.flatMap(finding => {
+        const ruling = rows.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
+        return ruling?.data['ruling'] === 'accepted' && ruling.seq > window ? [{id: finding.id, locus: finding.locus}] : [];
+      }));
+    }
+    // NOTE: a failed diff never refuses the round; REQ-4 keeps every gate, so extra information adds none.
+    async function interRoundDiff(captured: Capture, confirmationOnlyRound: boolean): Promise<string> {
+      if (confirmationOnlyRound) return UNCHANGED_TARGET;
+      try {
+        const previous = read<Round>(path.join(directory, 'round-' + (n - 1), 'round.json'));
+        if (!previous) return 'unavailable.';
+        if (kind === 'code') return label(previous.target) === label(captured.target) ? UNCHANGED_TARGET : '`git diff ' + label(previous.target) + ' ' + label(captured.target) + '`';
+        const before = reviewerInputPath(directory, n - 1), after = reviewerInputPath(directory, n);
+        if (!fs.existsSync(before) || !fs.existsSync(after)) return 'unavailable.';
+        if (fs.readFileSync(before).equals(fs.readFileSync(after))) return UNCHANGED_TEXT;
+        const result = await git(deps, directory, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--', before, after]);
+        // --no-index also exits 1 on an inaccessible path, so exit 1 needs output.
+        if (result.exit !== 1 || !result.stdout) return 'unavailable.';
+        const file = path.resolve(dir, 'inter-round.diff');
+        fs.writeFileSync(file, result.stdout);
+        return '`' + file + '` (unified diff of the governed text)';
+      } catch { return 'unavailable.'; }
+    }
     async function start(generation: number, captured: Capture): Promise<Round> {
       const rerun = isRerunRound();
       const {targets, narrowed, coverage} = replacement(); const requests=rejectionStates().filter(state=>state.state==='pending').map(state=>rejectionRequest({...state.request,target:captured.target,spec:captured.spec}));
@@ -528,6 +559,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (!slots.some(entry => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
       // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
       if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) writeReviewerInput(directory, n, kind, captured.source);
+      if (n > 1) value.interRound = {diff: await interRoundDiff(captured, confirmationOnlyRound), accepted: acceptedSinceReview()};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
       atomic(roundFile, value);
@@ -632,13 +664,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       for(const request of round.requests ?? [])for(const slot of request.sourceSlots)requestsBySlot.set(slot,[...(requestsBySlot.get(slot) ?? []),request]);
       const targets = round!.roster.filter(entry => !entry.reserve);
       const confirmationRound = round!.scope.includes('(confirmation-only)');
+      const interRound = round!.interRound ? {interRound: round!.interRound} : {};
       const prompt = (slot:RosterSlot)=>{
-        if (confirmationRound) return confirmationPrompt(kind, {spec: round!.spec, artifact: reviewerArtifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
+        if (confirmationRound) return confirmationPrompt(kind, {...interRound, spec: round!.spec, artifact: reviewerArtifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
           ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), requests: requestsBySlot.get(slot.slot) ?? []});
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
         return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact: reviewerArtifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
           ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),
-          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,...interRound,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
       };
       const validate = (text: string,logicalSlot:string): Validation => {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
@@ -745,7 +778,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
             const finding: Finding & {unresolved?: {of: string}} = {
               id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'), impact: 'degrades', trigger: 'realistic', severity: severityOf('degrades', 'realistic'), category: 'testing',
               locus: file + ':L' + gap.line, defect: defect + '; Tests touched: ' + (gap.testsTouched ? 'yes' : 'no'),
-              requiredChange: "Show the criterion's test failing before the fix in the writer report", sources: ['tool'], scope: 'in',
+              requiredChange: "Show the criterion's test failing before the fix in the writer report", sources: ['tool'], scope: 'in', origin: n === 1 ? 'original' : 'unknown',
             };
             const previous = priorGaps[0];
             if (previous) {
@@ -779,6 +812,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     fs.renameSync(pendingFile, path.join(dir, 'findings.json'));
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;
+    const fixInduced = pending.findings.filter(finding => finding.origin === 'fix-induced').length;
     const file = path.join(dir, 'findings.json');
     let findingsSectionReason: string | undefined;
     const findings = kind === 'plan' || kind === 'design'
@@ -806,7 +840,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         // The summary is bounded, so only this list names every marked finding.
         ...(unresolved.length ? { unresolvedLoci: unresolved.map(({id, locus}) => ({id, locus})) } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}${changedSuffix}${checkSuffix}`,
+      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}${changedSuffix}${checkSuffix}`,
         [...unresolved.map(finding => `${finding.id} ${finding.severity}: ${finding.locus} — ${finding.defect}`),
           ...bySeverity.filter(finding => !isUnresolvedLocus(finding.locus)).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`)]),
     };

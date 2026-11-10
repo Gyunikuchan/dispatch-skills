@@ -64,7 +64,7 @@ export function reviewRows(
     });
     for (const raw of findings) {
       if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
-      const finding = raw as { id: string; severity?: unknown; sources?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown } };
+      const finding = raw as { id: string; severity?: unknown; sources?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown }; origin?: unknown };
       const history = fold.records.filter((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
       const ruling = history.at(-1);
       const stored = typeof finding.severity === 'string' ? finding.severity : 'unknown';
@@ -84,6 +84,7 @@ export function reviewRows(
           (typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),
         ...(typeof finding.recurrence?.of === 'string' ? { recurrence: finding.recurrence.of } : {}),
         ...(typeof finding.unresolved?.of === 'string' ? { unresolved: finding.unresolved.of } : {}),
+        ...(finding.origin === 'original' || finding.origin === 'fix-induced' || finding.origin === 'unknown' ? { origin: finding.origin } : {}),
       });
     }
   }
@@ -95,7 +96,7 @@ export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readon
   if (rows.length) {
     out.push('| Review | ID | Round | Severity | Source | Status | Ruling |', '| --- | --- | --- | --- | --- | --- | --- |');
     for (const row of rows) {
-      const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`].filter(Boolean);
+      const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`, row.origin && `(origin ${line(row.origin)})`].filter(Boolean);
       const rulingStatus = row.ruling ? row.ruling[0]!.toUpperCase() + row.ruling.slice(1) : 'Open';
       const status = [rulingStatus, ...(row.downgradedFrom ? [`(downgraded from ${line(row.downgradedFrom)})`] : []), ...markers].join(' ');
       out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.sources?.length ? row.sources.join(', ') : '—')} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);

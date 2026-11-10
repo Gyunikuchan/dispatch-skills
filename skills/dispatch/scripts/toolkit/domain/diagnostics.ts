@@ -62,12 +62,15 @@ export type SlotYieldFacts = {
   raised: { MUST: number; SHOULD: number; CONSIDER: number };
   accepted: number; rejected: number; deferred: number; duplicate: number; unruled: number;
   tokens?: number; measured: number; launched: number;
+  /** Findings whose origin is `fix-induced`; present only when nonzero. */
+  fixInduced?: number;
 };
 /** Adds one responder's yield to another's; absent tokens stay absent. */
 export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
   for (const severity of ['MUST', 'SHOULD', 'CONSIDER'] as const) current.raised[severity] += row.raised[severity];
   for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const) current[key] += row[key];
   if (row.tokens !== undefined) current.tokens = (current.tokens ?? 0) + row.tokens;
+  if (row.fixInduced) current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
 }
 export type RunFacts = {
   hostUsage?: HostUsageFacts;
@@ -343,7 +346,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         kind, provider, model: kind === 'provider' ? modelName(v['model']) ?? null : null,
         raised: { MUST: count(raised['MUST']) ?? 0, SHOULD: count(raised['SHOULD']) ?? 0, CONSIDER: count(raised['CONSIDER']) ?? 0 },
         accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0, deferred: count(v['deferred']) ?? 0,
-        duplicate: count(v['duplicate']) ?? 0, unruled: count(v['unruled']) ?? 0, ...opt('tokens', count(v['tokens'])),
+        duplicate: count(v['duplicate']) ?? 0, unruled: count(v['unruled']) ?? 0, ...opt('tokens', count(v['tokens'])), ...opt('fixInduced', count(v['fixInduced']) || undefined),
         measured: count(v['measured']) ?? 0, launched: count(v['launched']) ?? 0,
       }];
     }) : undefined),
@@ -599,15 +602,16 @@ function overview(runs: readonly RunFacts[]): string[] {
     addYield(current, row);
   }
   const yieldRows = [...yields.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
+  const showFixInduced = yieldRows.some((entry) => (entry.fixInduced ?? 0) > 0);
   lines.push('', '### Review yield by slot', '',
-    row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted']),
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+    row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted']),
+    '| --- | --- | ---: | ---: | ---: |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const entry of yieldRows) {
     const partial = entry.measured < entry.launched ? ' partial' : '';
     const cost = `${entry.tokens === undefined ? DASH : num(entry.tokens)}${partial}`;
     const perAccepted = entry.accepted === 0 || entry.tokens === undefined ? DASH : `${num(entry.tokens / entry.accepted)}${partial}`;
     const model = entry.kind === 'native' ? 'native' : entry.kind === 'tool' ? DASH : entry.model ?? DASH;
-    lines.push(row([entry.provider, model, String(entry.raised.MUST), String(entry.raised.SHOULD), String(entry.raised.CONSIDER),
+    lines.push(row([entry.provider, model, String(entry.raised.MUST), String(entry.raised.SHOULD), String(entry.raised.CONSIDER), ...(showFixInduced ? [String(entry.fixInduced ?? 0)] : []),
       String(entry.accepted), String(entry.rejected), String(entry.deferred), String(entry.duplicate), String(entry.unruled), cost, perAccepted]));
   }
   if (!yieldRows.length) lines.push(row(Array<string>(12).fill(DASH)));

@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { rejectionState } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
-import { CLEAN, fixture, report } from '../../helpers/review-fixture.ts';
+import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
+import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
 
 // SECTION: Later-round roster policy
 
@@ -286,5 +288,215 @@ test('round keeps a loose-locus finding: a repeat in a later round links to no e
     const [finding] = JSON.parse(fs.readFileSync(second.value.path, 'utf8')).findings;
     assert.equal(finding.recurrence, undefined);
     assert.equal(finding.unresolved, undefined);
+  } finally {f.cleanup();}
+});
+
+// SECTION: Inter-round information
+
+type RoundFixture = Awaited<ReturnType<typeof fixture>>;
+const SINCE = '### Since the previous round';
+const DIFF = 'diff --git a/x b/x\n-Original body.\n+Changed body.\n';
+const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
+const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
+const NO_ACCEPTED = 'No accepted findings since the previous round.';
+const diffGit = (f: RoundFixture, result: {exit: number; stdout: string}) => {
+  f.deps.run = async argv => argv.includes('--no-index') ? {...result, stderr: ''} : {exit: 0, stdout: '', stderr: ''};
+};
+const script = (f: RoundFixture, reply: (provider: string, prompt: string) => string) => {
+  f.deps.delegate = async (provider, request, mode) => {
+    f.launches.push({provider, request, mode});
+    return {outcome: {status: 'ok', text: reply(provider, fs.readFileSync(request.promptPath, 'utf8')), resume: null, sessionId: null}, invocations: []};
+  };
+};
+const roomy = (f: RoundFixture) => fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+  'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}},
+  phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 6}}, 'code-review': {targets: {low: 2}, rounds: {low: 6}}},
+}));
+const blockBody = (lines: string[]) => lines.join('\n');
+const since = (diff: string, accepted: readonly string[]) => blockBody([SINCE, 'Inter-round diff: ' + diff, ...(accepted.length ? ['Check these accepted-finding loci and their interactions first:', ...accepted.map(entry => '- ' + entry)] : [NO_ACCEPTED])]);
+
+test('inter-round: a plan round 2 renders the diff path and the accepted loci, and round 1 renders none', async () => {
+  const f = await fixture();
+  try {
+    diffGit(f, {exit: 1, stdout: DIFF});
+    assert.equal((await f.call()).exit, 0);
+    assert.ok(promptsOf(f).every(prompt => !prompt.includes(SINCE)));
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    const file = path.join(f.directory, 'round-2', 'inter-round.diff');
+    const diff = '`' + file + '` (unified diff of the governed text)';
+    const later = promptsOf(f).slice(before);
+    assert.ok(later.length > 0);
+    for (const prompt of later) assert.ok(prompt.includes(since(diff, ['R1-F001 § Work'])), prompt);
+    assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
+    assert.deepEqual(f.read(2, 'round.json').interRound, {diff, accepted: [{id: 'R1-F001', locus: '§ Work'}]});
+    assert.equal(f.read(1, 'round.json').interRound, undefined);
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a design round 2 with no accepted finding states the empty list', async () => {
+  const f = await fixture(false);
+  try {
+    const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
+    f.artifact('strategy.design.context.md', CONTEXT_MAP);
+    await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
+    diffGit(f, {exit: 1, stdout: DIFF});
+    script(f, () => CLEAN);
+    const first = await f.call('design', design);
+    assert.equal(first.exit, 0, JSON.stringify(first.output));
+    const before = artifactHash('design', fs.readFileSync(design, 'utf8'));
+    fs.appendFileSync(design, '\n## Risks\nRetain the original boundary.\n');
+    await f.add('edit', {artifact: 'design', before, after: artifactHash('design', fs.readFileSync(design, 'utf8')), class: 'non-intent', affects: [], rationale: 'Clarify risk', diffRef: 'design diff'});
+    const launched = f.launches.length;
+    const second = await f.call('design', design);
+    assert.equal(second.exit, 0, JSON.stringify(second.output));
+    const file = path.join(path.dirname(path.dirname(second.value.path)), 'round-2', 'inter-round.diff');
+    const expected = since('`' + file + '` (unified diff of the governed text)', []);
+    for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(expected), prompt);
+    assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a code round 2 names the head range and a round with equal heads states no change', async () => {
+  const f = await fixture();
+  try {
+    roomy(f);
+    const state = {feature: 'feature-1'};
+    rangeGit(f, state, {'main-id..feature-1': ['src/a.ts'], 'main-id..feature-2': ['src/b.ts'], 'feature-1..feature-2': ['src/b.ts']});
+    script(f, () => report('src/a.ts:L3', 'Retries never stop', 'SHOULD'));
+    const first = await f.call('code', 'main..feature', 'low');
+    assert.equal(first.exit, 0, JSON.stringify(first.output));
+    await f.add('ruling', {subject: 'review:' + first.value.review + ':R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    state.feature = 'feature-2';
+    const launched = f.launches.length;
+    const second = await f.call('code', 'main..feature', 'low');
+    assert.equal(second.exit, 0, JSON.stringify(second.output));
+    const roundOf = (round: number) => JSON.parse(fs.readFileSync(path.join(path.dirname(path.dirname(second.value.path)), 'round-' + round, 'round.json'), 'utf8'));
+    assert.deepEqual(roundOf(2).interRound, {diff: '`git diff feature-1 feature-2`', accepted: [{id: 'R1-F001', locus: 'src/a.ts:L3'}]});
+    for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(since('`git diff feature-1 feature-2`', ['R1-F001 src/a.ts:L3'])), prompt);
+    const third = await f.call('code', 'main..feature', 'low');
+    assert.equal(third.exit, 0, JSON.stringify(third.output));
+    assert.equal(roundOf(3).interRound.diff, UNCHANGED_TARGET);
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a confirmation-only round lists accepted loci without a diff, and the window moves only when a round reviews the target', async () => {
+  const f = await fixture();
+  try {
+    roomy(f);
+    diffGit(f, {exit: 1, stdout: DIFF});
+    let phase = 'finding';
+    script(f, (provider, prompt) => {
+      const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+      if (phase === 'finding' && provider === 'agy') return replyOf(['§ Work', 'Concurrent writes overwrite captured results', 'MUST'], ['§ Notes', 'Naming could be clearer today', 'CONSIDER']);
+      return JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'Checked the captured isolation'}))});
+    });
+    assert.equal((await f.call()).exit, 0);
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'rejected', rationale: 'The captured implementation prevents this'});
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F002', ruling: 'accepted', rationale: 'Renamed'});
+    phase = 'later';
+    // Round 2: unchanged target with a pending rejection.
+    let before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
+    assert.deepEqual(f.read(2, 'round.json').interRound, {diff: UNCHANGED_TARGET, accepted: [{id: 'R1-F002', locus: '§ Notes'}]});
+    for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes('\n' + since(UNCHANGED_TARGET, ['R1-F002 § Notes']) + '\n\n### Inspection'), prompt);
+    // Round 3: the confirmation-only round did not move the window.
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    assert.deepEqual(f.read(3, 'round.json').interRound?.accepted, [{id: 'R1-F002', locus: '§ Notes'}]);
+    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes('- R1-F002 § Notes')));
+    // Round 4: round 3 reviewed the target; only a findings-section refresh changed the plan.
+    before = f.launches.length;
+    assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
+    assert.doesNotMatch(f.read(4, 'round.json').scope, /confirmation-only/);
+    assert.deepEqual(f.read(4, 'round.json').interRound, {diff: UNCHANGED_TEXT, accepted: []});
+    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes(since(UNCHANGED_TEXT, []))));
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a rerun round keeps its label and receives the block', async () => {
+  const f = await fixture();
+  try {
+    script(f, () => CLEAN);
+    assert.equal((await f.call()).exit, 0);
+    fs.mkdirSync(path.join(f.directory, 'round-1/gen-1'), {recursive: true});
+    fs.writeFileSync(path.join(f.directory, 'round-1/gen-1/checkout-report.json'), JSON.stringify({repositoryCheck: {state: 'unavailable', reason: 'test'}, asOfSeq: 0}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: 'repository-rerun:plan-work.plan:1:0', data: {text: 'rerun'}}, f.deps);
+    const before = f.launches.length;
+    assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
+    const round = f.read(2, 'round.json');
+    assert.match(round.scope, /^Full review/);
+    assert.doesNotMatch(round.scope, /Re-review/);
+    assert.deepEqual(round.interRound, {diff: UNCHANGED_TEXT, accepted: []});
+    for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes(round.scope) && prompt.includes(since(UNCHANGED_TEXT, [])), prompt);
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a rerun after an all-failed round diffs against that round', async () => {
+  const f = await fixture();
+  try {
+    diffGit(f, {exit: 1, stdout: DIFF});
+    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify({status: 'BLOCKED', reason: 'cannot read the artifact'}), resume: null, sessionId: null}, invocations: []});
+    assert.equal((await f.call()).output.reason, 'review-failed');
+    assert.equal(fs.existsSync(path.join(f.directory, 'round-1', 'findings.json')), false);
+    fs.mkdirSync(path.join(f.directory, 'round-1/gen-1'), {recursive: true});
+    fs.writeFileSync(path.join(f.directory, 'round-1/gen-1/checkout-report.json'), JSON.stringify({repositoryCheck: {state: 'unavailable', reason: 'test'}, asOfSeq: 0}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: 'repository-rerun:plan-work.plan:1:0', data: {text: 'rerun'}}, f.deps);
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    script(f, () => CLEAN);
+    assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
+    const file = path.join(f.directory, 'round-2', 'inter-round.diff');
+    assert.deepEqual(f.read(2, 'round.json').interRound, {diff: '`' + file + '` (unified diff of the governed text)', accepted: []});
+    assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
+  } finally {f.cleanup();}
+});
+
+test('inter-round: a failed diff or a missing governed input leaves the round running as unavailable', async () => {
+  const cases: [string, (f: RoundFixture) => void][] = [
+    ['spawn failure', () => {}],
+    ['git error', f => diffGit(f, {exit: 128, stdout: ''})],
+    ['exit 1 with no output', f => diffGit(f, {exit: 1, stdout: ''})],
+    ['missing governed input', f => { diffGit(f, {exit: 1, stdout: DIFF}); fs.rmSync(path.join(f.directory, 'round-1.input.md')); }],
+  ];
+  for (const [name, arrange] of cases) {
+    const f = await fixture();
+    try {
+      script(f, () => CLEAN);
+      assert.equal((await f.call()).exit, 0);
+      fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      arrange(f);
+      const before = f.launches.length;
+      assert.equal((await f.call()).exit, 0, name);
+      assert.equal(f.read(2, 'round.json').interRound.diff, 'unavailable.', name);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-2', 'inter-round.diff')), false, name);
+      for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes('Inter-round diff: unavailable.'), name);
+    } finally {f.cleanup();}
+  }
+});
+
+// SECTION: Finding origin
+
+test('origin: the round-2 prompt asks for it and findings.json and the summary carry the reply value', async () => {
+  const f = await fixture();
+  try {
+    const withOrigin = () => { const body = JSON.parse(report('§ Work', 'Concurrent writes overwrite captured results', 'SHOULD')); body.findings[0].origin = 'fix-induced'; return JSON.stringify(body); };
+    script(f, withOrigin);
+    const first = await f.call();
+    assert.equal(first.exit, 0, JSON.stringify(first.output));
+    assert.equal(f.read(1, 'findings.json').findings[0].origin, 'original');
+    assert.doesNotMatch(first.output.summary, /fix-induced/);
+    assert.ok(promptsOf(f).every(prompt => !prompt.includes('add `origin`')));
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const before = f.launches.length;
+    const second = await f.call();
+    assert.equal(second.exit, 0, JSON.stringify(second.output));
+    assert.equal(f.read(2, 'findings.json').findings[0].origin, 'fix-induced');
+    assert.match(second.output.summary, /, 1 fix-induced/);
+    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes('add `origin`')));
   } finally {f.cleanup();}
 });

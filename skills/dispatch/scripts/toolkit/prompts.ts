@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, extractTemplate, fillTemplate, qualityBar, rotateTags, settledSection, type Settled } from './domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qualityBar, rotateTags, settledSection, type InterRound, type Settled } from './domain/prompt.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import type { ReviewTarget } from './findings.ts';
@@ -32,7 +32,7 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; requests?: readonly RejectionRequest[]; rotation?: number; round: number;
+  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; interRound?: InterRound; requests?: readonly RejectionRequest[]; rotation?: number; round: number;
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
@@ -56,13 +56,14 @@ export function reviewPrompt(kind: ReviewKind, context: {
   };
   const requests=context.requests ?? [];
   const confirmation=requests.length?'\n\n### Pending MUST rejection confirmation\nReview each original claim and the host evidence. Add `confirmations` to the JSON report with exactly `requestId`, `decision` (`agree|disagree`), and a nonblank evidence-backed `rationale`: [{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]. Answer every assigned request exactly once. Keep ordinary `status` and `findings`. A pending MUST rejection is open until explicit agreement; omission is not confirmation.\n'+requests.map(request=>`\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nRequired change: ${request.claim.requiredChange}\nHost rejection: ${request.rationale}\n`).join(''):'';
-  return fillTemplate(template.template, template.variables, values) + settled+confirmation;
+  const interRound = context.interRound ? '\n\n' + interRoundSection(context.interRound) + '\n' : '';
+  return fillTemplate(template.template, template.variables, values) + settled+interRound+confirmation;
 }
 
 /** A compact round that asks the assigned source slots to confirm or dispute one rejection each. */
 export function confirmationPrompt(kind: ReviewKind, context: {
   spec: {path: string; hash: string}; artifact: string; target: ReviewTarget; cwd?: string;
-  planPath?: string; taskSummary?: string; scope: string; requests: readonly RejectionRequest[];
+  planPath?: string; taskSummary?: string; scope: string; interRound?: InterRound; requests: readonly RejectionRequest[];
 }): string {
   const revision = typeof context.target === 'string' ? context.target : context.target.base + '..' + context.target.head;
   const kindContext = kind === 'plan' ? ['- Plan: ' + context.artifact]
@@ -90,6 +91,7 @@ export function confirmationPrompt(kind: ReviewKind, context: {
     ...kindContext,
     '- Scope: ' + context.scope,
     '',
+    ...(context.interRound ? [interRoundSection(context.interRound), ''] : []),
     '### Inspection',
     'Inspect read-only: read files and run Git inspection commands in the foreground only. Do not edit or create files, write the ledger, launch subagents, or change the target, the session or the repository. Do not raise new findings; answer only the assigned requests below.',
     '',

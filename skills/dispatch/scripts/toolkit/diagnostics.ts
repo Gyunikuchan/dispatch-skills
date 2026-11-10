@@ -26,6 +26,7 @@ type ReviewedFinding = {
   sources?: string[];
   recurrence?: {of: string};
   unresolved?: {of: string};
+  origin?: string;
 };
 type FindingsFile = {review?: string; findings?: ReviewedFinding[]};
 type RoundFile = {round: number; generation: number; cap: number; roster: RosterSlot[]};
@@ -187,7 +188,7 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
         measured: recent.filter((row) => row.surface === 'cli' && row.launched && !row.estimated && row.usage).length,
         launched: attempts.filter((row) => row.surface === 'cli' && row.launched).length,
       };
-      let tokens: number | undefined;
+      let tokens: number | undefined, fixInduced = 0;
       for (const row of recent) {
         if (row.surface !== 'cli' || !row.launched || row.estimated || !row.usage) continue;
         tokens = (tokens ?? 0) + row.usage.input + (row.usage.cacheRead ?? 0) + (row.usage.cacheWrite ?? 0) + row.usage.output;
@@ -196,8 +197,10 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
       for (const item of round.findings?.findings ?? []) {
         if (!item.sources?.includes(source)) continue;
         if (item.severity === 'MUST' || item.severity === 'SHOULD' || item.severity === 'CONSIDER') value.raised[item.severity]++;
+        if (item.origin === 'fix-induced') fixInduced++;
         tally(value, `review:${round.review}:${item.id}`);
       }
+      if (fixInduced) value.fixInduced = fixInduced;
       add(value);
     }
     for (const item of round.findings?.findings ?? []) {

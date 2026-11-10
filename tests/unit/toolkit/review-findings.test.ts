@@ -257,3 +257,21 @@ test('review summary refreshes budget from current ledger', () => {
     assert.match(fs.readFileSync(plan, 'utf8'), /Budget \(plan-work\.plan\): next round 3 allowed \(cap 2, ceiling 4\)/);
   } finally { f.cleanup(); }
 });
+
+test('origin: marker renders beside a recurrence marker', () => {
+  const f = fixture();
+  try {
+    const review = 'plan-work.plan';
+    addRound(f.session, review, 1, [
+      { id: 'R1-F001', severity: 'SHOULD', origin: 'original' },
+      { id: 'R1-F002', severity: 'SHOULD', recurrence: { of: 'R0-F001' }, origin: 'fix-induced' },
+      { id: 'R1-F003', severity: 'SHOULD', origin: 'invented' },
+    ]);
+    const result = reviewRows(f.session, foldLedger(f.session), [], [review]);
+    assert.deepEqual(result.rows.map(row => row.origin), ['original', 'fix-induced', undefined]);
+    const rendered = renderFindingsSection(result.rows, [], f.session);
+    assert.match(rendered, /\| Open \(origin original\) \|/);
+    assert.match(rendered, /\| Open \(recurs R0-F001\) \(origin fix-induced\) \|/);
+    assert.match(rendered, /R1-F003 \| 1 \| SHOULD \| — \| Open \|/);
+  } finally { f.cleanup(); }
+});

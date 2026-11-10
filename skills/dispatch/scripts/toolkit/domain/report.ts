@@ -4,7 +4,7 @@
 import type { FindingId, SlotId } from '../types.ts';
 import { sanitizeText } from './sanitize.ts';
 import { IMPACTS, TRIGGERS, severityOf } from './severity.ts';
-import type { DraftFinding, Finding, Impact, ReviewKind, Trigger } from './types.ts';
+import type { DraftFinding, Finding, FindingOrigin, Impact, ReviewKind, Trigger } from './types.ts';
 
 // SECTION: Kind contracts
 
@@ -19,6 +19,11 @@ export const REVIEW_TAGS: ReadonlySet<string> = new Set([
 const LOCUS: Readonly<Record<ReviewKind, RegExp>> = { code: CODE_LOCUS, plan: SECTION_LOCUS, design: SECTION_LOCUS };
 
 const FINDING_FIELDS = ['defect', 'impact', 'locus', 'requiredChange', 'tag', 'trigger'];
+const OPTIONAL_FIELDS = ['origin'];
+const ORIGINS: readonly FindingOrigin[] = ['original', 'fix-induced', 'unknown'];
+const originRank = (origin: FindingOrigin | undefined): number => origin === 'fix-induced' ? 2 : origin === 'original' ? 1 : 0;
+/** `fix-induced` wins and a known value replaces `unknown`. */
+const mergeOrigin = (a: FindingOrigin | undefined, b: FindingOrigin | undefined): FindingOrigin | undefined => originRank(b) > originRank(a) ? b : a;
 const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
 
 /** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
@@ -158,16 +163,16 @@ export function parseReport(input: ReportInput): ReportResult {
     return fail('uncovered-scope', 'report must carry status CLEAN|FINDINGS and a findings array');
   }
   const findings: DraftFinding[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, DraftFinding>();
   const pattern = LOCUS[kind];
   for (const [index, item] of items.entries()) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return fail('uncovered-scope', `finding ${index} must be a JSON object`);
     const finding = item as Record<string, unknown>;
-    const missing = FINDING_FIELDS.filter(field => !Object.hasOwn(finding, field)), unexpected = Object.keys(finding).filter(field => !FINDING_FIELDS.includes(field));
+    const missing = FINDING_FIELDS.filter(field => !Object.hasOwn(finding, field)), unexpected = Object.keys(finding).filter(field => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.includes(field));
     // NOTE: key names are delegate text, so only the retired field is named and other keys are counted.
     const others = unexpected.filter(field => field !== 'severity').length;
     const unsupported = [...(unexpected.includes('severity') ? ['severity'] : []), ...(others ? [others + ' other field(s)'] : [])];
-    if (missing.length || unsupported.length) return fail('uncovered-scope', `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`);
+    if (missing.length || unsupported.length) return fail('uncovered-scope', `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`);
     const { impact, trigger, locus, tag, defect, requiredChange } = finding;
     if (!IMPACTS.includes(impact as Impact)) return fail('uncovered-scope', `finding ${index} impact must be one of ${IMPACTS.join(', ')}`);
     if (!TRIGGERS.includes(trigger as Trigger)) return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
@@ -194,11 +199,17 @@ export function parseReport(input: ReportInput): ReportResult {
       sources: [source],
       scope: category === 'adjacent' ? 'adjacent' : 'in',
       ...(originalTag === undefined ? {} : { originalTag }),
+      ...(ORIGINS.includes(finding['origin'] as FindingOrigin) ? { origin: finding['origin'] as FindingOrigin } : {}),
     };
     // Raw tag and unresolved locus, not their lossy sanitized forms, so distinct values never collide.
     const key = JSON.stringify([draft.severity, resolved ? normalizedLocus : locus, draft.category, draft.defect, draft.requiredChange, known ? null : normalizedTag]);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const kept = seen.get(key);
+    if (kept) {
+      const merged = mergeOrigin(kept.origin, draft.origin);
+      if (merged) kept.origin = merged;
+      continue;
+    }
+    seen.set(key, draft);
     findings.push(draft);
   }
   if (status === 'CLEAN' && findings.length) return fail('uncovered-scope', 'CLEAN requires an empty findings array');
@@ -262,11 +273,14 @@ export function collectFindings(round: number, drafts: readonly DraftFinding[], 
   drafts.forEach((draft, index) => {
     const id = findingId(round, firstOrdinal + index);
     const key: MatchKey = { locus: draft.locus, category: draft.category, text: `${draft.defect} ${draft.requiredChange}` };
+    // Round 1 has no earlier fix; later rounds keep a reviewer's known value and mark every other reply `unknown`.
+    const origin: FindingOrigin = round === 1 ? 'original' : draft.origin === 'original' || draft.origin === 'fix-induced' ? draft.origin : 'unknown';
     const first = out.find((prior) => prior.dupOf === undefined && matchFinding({ locus: prior.locus, category: prior.category, text: `${prior.defect} ${prior.requiredChange}` }, key));
     if (first) {
       first.sources = [...new Set([...first.sources, ...draft.sources])];
-      out.push({ ...draft, id, dupOf: first.id });
-    } else out.push({ ...draft, id });
+      first.origin = mergeOrigin(first.origin, origin) ?? 'unknown';
+      out.push({ ...draft, id, origin, dupOf: first.id });
+    } else out.push({ ...draft, id, origin });
   });
   return out;
 }

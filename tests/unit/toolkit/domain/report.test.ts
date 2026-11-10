@@ -1004,3 +1004,35 @@ test('grounding phase retro observation passes gate and renders evidence in repo
   assert.match(text, /Information access · `references\/grounding\.md`/);
   assert.match(text, /map 1, gap 2, scout 1, not-covered 0, yield 2\/3, tokens unavailable/);
 });
+
+// SECTION: Finding origin
+
+const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
+const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
+
+test('origin: a reply with a valid, absent or invalid origin stays valid and keeps only known values', () => {
+  const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
+  assert.deepEqual(drafts.map(draft => draft.origin), ['fix-induced', 'original', 'unknown', undefined, undefined]);
+});
+
+test('origin: collected origin follows the round table', () => {
+  const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
+  assert.deepEqual(collectFindings(1, drafts).map(entry => entry.origin), ['original', 'original', 'original', 'original', 'original']);
+  assert.deepEqual(collectFindings(2, drafts).map(entry => entry.origin), ['fix-induced', 'original', 'unknown', 'unknown', 'unknown']);
+});
+
+test('origin: duplicate findings in one reply merge to fix-induced, and a known value replaces unknown', () => {
+  const duplicate = (origin?: string) => finding(origin === undefined ? {} : {origin});
+  assert.deepEqual(draftsOf(report([duplicate('original'), duplicate('fix-induced')])).map(draft => draft.origin), ['fix-induced']);
+  assert.deepEqual(draftsOf(report([duplicate('fix-induced'), duplicate('original')])).map(draft => draft.origin), ['fix-induced']);
+  assert.deepEqual(draftsOf(report([duplicate('unknown'), duplicate('original')])).map(draft => draft.origin), ['original']);
+  assert.deepEqual(draftsOf(report([duplicate(), duplicate('original')])).map(draft => draft.origin), ['original']);
+});
+
+test('origin: duplicate findings across replies merge into the kept finding', () => {
+  const parse = (source: string, origin?: string) => { const result = parseReport({kind: 'code', source, text: report([finding(origin === undefined ? {} : {origin})])}); assert.ok(result.ok); return result.findings; };
+  const merged = collectFindings(2, [...parse('codex[0]', 'original'), ...parse('claude[0]', 'fix-induced')]);
+  assert.equal(merged[0]?.origin, 'fix-induced');
+  assert.equal(merged[1]?.dupOf, merged[0]?.id);
+  assert.equal(collectFindings(2, [...parse('codex[0]'), ...parse('claude[0]', 'original')])[0]?.origin, 'original');
+});

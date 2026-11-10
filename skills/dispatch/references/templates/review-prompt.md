@@ -74,5 +74,5 @@ Use only the tags above.
 ## Re-review template
 
 ````markdown
-On re-review, treat any earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed; an accepted `MUST` is never closed by that rule—re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present. When Scope names changed sections or paths, raise new in-scope findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+On re-review, treat any earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed; an accepted `MUST` is never closed by that rule—re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present. When Scope names changed sections or paths, raise new in-scope findings only there; `adjacent` findings may cite any locus. Stop at that blast radius. For each new finding, add `origin`: `fix-induced` when an earlier fix caused the defect, `original` when the defect predates those fixes, `unknown` when you cannot tell.
 ````

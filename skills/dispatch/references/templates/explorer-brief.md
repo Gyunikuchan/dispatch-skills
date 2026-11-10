@@ -36,6 +36,7 @@ Complete every item; the checklist is the completeness contract, not a search or
 
 - entry points
 - callers of each symbol to change
+- callers and impacted tests of each changed shared helper
 - saved states, resume paths and callers that read a changed value
 - tests
 - docs and references

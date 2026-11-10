@@ -451,6 +451,19 @@ describe('explorer brief', () => {
     } finally { f.cleanup(); }
   });
 
+  test('explorer brief lists callers and impacted tests of a changed shared helper', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const valuesPath = path.join(f.session, 'explorer-helper-values.json');
+      fs.writeFileSync(valuesPath, JSON.stringify({objective: 'Map a shared helper change.', questions: '- Who calls the helper?', outputPath: '.scratch/session/work.spec.context.md'}));
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+      const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.match(brief, /^- callers and impacted tests of each changed shared helper$/m);
+    } finally { f.cleanup(); }
+  });
+
   test('refuses missing or unknown value without writing', async () => {
     const f = await fixture();
     try {

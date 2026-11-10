@@ -48,6 +48,7 @@ export type WalkthroughView = {
     rationale: string;
     recurrence?: string;
     unresolved?: string;
+    origin?: string;
   }[];
   reviewRounds: readonly RoundLink[];
   reviewFixes?: readonly ReviewFixReport[];

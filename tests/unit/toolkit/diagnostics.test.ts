@@ -1050,3 +1050,27 @@ test('diagnostics resume chain: a chain without a successful end stays waste', a
     assert.match(findings[0]!.evidence, /`timeout`: 3 of 3 CLI attempts failed/);
   } finally { f.cleanup(); }
 });
+
+test('origin: a nonzero fix-induced count renders the column', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const review = 'plan-origin';
+    saveRound({
+      session: f.session, review, round: 2,
+      roster: [rosterSlot('claude[0]', 'claude', {model: 'model-a'})],
+      outcomes: [{slot: 'claude[0]', state: 'done', text: 'ok', responder: {slot: 'claude[0]', provider: 'claude', model: 'model-a', native: false}}],
+      findings: [
+        {...finding('F1', {severity: 'MUST'}), origin: 'fix-induced'},
+        {...finding('F2', {severity: 'SHOULD'}), origin: 'original'},
+        {...finding('F3', {severity: 'SHOULD'}), origin: 'fix-induced'},
+      ],
+    });
+    captureRuns(f.session, [attempt(roundSubject(f.session, review, 2), {slot: 'claude[0]', provider: 'claude', model: 'model-a', tokens: 100})]);
+    const fold = {records: [], lastSeq: 0, torn: null} as Fold;
+    const facts = sessionFacts(f.session, fold, 'complete');
+    assert.equal(facts.slotYield?.find((row) => row.provider === 'claude')?.fixInduced, 2);
+    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.match(report, /^\| Provider \| Model \| MUST \| SHOULD \| CONSIDER \| Fix-induced \| Accepted /m);
+    assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| — \|$/m);
+  } finally { f.cleanup(); }
+});

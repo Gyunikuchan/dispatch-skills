@@ -9,6 +9,7 @@ export type Impact = 'critical' | 'blocks' | 'degrades' | 'minor';
 export type Trigger = 'realistic' | 'contrived';
 export type ReviewKind = 'code' | 'plan' | 'design';
 export type FindingScope = 'in' | 'adjacent';
+export type FindingOrigin = 'original' | 'fix-induced' | 'unknown';
 
 export type FindingFix = { paths: readonly string[]; dependencies: readonly FindingId[]; verification: readonly string[] };
 
@@ -29,6 +30,8 @@ export type Finding = {
   dupOf?: FindingId;
   /** Sanitized reviewer tag kept when the category is `uncategorized`. */
   originalTag?: string;
+  /** Whether an earlier fix caused the defect; absent on findings stored before origin existed. */
+  origin?: FindingOrigin;
 };
 
 /** A parsed finding before the round assigns its id. */
