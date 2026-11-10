@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import {spawnSync} from 'node:child_process';
 import {describe,test} from 'node:test';
 import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';
 
@@ -32,5 +34,19 @@ describe('summary byte cap',()=>{
       assert.equal(r.value.checks.length,6);
       for(const check of r.value.checks.filter((c:any)=>c.criterion!=='contract')) assert.ok(fs.statSync(check.logPath).size>=200000);
     } finally {f.cleanup();}
+  });
+});
+
+describe('help command',()=>{
+  test('prints the raw section from a real process without a session and writes nothing',()=>{
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'help-')); const entry=path.resolve('skills/dispatch/scripts/dispatch.ts');
+    const env={...process.env}; for(const key of ['NODE_OPTIONS','NODE_TEST_CONTEXT']) delete env[key];
+    try {
+      const ok=spawnSync(process.execPath,[entry,'help','lint','run'],{cwd:dir,env,encoding:'utf8'});
+      const text=fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'),'utf8');
+      const expected=('### lint run\n'+text.split('\n### lint run\n')[1]!.split(/\n#{1,3} /)[0]!).trimEnd()+'\n';
+      assert.equal(ok.status,0,ok.stderr); assert.equal(ok.stdout,expected);
+      assert.deepEqual(fs.readdirSync(dir),[]);
+    } finally {fs.rmSync(dir,{recursive:true,force:true});}
   });
 });

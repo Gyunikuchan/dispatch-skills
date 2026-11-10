@@ -1,8 +1,61 @@
 # Toolkit CLI contract
 
+## Index
+
+### call table
+
 Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
 
 Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
+
+`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` needs no session and prints one section of this file as raw text through the next heading, exit 0; it is the one command whose stdout is not JSON. An unknown or empty heading refuses with reason `usage` and lists the valid headings; an unreadable file refuses with reason `fault`, exit 2. A refusal may add `help`, the heading to read next; `native-pending` and `ok:true` results carry none.
+
+In the table, `\|` separates alternative values. Append a record with `ledger append <record.json> --session <session>`: the file holds JSON objects with kind, by, data, optional key and optional quote, and `help <kind>` lists the data fields.
+
+| Type | Heading | Arguments |
+| --- | --- | --- |
+| action | ask run | `ask run <question-file> --session <session> --host <platform> [--level <level>] [--native-failed '<attempt>=<reason>' ...]` |
+| action | review run | `review run <target> --session <session> --host <platform> [--kind plan\|design\|code] [--spec <path>] [--level <level>] [--native-failed '<attempt>=<reason>' ...]` |
+| action | report render | `report render --session <session>` |
+| action | report complete | `report complete --session <session>` |
+| action | brief render | `brief render <task> --session <session> --host <platform>` |
+| action | brief explorer | `brief explorer <values.json> --session <session> --host <platform>` |
+| action | brief test-cleanup | `brief test-cleanup <values.json> --session <session> --host <platform>` |
+| action | worktree integrate | `worktree integrate <task> --session <session> [--ack-stale <rationale>]` |
+| action | worktree continue | `worktree continue <task> --session <session>` |
+| action | worktree commit | `worktree commit --session <session> --reason <reason> [--review-fix <json-file> \| --test-cleanup <json-file>]` |
+| action | worktree abort | `worktree abort <task> --session <session> --reason <reason>` |
+| action | worktree deliver | `worktree deliver --session <session>` |
+| action | worktree close | `worktree close --session <session> --reason <reason>` |
+| action | worktree cleanup | `worktree cleanup --session <session>` |
+| action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
+| action | worktree submit | `worktree submit <task> --session <session>` |
+| action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
+| action | verify run | `verify run --session <session> [--criteria SC1,SC2,contract]` |
+| action | brief verifier | `brief verifier <values.json> --session <session> --host <platform>` |
+| action | ledger append | `ledger append <record.json> --session <session>` |
+| action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
+| action | doctor run | `doctor run --session <session> --host <platform> [--level <level>]` |
+| action | status show | `status show --session <session>` |
+| action | lint run | `lint run <artifact> --session <session>` |
+| action | diagnostics render | `diagnostics render --session <session>` |
+| record | bind | - |
+| record | approval | - |
+| record | confirm | - |
+| record | level | - |
+| record | waiver | - |
+| record | manual-complete | - |
+| record | escalation | - |
+| record | ruling | - |
+| record | note | - |
+| record | focus | - |
+| record | edit | - |
+| record | evidence | - |
+| record | writer | - |
+| record | integrate | - |
+| session | session init | `session init --objective "<objective>" --host <platform> [--session-id <id>]` |
+| session | session reactivate | `session reactivate --session-dir <session> --host <platform>` |
+| session | session quota-reprobe | `session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]` |
 
 ## Tool actions
 
@@ -257,7 +310,7 @@ These commands use --session-dir rather than --session and run before tool calls
 
 ### session init
 
-`session init --objective "<objective>" --host <platform> [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>, reused:<boolean>}; `reused` is true when an existing folder is returned and false when init creates one. Summary is at most 1024 UTF-8 bytes. `--host` is required: pass your current platform (`claude`, `agy`, `copilot`, `opencode`, `codex` or an alias); a missing or unknown value fails with reason `usage` and leaves the manifest unchanged. Init records it as `host` in manifest.json; the toolkit takes the orchestrator only from that record. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault'} with exit 1 or 2.
+`session init --objective "<objective>" --host <platform> [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>, reused:<boolean>}; `reused` is true when an existing folder is returned and false when init creates one. Summary is at most 1024 UTF-8 bytes. `--host` is required: pass your current platform (`claude`, `agy`, `copilot`, `opencode`, `codex` or an alias); a missing or unknown value fails with reason `usage` and leaves the manifest unchanged. Init records it as `host` in manifest.json; the toolkit takes the orchestrator only from that record. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault', help?} with exit 1 or 2; `help` names the section to read.
 
 ### session reactivate
 

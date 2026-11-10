@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { main as toolkitMain } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main as toolkitMain, TOOL_ACTIONS } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
 
@@ -166,5 +167,71 @@ test('disabled diagnostics add neither lifecycle collection requests nor capture
     assert.equal(await toolkitMain(['ask', 'run', '--session', f.session, '--host', 'opencode'], f.deps), 0);
     assert.deepEqual(requests.map((r) => [r.collectUsage, r.collectLifecycle]), [[undefined, undefined]]);
     assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false);
+  } finally { f.cleanup(); }
+});
+
+// SECTION: help command and session refusal pointer
+const toolkitText = fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8');
+const sectionOf = (heading: string) => toolkitText.split('\n### ' + heading + '\n')[1]!.split(/\n#{1,3} /)[0]!;
+
+test('help prints exactly one section for each action, record kind, session command and the call table', async () => {
+  const f = sessionFixture();
+  try {
+    const headings = [...toolkitText.matchAll(/^### (.+)$/gm)].map((m) => m[1]!);
+    assert.ok(headings.length >= 43);
+    for (const heading of [...TOOL_ACTIONS, ...KINDS, 'session init', 'session reactivate', 'session quota-reprobe', 'call table']) {
+      f.lines.length = 0;
+      assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, heading);
+      assert.equal(f.lines.length, 1);
+      assert.equal(f.lines[0], ('### ' + heading + '\n' + sectionOf(heading)).trimEnd() + '\n', heading);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('help refuses an unknown or empty heading with the valid headings inside the summary cap', async () => {
+  const f = sessionFixture();
+  try {
+    for (const args of [['help'], ['help', 'no', 'such', 'heading'], ['help', 'Tool', 'actions']]) {
+      f.lines.length = 0;
+      assert.equal(await entry.main(args, f.deps), 1);
+      const out = f.output();
+      assert.equal(out.ok, false);
+      assert.equal(out.reason, 'usage');
+      assert.equal(out.path, null);
+      assert.ok(Buffer.byteLength(out.summary) <= 1024);
+      assert.match(out.summary, /call table.*session quota-reprobe/);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('help refuses an unreadable toolkit contract as a fault', async () => {
+  const f = sessionFixture();
+  try {
+    assert.equal(await entry.main(['help', 'call', 'table'], { ...f.deps, skillRoot: path.join(f.root, 'missing') }), 2);
+    const out = f.output();
+    assert.equal(out.reason, 'fault');
+    assert.equal(out.path, null);
+  } finally { f.cleanup(); }
+});
+
+test('session refusals name the section to read', async () => {
+  const f = sessionFixture();
+  fs.mkdirSync(path.join(f.root, '.git'));
+  const deps = { ...f.deps, cwd: () => f.root };
+  try {
+    const cases: [string[], number, string][] = [
+      [['session', 'init', '--unknown', 'x', '--host', 'claude'], 1, 'session init'],
+      [['session', 'reactivate', '--session-dir', path.join(f.root, 'missing'), '--host', 'claude'], 2, 'session reactivate'],
+      [['session', 'quota-reprobe', '--session-dir', f.session, '--provider', 'unknown', '--mode', 'cli'], 1, 'session quota-reprobe'],
+      [['session', 'bogus'], 1, 'call table'],
+    ];
+    for (const [args, exit, help] of cases) {
+      f.lines.length = 0;
+      assert.equal(await entry.main(args, deps), exit, args.join(' '));
+      assert.equal((f.output() as { help?: string }).help, help, args.join(' '));
+    }
+    f.lines.length = 0;
+    assert.equal(await entry.main(['session', 'init', '--objective', 'ok', '--host', 'claude'], deps), 0);
+    assert.equal('help' in f.output(), false);
   } finally { f.cleanup(); }
 });

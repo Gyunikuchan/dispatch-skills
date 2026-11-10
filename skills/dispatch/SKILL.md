@@ -23,7 +23,7 @@ Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --o
 
 Invoke tools with `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> ... --session <session>`. Inspect `ok` and read the result `path`; the [toolkit contract](references/toolkit.md) owns exit and result semantics.
 
-For each call read its action section in the [toolkit contract](references/toolkit.md); for ledger calls also read the matching record-kind section. Follow [native-slot replies](references/toolkit.md#native-slot-replies). Read host rules, then follow the selected branch. At each step read only its linked quality-bar and toolkit sections:
+Run `node <skills-dir>/dispatch/scripts/dispatch.ts help call table` once per run. Run `help <heading>` before the first use in a run of each tool action, ledger record kind and session command except `session init`, whose form stays inline above, and after each `ok:false` result that has a `help` field, for that heading. Follow [native-slot replies](references/toolkit.md#native-slot-replies). Read host rules, then follow the selected branch. At each step read only its linked quality-bar sections, and use `help` for its linked toolkit sections:
 
 - `ask`: follow the question, answer and synthesis path in its guide. Ask needs no spec, plan or approval.
 - `review`: resolve the [governing spec](references/spec-stage.md) and target; adjudicate under [review rules](references/review-rules.md). Standalone review adds no approval gate. Apply accepted fixes and verify.

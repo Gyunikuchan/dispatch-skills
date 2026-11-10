@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
 
@@ -246,4 +248,15 @@ test('audit lifecycle finalize interrupted after publication completes the repor
     assert.match(body, /Repo integrity: unchanged/); assert.doesNotMatch(body, /Run artifacts[^:]*: none/);
     if (relocated2) fs.rmSync(relocated2, { recursive: true, force: true });
   } finally { if (relocated) fs.rmSync(relocated, { recursive: true, force: true }); f.cleanup(); }
+});
+
+// SECTION: Path byte baseline
+
+test('path bytes baseline equals a fresh measure of the baseline commit', async (t) => {
+  const repo = fileURLToPath(new URL('../../', import.meta.url));
+  const commit = 'f8d2b708';
+  try { execFileSync('git', ['-C', repo, 'cat-file', '-e', commit + '^{commit}'], { stdio: 'ignore' }); } catch { t.skip('baseline commit is absent'); return; }
+  const { BASELINE, measure } = await import('../../scripts/path-bytes.ts');
+  const read = (rel: string) => execFileSync('git', ['-C', repo, 'show', commit + ':skills/dispatch/' + rel], { encoding: 'utf8', maxBuffer: 1 << 24 });
+  assert.deepEqual(measure(read, 'before'), BASELINE);
 });

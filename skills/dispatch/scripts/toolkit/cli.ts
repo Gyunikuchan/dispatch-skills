@@ -215,7 +215,9 @@ export const TOOL_ACTIONS = Object.keys(handlers);
 export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<number> {
   const print = (result: ToolResult) => {
     const { exit, ...output } = result;
-    deps.stdout(JSON.stringify({ ...output, summary: capSummary(output.summary) }) + '\n');
+    // Refusals name the toolkit.md section to read; argv (not parsed positionals) keeps a parse failure on a valid action pointed at its section.
+    const help = output.ok || output.reason === 'native-pending' ? undefined : handlers[(argv[0] ?? '') + ' ' + (argv[1] ?? '')] ? argv[0] + ' ' + argv[1] : 'call table';
+    deps.stdout(JSON.stringify({ ...output, summary: capSummary(output.summary), ...(help ? { help } : {}) }) + '\n');
     return exit;
   };
   let parsed: ReturnType<typeof parseArgs>;

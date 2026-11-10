@@ -14,9 +14,27 @@ import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
 const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor\'s `utility` entry for this platform; self-ground only when none resolves.';
 
+// SECTION: help — prints one toolkit.md section as raw text; reads no session, config or ledger.
+function printHelp(heading: string, deps: EntryDeps): number {
+  const fail = (summary: string, reason: string, exit: number) => {
+    deps.stdout(JSON.stringify({ ok: false, summary: capSummary(summary), path: null, reason }) + '\n');
+    return exit;
+  };
+  let lines: string[];
+  try { lines = fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8').split(/\r?\n/); }
+  catch (error) { return fail(error instanceof Error ? error.message : String(error), 'fault', 2); }
+  const start = heading ? lines.indexOf('### ' + heading) : -1;
+  if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => line.startsWith('### ')).map((line) => line.slice(4)).join(', '), 'usage', 1);
+  let end = start + 1;
+  while (end < lines.length && !/^#{1,3} /.test(lines[end]!)) end++;
+  deps.stdout(lines.slice(start, end).join('\n').trimEnd() + '\n');
+  return 0;
+}
+
 export type EntryDeps = CliDeps & { cwd?: () => string };
 
 export async function main(argv: readonly string[] = process.argv.slice(2), deps: EntryDeps = nodeDeps()): Promise<number> {
+  if (argv[0] === 'help') return printHelp(argv.slice(1).join(' ').trim(), deps);
   if (argv[0] !== 'session') return toolkitMain([...argv], deps);
   const print = (value: Record<string, unknown>) => deps.stdout(JSON.stringify(value) + '\n');
   try {
@@ -53,7 +71,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
     return 0;
   } catch (error) {
     const usage = error instanceof UsageError;
-    print({ ok: false, summary: capSummary(error instanceof Error ? error.message : String(error)), path: null, reason: usage ? 'usage' : 'fault' });
+    print({ ok: false, summary: capSummary(error instanceof Error ? error.message : String(error)), path: null, reason: usage ? 'usage' : 'fault', help: ['init', 'reactivate', 'quota-reprobe'].includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table' });
     return usage ? 1 : 2;
   }
 }

@@ -589,3 +589,32 @@ test('toolkit doctor run documents writeConcurrency in result shape', () => {
 test('implement runs verification before test cleanup', () => { const s = read(root + 'references/verbs/implement.md'); assert.ok(s.indexOf('verification step') < s.indexOf('Apply [shared]')); for (const term of ['criterion and contract checks must pass on the new HEAD', 'Any verifier-added test launches cleanup', 'all review rounds settle', 'accepted review fixes changed proved behaviour', 'V0', 'before launching', 'covering those fixes together', 'Never re-check between rounds', 'add tests in a re-check', 'another code review round', 'three fix rounds per issue']) assert.ok(s.includes(term), term); });
 test('verify guide states approval and issue loop', () => { const s = read(root + 'references/verbs/verify.md'); for (const term of ['finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(s.includes(term), term); });
 test('verify manual describes proof and host guidance', () => { const s = read(root + 'references/readme/verify.md'); assert.match(s, /verification\/report.md/); assert.match(s, /Verification/); });
+
+test('call table lists every tool action, record kind and session command with its section argument form', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  const lines = section(toolkit, 'call table').split('\n').filter(line => line.startsWith('| ')).slice(2);
+  const parsed = lines.map(line => {
+    const [type, heading, ...rest] = line.slice(2, -2).split(' | ');
+    return {type: type!, heading: heading!, form: rest.join(' | ').split('\\|').join('|')};
+  });
+  const expected = [
+    ...TOOL_ACTIONS.map(h => ['action', h]), ...KINDS.map(h => ['record', h]),
+    ...['session init', 'session reactivate', 'session quota-reprobe'].map(h => ['session', h]),
+  ];
+  assert.deepEqual(parsed.map(r => [r.type, r.heading]).sort(), expected.sort());
+  const firstSpan = (text: string) => /`([^`]+)`/.exec(text)?.[1] ?? '-';
+  for (const row of parsed) {
+    const body = section(toolkit, row.heading);
+    const form = row.type === 'action' ? firstSpan(body.split('\n').find(line => line.startsWith('Arguments: ')) ?? '')
+      : row.type === 'session' ? firstSpan(body) : '-';
+    assert.equal(row.form.replace(/^`|`$/g, ''), form, row.heading);
+  }
+});
+
+test('SKILL.md read rule loads the call table once and each tool section through help', () => {
+  const skill = read(root + 'SKILL.md');
+  assert.ok(skill.includes('dispatch.ts help call table` once per run. Run `help <heading>` before the first use in a run of each tool action, ledger record kind and session command except `session init`'));
+  assert.ok(skill.includes('after each `ok:false` result that has a `help` field'));
+  assert.ok(!skill.includes('For each call read its action section'));
+  assert.ok(!skill.includes('for ledger calls also read the matching record-kind section'));
+});

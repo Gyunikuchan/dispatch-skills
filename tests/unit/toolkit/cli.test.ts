@@ -298,3 +298,39 @@ test('cli ledger append formats array summary and refreshes findings for new and
     assert.deepEqual({seq:singleRetry.value!['seq'], deduped:singleRetry.value!['deduped']}, {seq:5, deduped:true});
   } finally {restoreAtomicWrite(); f.cleanup();}
 });
+
+// SECTION: refusal pointer
+test('refusal names the section for a resolved action and the call table otherwise', async () => {
+  const f = sessionFixture({memory:true});
+  const help = () => (f.output() as {help?: string}).help;
+  const run = async (args: string[], mutate: (deps: typeof f.deps) => void = () => {}) => {
+    f.lines.length = 0;
+    const deps = {...f.deps};
+    mutate(deps);
+    return main(args, deps);
+  };
+  try {
+    // Unresolved action and parse failure on a valid action.
+    assert.equal(await run(['bogus', 'action', '--session', f.session]), 1);
+    assert.equal(help(), 'call table');
+    assert.equal(await run(['--session', f.session]), 1);
+    assert.equal(help(), 'call table');
+    assert.equal(await run(['status', 'show', '--unknown-flag', '--session', f.session]), 1);
+    assert.equal(help(), 'status show');
+    // Handler fault and result-write fault.
+    assert.equal(await run(['status', 'show', '--session', f.session], deps => { deps.handler = async () => { throw new Error('boom'); }; }), 2);
+    assert.equal(help(), 'status show');
+    assert.equal(await run(['status', 'show', '--session', f.session], deps => { deps.writeResult = () => { throw new Error('disk'); }; }), 2);
+    assert.equal(help(), 'status show');
+    // Gate refusal.
+    const file = f.artifact('bad.plan.md', '# Work\n');
+    assert.equal(await run(['lint', 'run', file, '--session', f.session]), 4);
+    assert.equal(f.output().reason, 'lint-errors');
+    assert.equal(help(), 'lint run');
+    // native-pending and ok:true carry no pointer.
+    assert.equal(await run(['status', 'show', '--session', f.session], deps => { deps.handler = async () => ({ok: false, value: {}, summary: 'pending', exit: 4, reason: 'native-pending'}); }), 4);
+    assert.equal('help' in f.output(), false);
+    assert.equal(await run(['status', 'show', '--session', f.session], deps => { deps.handler = async () => ({ok: true, value: {}, summary: 'fine', exit: 0}); }), 0);
+    assert.equal('help' in f.output(), false);
+  } finally { f.cleanup(); }
+});

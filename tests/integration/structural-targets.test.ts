@@ -26,10 +26,10 @@ test('toolkit stays within the structural size budgets', () => {
     `ledger kinds ${KINDS.length} exceeds 14 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8256 covers the verification route needed by every branch.
+  // NOTE: 8512 covers the verification route and the read-once tool contract rule that every branch needs.
   assert.ok(
-    bytes <= 8256,
-    `SKILL.md bytes ${bytes} exceeds 8256 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
+    bytes <= 8512,
+    `SKILL.md bytes ${bytes} exceeds 8512 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
   );
 });
 
