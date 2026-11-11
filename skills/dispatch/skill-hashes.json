@@ -69,7 +69,7 @@
   "scripts/providers/node-process.ts": "a14538b2ce430b3b7671ff9a8e9b6714a5744652337edf0997776f4eeb455e98",
   "scripts/providers/opencode-runtime.ts": "771b83a9855800acff9bfdc190b4460eea958906f0833de8f6cb7c6639b3287b",
   "scripts/providers/opencode.ts": "2edb9c217bce20dccd98bda3ccb8d00d0bb774369b62de45ddb283b638ef0da3",
-  "scripts/providers/runner.ts": "3f7e5a49c7f7d528c749325f3c326a0c8194e16228259f4ef78eb2d016e03976",
+  "scripts/providers/runner.ts": "d2683ed7b98d0b10c19c62efe8c149c14184cf9edd73a76efda22da394a15724",
   "scripts/providers/types.ts": "8c544d27105f1a29713ed8b7b56164573f446b4740d96eae3bb7434af429c7f6",
   "scripts/toolkit/artifacts.ts": "5f0c30d355636ffb6bec20b26afa01304549fb2b04f046c120c0bc3a70bfae99",
   "scripts/toolkit/ask.ts": "05c01294da8d7d3670585bc622d88fabde5a6ab961084b31c7d4b1d75b30ea79",

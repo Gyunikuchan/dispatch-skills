@@ -258,12 +258,15 @@ test('attachments respect per-file and total caps inside nonce DATA tags; sensit
   assert.ok(block.notes.some((note) => /skipped \/c\.ts|truncated \/b\.ts/.test(note)));
 });
 
-test('oversize and batch-launcher-unsafe prompts spill to the brief file', async () => {
+test('oversize and Windows shim-unsafe prompts spill to the brief file', async () => {
   assert.equal(mustSpill('x'.repeat(100001), posix, 'claude'), true);
   assert.equal(mustSpill('short', posix, 'claude'), false);
+  assert.equal(mustSpill('a\nb', posix, 'claude'), false);
   assert.equal(mustSpill('a\nb', windows, 'C:/bin/copilot.cmd'), true);
   assert.equal(mustSpill('100%', windows, 'C:/bin/copilot.cmd'), true);
-  assert.equal(mustSpill('a\nb', windows, 'C:/bin/claude.exe'), false);
+  assert.equal(mustSpill('a\nb', windows, 'C:/bin/claude.exe'), true);
+  assert.equal(mustSpill('100%', windows, 'C:/bin/claude.exe'), true);
+  assert.equal(mustSpill('short', windows, 'C:/bin/claude.exe'), false);
   const h = harness({ ...posix, argvLimit: 50 });
   const run = runDelegate(claude, req, 'cli', h.ports);
   await flush();
@@ -272,6 +275,20 @@ test('oversize and batch-launcher-unsafe prompts spill to the brief file', async
   assert.equal(done.briefFile, '/r/brief.md');
   assert.ok(h.fs.files.get('/r/brief.md')?.startsWith(GUARDRAIL_HEADER));
   assert.match(h.launches[0]?.argv[2] ?? '', /Brief file: \/r\/brief\.md/);
+});
+
+test('Windows Claude exe receives a one-line pointer to the complete prompt', async () => {
+  const h = harness(windows, { '/r/p.md': 'Review it\nReply exactly: hi' });
+  h.ports.binary = 'C:/bin/claude.exe';
+  const pending = runDelegate(claude, req, 'cli', h.ports);
+  await flush();
+  h.finish(ok());
+  const done = await pending;
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.briefFile, req.briefPath);
+  assert.match(h.fs.files.get(req.briefPath) ?? '', /Review it\nReply exactly: hi/);
+  assert.match(h.launches[0]?.argv[2] ?? '', /Brief file: \/r\/brief\.md/);
+  assert.doesNotMatch(h.launches[0]?.argv[2] ?? '', /[\r\n%]/);
 });
 
 test('timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output kept (fake clock)', async () => {

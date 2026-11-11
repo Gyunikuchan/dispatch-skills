@@ -208,11 +208,12 @@ export function buildAttachmentBlock(files: readonly string[], fs: RunnerFs, non
 
 export const isBatchLauncher = (os: OsId, binary: string): boolean => os === 'win32' && /\.(?:bat|cmd)$/i.test(binary);
 
-/** Whether the prompt must spill: over the argv ceiling, or corrupted by a batch launcher (newline, `%`, length). */
+/** Whether the prompt must spill: over the argv ceiling, unsafe for a Windows command shim, or too large for a batch launcher. */
 export function mustSpill(prompt: string, env: PlatformEnv, binary: string, reservedBytes = 0): boolean {
   const size = bytes(prompt);
-  const batch = isBatchLauncher(env.os, binary) && (/[\r\n%]/.test(prompt) || size > Math.max(0, BATCH_LAUNCHER_ARG_BYTE_LIMIT - reservedBytes));
-  return size > env.argvLimit || batch;
+  const windowsShim = env.os === 'win32' && /[\r\n%]/.test(prompt);
+  const batch = isBatchLauncher(env.os, binary) && size > Math.max(0, BATCH_LAUNCHER_ARG_BYTE_LIMIT - reservedBytes);
+  return size > env.argvLimit || windowsShim || batch;
 }
 
 /** Single line with no `%`: the pointer itself must survive a batch launcher. */
