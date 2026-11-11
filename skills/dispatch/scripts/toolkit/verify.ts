@@ -29,16 +29,24 @@ export async function verifyRun(ctx: HandlerContext): Promise<HandlerResult> {
   const integration=await withLedger(session,'verify run',deps,tx=>ensureIntegration(tx,ctx));
   const directory=path.join(session,'.state/evidence'); fs.mkdirSync(directory,{recursive:true});
   const records: Record<string,unknown>[]=[];
+  const outcomes=new Map<string,{exit:number;log:string}>();
   for(const check of selected) {
     const before=await testedTree(deps,session,integration.path);
     const clean=before===await headTree(deps,integration.path);
-    let exit=0; let log='';
-    for(const command of check.commands) {
-      const result=await deps.run(shellArgv(process.platform,command),{cwd:integration.path});
-      log+='$ '+command+'\n'+result.stdout+result.stderr;
-      exit=result.exit;
-      if(exit!==0) break;
+    // Criteria often share one test-file command; the same commands on the same tree need one run.
+    const key=JSON.stringify([check.commands,before]);
+    let outcome=outcomes.get(key);
+    if(!outcome) {
+      outcome={exit:0,log:''};
+      for(const command of check.commands) {
+        const result=await deps.run(shellArgv(process.platform,command),{cwd:integration.path});
+        outcome.log+='$ '+command+'\n'+result.stdout+result.stderr;
+        outcome.exit=result.exit;
+        if(outcome.exit!==0) break;
+      }
+      outcomes.set(key,outcome);
     }
+    const {exit,log}=outcome;
     const after=await testedTree(deps,session,integration.path);
     const data={criterion:check.criterion,commandDigest:check.commandDigest,tree:before,clean,before,after,exit};
     const digest=crypto.createHash('sha256').update(stableValue(data)).digest('hex');

@@ -42,6 +42,16 @@ describe('toolkit verify', () => {
       } finally {f.cleanup();}
     }
   });
+  test('runs a command shared by criteria once per tree and records evidence for each', async () => {
+    const shared=(target:string)=>planSource.replace('| SC1 |','| SC1, SC2 |').replace('`node -e "process.exit(0)"`',`\`node -e "require('fs').appendFileSync('${target}','x')"\``).replace('\n## Verification Plan',m=>`- [SC2] File still works\n  - Changes: src/file.ts\n  - Verify: \`node -e "require('fs').appendFileSync('${target}','x')"\`\n  - Evidence: verify\n${m}`);
+    for (const [target,expected,reason] of [['ignored','x',undefined],['src/file.ts','initial\nxx','mutated']] as const) {
+      const f=await toolkitRepo(shared(target)); try {
+        const r=await f.run(['verify','run','--criteria','SC1,SC2']); assert.equal(r.exit,0,JSON.stringify(r)); assert.equal(r.output.reason,reason);
+        assert.equal(fs.readFileSync(path.join(f.integration,target),'utf8').replaceAll('\r\n','\n'),expected);
+        assert.deepEqual(foldLedger(f.session).records.filter(x=>x.kind==='evidence').map(x=>x.data['criterion']),['SC1','SC2']);
+      } finally {f.cleanup();}
+    }
+  });
   test('recovers an evidence file written before a crash without duplicate records', async () => {
     const f=await toolkitRepo(); try {
       const crash=await f.run(['verify','run','--criteria','SC1'],point=>{if(point==='verify:after-evidence') throw new Error('crash');});

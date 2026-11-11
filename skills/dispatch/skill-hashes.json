@@ -37,7 +37,7 @@
   "references/templates/verifier-brief.md": "1565326eded0054e8fe42b67fc444e9091a139435c329d966f612274f64e83f9",
   "references/templates/walkthrough.md": "f334e2177843fcfcb764dc909e4f3c9850a8ba8202870ac42e954c734034bca2",
   "references/templates/writer-brief.md": "a28c7929e0b3f7f1906589ea71a4634666c0af8c177a58fe9c619575fe6df868",
-  "references/toolkit.md": "3369f93141ab6d4fff5b137f9aa0b4e2ed4b2f344ad342a8c3cf33bde70e6b08",
+  "references/toolkit.md": "73c8922c7df98ca1778f5e279af9a15ea55a9b10ee9617598b47ebb4410f6020",
   "references/verbs/ask.md": "d6ac6dec92598df022cc7fac92c457e42c4a3cfcf025e925b7424e8bb8b7598c",
   "references/verbs/design.md": "eaabbbd1ca41cfc9d47ced169ee41690d0959e01aa1681aa38cb3ac25c226911",
   "references/verbs/implement.md": "efc47752b6459033e4c71597ed0361730a1d73d1fde7f21ab5889eca1149013c",
@@ -117,7 +117,7 @@
   "scripts/toolkit/review.ts": "e4786b8d92c4163fdfdac5880300117d21896f21e93df518515c1808c6470916",
   "scripts/toolkit/status.ts": "2057658202fbde146260a1b62857e5a9b5e57b794e863865ba6dd5ee0022eba6",
   "scripts/toolkit/types.ts": "6f99e074d1b40e67942f0b63fd669075a3c9654bb9663291d1798881fc8fad5f",
-  "scripts/toolkit/verify.ts": "ceda3d483476a19b9152ffd90f155a7de1f014e98321448168302e71f463be36",
+  "scripts/toolkit/verify.ts": "79aa57af772c40636abbeb5be454497e990c445d2dcac019a5e7ff3950282faa",
   "scripts/toolkit/walkthrough.ts": "686ae106b8cc3ba6b616a820f41c43b74e8b44c434ef1928cca066ea1623b565",
   "scripts/toolkit/writers.ts": "19481188d637b3afa0bd0b0b8f303cfd9f3f9ca3a42eb222f550febfcb4b7991"
 }

@@ -199,7 +199,7 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and o
 ### verify run
 
 Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed. Without `--criteria`, verification skips criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its pre-cleanup evidence remains eligible under [report completion](#report-complete).
-Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists.
+Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists. Within one run, criteria with identical commands on an unchanged tree share one execution and each gets its own evidence.
 Refusals: unknown criterion, which names each unknown ID and the valid IDs; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 
