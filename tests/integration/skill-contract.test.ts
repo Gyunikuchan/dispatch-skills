@@ -654,3 +654,15 @@ test('merged rules keep one home', () => {
     assert.ok(ref(homeFile).includes(home), `${homeFile} lacks: ${home}`);
   }
 });
+
+test('flow defect repairs state background review start and verifier disposable and refused-write rules', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.match(section(toolkit, 'review run'), /Start a long `review run` as a background command and wait for its completion notice/);
+  const brief = read(root + 'references/templates/verifier-brief.md');
+  assert.match(brief, /disposable repositories you create and remove are excepted/);
+  assert.match(brief, /When the host refuses the report write, return the full report text/);
+  assert.match(brief, /A refused write needs no user ruling/);
+  const verify = read(root + 'references/verbs/verify.md');
+  assert.match(verify, /When the host refuses the report write, the verifier returns the full report text and the orchestrator persists it/);
+  assert.match(verify, /a refused write needs no user ruling/);
+});

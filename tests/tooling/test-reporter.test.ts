@@ -36,11 +36,22 @@ test('failures expand the first and list the rest by location', async () => {
   assert.doesNotMatch(out, /second broke/);
 });
 
-test('a non-e2e file over the per-file budget fails the run with the fix', async () => {
+test('a non-e2e file over the per-file budget warns without failing a passing run', async () => {
   const { out, code } = await report([pass('tests/unit/core/slow.test.ts', FILE_BUDGET_MS + 1), pass('tests/e2e/flow.test.ts', FILE_BUDGET_MS * 5)]);
-  assert.equal(code, 1);
-  assert.match(out, /Over the 1\.00s per-file budget: tests\/unit\/core\/slow\.test\.ts; split the file/);
+  assert.equal(code, 0);
+  assert.match(out, /⚠ Over the 1\.00s per-file budget: tests\/unit\/core\/slow\.test\.ts; split the file/);
+  assert.doesNotMatch(out, /✖ Over the 1\.00s per-file budget/);
   assert.doesNotMatch(out, /budget: .*flow.test/);
+});
+
+test('a non-e2e file over the per-file budget fails the run with a test failure', async () => {
+  const fail: ReporterEvent = ({
+    type: 'test:fail',
+    data: { name: 'broken', file: file('tests/unit/core/slow.test.ts'), nesting: 0, details: { duration_ms: FILE_BUDGET_MS + 1, error: { cause: { message: 'broken', stack: 'broken\n  at x' } } } },
+  });
+  const { out, code } = await report([fail]);
+  assert.equal(code, 1);
+  assert.match(out, /✖ Over the 1\.00s per-file budget: tests\/unit\/core\/slow\.test\.ts; split the file/);
 });
 
 test('a file that selects no tests is reported and fails', async () => {

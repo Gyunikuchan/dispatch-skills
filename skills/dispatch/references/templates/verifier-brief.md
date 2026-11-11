@@ -1,6 +1,6 @@
 # Runtime verification brief
 
-Work in `{{checkoutPath}}` against base `{{base}}` and governing spec `{{specPath}}`. Focus: {{focus}}. Your write scope is evidence under `{{evidenceDir}}` and, only with `test edits permitted` in the focus, gap-filling tests in dedicated test files that test cleanup may edit. Report changes needed outside this scope as issues or limits. Run no Git write commands or Dispatch toolkit.
+Work in `{{checkoutPath}}` against base `{{base}}` and governing spec `{{specPath}}`. Focus: {{focus}}. Your write scope is evidence under `{{evidenceDir}}` and, only with `test edits permitted` in the focus, gap-filling tests in dedicated test files that test cleanup may edit. Report changes needed outside this scope as issues or limits. Run no Git write commands or Dispatch toolkit in the checkout or session; disposable repositories you create and remove are excepted.
 
 ## Objective
 
@@ -16,6 +16,6 @@ Obtain recorded user approval through the orchestrator before changing persisten
 
 ## Report
 
-Write `{{evidenceDir}}/report.md` with an outcome (`proved`, `partial` or `no-op`), a table of claim, method, result (`proved`, `not proved` or `failed`) and artifact, issues `V<n>` with expected, observed, reproduction and evidence, limits and pending approval requests. Store artifacts in `{{evidenceDir}}/<n>/`, where `<n>` is the cycle number from the focus. Give each artifact a new path. If a report exists, append `## Cycle <n>` and leave earlier content unchanged. Continue issue numbering within the cycle.
+Write `{{evidenceDir}}/report.md` with an outcome (`proved`, `partial` or `no-op`), a table of claim, method, result (`proved`, `not proved` or `failed`) and artifact, issues `V<n>` with expected, observed, reproduction and evidence, limits and pending approval requests. When the host refuses the report write, return the full report text; the orchestrator persists it with its evidence. A refused write needs no user ruling. Store artifacts in `{{evidenceDir}}/<n>/`, where `<n>` is the cycle number from the focus. Give each artifact a new path. If a report exists, append `## Cycle <n>` and leave earlier content unchanged. Continue issue numbering within the cycle.
 
 Reply with status `DONE`, `NEEDS_APPROVAL` or `BLOCKED`; `reportPath`; a one-line summary; and `issues: <n>`.

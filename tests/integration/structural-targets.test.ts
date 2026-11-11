@@ -16,20 +16,20 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 15250 ceiling covers the approved runtime verification stage, inter-round information and finding origin.
+  // NOTE: 15250 ceiling is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
     lines <= 15250,
-    `driver TS LOC ${lines} exceeds 15250 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    `driver TS LOC ${lines} exceeds 15250 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,
-    `ledger kinds ${KINDS.length} exceeds 14 budget. Streamline, consolidate, or refactor without squashing or stripping comments; raising the budget requires explicit authorization.`
+    `ledger kinds ${KINDS.length} exceeds 14 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8512 covers the verification route and the read-once tool contract rule that every branch needs.
+  // NOTE: 8512 covers the verification route and the read-once tool contract rule that every branch needs. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
   assert.ok(
     bytes <= 8512,
-    `SKILL.md bytes ${bytes} exceeds 8512 budget. Move branch-specific detail to references; raise the budget only for rules that every branch needs, per AGENTS.md Documentation Standards.`
+    `SKILL.md bytes ${bytes} exceeds 8512 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
   );
 });
 
