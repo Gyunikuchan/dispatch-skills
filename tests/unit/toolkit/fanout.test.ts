@@ -2130,3 +2130,186 @@ test('opencode native descriptors carry exact subagent model values', async () =
   }
 });
 
+
+test('rerun resumes an unfinished slot in its saved session', async () => {
+  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'resume'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'ses_abc'}));
+    fs.writeFileSync(path.join(logs,'opencode[0].log'),'old log');
+    f.deps.delegate=async (_provider,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,2);assert.match(fs.readFileSync(req.promptPath,'utf8'),/Continue the task/);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+    assert.equal(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),'old log');
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh at the saved position after a failed resume', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'resume-fail'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:1,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'ses_abc'}));
+    const calls: {resume:string|null;model:string|null}[]=[];
+    f.deps.delegate=async (_p,req)=>{calls.push({resume:req.resume,model:req.model}); if(req.resume)return {outcome:{status:'fail',cls:'auth',detail:'failed'},invocations:[]}; const state=JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')); assert.match(state.restart,/failed cross-run resume/); return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode',['bad','good'])],prompt:'question',validate,quota},f.deps);
+    assert.deepEqual(calls,[{resume:'ses_abc',model:'good'},{resume:null,model:'good'}]);
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh when a saved outcome needs a retake', async () => {
+  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({ memory: true });
+  try {
+    for (const outcome of [{ state: 'failed', cls: 'auth', reason: 'denied' }, { state: 'done', text: '' }]) {
+      const dir = path.join(f.session, outcome.state);
+      const logs = path.join(dir, 'logs'), slots = path.join(dir, 'slots');
+      fs.mkdirSync(logs, { recursive: true });
+      fs.mkdirSync(slots);
+      fs.writeFileSync(path.join(slots, 'opencode[0].json'), JSON.stringify({ slot: 'opencode[0]', ...outcome }));
+      const statePath = path.join(logs, 'opencode[0].state.json');
+      fs.writeFileSync(statePath, JSON.stringify({ physicalSlot: 'opencode[0]', provider: 'opencode', model: 'second', position: { model: 1, mode: 0 }, pending: 'stall', resumesUsed: 1, reportResumes: 0, sessionId: 'old' }));
+      const calls: { model: string | null; resume: string | null }[] = [];
+      f.deps.delegate = async (_provider, req) => {
+        calls.push({ model: req.model, resume: req.resume });
+        return { outcome: { status: 'ok', text: 'answer', sessionId: 'new', resume: null }, invocations: [] };
+      };
+      await fanOut({ dir, slots: [slot('opencode', ['first', 'second'])], prompt: 'question', validate, quota }, f.deps);
+      assert.deepEqual(calls, [{ model: 'first', resume: null }], outcome.state);
+      assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).restart, 'saved outcome retake');
+    }
+  } finally { f.cleanup(); }
+});
+
+test('rerun starts fresh on stale slot state', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'stale'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'other[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'old'}));
+    fs.writeFileSync(path.join(logs,'opencode[0].log'),'previous');
+    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,null);assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/stale/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+    assert.equal(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),'previous');
+  } finally {f.cleanup();}
+});
+
+test('exit-only providers start fresh when interrupted logs have no session envelope', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  for (const provider of ['claude','agy'] as const) {
+    const f=sessionFixture({memory:true}); try {
+      const dir=path.join(f.session,provider+'-exit-only'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+      const statePath=path.join(logs,provider+'[0].state.json'), logPath=path.join(logs,provider+'[0].log');
+      fs.writeFileSync(statePath,JSON.stringify({physicalSlot:provider+'[0]',provider,model:'second',position:{model:1,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:null}));
+      fs.writeFileSync(logPath,'partial output without the exit envelope');
+      const calls: {model:string|null;resume:string|null}[]=[];
+      f.deps.delegate=async (_provider,req)=>{
+        calls.push({model:req.model,resume:req.resume});
+        return {outcome:{status:'ok',text:'answer',sessionId:'new-session',resume:null},invocations:[]};
+      };
+      await fanOut({dir,slots:[slot(provider,['first','second'])],prompt:'question',validate,quota},f.deps);
+      assert.deepEqual(calls,[{model:'first',resume:null}],provider+' does not recover an ID from partial exit-only output');
+      assert.equal(JSON.parse(fs.readFileSync(statePath,'utf8')).restart,'stale: no valid session ID');
+      assert.equal(fs.readFileSync(logPath+'.stalled','utf8'),'partial output without the exit envelope');
+    } finally {f.cleanup();}
+  }
+});
+
+test('rerun resumes a pending report with the report prompt', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'report'), logs=path.join(dir,'logs'), prompts=path.join(dir,'prompts'); fs.mkdirSync(logs,{recursive:true}); fs.mkdirSync(prompts,{recursive:true});
+    fs.writeFileSync(path.join(prompts,'opencode[0].no-report.md'),'report prompt');
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'report',resumesUsed:1,reportResumes:1,sessionId:'ses_abc'}));
+    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,1);assert.equal(fs.readFileSync(req.promptPath,'utf8'),'report prompt');return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh after an interrupted fresh launch checkpoint', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'boundary'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].log'),'{"type":"step_start","sessionID":"old_session"}\n');
+    let first=true;
+    f.deps.delegate=async (_p,req)=>{if(first){first=false;assert.equal(req.resume,null);assert.equal(fs.readFileSync(req.logPath,'utf8'),'');throw new Error('interrupted');}assert.equal(req.resume,null);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    const input={dir,slots:[slot('opencode')],prompt:'question',validate,quota};
+    await assert.rejects(fanOut(input,f.deps),/interrupted/); await fanOut(input,f.deps);
+    assert.match(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),/old_session/);
+  } finally {f.cleanup();}
+});
+
+test('rerun resumes with the continue prompt after a stall inside a report resume', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'report-stall'); let call=0;
+    f.deps.delegate=async (_p,req)=>{call++; if(call===1)return {outcome:{status:'ok',text:'invalid',sessionId:'ses_abc',resume:null},invocations:[]}; if(call===2){assert.match(req.promptPath,/no-report/);req.onResume?.('ses_abc',1);fs.writeFileSync(req.logPath,'stall log');throw new Error('interrupted');} assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,2);assert.match(fs.readFileSync(req.promptPath,'utf8'),/Continue the task/);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
+    const input={dir,slots:[slot('opencode')],prompt:'question',validate:check,quota};
+    await assert.rejects(fanOut(input,f.deps),/interrupted/); await fanOut(input,f.deps);assert.equal(call,3);
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh after a failed resume checkpoint', async t => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'checkpoint'), log=path.join(dir,'logs','opencode[0].log'), state=log.replace(/\.log$/,'.state.json'); let fail=false;
+    const rename=fs.renameSync;t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(fail && String(to)===state){fail=false;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
+    let first=true;f.deps.delegate=async (_p,req)=>{if(first){first=false;fs.writeFileSync(req.logPath,'leftover');fail=true;req.onResume?.('ses_abc',1);throw new Error('interrupted');}assert.equal(req.resume,null);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    const input={dir,slots:[slot('opencode')],prompt:'question',validate,quota};
+    await assert.rejects(fanOut(input,f.deps),/interrupted/);assert.equal(fs.existsSync(state),false);await fanOut(input,f.deps);assert.equal(fs.readFileSync(log+'.stalled','utf8'),'leftover');
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh after a failed usage checkpoint', async t => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'usage-checkpoint'), log=path.join(dir,'logs','codex[0].log'), state=log.replace(/\.log$/,'.state.json'); let fail=false;
+    const rename=fs.renameSync;t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(fail && String(to)===state){fail=false;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
+    const row={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{input:10,output:2,scope:'invocation' as const,provenance:'test',inputSemantics:'uncached' as const}};
+    let first=true;f.deps.delegate=async (_p,req)=>{if(first){first=false;fs.writeFileSync(req.logPath,'leftover');fail=true;req.onInvocation?.(row);throw new Error('interrupted');}assert.equal(req.resume,null);assert.equal(req.priorUsage,undefined);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    const input={dir,slots:[slot('codex')],prompt:'question',validate,quota};
+    await assert.rejects(fanOut(input,f.deps),/interrupted/);assert.equal(fs.existsSync(state),false);await fanOut(input,f.deps);assert.equal(fs.readFileSync(log+'.stalled','utf8'),'leftover');
+  } finally {f.cleanup();}
+});
+
+test('rerun resumes without counting saved session usage twice', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'usage-resume'), logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
+    const usage={input:10,output:2,scope:'invocation' as const,provenance:'test',inputSemantics:'uncached' as const};
+    fs.writeFileSync(path.join(logs,'codex[0].state.json'),JSON.stringify({physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_abc',sessionUsage:usage}));
+    const row1={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{...usage,input:3}};
+    const row2={...row1,usage:{...usage,input:5}};
+    let calls=0;f.deps.delegate=async (_p,req)=>{calls++;if(calls===1){assert.equal(req.priorUsage?.input,10);req.onInvocation?.(row2);return {outcome:{status:'ok',text:'invalid',sessionId:'thread_abc',resume:null},invocations:[row1,row2]};}assert.equal(req.priorUsage?.input,18);return {outcome:{status:'ok',text:'answer',sessionId:'thread_abc',resume:null},invocations:[]};};
+    const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
+    await fanOut({dir,slots:[slot('codex')],prompt:'question',validate:check,quota},f.deps);assert.equal(calls,2);
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh at the saved position after a thrown resume launch', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'throw-resume'), logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:1,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'ses_abc'}));
+    let calls=0;f.deps.delegate=async (_p,req)=>{calls++;assert.equal(req.model,'good');if(req.resume)throw new Error('spawn');assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/launch error/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode',['bad','good'])],prompt:'question',validate,quota},f.deps);assert.equal(calls,2);
+  } finally {f.cleanup();}
+});
+
+test('rerun resumes after a later call replaces a failed checkpoint', async t => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'later-checkpoint'),state=path.join(dir,'logs','opencode[0].state.json');let fail=false;
+    const rename=fs.renameSync;t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(fail && String(to)===state){fail=false;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
+    let calls=0;f.deps.delegate=async (_p,req)=>{calls++;if(calls===1){fail=true;req.onResume?.('ses_abc',1);return {outcome:{status:'ok',text:'invalid',sessionId:'ses_abc',resume:null},invocations:[]};}if(calls===2){assert.equal(JSON.parse(fs.readFileSync(state,'utf8')).pending,'report');throw new Error('interrupted');}assert.equal(req.resume,'ses_abc');return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
+    const input={dir,slots:[slot('opencode')],prompt:'question',validate:check,quota};await assert.rejects(fanOut(input,f.deps),/interrupted/);await fanOut(input,f.deps);assert.equal(calls,3);
+  } finally {f.cleanup();}
+});
+
+test('rerun starts fresh when a reserve left the state', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');const f=sessionFixture({memory:true});try {
+    const dir=path.join(f.session,'reserve-state'),logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'reserve_session'}));
+    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,null);assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/stale/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+  }finally{f.cleanup();}
+});
+
+test('rerun resumes with the resumes spent before the stop', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');const f=sessionFixture({memory:true});try {
+    const dir=path.join(f.session,'log-session'),logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:2,reportResumes:0,sessionId:null}));
+    fs.writeFileSync(path.join(logs,'opencode[0].log'),'{"type":"step_start","sessionID":"ses_abc"}\n');
+    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,3);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+  }finally{f.cleanup();}
+});

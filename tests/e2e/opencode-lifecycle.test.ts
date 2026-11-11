@@ -343,3 +343,15 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
     }
   });
 });
+
+
+test('stdout lines reach the line hook through a real process', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stdout-lines-'));
+  try {
+    const lines: string[] = [];
+    const launch = { argv: [process.execPath, '-e', "process.stdout.write('one\\r'); setTimeout(() => { process.stdout.write('\\ntwo\\nlast'); }, 20)"], stdin: null, env: process.env as Record<string, string>, cwd: root };
+    const result = await nodeProcess.start(launch, { logPath: path.join(root, 'out.log'), capBytes: 1000, onLine: line => lines.push(line) }).done;
+    assert.equal(result.exit, 0);
+    assert.deepEqual(lines, ['one', 'two', 'last']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

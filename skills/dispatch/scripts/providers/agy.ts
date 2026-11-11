@@ -43,6 +43,7 @@ export const agy: ProviderSpec = {
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
   usage: agyUsage,
+  resumeUsage: 'cumulative',
   attemptSession: (out: ProcessResult): string | null =>
     validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),
   argv(req, mode) {

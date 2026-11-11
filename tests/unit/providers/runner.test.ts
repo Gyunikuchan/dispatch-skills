@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
@@ -53,12 +54,14 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   const clock = manualClock();
   let finish: (r: ProcessResult) => void = () => {};
   let activity: () => void = () => {};
+  let line: (value: string, fragment?: boolean) => void = () => {};
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
         if (io.onActivity) activity = io.onActivity;
+        if (io.onLine) line = io.onLine;
         if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
         return { pid: 50, done: new Promise<ProcessResult>((resolve) => { finish = resolve; }) };
       },
@@ -67,7 +70,7 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
     clock, fs, platform, binary: 'claude', nonce: () => 'N0NCE',
     env: { PATH: '/bin', HOME: '/h', ANTHROPIC_API_KEY: 'sk-1', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'x', HTTPS_PROXY: 'http://p' },
   };
-  return { ports, launches, signals, clock, fs, finish: (r: ProcessResult) => finish(r), activity: () => activity() };
+  return { ports, launches, signals, clock, fs, finish: (r: ProcessResult) => finish(r), activity: () => activity(), line: (value: string, fragment?: boolean) => { activity(); line(value, fragment); } };
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -879,7 +882,7 @@ test('active delegate is not idle while output keeps arriving', async () => {
 test('diagnostics usage parsing is opt-in and result-neutral', async () => {
   for(const scenario of ['disabled','enabled','throw','resume','truncated','retry'] as const) {
     let calls=0;
-    const spec={...claude,parse:(out:ProcessResult,launch:Parameters<typeof claude.parse>[1])=>scenario==='retry'&&launch.effort?{status:'fail' as const,cls:'config' as const,detail:'unsupported',retryWithoutEffort:true}:claude.parse(out,launch),usage:()=>{calls++;if(scenario==='throw')throw new Error('parser');return {input:3,output:2,inputSemantics:'uncached' as const,scope:'invocation' as const,provenance:'fixture'};}};
+    const spec={...claude,resumeUsage:undefined,parse:(out:ProcessResult,launch:Parameters<typeof claude.parse>[1])=>scenario==='retry'&&launch.effort?{status:'fail' as const,cls:'config' as const,detail:'unsupported',retryWithoutEffort:true}:claude.parse(out,launch),usage:()=>{calls++;if(scenario==='throw')throw new Error('parser');return {input:3,output:2,inputSemantics:'uncached' as const,scope:'invocation' as const,provenance:'fixture'};}};
     const h=harness(posix), pending=runDelegate(spec,{...req,collectUsage:scenario!=='disabled',resume:scenario==='resume'?'resume-id':null,effort:scenario==='retry'?'high':null},'cli',h.ports);
     await flush();
     h.finish(scenario==='retry'?ok({exit:1,stderrTail:'unknown option --effort'}):ok({truncated:scenario==='truncated'}));
@@ -998,4 +1001,159 @@ test('OpenCode lifecycle steps keep preparation, response and settlement separat
   const offline = await run('offline');
   assert.deepEqual(offline.invocations.map((i) => [i.launched, i.lifecycleSteps?.map((s) => [s.step, s.outcome])]), [[false, [['prepare', 'failed']]]]);
   assert.deepEqual(await steps('other-provider'), [], 'other providers never record lifecycle steps');
+});
+
+
+test('silence between steps stops at 60 s', async () => {
+  const h = harness(posix);
+  const spec = { ...makeNudgeSpec(null), stepEvent: (line: string) => line === 'end' ? 'step-end' as const : null };
+  const run = runDelegate(spec, { ...req, timeoutMs: 400_000 }, 'cli', h.ports);
+  await flush(); h.line('end'); h.clock.advance(50_000);
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(10_000); assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM' })); await run;
+});
+
+test('inside a step stops at 180 s, including after an unknown line', async () => {
+  for (const afterEnd of [false, true]) {
+    const h = harness(posix);
+    const spec = { ...makeNudgeSpec(null), stepEvent: (line: string) => line === 'end' ? 'step-end' as const : null };
+    const run = runDelegate(spec, { ...req, timeoutMs: 400_000 }, 'cli', h.ports);
+    await flush(); if (afterEnd) { h.line('end'); h.line('unknown'); }
+    h.clock.advance(170_000); assert.deepEqual(h.signals, []);
+    h.clock.advance(10_000); assert.deepEqual(h.signals, ['-50:SIGTERM']);
+    h.finish(ok({ exit: null, signal: 'SIGTERM' })); await run;
+  }
+});
+
+test('stderr activity resets silence without changing the phase', async () => {
+  const h = harness(posix);
+  const spec = { ...makeNudgeSpec(null), stepEvent: (line: string) => line === 'end' ? 'step-end' as const : null };
+  const run = runDelegate(spec, { ...req, timeoutMs: 400_000 }, 'cli', h.ports);
+  await flush(); h.line('end'); h.clock.advance(50_000); h.activity();
+  h.clock.advance(50_000); assert.deepEqual(h.signals, []);
+  h.clock.advance(10_000); assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM' })); await run;
+});
+
+test('a resumed launch starts inside a step', async () => {
+  const h = harness(posix);
+  let sessions = 0;
+  const spec = { ...makeNudgeSpec('sess1'), attemptSession: () => ++sessions === 1 ? 'sess1' : null, stepEvent: (line: string) => line === 'end' ? 'step-end' as const : null };
+  const run = runDelegate(spec, { ...req, timeoutMs: 400_000 }, 'cli', h.ports);
+  await flush(); h.line('end'); h.clock.advance(60_000);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  await flush(); await flush();
+  h.clock.advance(170_000); assert.equal(h.signals.length, 1);
+  h.finish(ok({ stdout: 'FINAL answer' })); await run;
+});
+
+
+test('a parseable over-long line fragment returns the phase inside a step', async () => {
+  const h = harness(posix);
+  const spec = { ...makeNudgeSpec(null), stepEvent: opencode.stepEvent };
+  const run = runDelegate(spec, { ...req, timeoutMs: 400_000 }, 'cli', h.ports);
+  await flush(); h.line('{"type":"step_finish"}');
+  h.line('{"type":"step_finish"}', true);
+  h.clock.advance(170_000); assert.deepEqual(h.signals, []);
+  h.clock.advance(10_000); assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM' })); await run;
+});
+
+test('resumed launch records usage for a per-launch provider', async () => {
+  const h = harness(posix);
+  const usage = { input: 3, output: 2, inputSemantics: 'uncached' as const, scope: 'invocation' as const, provenance: 'fixture' };
+  const spec = { ...claude, resumeUsage: 'per-launch' as const, usage: () => usage };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session' }, 'cli', h.ports);
+  await flush(); h.finish(ok());
+  assert.deepEqual((await pending).invocations[0]?.usage, usage);
+});
+
+test('resumed launch records no usage without proven semantics', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec = { ...claude, resumeUsage: undefined, usage: () => { calls++; return undefined; } };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session' }, 'cli', h.ports);
+  await flush(); h.finish(ok());
+  assert.equal((await pending).invocations[0]?.usage, undefined);
+  assert.equal(calls, 0);
+});
+
+test('Claude resume records per-launch fallback usage alongside cumulative model usage', async () => {
+  const h = harness(posix);
+  const priorUsage = { input: 10, output: 5, scope: 'invocation' as const, provenance: 'claude.result.modelUsage', inputSemantics: 'uncached' as const };
+  const pending = runDelegate(claude, { ...req, collectUsage: true, resume: 'session', priorUsage }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'answer', session_id: 'session', usage: { input_tokens: 2, output_tokens: 3 } }) }));
+  const usage = (await pending).invocations[0]?.usage;
+  assert.deepEqual(usage, { input: 2, output: 3, scope: 'invocation', provenance: 'claude.result.usage', inputSemantics: 'uncached' });
+});
+
+test('resumed launch subtracts usage already recorded for its session', async () => {
+  const h = harness(posix);
+  const prior = { input: 10, output: 5, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const, models: { m: { input: 10, output: 5 } } };
+  const spec = { ...claude, id: 'agy' as const, resumeUsage: 'cumulative' as const, usage: () => ({ ...prior, input: 14, output: 8, models: { m: { input: 14, output: 8 } } }) };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session', priorUsage: prior }, 'cli', h.ports);
+  await flush(); h.finish(ok());
+  const usage = (await pending).invocations[0]?.usage;
+  assert.equal(usage?.input, 4); assert.equal(usage?.output, 3); assert.equal(usage?.scope, 'invocation');
+  assert.deepEqual({ ...usage?.models }, { m: { input: 4, output: 3 } });
+  const rows = [prior, usage!].map(value => ({ phase: 'ask-run', provider: 'agy', model: 'm', surface: 'cli' as const, launched: true, outcome: 'ok', usage: normalizeUsage(value, value.inputSemantics)! }));
+  const report = renderDiagnostics([{ phases: [], reviews: [], invocations: rows }]).text;
+  assert.match(report, /Provider CLI measured tokens: 22 \(input 14 .* output 8\)/);
+});
+
+test('session usage sums optional counters once and preserves model keys safely', async () => {
+  const { sumSessionUsage } = await import('../../../skills/dispatch/scripts/providers/runner.ts');
+  const models = Object.fromEntries([['__proto__', { input: 2, output: 1, cacheRead: 3 }]]);
+  const first = { input: 2, output: 1, cacheRead: 3, cacheWrite: 4, reasoning: 5, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const, models };
+  const later = { ...first, input: 7, output: 2, cacheRead: 6, cacheWrite: 8, reasoning: 9, models: Object.fromEntries([['__proto__', { input: 7, output: 2, cacheRead: 6 }]]) };
+  const sum = sumSessionUsage([first, later])!;
+  assert.deepEqual([sum.input, sum.output, sum.cacheRead, sum.cacheWrite, sum.reasoning], [9, 3, 9, 12, 14]);
+  assert.deepEqual(sum.models?.['__proto__'], { input: 9, output: 3, cacheRead: 9 });
+  assert.equal(Object.hasOwn(sum.models!, '__proto__'), true);
+  assert.equal(sumSessionUsage([first, { ...later, models: undefined } as unknown as typeof later])?.models, undefined);
+});
+
+test('failed cumulative normalization never records the raw total', async () => {
+  const h = harness(posix);
+  const spec = { ...claude, id: 'agy' as const, resumeUsage: 'cumulative' as const, usage: () => ({ input: 9, output: 3, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const, models: new Proxy({}, { ownKeys() { throw new Error('bad models'); } }) }) };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session' }, 'cli', h.ports);
+  await flush(); h.finish(ok());
+  const result = await pending;
+  assert.equal(result.outcome.status, 'ok'); assert.equal(result.invocations[0]?.usage, undefined);
+});
+test('cumulative resumes subtract prior usage and earlier deltas in the same session', async () => {
+  const h = harness(posix);
+  const base = { input: 10, output: 5, cacheRead: 20, cacheWrite: 30, reasoning: 4, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const };
+  const values = [{ ...base, input: 12, output: 7, cacheRead: 23, cacheWrite: 34, reasoning: 5 }, { ...base, input: 15, output: 9, cacheRead: 29, cacheWrite: 41, reasoning: 7 }];
+  let index = 0;
+  const spec = { ...makeNudgeSpec('session'), resumeUsage: 'cumulative' as const, usage: () => values[index++] };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session', priorUsage: base }, 'cli', h.ports);
+  await flush(); h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush(); h.finish(ok({ stdout: 'FINAL answer' }));
+  const rows = (await pending).invocations;
+  assert.deepEqual(rows.map(row => [row.usage?.input, row.usage?.output, row.usage?.cacheRead, row.usage?.cacheWrite, row.usage?.reasoning]), [[2, 2, 3, 4, 1], [3, 2, 6, 7, 2]]);
+});
+test('runner reports each attempt and each resume as it happens', async () => {
+  const h=harness(posix), events: unknown[]=[];
+  const run=runDelegate(makeNudgeSpec('sess1'),{...req,onInvocation: row=>events.push(row),onResume:(id,count)=>events.push([id,count])},'cli',h.ports);
+  await flush();h.finish(ok({exit:null,signal:'SIGTERM',stdout:'partial',timedOut:true,idleMs:IDLE_TIMEOUT_MS}));
+  await flush();await flush();
+  assert.equal(events.length,2);assert.deepEqual(events[1],['sess1',1]);
+  h.finish(ok({stdout:'FINAL'}));const done=await run;
+  assert.equal(events[0],done.invocations[0]);assert.equal(events[2],done.invocations[1]);
+  const failed=harness(posix);failed.ports.process.start=()=>{throw new Error('launch');};
+  const rows: unknown[]=[];
+  await assert.rejects(runDelegate(makeNudgeSpec('sess1'),{...req,onInvocation:row=>{rows.push(row);throw new Error('observer');}},'cli',failed.ports),/launch/);
+  assert.equal(rows.length,1);assert.equal((rows[0] as {outcome:string}).outcome,'launch-failed');
+});
+test('cumulative session usage reaches the observer without diagnostics', async () => {
+  const h=harness(posix),rows: any[]=[];
+  const spec={...makeNudgeSpec('sess1'),resumeUsage:'cumulative' as const,usage:()=>({input:9,output:3,scope:'invocation' as const,provenance:'fixture',inputSemantics:'uncached' as const})};
+  const run=runDelegate(spec,{...req,collectUsage:false,onInvocation:row=>rows.push(row)},'cli',h.ports);
+  await flush();h.finish(ok({stdout:'partial'}));await flush();await flush();
+  assert.equal(rows[0].usage.input,9);
+  h.finish(ok({stdout:'FINAL'}));await run;
+  assert.equal(rows[1].usage.input,0);
 });

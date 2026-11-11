@@ -12,6 +12,7 @@ export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 export const KILL_ESCALATION_MS = 1000;
 /** Silence on both stdout and stderr that stops a delegate before its overall deadline. */
 export const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const BETWEEN_STEPS_MS = 60_000, IN_STEP_MS = 180_000, IDLE_CHECK_MS = 10_000;
 export const CONTINUE_PROMPT = 'Your previous turn stopped before a final answer. Continue the task from where you stopped and return your final answer in the format the original prompt requires.';
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
@@ -280,6 +281,39 @@ export const failOutcome = (cls: FailureClass, detail: string): Extract<RunOutco
 
 export const tail = (text: string, max = 2000): string => (text.length > max ? text.slice(-max) : text);
 
+const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const;
+/** Combine invocation deltas for a provider session, including per-model attribution. */
+export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]): DiagnosticUsage | undefined {
+  let total: DiagnosticUsage | undefined;
+  let completeModels = true;
+  for (const row of rows) {
+    if (!row) continue;
+    if (!total) { total = { ...row, input: 0, output: 0 }; delete total.models; delete total.cacheRead; delete total.cacheWrite; delete total.reasoning; }
+    if (!row.models) completeModels = false;
+    for (const key of USAGE_KEYS) if (row[key] !== undefined) total[key] = (total[key] ?? 0) + row[key];
+    if (row.models) {
+      total.models ??= Object.create(null) as NonNullable<DiagnosticUsage['models']>;
+      for (const [model, part] of Object.entries(row.models)) {
+        const target = Object.hasOwn(total.models, model) ? total.models[model]! : (total.models[model] = { input: 0, output: 0 });
+        for (const key of USAGE_KEYS) if (part[key] !== undefined) target[key] = (target[key] ?? 0) + part[key];
+      }
+    }
+  }
+  if (total && !completeModels) delete total.models;
+  return total;
+}
+function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefined): DiagnosticUsage {
+  const result: DiagnosticUsage = { ...usage, scope: 'invocation' };
+  if (usage.models && (!previous || previous.models)) result.models = Object.create(null) as NonNullable<DiagnosticUsage['models']>;
+  else delete result.models;
+  for (const key of USAGE_KEYS) if (usage[key] !== undefined) result[key] = Math.max(0, usage[key] - (previous?.[key] ?? 0));
+  if (usage.models && result.models) for (const [model, part] of Object.entries(usage.models)) {
+    const target = { ...part };
+    for (const key of USAGE_KEYS) if (part[key] !== undefined) target[key] = Math.max(0, part[key] - (previous?.models && Object.hasOwn(previous.models, model) ? previous.models[model]?.[key] ?? 0 : 0));
+    result.models[model] = target;
+  }
+  return result;
+}
 // SECTION: runDelegate
 
 export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void };
@@ -301,9 +335,10 @@ export type RunnerPorts = {
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
 /** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, steps?: LifecycleStep[]): Promise<ProcessResult> {
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[]): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
-  const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); } });
+  let betweenSteps = false;
+  const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); }, ...(stepEvent ? { onLine: (line: string, fragment?: boolean) => { betweenSteps = !fragment && stepEvent(line) === 'step-end'; } } : {}) });
   let timedOut = false;
   let idleMs: number | undefined;
   let escalate: (() => void) | null = null;
@@ -337,9 +372,9 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
   // Settlement is measured apart from the response; budgets are the existing bounds.
   const teardown = (since: number, budgetMs: number, settled: boolean) => steps?.push({ step: 'teardown', elapsedMs: Math.round(ports.clock.now() - since), budgetMs, outcome: settled ? 'ok' : 'unconfirmed' });
   const stopTimeout = ports.clock.every(req.timeoutMs, kill);
-  const stopIdle = !idle ? () => {} : ports.clock.every(Math.min(IDLE_TIMEOUT_MS, 30_000), () => {
+  const stopIdle = !idle ? () => {} : ports.clock.every(IDLE_CHECK_MS, () => {
     const silent = ports.clock.now() - lastActivity;
-    if (silent < IDLE_TIMEOUT_MS || timedOut) return;
+    if (silent < (stepEvent ? betweenSteps ? BETWEEN_STEPS_MS : IN_STEP_MS : IDLE_TIMEOUT_MS) || timedOut) return;
     idleMs = silent;
     kill();
   });
@@ -414,10 +449,15 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
     return await runAttempts(spec, req, mode, ports, track);
   } catch (error) {
     // NOTE: the original error object is rethrown unchanged; it only gains the attempts so far for the slot row.
-    track.invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: 'launch-failed' });
+    recordInvocation(track.invocations, req, { provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: 'launch-failed' });
     if (error !== null && typeof error === 'object') (error as { invocations?: Invocation[] }).invocations = [...track.invocations];
     throw error;
   }
+}
+
+function recordInvocation(rows: Invocation[], req: DelegateRequest, row: Invocation): void {
+  rows.push(row);
+  try { req.onInvocation?.(row); } catch {}
 }
 
 type Attempts = { invocations: Invocation[]; model: string | null; effort: string | null };
@@ -429,7 +469,7 @@ export const sandboxBlocked = (spec: ProviderSpec, sandbox: boolean, platform: P
 async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
   const { invocations } = track;
   const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null, steps?: LifecycleStep[]): DelegateRun => {
-    invocations.push({ provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
+    recordInvocation(invocations, req, { provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
     return { outcome, result: null, attempts, briefFile, invocations };
   };
   const deadline = ports.clock.now() + req.timeoutMs;
@@ -493,7 +533,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
-      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', steps);
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps);
     } catch (error) {
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
@@ -503,8 +543,15 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
-    try { usage = req.collectUsage === true && !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined; } catch { /* A usage parse failure cannot change provider results. */ }
-    invocations.push({ provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    try {
+      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout) : undefined;
+      const perLaunchClaudeUsage = spec.id === 'claude' && usage?.provenance === 'claude.result.usage';
+      if (usage && current.resume && spec.resumeUsage === 'cumulative' && !perLaunchClaudeUsage) {
+        const lastFresh = invocations.findLastIndex(row => !row.nudge);
+        usage = usageDelta(usage, sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]));
+      }
+    } catch { usage = undefined; /* A usage parse failure cannot change provider results. */ }
+    recordInvocation(invocations, req, { provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;
@@ -568,6 +615,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
               return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
             }
             resumesUsed += 1;
+            try { req.onResume?.(lastSessionId, resumesUsed); } catch {}
             continue;
           }
         }

@@ -74,10 +74,13 @@ export function nodeDeps(): CliDeps {
     async delegate(provider,request,mode) {
       // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
       const steps:LifecycleStep[]=[];
-      const attach=(rows:RunResult['invocations'])=>{const first=rows[0];if(steps.length&&first)first.lifecycleSteps=[...steps,...(first.lifecycleSteps??[])];return rows;};
-      const failedLaunch=(cls:'not-found'|'config'|'timeout',detail:string):RunResult=>({
-        outcome:{status:'fail',cls,detail},invocations:attach([{provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls}]),
-      });
+      let attached=false;
+      const attach=(rows:RunResult['invocations'])=>{const first=rows[0];if(!attached&&first){attached=true;if(steps.length)first.lifecycleSteps=[...steps,...(first.lifecycleSteps??[])];}return rows;};
+      const notify=(row:RunResult['invocations'][number])=>{attach([row]);try{request.onInvocation?.(row);}catch{}};
+      const failedLaunch=(cls:'not-found'|'config'|'timeout',detail:string):RunResult=>{
+        const row:RunResult['invocations'][number]={provider,model:request.model,mode,effort:request.effort,launched:false,outcome:cls};notify(row);
+        return {outcome:{status:'fail',cls,detail},invocations:[row]};
+      };
       const binary=discovery.resolve(provider,mode).path;
       if(!binary)return failedLaunch('not-found',provider+': missing '+mode);
       const deadline=Date.now()+request.timeoutMs;
@@ -88,7 +91,7 @@ export function nodeDeps(): CliDeps {
         catch(error){const detail=String(error);return failedLaunch(/effective-config-unverified: opencode-lifecycle-timeout:/.test(detail)?'timeout':'config',detail);}
         if(resolved.readOnlyBestEffort)process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
       }
-      resolved={...resolved,timeoutMs:Math.max(1,deadline-Date.now())};
+      resolved={...resolved,timeoutMs:Math.max(1,deadline-Date.now()),...(request.onInvocation?{onInvocation:notify}:{})};
       try{
       const run=await runDelegate(SPECS[provider],resolved,mode,{
         process:nodeProcess,fs:runnerFs,env:process.env,platform,binary,nonce:crypto.randomUUID,workspaceRoot:request.cwd,

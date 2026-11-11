@@ -96,6 +96,12 @@ export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): 
 
 export const opencode: ProviderSpec = {
   id: 'opencode',
+  stepEvent(line) {
+    try {
+      const type = row(JSON.parse(line))?.['type'];
+      return type === 'step_start' ? 'step-start' : type === 'step_finish' ? 'step-end' : null;
+    } catch { return null; }
+  },
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'opencode.cmd' : 'opencode', env.os === 'win32' ? 'opencode.exe' : join(env, env.home, '.opencode', 'bin', 'opencode')] },
     { id: 'desktop', candidates: (env) => env.os === 'darwin'
@@ -108,6 +114,7 @@ export const opencode: ProviderSpec = {
   native: 'opencode',
   modeCascadeOn: [],
   usage: opencodeUsage,
+  resumeUsage: 'per-launch',
   outputCapBytes: 64 * 1024 * 1024,
   resumeCommand: (id) => id,
   attemptSession: (out): string | null => validSessionId(parseEvents(out.stdout).sessionId),

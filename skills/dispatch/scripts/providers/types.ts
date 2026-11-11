@@ -14,7 +14,10 @@ export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
 export type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
 
 export type DelegateRequest = {
+  onInvocation?: (row: Invocation) => void;
+  onResume?: (sessionId: string, resumesUsed: number) => void;
   collectUsage?: boolean;
+  priorUsage?: DiagnosticUsage;
   /** Set only by the diagnostics observer; OpenCode then records bounded lifecycle steps. */
   collectLifecycle?: boolean;
   promptPath: string;
@@ -122,7 +125,9 @@ export type ProviderSpec = {
   readOnlyFlags: readonly string[];
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
+  stepEvent?(line: string): 'step-start' | 'step-end' | null;
   usage?(raw: string): DiagnosticUsage | undefined;
+  resumeUsage?: 'per-launch' | 'cumulative' | undefined;
   /** Marks a launched invocation whose provider has no machine-readable usage output. */
   usageUnavailable?: CoverageReason;
   /** Provider-specific stdout cap; the runner default is 10 MiB. */
@@ -145,7 +150,7 @@ export type ProviderSpec = {
 
 export interface ProcessPort {
   /** Launches detached (own process group on POSIX), streaming stdout to `logPath` up to `capBytes`; `onActivity` fires per stdout or stderr chunk. */
-  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void }): { pid: number; done: Promise<ProcessResult> };
+  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void; onLine?: (line: string, fragment?: boolean) => void }): { pid: number; done: Promise<ProcessResult> };
   signal(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void;
   /** Settle only the invocation's POSIX group; false means exit is unconfirmed, not permission to remove its directory. */
   settleGroup?(pid: number, budgetMs: number): Promise<boolean>;

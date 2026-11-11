@@ -35,6 +35,7 @@ export function parseCodexEvents(raw: string): { answer: string; threadId: strin
 
 export const codex: ProviderSpec = {
   usage: codexUsage,
+  resumeUsage: 'cumulative',
   id: 'codex',
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'codex.cmd' : 'codex', env.os === 'win32' ? 'codex.exe' : join(env, env.home, '.local', 'bin', 'codex')] },

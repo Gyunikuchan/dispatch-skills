@@ -17,9 +17,36 @@ export const nodeRunnerFs: RunnerFs = {
 };
 
 const STDERR_TAIL = 4000;
+const LINE_CARRY_MAX = 64 * 1024;
+
+export function stdoutLines(onLine: (line: string, fragment?: boolean) => void) {
+  let carry = Buffer.alloc(0);
+  let fragmented = false;
+  return {
+    write(chunk: Buffer) {
+      let data = Buffer.concat([carry, chunk]);
+      while (data.length) {
+        const newline = data.indexOf(10);
+        if (newline >= 0 && newline <= LINE_CARRY_MAX) {
+          let line = data.subarray(0, newline);
+          if (line.at(-1) === 13) line = line.subarray(0, -1);
+          onLine(line.toString('utf8'), fragmented);
+          fragmented = false;
+          data = data.subarray(newline + 1);
+        } else if (data.length > LINE_CARRY_MAX) {
+          fragmented = true;
+          onLine(data.subarray(0, LINE_CARRY_MAX).toString('utf8'), true);
+          data = data.subarray(LINE_CARRY_MAX);
+        } else break;
+      }
+      carry = Buffer.from(data);
+    },
+    end() { if (carry.length) onLine(carry.toString('utf8'), fragmented); carry = Buffer.alloc(0); fragmented = false; },
+  };
+}
 
 export const nodeProcess: ProcessPort = {
-  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void }) {
+  start(launch: Launch, io: { logPath: string; capBytes: number; onActivity?: () => void; onLine?: (line: string, fragment?: boolean) => void }) {
     const started = process.hrtime.bigint();
     const [command, ...args] = launch.argv;
     if (!command) throw new Error('nodeProcess.start: empty argv');
@@ -44,6 +71,7 @@ export const nodeProcess: ProcessPort = {
       throw error;
     }
     if (launch.stdin !== null) child.stdin?.end(launch.stdin);
+    const lines = io.onLine ? stdoutLines(io.onLine) : null;
     const chunks: Buffer[] = [];
     let written = 0;
     let truncated = false;
@@ -61,6 +89,7 @@ export const nodeProcess: ProcessPort = {
     };
     child.stdout?.on('data', (chunk: Buffer) => {
       io.onActivity?.();
+      lines?.write(chunk);
       const room = io.capBytes - written;
       if (room <= 0) { truncated = true; cancelCap(); return; }
       const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
@@ -78,6 +107,7 @@ export const nodeProcess: ProcessPort = {
         if (settled) return;
         settled = true;
         if (capTimer) clearTimeout(capTimer);
+        lines?.end();
         fs.closeSync(log);
         resolve({
           exit, signal, stdout: Buffer.concat(chunks).toString('utf8'), stdoutPath: io.logPath,

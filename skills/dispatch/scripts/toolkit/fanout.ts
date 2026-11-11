@@ -7,20 +7,35 @@ import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, failureDisposition } from '../policy/cascade.ts';
 import { resolveRoster, nativeFirstRoute, normalizeProvider, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
-import { opencodeSubagentModels } from '../lib/platform.ts';
+import { currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
-import type { ProviderId, RunOutcome } from '../providers/types.ts';
+import type { ProviderId, RunOutcome, Invocation, LaunchRequest, ProcessResult } from '../providers/types.ts';
 import { validSessionId } from '../providers/types.ts';
-import { sessionScope, formatSafetyPrompt } from '../providers/runner.ts';
+import { sessionScope, formatSafetyPrompt, sumSessionUsage, CONTINUE_PROMPT } from '../providers/runner.ts';
 import { nodeRunnerFs } from '../providers/node-process.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import type { CliDeps } from './cli.ts';
 import type { RosterSlot } from './domain/types.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { ToolError } from './output.ts';
-import type { Level } from './types.ts';
+import type { Level, DiagnosticUsage } from './types.ts';
 
 const newNativeReply = (cwd: string, replyPath: string) => `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
+
+function savedUsage(value: unknown): DiagnosticUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const counters = (part: unknown): boolean => {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) return false;
+    const fields = part as Record<string, unknown>;
+    return ['input','output','cacheRead','cacheWrite','reasoning'].every(key =>
+      fields[key] === undefined ? key !== 'input' && key !== 'output' : typeof fields[key] === 'number' && Number.isFinite(fields[key]) && (fields[key] as number) >= 0);
+  };
+  if (!counters(row) || !['invocation','turn-delta','session-cumulative'].includes(String(row['scope'])) || typeof row['provenance'] !== 'string' || !['includes-cache','uncached'].includes(String(row['inputSemantics']))) return undefined;
+  if (row['actualModels'] !== undefined && (!Array.isArray(row['actualModels']) || !row['actualModels'].every(item => typeof item === 'string'))) return undefined;
+  if (row['models'] !== undefined && (!row['models'] || typeof row['models'] !== 'object' || Array.isArray(row['models']) || !Object.values(row['models']).every(counters))) return undefined;
+  return value as DiagnosticUsage;
+}
 
 type FailureClass = Extract<RunOutcome, {status: 'fail'}>['cls'];
 const MAX_REPORT_RESUMES = 3;
@@ -230,6 +245,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     }
     return decisions.get(id)!;
   };
+  const rerun = fs.existsSync(path.join(input.dir, 'logs'));
   for (const dir of ['prompts','slots','replies','logs']) fs.mkdirSync(path.join(input.dir, dir), {recursive: true});
   const name = (slot: string) => {
     if (!/^[A-Za-z0-9_-]+\[\d+\]$/.test(slot)) throw new Error('Invalid roster slot ' + slot);
@@ -384,6 +400,45 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     // A reserve runs on its own 30-minute budget from its start; targets share the wave deadline.
     const voiceDeadline = physical.reserve ? deps.clock() + 30 * 60 * 1000 : deadline;
     let resumesUsed = 0, reportResumes = 0, resumeSessionId: string | null = null;
+    let sessionUsage: DiagnosticUsage | undefined;
+    const logPath = path.join(input.dir,'logs',name(logicalSlot) + '.log');
+    const statePath = path.join(input.dir,'logs',name(logicalSlot) + '.state.json');
+    let restart: string | undefined, crossRun = false, pending: 'stall' | 'report' = 'stall';
+    type SlotState = {physicalSlot: string; provider: string; model: string | null; position: {model: number; mode: number}; pending: 'stall' | 'report'; resumesUsed: number; reportResumes: number; sessionId: string | null; sessionUsage?: DiagnosticUsage};
+    let saved: Partial<SlotState> | undefined;
+    const priorOutcome = rerun ? readSaved(logicalSlot) : undefined;
+    if (priorOutcome?.state === 'done' || priorOutcome?.state === 'failed') restart = 'saved outcome retake';
+    else {
+      try { const parsed: unknown = JSON.parse(fs.readFileSync(statePath, 'utf8')); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed as Partial<SlotState>; else restart = 'stale: unreadable state'; }
+      catch { if (rerun) restart = 'stale: missing or unreadable state'; }
+    }
+    let leftover = '', logPreserved = true;
+    try { leftover = fs.readFileSync(logPath, 'utf8'); if (leftover) fs.appendFileSync(logPath + '.stalled', leftover); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') logPreserved = false; }
+    if (saved) {
+      const pos = saved.position;
+      if (saved.physicalSlot !== physical.slot || saved.provider !== provider || !pos || typeof pos.model !== 'number' || typeof pos.mode !== 'number' || !Number.isInteger(pos.model) || !Number.isInteger(pos.mode) || pos.model < 0 || pos.model >= models.length || pos.mode < 0 || pos.mode >= modes.length || saved.model !== (models[pos.model] ?? null)) restart = 'stale: slot, provider, model or position changed';
+      else if (SPECS[provider].resumeUsage === 'cumulative' && saved.sessionUsage !== undefined && !savedUsage(saved.sessionUsage)) restart = 'stale: invalid session usage';
+      else if (saved.pending === 'report' && !fs.existsSync(reportResumePromptPath(promptPath))) restart = 'stale: missing report prompt';
+      else if (typeof saved.resumesUsed !== 'number' || typeof saved.reportResumes !== 'number' || !Number.isInteger(saved.resumesUsed) || saved.resumesUsed < 0 || saved.resumesUsed >= 3 || !Number.isInteger(saved.reportResumes) || saved.reportResumes < 0 || saved.reportResumes > MAX_REPORT_RESUMES || (saved.pending !== 'stall' && saved.pending !== 'report')) restart = 'stale: invalid resume state';
+      else {
+        let id = validSessionId(saved.sessionId);
+        if (!id && leftover && SPECS[provider].attemptSession) {
+          try {
+            const output: ProcessResult = {exit:null,signal:null,stdout:leftover,stdoutPath:logPath,stderrTail:'',durationMs:0,timedOut:false,truncated:false};
+            const request: LaunchRequest = {binary:'',prompt:'',briefFile:null,schemaText:null,platform:currentPlatform(),promptPath,model:models[pos.model] ?? null,effort:physical.effort ?? null,sandbox:physical.sandbox ?? true,schemaPath:null,resume:null,cwd,timeoutMs:0,outputCapBytes:0,attachments:[],logPath,briefPath:logPath+'.spill.md'};
+            id = validSessionId(SPECS[provider].attemptSession!(output, request));
+          } catch {}
+        }
+        if (!id) restart = 'stale: no valid session ID';
+        else { position = pos; resumesUsed = saved.resumesUsed; reportResumes = saved.reportResumes; resumeSessionId = id; pending = saved.pending; sessionUsage = SPECS[provider].resumeUsage === 'cumulative' ? savedUsage(saved.sessionUsage) : undefined; crossRun = true; }
+      }
+    }
+    let stateEnabled = logPreserved;
+    const checkpoint = (model: string | null) => {
+      if (!stateEnabled) return;
+      try { atomic(statePath,{physicalSlot:physical.slot,provider,model,position,pending,resumesUsed,reportResumes,sessionId:resumeSessionId,...(restart ? {restart} : {}),...(sessionUsage && SPECS[provider].resumeUsage === 'cumulative' ? {sessionUsage} : {})}); }
+      catch { stateEnabled = false; try { fs.rmSync(statePath,{force:true}); } catch {} }
+    };
     for (;;) {
       const remaining = voiceDeadline - deps.clock();
       if (remaining <= 0) return {slot:physical.slot,state:'failed',cls:'timeout',reason:'Fan-out deadline passed', ...(blocked.length ? {blocked} : {})};
@@ -392,22 +447,57 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       let failure: Extract<Validation,{ok:false}>;
       if (decision?.skipped) failure = {ok:false,cls:'quota',reason:'skipped-quota: quota-cooldown'};
       else {
-        const logPath = path.join(input.dir,'logs',name(logicalSlot) + '.log');
         for (;;) {
           const budget = voiceDeadline - deps.clock();
           if (budget <= 0) { failure = {ok:false,cls:'timeout',reason:'Fan-out deadline passed'}; break; }
           ordinals.set(logicalSlot,(ordinals.get(logicalSlot)??0)+1);
-          const result = await deps.delegate(provider, {
-            promptPath: reportResumes > 0 ? reportResumePromptPath(promptPath) : promptPath,
+          stateEnabled = logPreserved;
+          if (!resumeSessionId) {
+            sessionUsage = undefined;
+            // Clear the previous attempt before publishing a fresh session checkpoint.
+            try { if (fs.existsSync(logPath) && logPreserved) { const old = fs.readFileSync(logPath); if (old.length && !leftover) fs.appendFileSync(logPath + '.stalled', old); fs.writeFileSync(logPath, ''); } } catch { stateEnabled = false; try { fs.rmSync(statePath,{force:true}); } catch {} }
+          }
+          leftover = '';
+          const continued = crossRun && pending === 'stall';
+          if (continued) resumesUsed++;
+          const continuePath = promptPath + '.continue.md';
+          if (continued) fs.writeFileSync(continuePath, CONTINUE_PROMPT, {mode:0o600});
+          checkpoint(model);
+          const observed = new Set<Invocation>();
+          let resumeCallback = false;
+          const recordUsage = (usage: DiagnosticUsage | undefined) => {
+            if (SPECS[provider].resumeUsage !== 'cumulative' || !usage) return;
+            try { sessionUsage = sumSessionUsage([sessionUsage, usage]); } catch { sessionUsage = undefined; }
+            checkpoint(model);
+          };
+          let result: Awaited<ReturnType<CliDeps['delegate']>>;
+          try { result = await deps.delegate(provider, {
+            promptPath: continued ? continuePath : pending === 'report' && resumeSessionId ? reportResumePromptPath(promptPath) : promptPath,
             model,effort:physical.effort ?? null,sandbox:physical.sandbox ?? true,schemaPath:null,resume:resumeSessionId,cwd,
-            resumesUsed,timeoutMs:budget,outputCapBytes:SPECS[provider].outputCapBytes ?? 10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
+            resumesUsed,...(resumeSessionId && sessionUsage ? {priorUsage:sessionUsage} : {}),timeoutMs:budget,outputCapBytes:SPECS[provider].outputCapBytes ?? 10*1024*1024,attachments:[],logPath,briefPath:logPath+'.spill.md',
+            onResume: (id, count) => { resumeCallback = true; resumeSessionId = id; resumesUsed = count; pending = 'stall'; checkpoint(model); },
+            onInvocation: row => { if (!observed.has(row)) { observed.add(row); recordUsage(row.usage); } },
             configSelectors:Object.fromEntries(['OPENCODE_CONFIG','OPENCODE_CONFIG_DIR'].flatMap(key =>
               deps.env[key] === undefined ? [] : [[key,deps.env[key]!]])),readCommands,
             ...(input.sessionRoot === undefined ? {} : {sessionRoot: input.sessionRoot}),
             ...(logicalSlot === physical.slot ? {} : {targetSlot: logicalSlot}),
-          },mode);
-          // The first invocation is this launch; later nudges are stall or capacity resumes spent in the model attempt.
-          resumesUsed += result.invocations.slice(1).filter(invocation => invocation.nudge === true).length;
+          },mode); } catch (error) {
+            if (!crossRun) throw error;
+            crossRun = false; restart = 'failed cross-run resume: launch error';
+            resumesUsed = 0; reportResumes = 0; resumeSessionId = null; sessionUsage = undefined; pending = 'stall';
+            continue;
+          }
+          for (const row of result.invocations) if (!observed.has(row)) recordUsage(row.usage);
+          // Fakes may return rows without invoking the callback.
+          if (!resumeCallback) resumesUsed += result.invocations.slice(1).filter(invocation => invocation.nudge === true).length;
+          if (result.outcome.status === 'ok') resumeSessionId = validSessionId(result.outcome.sessionId) ?? resumeSessionId;
+          checkpoint(model);
+          if (crossRun && result.outcome.status === 'fail') {
+            crossRun = false; restart = 'failed cross-run resume: ' + result.outcome.cls;
+            resumesUsed = 0; reportResumes = 0; resumeSessionId = null; sessionUsage = undefined; pending = 'stall';
+            continue;
+          }
+          crossRun = false;
           if(result.outcome.status === 'ok') {
             const checked = input.validate(result.outcome.text, logicalSlot);
             emit(targetForEmit,{kind:'validation',surface:'cli',outcome:checked.ok?'ok':checked.cls});
@@ -417,7 +507,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
             const sessionId = validSessionId(result.outcome.sessionId);
             if (sessionId !== null) resumeSessionId = sessionId;
             if (checked.cls === 'no-report' && resumeSessionId !== null && reportResumes < MAX_REPORT_RESUMES && deps.clock() < voiceDeadline) {
-              reportResumes += 1;
+              reportResumes += 1; pending = 'report';
               try { fs.copyFileSync(logPath, logPath + '.no-report'); } catch {}
               fs.writeFileSync(reportResumePromptPath(promptPath), reportResumePrompt(checked.reason), {mode: 0o600});
               continue;
@@ -432,7 +522,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       }
       const cascade = next(failure.cls,position,config);
       emit(targetForEmit,{kind:'routing',state:cascade.kind==='terminal'?'stop':cascade.kind,cls:failure.cls});
-      if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;resumesUsed=0;reportResumes=0;resumeSessionId=null;continue;}
+      if(cascade.kind === 'next-model' || cascade.kind === 'next-mode') {position=cascade.position;resumesUsed=0;reportResumes=0;resumeSessionId=null;sessionUsage=undefined;pending='stall';continue;}
       return {slot:physical.slot,state:'failed',cls:failure.cls,reason:failure.reason, ...(blocked.length ? {blocked} : {})};
     }
   };

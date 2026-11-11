@@ -238,3 +238,11 @@ test('opencode large tool events keep usage', () => {
     scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached',
   });
 });
+
+
+test('step event classification recognizes only top-level step events', () => {
+  assert.equal(opencode.stepEvent?.('{"type":"step_start"}'), 'step-start');
+  assert.equal(opencode.stepEvent?.('{"type":"step_finish"}'), 'step-end');
+  assert.equal(opencode.stepEvent?.('{"type":"text"}'), null);
+  assert.equal(opencode.stepEvent?.('invalid'), null);
+});

@@ -430,13 +430,16 @@ export function observeTool(session: string, tool: string, action: string, kind:
     facts.build=crypto.createHash('sha256').update(JSON.stringify(Object.entries(generateSkillHashes(deps.skillRoot)).sort(([a],[b])=>a<b?-1:a>b?1:0))).digest('hex');
     facts.config=loadConfig(deps.skillRoot).config;
   }catch{}
+  let pendingPersistence=false;
   const persist = () => {
     const temp = file+'.tmp';
     try {
       fs.mkdirSync(directory,{recursive:true});
       fs.writeFileSync(temp,JSON.stringify(sanitizeFacts(facts))+'\n',{mode:0o600});
       fs.renameSync(temp,file);
+      pendingPersistence=false;
     } catch {
+      pendingPersistence=true;
       facts.capture!.storageFailed=Math.min(1000000,(facts.capture!.storageFailed??0)+1);
       // Preserve the previous capture when an optional update fails.
       const marker=file+'.failure.json',markerTemp=marker+'.tmp';
@@ -449,19 +452,23 @@ export function observeTool(session: string, tool: string, action: string, kind:
   };
   const subjectOf=(directory:string)=>crypto.createHash('sha256').update(directory).digest('hex').slice(0,16);
   const attempts=new Map<string,number>();
+  const seen=new WeakSet<object>();
   const collect=(rows: unknown, request: Parameters<CliDeps['delegate']>[1])=>{
     try {
       if(!Array.isArray(rows))return;
       const slot=/^([A-Za-z0-9_-]+\[\d+\])\.log$/.exec(path.basename(request.logPath))?.[1];
       const subject=subjectOf(path.dirname(path.dirname(request.logPath)));
       const key=subject+slot;
+      let added=false;
       for(const i of rows) {
+        if (!i || typeof i !== 'object' || seen.has(i)) continue;
         const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
         const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
           ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
+        seen.add(i);added=true;
       }
-      persist();
+      if(added||pendingPersistence)persist();
     } catch { /* Malformed optional runner metadata cannot change its outcome. */ }
   };
   persist();
@@ -493,7 +500,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
       }catch{}
     }, async delegate(provider,request,mode) {
       try {
-        const result=await deps.delegate(provider,{...request,collectUsage:true,...(provider==='opencode'?{collectLifecycle:true}:{})},mode);
+        const result=await deps.delegate(provider,{...request,collectUsage:true,...(provider==='opencode'?{collectLifecycle:true}:{}),onInvocation(row) { collect([row],request); try { request.onInvocation?.(row); } catch {} }},mode);
         collect(result.invocations,request);return result;
       } catch(error) {
         try {collect((error as {invocations?:unknown})?.invocations,request);}catch{}

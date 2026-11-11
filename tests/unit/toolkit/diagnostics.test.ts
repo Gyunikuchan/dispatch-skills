@@ -1074,3 +1074,62 @@ test('origin: a nonzero fix-induced count renders the column', async () => {
     assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| — \|$/m);
   } finally { f.cleanup(); }
 });
+test('attempt rows persist before the delegate returns', async () => {
+ const f=sessionFixture({memory:true});try {
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  f.deps.delegate=async (_provider,request)=>{
+   const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok'};
+   request.onInvocation?.(row);
+   const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete');
+   assert.equal(facts.invocations.length,1);
+   return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[row]};
+  };
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
+  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+ }finally{f.cleanup();}
+});
+test('a launch-failed row is persisted once', async () => {
+ const f=sessionFixture({memory:true});try {
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:false,outcome:'launch-failed'};
+  f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(row);throw Object.assign(new Error('launch'),{invocations:[row]});};
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  await assert.rejects(observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli'),/launch/);
+  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+ }finally{f.cleanup();}
+});
+test('the first persisted row keeps its preflight lifecycle steps', async t => {
+ const f=sessionFixture({memory:true});try {
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  const {nodeDeps}=await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
+  const {nodeProcess}=await import('../../../skills/dispatch/scripts/providers/node-process.ts');
+  t.mock.method(fs,'existsSync',()=>true);
+  const stat=fs.statSync;t.mock.method(fs,'statSync',((...args:Parameters<typeof fs.statSync>)=>{try{return stat(...args);}catch{return {isFile:()=>true,mode:0o755} as ReturnType<typeof fs.statSync>;}}) as typeof fs.statSync);
+  t.mock.method(nodeProcess,'start',()=>({pid:50,done:Promise.resolve({exit:2,signal:null,stdout:'',stdoutPath:'/unused',stderrTail:'permission denied',durationMs:1,timedOut:false,truncated:false})}));
+  t.mock.method(nodeProcess as Required<typeof nodeProcess>,'settleGroup',async()=>true);
+  const native=nodeDeps();f.deps.delegate=native.delegate;
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  const result=await observer.deps.delegate('opencode',{promptPath:'/unused',model:null,effort:null,sandbox:false,schemaPath:null,resume:null,cwd:f.root,timeoutMs:60000,outputCapBytes:1000,attachments:[],logPath:path.join(f.session,'logs','opencode[0].log'),briefPath:'/unused'},'cli');
+  const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete');
+  assert.ok(result.invocations[0]?.lifecycleSteps?.length);
+  assert.deepEqual(facts.invocations[0]?.lifecycleSteps,result.invocations[0]?.lifecycleSteps);
+ }finally{t.mock.restoreAll();f.cleanup();}
+});
+test('attempt persistence retries a failed write without repeating successful writes', async t => {
+ const f=sessionFixture({memory:true});try {
+  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+  const rename=fs.renameSync;let writes=0,fail=true;
+  t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(String(to).endsWith('.json')&&!String(to).endsWith('.failure.json')){writes++;if(fail){fail=false;throw new Error('storage');}}return rename(from,to);}) as typeof fs.renameSync);
+  const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok'};
+  f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(row);return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[row]};};
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
+  assert.equal(writes,2,'return retries failed callback persistence');
+  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+  writes=0;
+  const second={...row};f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(second);return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[second]};};
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
+  assert.equal(writes,1,'return does not repeat successful callback persistence');
+ }finally{t.mock.restoreAll();f.cleanup();}
+});
