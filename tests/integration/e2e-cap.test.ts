@@ -4,7 +4,8 @@ import path from 'node:path';
 import { OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
 
 // Count the real Git/subprocess suites and their shared repository helper.
-export const E2E_CAP = 15;
+// NOTE: 16 covers commit-phase refusals and hooks, which need real Git.
+export const E2E_CAP = 16;
 const e2eFiles = () => scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map(file => ({ ...file, path: 'tests/e2e/' + file.path }));
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
@@ -16,7 +17,7 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 
 test('tests/e2e/ stays within the cap', () => {
   const files = e2eFiles();
-  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 15);
+  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 16);
   assert.deepEqual(checkE2eCap(files), []);
 });
 

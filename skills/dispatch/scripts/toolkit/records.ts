@@ -105,6 +105,7 @@ const integrations: Record<string, Record<string, Rule>> = {
   fix: { commit: git, reason: text, reviewFix },
   'deliver-started': { mode: choice('uncommitted'), dest, from: git, source: git },
   delivered: { mode: choice('uncommitted'), dest, from: git, source: git, noop: bool },
+  committed: { commit: git, source: git, differing: array },
   closed: { reason: text },
 };
 
@@ -136,7 +137,7 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='verification' ? ['report', 'artifacts', 'dirty'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
+  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='verification' ? ['report', 'artifacts', 'dirty'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='committed' ? ['differing'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
   object(value.data, fields!, optional);
   if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
     invalid('data', 'a spec and at least one plan or design');

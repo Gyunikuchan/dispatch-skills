@@ -64,6 +64,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'missing-requirement-ref':
     case 'unknown-requirement':
     case 'plan-id-in-test-name':
+    case 'outside-increment':
     case 'task-summary':
     case 'task-behaviour':
     case 'increment-behaviour':
@@ -1319,6 +1320,12 @@ export function incrementPathMatches(file: string, scope: string): boolean {
     else expression += ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
   }
   return new RegExp(`^${expression}$`).test(target);
+}
+
+/** One warning per change path outside the increment's Paths, on that change's line. */
+export function outsideIncrementWarnings(changes: readonly PlanChange[], paths: readonly string[], increment: string): LintDefect[] {
+  return changes.filter(change => !paths.some(owned => incrementPathMatches(change.path, owned)))
+    .map(change => lint('outside-increment', change.line, `Plan path ${change.path} is outside increment ${increment} Paths.`));
 }
 
 /** Admission uses the journal-owned design binding, never artifact metadata as approval. */

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { main, nodeDeps, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { normalizeProvider } from '../../../skills/dispatch/scripts/policy/roster.ts';
+import { initSession } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 export const planSource = ['# Work', '', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '', '## Proposed Changes', '### T1 — File', '#### [MODIFY] src/file.ts', '- Purpose: implements behavior.', '', '## Success Criteria', '- [SC1] File works', '  - Changes: src/file.ts', '  - Verify: `node -e "process.exit(0)"`', '  - Evidence: verify', '', '## Verification Plan', '### Automated Tests', '- `node -e "process.stdout.write(\'contract\')"`', ''].join('\n');
 
@@ -50,6 +51,8 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   const deps = nodeDeps();
   // These tests stub `delegate`, so rosters must not depend on the host sandbox.
   delete deps.sandboxSupported;
+  // Each session folder binds the same spec and plan and gets its own run helpers.
+  const attach = async (session: string) => {
   await appendRecord(session,{kind:'bind',by:'orchestrator',key:'bind',data:{spec:'work.spec.md',plan:'work.plan.md'}},deps);
   const bound=currentHashes(root,latest(foldLedger(session),'bind'));
   await appendRecord(session,{kind:'confirm',by:'user',quote:'confirmed',key:'confirm',data:{spec:bound.spec}},deps);
@@ -83,7 +86,12 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
     let stdout=''; let stderr=''; child.stdout.on('data',b=>stdout+=b); child.stderr.on('data',b=>stderr+=b); child.on('error',reject);
     child.on('close',exit=>{try {const lines=stdout.trim().split(/\r?\n/); assert.equal(lines.length,1,stderr); const output=JSON.parse(lines[0]!); assert.ok(Buffer.byteLength(output.summary)<=1024); resolve({exit:exit??1,output,value:JSON.parse(fs.readFileSync(output.path,'utf8'))});} catch(error){reject(error);}});
   });
-  return {root,session,deps,git,run,spawned,concurrent,approve,level,edit, integration:path.join(session,'.state/worktrees/integration'), cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
+  return {session,run,spawned,concurrent,approve,level,edit,integration:path.join(session,'.state/worktrees/integration')};
+  };
+  const first = await attach(session);
+  // Opens another session folder in this repository, as `session init --session-id` does.
+  const second = async (sessionId: string) => attach(initSession({repositoryRoot:root,sessionId,sessionTitle:'second',now:new Date('2026-10-23T00:01:00Z')}).path);
+  return {root,deps,git,...first,second,cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 
 export function captureIntegrationReview(r:Awaited<ReturnType<typeof toolkitRepo>>,round=1,findings:Record<string,unknown>[]=[]){

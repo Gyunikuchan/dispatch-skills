@@ -70,7 +70,7 @@ test('skill contract keeps router entries and resolving reference links', () => 
     edit: ['artifact', 'before', 'after', 'class', 'affects', 'rationale', 'diffRef'],
     evidence: ['criterion', 'commandDigest', 'tree', 'clean', 'before', 'after', 'exit', 'path'],
     writer: ['phase', 'task', 'launched', 'path', 'base', 'commit', 'taskSection', 'seq', 'finished', 'launch', 'candidate', 'abandoned', 'reason'],
-    integrate: ['verification', 'cycle', 'outcome', 'head', 'open', 'report', 'artifacts', 'dirty', 'phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'from', 'source', 'delivered', 'closed'],
+    integrate: ['verification', 'cycle', 'outcome', 'head', 'open', 'report', 'artifacts', 'dirty', 'phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'from', 'source', 'delivered', 'committed', 'differing', 'closed'],
   };
   for (const [kind, names] of Object.entries(fields)) {
     const body = section(ledger, kind);
@@ -307,6 +307,22 @@ test('human manuals retain portable links and current operational guidance', () 
   const concepts = read(root + 'references/readme/concepts.md');
   assert.match(read(root + 'README.md'), /task summaries/);
   assert.match(read(root + 'references/readme/design.md'), /increments in order/);
+});
+
+test('commit phase and all-increments opt-in contracts', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  const deliver = section(toolkit, 'worktree deliver');
+  assert.ok(toolkit.includes('`worktree deliver --session <session> [--commit <message-file>]`'), 'call table');
+  for (const term of ['--commit', 'recordOnly', 'committed', 'differing', 'warning', 'not-delivered', 'staged-changes', 'delivered-content-changed', 'commit-failed', 'head-not-descendant', 'delivered-uncommitted', 'caller-moved'])
+    assert.ok(deliver.includes(term), term);
+  assert.ok(section(toolkit, 'lint run').includes('outside-increment'), 'lint run warning');
+  const approval = read(root + 'references/spec-stage.md').split('## Approval\n')[1]?.split(/\n## /)[0] ?? '';
+  assert.match(approval, /approve all increments/);
+  assert.match(approval, /user-quoted `note`/);
+  assert.match(approval, /tuple with that quote/);
+  const frame = section(read(root + 'references/decision-frame.md'), 'Plan or design approval');
+  assert.match(frame, /all increments/);
+  assert.ok(links(frame).some(link => link.includes('spec-stage.md#approval')), 'opt-in link');
 });
 
 test('uncommitted delivery contract', () => {

@@ -23,7 +23,7 @@ Present the canonical path/hash, stated and assumed intent separately, core REQs
 
 ### Plan or design approval
 
-Present current artifact paths/hashes, strategy, task or increment sequence, scope, verification and the proposed level with its reason under [Run level](spec-stage.md#run-level). Recommend the bounded unit and confirm the level. Explain delivery risk and alternatives. Record approval under [spec approval rules](spec-stage.md#approval) and the [tuple contract](toolkit.md#approval).
+Present current artifact paths/hashes, strategy, task or increment sequence, scope, verification and the proposed level with its reason under [Run level](spec-stage.md#run-level). Recommend the bounded unit and confirm the level. Explain delivery risk and alternatives. At design approval, offer to approve all increments; the rule is in [approval](spec-stage.md#approval). Record approval under [spec approval rules](spec-stage.md#approval) and the [tuple contract](toolkit.md#approval).
 
 ### Intent finding
 

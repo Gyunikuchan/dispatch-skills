@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { artifactHash, artifactKind, readArtifact } from './artifacts.ts';
-import { parsePlan } from './domain/plan.ts';
-import { parseDesign } from './domain/design.ts';
+import { lint as lintDefect, outsideIncrementWarnings, parentPin, parsePlan, structuralLines } from './domain/plan.ts';
+import { parseDesign, parseIncrementGraph } from './domain/design.ts';
 import { parseSpec } from './domain/spec.ts';
 import { lintContextMap } from './domain/context.ts';
 import { ToolError } from './output.ts';
@@ -38,6 +38,16 @@ export function repositoryReader(repositoryRoot: string): (relativePath: string)
   };
 }
 
+// NOTE: an unreadable pin warns once; a silent skip would look like a pass.
+function pinnedIncrementWarnings(source: string, changes: Parameters<typeof outsideIncrementWarnings>[0], repositoryRoot: string) {
+  const pin = parentPin(source);
+  if (pin?.kind !== 'design') return [];
+  const design = repositoryReader(repositoryRoot)(pin.path);
+  const increment = design === null ? undefined : parseIncrementGraph(structuralLines(design)).increments.find(row => row.id === pin.increment);
+  if (!increment) return [lintDefect('outside-increment', null, `Pinned design increment ${pin.increment} in ${pin.path} cannot be read; plan paths are unchecked.`)];
+  return outsideIncrementWarnings(changes, increment.paths, pin.increment);
+}
+
 export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
   const isContext = file.endsWith('.context.md');
   const kind = artifactKind(file);
@@ -53,5 +63,7 @@ export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
   const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source);
   const hash = artifactHash(kind!, source);
   const errors = result.ok ? [] : result.defects;
-  return { kind, hash, errors, warnings: result.warnings };
+  const warnings = [...result.warnings];
+  if (result.ok && 'plan' in result && options.repositoryRoot) warnings.push(...pinnedIncrementWarnings(source, result.plan.changes, options.repositoryRoot));
+  return { kind, hash, errors, warnings };
 }

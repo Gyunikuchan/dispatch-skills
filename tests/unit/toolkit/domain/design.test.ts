@@ -285,3 +285,9 @@ test('design human layout: At a Glance is required first and long paragraphs war
   assert.ok(!long.design.governedText.includes('## Execution Status'));
   assert.ok(!long.design.governedText.includes('## Review Findings & Resolutions'));
 });
+
+test('increment graph paths drop Markdown backticks and surrounding whitespace', () => {
+  const result = parseDesign(DESIGN.replace('| src/parse.ts |', '| `src/parse.ts`, `src/util/` |'));
+  assert.ok(result.ok);
+  assert.deepEqual(result.design.increments[0]!.paths, ['src/parse.ts', 'src/util/']);
+});

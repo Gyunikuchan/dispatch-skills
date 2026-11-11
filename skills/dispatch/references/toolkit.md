@@ -25,7 +25,7 @@ In the table, `\|` separates alternative values. Append a record with `ledger ap
 | action | worktree continue | `worktree continue <task> --session <session>` |
 | action | worktree commit | `worktree commit --session <session> --reason <reason> [--review-fix <json-file> \| --test-cleanup <json-file>]` |
 | action | worktree abort | `worktree abort <task> --session <session> --reason <reason>` |
-| action | worktree deliver | `worktree deliver --session <session>` |
+| action | worktree deliver | `worktree deliver --session <session> [--commit <message-file>]` |
 | action | worktree close | `worktree close --session <session> --reason <reason>` |
 | action | worktree cleanup | `worktree cleanup --session <session>` |
 | action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
@@ -140,7 +140,7 @@ Refusals: blank reason, wrong-task, no-candidate or already-integrated. Obtain u
 
 ### worktree deliver
 
-Arguments: `worktree deliver --session <session>`.
+Arguments: `worktree deliver --session <session> [--commit <message-file>]`. `--commit` is refused on every other action.
 Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
 Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required, `coverage-required` or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
 
@@ -157,6 +157,11 @@ Before it records deliver-started, delivery retains source at the ref. A missing
 Inspect with `git diff` and `git status`; restore retained source with `git restore --source=<ref> -- <path>`.
 
 A completed same-source retry returns the recorded outcome without checking or changing later caller work; a changed source needs a new run. Conflicting ref, changed pending source or unsupported pending mode refuses recovery-blocked. Preserve refs, records and worktrees for inspection; never reset caller work.
+
+Commit phase (`--commit <message-file>`): a second phase after delivered; the message file needs non-blank text. Under the ledger lock it takes one of two paths. Never pushes, skips hooks or rewrites the caller branch. The result value is `{commit, source, from, dest, committed, recordOnly, differing?, warning?}` and it appends `integrate` phase `committed`. `committed` is false on a retry that finds a committed record for this delivery; that retry appends nothing. `recordOnly` is true when the action made no commit.
+- Commit path (HEAD equals `from`): stages `source` with `git read-tree`, makes one commit with hooks, then compares `source` with the commit tree. `differing` lists every differing path plus each delivered path whose working-tree content differs after the commit. `warning` names a commit whose parent is not `from`, which only another process committing during `git commit` or its hooks causes.
+- Record-only path (HEAD descends from `from`): records the current HEAD without a commit. `differing` lists only differing paths that overlap the delivered paths.
+- Refusals (exit 4, no record): `not-delivered` (no delivered record); `caller-moved` (branch is not `dest.branch`, branch or HEAD changed at the last check, or the new commit is not an ancestor of the branch; names that commit); `staged-changes` (a staged path that is not a delivered path, a staged delivered path that differs from `source`, an index that changed at the last check, or `git write-tree` failing); `delivered-content-changed` (caller content at a delivered path differs from `source`); `commit-failed` (`git commit` failed, for example a hook; the prior index is restored); `head-not-descendant` (HEAD is not `from` and does not descend from it); `delivered-uncommitted` (record-only: a delivered path has staged, unstaged or untracked changes).
 
 `verification-required` refuses delivery before caller writes when no verification outcome follows integration opening, its open list is nonempty, or a later accepted verification ruling exists. A started delivery uses recovery.
 
@@ -232,7 +237,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 Arguments: `lint run <artifact> --session <session>`. Pass the artifact as the positional argument, for example `node <skills-dir>/dispatch/scripts/dispatch.ts lint run .scratch/dispatch-skills/<folder>/<name>.plan.md --session <session>`.
 Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
-Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review.
+Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review. A plan whose pinned design names increments warns `outside-increment` once per change path outside the pinned increment's Paths, on that change's line; a pinned design or increment that cannot be read gives one such warning that names it.
 
 ### diagnostics render
 
@@ -298,7 +303,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 
 ### integrate
 
-data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged}; verification {cycle,outcome,head,reason,open,report?,artifacts?,dirty?}. Verification has a positive cycle, outcome `proved`, `partial` or `no-op`, a full commit head, and open issue IDs `<cycle>:V<n>`; proved and no-op require an empty open list. Proved and partial require report. Report and artifacts follow the focus evidence path rule; dirty marks uncommitted changes. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
+data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; committed {commit,source,differing?} (tool only, from `worktree deliver --commit`); closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged}; verification {cycle,outcome,head,reason,open,report?,artifacts?,dirty?}. Verification has a positive cycle, outcome `proved`, `partial` or `no-op`, a full commit head, and open issue IDs `<cycle>:V<n>`; proved and no-op require an empty open list. Proved and partial require report. Report and artifacts follow the focus evidence path rule; dirty marks uncommitted changes. Delivery fields `mode`, `from` and `source` have the meanings above; `from` and `source` are Git object IDs; `noop` is boolean. Delivery records require this shape; missing mode, squash mode and unknown fields are invalid. Older delivery records require a new session. operation is a stable snapshot digest; pre/final contain exact criterion identities, command arrays and commandDigest. Allowed by: user, orchestrator, tool; worktree tools maintain actual lifecycle records.
 
 ## Native-slot replies
 

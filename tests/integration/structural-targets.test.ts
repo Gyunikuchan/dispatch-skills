@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 15250 ceiling is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
+  // NOTE: 15350 ceiling covers the worktree deliver commit phase and the plan path warning (15336 lines). It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
-    lines <= 15250,
-    `driver TS LOC ${lines} exceeds 15250 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 15350,
+    `driver TS LOC ${lines} exceeds 15350 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,

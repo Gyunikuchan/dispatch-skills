@@ -230,12 +230,13 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      'test-cleanup': {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
+      'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
     if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
+    if (parsed.values['commit'] !== undefined && (tool !== 'worktree' || action !== 'deliver')) throw new ToolError(1, 'invalid-input', '--commit is only for worktree deliver');
     const nativeFailedRaw = parsed.values['native-failed'];
     if (nativeFailedRaw !== undefined) {
       const isReviewOrAsk = (tool === 'review' && action === 'run') || (tool === 'ask' && action === 'run');

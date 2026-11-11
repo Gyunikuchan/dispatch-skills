@@ -14,20 +14,38 @@ const chunks=<T>(items:T[],size=100)=>Array.from({length:Math.ceil(items.length/
 import { loadRejections, applicableReviewIds } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
 import { admission } from './findings.ts';
+
+// SECTION: Git helpers shared by delivery and the commit phase
+// NOTE: gitOk trims output; NUL-separated path lists need their exact bytes.
+async function rawGit(deps: CliDeps, root: string, args: string[], env: NodeJS.ProcessEnv = {}, stdin?: string): Promise<string> {
+  const out=await deps.run(['git',...args],{cwd:root,env:{GIT_OPTIONAL_LOCKS:'0',...env},...(stdin!==undefined?{stdin}:{})});
+  if(out.exit)throw new ToolError(2,'fault',out.stderr||out.stdout||'Git exited '+out.exit);
+  return out.stdout;
+}
+const gitNames=async(deps: CliDeps,root: string,args: string[],env?: NodeJS.ProcessEnv)=>(await rawGit(deps,root,args,env)).split('\0').filter(Boolean);
+function tempIndexFile(session: string, name: string): string {
+  const file=path.join(session,'.state',name);fs.mkdirSync(path.dirname(file),{recursive:true});for(const f of [file,file+'.lock'])fs.rmSync(f,{force:true});return file;
+}
+// Paths of `subset` whose working-tree state equals `tree`, judged by Git through a session-owned temporary index.
+async function pathsEqualTo(deps: CliDeps, session: string, destPath: string, tree: string, subset: string[]): Promise<Set<string>> {
+  if(!subset.length)return new Set();
+  const index=tempIndexFile(session,'deliver-check-index'),env={GIT_INDEX_FILE:index};
+  try{
+    await rawGit(deps,destPath,['read-tree',tree],env);await rawGit(deps,destPath,['update-index','-q','--refresh'],env);
+    const differing=new Set(await gitNames(deps,destPath,['diff-files','--name-only','-z'],env)),others=await gitNames(deps,destPath,['ls-files','--others','-z'],env);
+    return new Set(subset.filter(p=>!differing.has(p)&&!others.some(o=>o===p||o.startsWith(p+'/'))));
+  }finally{for(const f of [index,index+'.lock'])fs.rmSync(f,{force:true});}
+}
 export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','deliver takes no task');
+  if(ctx.values['commit']!==undefined)return commitDelivered(ctx);
   return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
     const active=pending(tx.fold);if(active)refuse('integration-pending',active.data['task']);
     const opened=integrationRecord(tx.fold);if(!opened)refuse('no-integration');
     const cwd=path.resolve(ctx.session,opened.data['path']),dest=opened.data['dest'] as {path:string;branch:string};
     const read=(root:string,args:string[])=>gitOk(ctx.deps,root,args,{GIT_OPTIONAL_LOCKS:'0'});
-    // NOTE: gitOk trims output; NUL-separated path lists need their exact bytes.
-    const rawOut=async(root:string,args:string[],env:NodeJS.ProcessEnv={},stdin?:string)=>{
-      const out=await ctx.deps.run(['git',...args],{cwd:root,env:{GIT_OPTIONAL_LOCKS:'0',...env},...(stdin!==undefined?{stdin}:{})});
-      if(out.exit)throw new ToolError(2,'fault',out.stderr||out.stdout||'Git exited '+out.exit);
-      return out.stdout;
-    };
-    const names=async(root:string,args:string[],env?:NodeJS.ProcessEnv)=>(await rawOut(root,args,env)).split('\0').filter(Boolean);
+    const rawOut=(root:string,args:string[],env:NodeJS.ProcessEnv={},stdin?:string)=>rawGit(ctx.deps,root,args,env,stdin);
+    const names=(root:string,args:string[],env?:NodeJS.ProcessEnv)=>gitNames(ctx.deps,root,args,env);
     const value=<T>(row:PromiseSettledResult<T>):T=>{if(row.status==='rejected')throw row.reason;return row.value;};
     const from=opened.data['base'] as string;
     // Cleanup may have removed the integration worktree after a completed delivery; the retry then relies on recorded identities.
@@ -74,16 +92,8 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const zero='0'.repeat(source.length);
 
     // SECTION: path state against a tree, judged by Git through a session-owned temporary index
-    const tempIndex=(name:string)=>{const file=path.join(ctx.session,'.state',name);fs.mkdirSync(path.dirname(file),{recursive:true});for(const f of [file,file+'.lock'])fs.rmSync(f,{force:true});return file;};
-    const equalTo=async(tree:string,subset:string[]):Promise<Set<string>>=>{
-      if(!subset.length)return new Set();
-      const index=tempIndex('deliver-check-index'),env={GIT_INDEX_FILE:index};
-      try{
-        await rawOut(dest.path,['read-tree',tree],env);await rawOut(dest.path,['update-index','-q','--refresh'],env);
-        const differing=new Set(await names(dest.path,['diff-files','--name-only','-z'],env)),others=await names(dest.path,['ls-files','--others','-z'],env);
-        return new Set(subset.filter(p=>!differing.has(p)&&!others.some(o=>o===p||o.startsWith(p+'/'))));
-      }finally{for(const f of [index,index+'.lock'])fs.rmSync(f,{force:true});}
-    };
+    const tempIndex=(name:string)=>tempIndexFile(ctx.session,name);
+    const equalTo=(tree:string,subset:string[])=>pathsEqualTo(ctx.deps,ctx.session,dest.path,tree,subset);
 
     // SECTION: caller guard
     const checkCaller=async(resuming:boolean)=>{
@@ -154,6 +164,73 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     await tx.append({kind:'integrate',by:'tool',data:{phase:'delivered',...data,...(noop?{noop:true}:{})}});
     await ctx.deps.hook?.('deliver:after-delivered');
     return result({...data,ref,paths,delivered:true,...(noop?{noop:true}:{})});
+  });
+}
+// SECTION: commit phase; one caller commit for a delivered increment, or a record of the user's own commit
+export async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
+  const file=ctx.values['commit'];
+  let message='';
+  try{if(typeof file==='string'&&file.trim())message=fs.readFileSync(path.resolve(file),'utf8');}catch{message='';}
+  if(!message.trim())throw new ToolError(1,'invalid-input','--commit requires a readable message file with non-blank text');
+  return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
+    const delivered=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='delivered');
+    if(!delivered)return refuse('not-delivered','No delivered record in this session');
+    const {dest,from,source}=delivered.data as {dest:{path:string;branch:string};from:string;source:string};
+    const recorded=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.seq>delivered.seq&&r.data['phase']==='committed'&&r.data['source']===source);
+    if(recorded)return result({commit:recorded.data['commit'],source,from,dest,committed:false,recordOnly:true,...(recorded.data['differing']?{differing:recorded.data['differing']}:{})});
+    const run=(args:string[])=>git(ctx.deps,dest.path,args,{GIT_OPTIONAL_LOCKS:'0'});
+    const read=(args:string[])=>gitOk(ctx.deps,dest.path,args,{GIT_OPTIONAL_LOCKS:'0'});
+    const names=(args:string[])=>gitNames(ctx.deps,dest.path,args);
+    const state=async()=>{const branch=await run(['symbolic-ref','--quiet','--short','HEAD']);return {branch:branch.exit?'':branch.stdout.trim(),head:await read(['rev-parse','HEAD'])};};
+    const indexTree=async()=>{const out=await git(ctx.deps,dest.path,['write-tree']);if(out.exit)refuse('staged-changes','Git cannot write the index tree: '+capSummary(out.stderr||out.stdout));return out.stdout.trim();};
+    const isAncestor=async(ancestor:string,descendant:string)=>{const out=await run(['merge-base','--is-ancestor',ancestor,descendant]);if(out.exit>1)throw new ToolError(2,'fault',out.stderr||out.stdout||'Git exited '+out.exit);return out.exit===0;};
+    const paths=await names(['diff','--name-only','--no-renames','-z',from,source,'--']);
+    const known=new Set(paths),overlap=(p:string)=>paths.some(q=>overlaps(p,q));
+    const caller=await state();
+    if(caller.branch!==dest.branch)refuse('caller-moved','Checked-out branch is not the delivered branch '+dest.branch);
+    let commit=caller.head,recordOnly=true,differing:string[];
+    const warnings:string[]=[];
+    if(caller.head!==from){
+      // SECTION: record-only; the user committed the delivered paths
+      if(!await isAncestor(from,caller.head))refuse('head-not-descendant','HEAD does not descend from the delivery base '+from);
+      const dirty=[...new Set([
+        ...await names(['diff','--name-only','--no-renames','-z','HEAD','--']),
+        ...await names(['ls-files','--others','--exclude-standard','-z']),
+        ...await names(['ls-files','--others','--ignored','--exclude-standard','-z']),
+      ])].filter(overlap);
+      if(dirty.length)refuse('delivered-uncommitted','Delivered paths have uncommitted changes: '+dirty.join(', ')+'; commit or discard them');
+      // Later user commits may change other paths; only paths that overlap the delivered paths count.
+      differing=(await names(['diff','--name-only','--no-renames','-z',source,caller.head,'--'])).filter(overlap);
+    } else {
+      // SECTION: commit; preconditions block, checks after the commit warn
+      const flags=['--cached','--ita-visible-in-index','--name-only','--no-renames','-z'];
+      const staged=await names(['diff',...flags,'HEAD','--']),stagedVsSource=new Set(await names(['diff',...flags,source,'--']));
+      const stray=staged.filter(p=>!known.has(p)||stagedVsSource.has(p));
+      if(stray.length)refuse('staged-changes','Staged changes block the commit: '+stray.join(', ')+'; unstage or commit them first');
+      const equal=await pathsEqualTo(ctx.deps,ctx.session,dest.path,source,paths),changed=paths.filter(p=>!equal.has(p));
+      if(changed.length)refuse('delivered-content-changed','Caller content differs from the delivered source at: '+changed.join(', '));
+      const before=await indexTree();
+      await ctx.deps.hook?.('deliver:before-commit');
+      // NOTE: Git has no lock spanning read-tree and commit; the checks after the commit cover the remaining window.
+      const now=await state();
+      if(now.branch!==caller.branch||now.head!==caller.head)refuse('caller-moved','Caller branch or HEAD changed before the commit');
+      if(await indexTree()!==before)refuse('staged-changes','The index changed before the commit');
+      const empty=(await read(['rev-parse',source+'^{tree}']))===(await read(['rev-parse',from+'^{tree}']));
+      await gitOk(ctx.deps,dest.path,['read-tree',source]);
+      const made=await ctx.deps.run(['git','commit','-q',...(empty?['--allow-empty']:[]),'-F','-'],{cwd:dest.path,stdin:message});
+      if(made.exit){await gitOk(ctx.deps,dest.path,['read-tree',before]);refuse('commit-failed','git commit failed: '+capSummary(made.stderr||made.stdout)+'; the prior index is restored');}
+      await ctx.deps.hook?.('deliver:after-commit');
+      const after=await state();
+      commit=after.head;recordOnly=false;
+      if(after.branch!==dest.branch||!await isAncestor(commit,'refs/heads/'+dest.branch))refuse('caller-moved','Commit '+commit+' is not on branch '+dest.branch+'; a hook moved the caller');
+      const parents=(await read(['rev-list','--parents','-n','1',commit])).split(' ').slice(1);
+      if(parents.length!==1||parents[0]!==from)warnings.push('Commit '+commit+' has parent '+parents.join(', ')+' instead of '+from+'; another process committed in the caller');
+      const settled=await pathsEqualTo(ctx.deps,ctx.session,dest.path,source,paths);
+      differing=[...new Set([...await names(['diff','--name-only','--no-renames','-z',source,commit,'--']),...paths.filter(p=>!settled.has(p))])];
+    }
+    if(differing.length)warnings.push('Delivered source differs from the caller at: '+differing.join(', '));
+    await tx.append({kind:'integrate',by:'tool',data:{phase:'committed',commit,source,...(differing.length?{differing}:{})}});
+    return result({commit,source,from,dest,committed:true,recordOnly,...(differing.length?{differing}:{}),...(warnings.length?{warning:warnings.join('; ')}:{})});
   });
 }
 export async function close(ctx: HandlerContext): Promise<HandlerResult> {
@@ -334,7 +411,7 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
     // Git cannot report a deregistered directory's state (e.g. after an interrupted removal), so only ledger-merged remnants are removed.
     const remnants=deregistered.filter(relative=>{
       const writer=writers.findLast(w=>w.record.data['path']===relative);
-      const merged=writer ? integrated(writer) : !!delivered && !tx.fold.records.some(r=>r.kind==='integrate' && r.seq>delivered.seq && r.data['phase']!=='closed') &&
+      const merged=writer ? integrated(writer) : !!delivered && !tx.fold.records.some(r=>r.kind==='integrate' && r.seq>delivered.seq && r.data['phase']!=='closed' && r.data['phase']!=='committed') &&
         terminalWorktrees(tx.fold,{[relative]:{head:delivered.data['source']}}).includes(relative);
       if(!merged)kept.push({path:relative,reason:'unpreserved'});
       return merged;

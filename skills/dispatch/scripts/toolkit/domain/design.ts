@@ -48,7 +48,7 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): { increme
     if (ids.has(id)) defects.push(lint('duplicate-id', line, `Increment ${id} appears more than once.`));
     ids.add(id);
     const prerequisites = (columns[3] ?? '').split(',').map((item) => item.trim()).filter((item) => item && item !== 'none');
-    const paths = columns.slice(4).flatMap((column) => column.split(',')).map((item) => item.trim()).filter(Boolean);
+    const paths = columns.slice(4).flatMap((column) => column.split(',')).map((item) => item.replace(/`/g, '').trim()).filter(Boolean);
     increments.push({ id, priority, summary: columns[2] ?? '', behaviour: [], prerequisites, paths });
   }
   if (!increments.length) defects.push(lint('missing-increments', null, 'Increment Dependency Graph requires at least one I<nn> row.'));
