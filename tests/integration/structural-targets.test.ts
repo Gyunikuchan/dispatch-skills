@@ -26,10 +26,10 @@ test('toolkit stays within the structural size budgets', () => {
     `ledger kinds ${KINDS.length} exceeds 14 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8512 covers the verification route and the read-once tool contract rule that every branch needs. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
+  // NOTE: 8576 covers the child route and launch exceptions while keeping OpenCode forwarding inline. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
   assert.ok(
-    bytes <= 8512,
-    `SKILL.md bytes ${bytes} exceeds 8512 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
+    bytes <= 8576,
+    `SKILL.md bytes ${bytes} exceeds 8576 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
   );
 });
 
@@ -172,4 +172,10 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
       assert.doesNotThrow(() => validateRecord({ ...record, by: 'orchestrator' }), label);
     }
   }
+});
+
+// NOTE: The hand-filled brief needs its own budget for the child authority and reply contract.
+test('increment orchestrator brief stays within its byte budget', () => {
+  const bytes = fs.statSync(path.join(root, 'skills/dispatch/references/templates/increment-orchestrator-brief.md')).size;
+  assert.ok(bytes <= 4096, `increment orchestrator brief ${bytes} exceeds 4096 bytes`);
 });

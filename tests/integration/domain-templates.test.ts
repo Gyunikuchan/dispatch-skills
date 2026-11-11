@@ -14,7 +14,7 @@ import { renderWalkthrough } from '../../skills/dispatch/scripts/toolkit/walkthr
 const root = new URL('../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md', 'spec.md',
-  'writer-brief.md', 'quality-bar.md', 'review-severity.md', 'context-map.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'verifier-brief.md',
+  'writer-brief.md', 'quality-bar.md', 'review-severity.md', 'context-map.md', 'explorer-brief.md', 'increment-orchestrator-brief.md', 'test-cleanup-brief.md', 'verifier-brief.md',
   'plan-field-notes.md',
 ];
 

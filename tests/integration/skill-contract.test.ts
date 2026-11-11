@@ -396,14 +396,14 @@ test('root skill routes work and guards orchestrator context', () => {
     ['Decisions, rulings, ledger, user gates', 'Orchestrator'], ['submitted-change inspection', 'Orchestrator'],
   ] as const) assert.equal(route(work), target, work);
   assert.equal(route('retro'), undefined);
-  assert.equal(rows.length, 5, 'five routes');
+  assert.equal(rows.length, 6, 'six routes');
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
   for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
   for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'A follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -681,4 +681,45 @@ test('flow defect repairs state background review start and verifier disposable 
   const verify = read(root + 'references/verbs/verify.md');
   assert.match(verify, /When the host refuses the report write, the verifier returns the full report text and the orchestrator persists it/);
   assert.match(verify, /a refused write needs no user ruling/);
+});
+
+test('design increments route isolated sessions', () => {
+  const skill = read(root + 'SKILL.md');
+  const design = read(root + 'references/verbs/design.md');
+  assert.match(skill, /\| Design increment \| Child orchestrator where verified; else chain \|/);
+  for (const term of ['session init', 'increment ID', 'dependency order', 'committed', 'Reconcile']) {
+    assert.ok(design.includes(term), term);
+  }
+  assert.match(design, /After continuation the child, or the parent when chaining, grounds one coherent plan/);
+  assert.match(design, /earlier outcomes only through their walkthroughs/i);
+});
+
+test('child launch uses documented inheritance without mandatory telemetry', () => {
+  const providers = read(root + 'references/providers.md');
+  assert.match(providers, /definition with `model: inherit`/);
+  assert.match(providers, /on the same model Claude Code inherits session effort\./);
+  assert.match(providers, /Missing telemetry alone does not block documented inheritance\./);
+});
+
+test('unapplied child launch settings report a blocker', () => {
+  assert.match(read(root + 'references/providers.md'), /If the host cannot apply the settings or reports a mismatch, report the existing launch blocker with evidence\./);
+});
+
+test('missing child launch capability chains the increment', () => {
+  assert.match(read(root + 'references/verbs/design.md'), /on capability-missing chain the increment in its session\./);
+});
+
+test('child waits for parent continuation before increment work', () => {
+  assert.match(read(root + 'references/templates/increment-orchestrator-brief.md'), /Wait for the parent to continue you before any increment work\./);
+});
+
+test('design parent settles approval and caller commit', () => {
+  const design = read(root + 'references/verbs/design.md');
+  for (const term of ['approval tuple', 'opt-in', 'empty commit', 'record-only', 'deviation']) {
+    assert.ok(design.includes(term), term);
+  }
+  assert.match(design, /Before accepting or declining a deviation, obtain a user decision for .* disagreement or uncertainty about intent or trade-offs/);
+  assert.match(design, /Wait for that decision before ruling on or implementing the affected change\./);
+  assert.match(design, /Decline only when the increment can be met without the deviation/);
+  assert.match(design, /otherwise obtain user approval at medium and above; at low follow/);
 });

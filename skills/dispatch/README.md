@@ -151,7 +151,7 @@ The [configuration guide](references/readme/configuration.md) covers setup, leve
 - Production changes use a writer configured for the host platform after the plan settles.
 - Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
-- Dispatch creates internal commits and delivers unstaged changes to your checkout; it does not commit on your branch, push, or open a pull request.
+- Dispatch creates internal commits and delivers unstaged changes to your checkout. It does not push or open a pull request. See [design delivery](references/readme/implement.md#design-delivery) for increment commits.
 
 See [Workspaces and results](references/readme/concepts.md) for session files and verification.
 

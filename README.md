@@ -99,7 +99,7 @@ Only the argument is required; the default verb is `ask`.
 In every review, your host agent checks each finding, applies accepted safe fixes, then verifies and reviews again. It brings you findings that depend on your intent.
 
 > [!NOTE]
-> Dispatch works in its own internal worktrees and commits, then delivers the result as unstaged changes in your checkout. It never commits on your branch, pushes, or opens a PR. Session files live under `.scratch/dispatch-skills/`, so interrupted runs can resume; the handoff gives the folder path.
+> Dispatch works in its own internal worktrees and commits, then delivers the result as unstaged changes in your checkout. See [design delivery](skills/dispatch/references/readme/implement.md#design-delivery) for increment commits. It never pushes or opens a PR. Session files live under `.scratch/dispatch-skills/`, so interrupted runs can resume; the handoff gives the folder path.
 
 ## Skills
 

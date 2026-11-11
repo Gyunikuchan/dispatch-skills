@@ -45,7 +45,7 @@ After a task finishes, the host agent checks its submitted changes before integr
 
 ## Session folder
 
-Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and human deliverables: specs, designs, plans, walkthroughs, reports, and optional `diagnostics.md`. Tool internals such as prompts, logs, and the ledger live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
+Each chat has a primary session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and human deliverables: specs, designs, plans, walkthroughs, reports, and optional `diagnostics.md`. Tool internals such as prompts, logs, and the ledger live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it. A design run links separate increment sessions from its primary design session. Follow those links to find the plan, walkthrough and evidence for each increment.
 
 Agents put helper scripts, manually captured logs, intermediate data, and backups in `.state/scratch/`. Purpose determines placement: a backup named `before-rewrite.plan.md` goes in scratch, while the plan being delivered stays at the root. Writers use the paths supplied in their briefs. Tool-owned outputs retain their supplied paths, and production files stay in their scoped repository paths.
 
@@ -55,7 +55,7 @@ Keep the folder while work is active or may resume. The handoff provides its pat
 
 Verification follows the plan you approved. Dispatch records evidence for the plan's criteria, checks submitted changes, and runs a final review before reporting completed delivery. If a required check fails or a decision is still open, the handoff names that state rather than presenting the work as complete.
 
-Dispatch keeps internal task and integration commits, then delivers the verified result into your caller working tree as unstaged changes. It makes no commit and stages nothing; new files show as untracked in `git status`. Review the result with `git diff`, then stage and commit it yourself. Dispatch keeps the verified source at `refs/dispatch/<id>/delivered-source`; restore a file from it with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. Dispatch does not push or open a pull request.
+Dispatch keeps internal task and integration commits, then delivers the verified result into your caller working tree as unstaged changes. By default it makes no commit and stages nothing; new files show as untracked in `git status`. Review the result with `git diff`, then stage and commit it yourself unless you opted in to design increment commits. Dispatch keeps the verified source at `refs/dispatch/<id>/delivered-source`; restore a file from it with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. Dispatch does not push or open a pull request.
 
 ## Optional session diagnostics
 
@@ -66,3 +66,5 @@ The host agent merges its own terse notes on Dispatch instruction, driver or rou
 The report stays in the session folder and is not uploaded automatically. Review it before sharing. When `diagnostics` is off, no report is written.
 
 See [Troubleshooting](troubleshooting.md) for interrupted runs, failed checks, and diagnostics coverage.
+
+See [design delivery](implement.md#design-delivery) for increment commits and the all-increments opt-in.
