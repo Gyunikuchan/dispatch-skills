@@ -121,7 +121,7 @@ Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-in
 ### worktree commit
 
 Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive. Both JSON files accept a leading UTF-8 BOM.
-Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after direct accepted fixes. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
+Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
 The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Verify commands no longer run any test, and non-negative counts of deleted and merged tests. The commit message is `fix(dispatch): <reason>` with trailers `Dispatch-Fix: <session>` and `Dispatch-Test-Cleanup-Data: <stable JSON of {removed, deleted, merged}>`.

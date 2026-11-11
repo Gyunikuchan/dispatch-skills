@@ -26,10 +26,10 @@ test('toolkit stays within the structural size budgets', () => {
     `ledger kinds ${KINDS.length} exceeds 14 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8576 covers the child route and launch exceptions while keeping OpenCode forwarding inline. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
+  // NOTE: 8900 covers child routing, assigned review-fix exceptions and the precise writer-route pointer; consolidation was tried first. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
   assert.ok(
-    bytes <= 8576,
-    `SKILL.md bytes ${bytes} exceeds 8576 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
+    bytes <= 8900,
+    `SKILL.md bytes ${bytes} exceeds 8900 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
   );
 });
 
@@ -103,7 +103,8 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   assert.ok(promptBytes('plan') <= 16653, `plan reviewer prompt exceeds 16653 budget`);
   assert.ok(promptBytes('design') <= 12439, `design reviewer prompt exceeds 12439 budget`);
   const writer = templateBytes('writer-brief.md') + qualityBytes('writer');
-  assert.ok(writer <= 10520, `writer brief pack ${writer} exceeds 10520 budget`);
+  // NOTE: 10784 retains the original writer contract and states separate task and assigned-fix reply forms; consolidation was tried first.
+  assert.ok(writer <= 10784, `writer brief pack ${writer} exceeds 10784 budget`);
   const explorerBrief = templateBytes('explorer-brief.md');
   assert.ok(explorerBrief <= 5418, `explorer brief template ${explorerBrief} exceeds 5418 budget`);
   const explorer = explorerBrief + templateBytes('context-map.md') + qualityBytes('explorer');

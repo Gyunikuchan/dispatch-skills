@@ -723,3 +723,31 @@ test('design parent settles approval and caller commit', () => {
   assert.match(design, /Decline only when the increment can be met without the deviation/);
   assert.match(design, /otherwise obtain user approval at medium and above; at low follow/);
 });
+
+test('accepted review fixes route by artifact and change', () => {
+  const rules = read(root + 'references/review-rules.md');
+  assert.match(rules, /plan and design fixes go to the orchestrator/i);
+  assert.match(rules, /mechanical correction confirmed by a deterministic check goes to utility first/i);
+  for (const trigger of ['multiple files', 'an executable production statement', 'a production configuration or schema directive that changes runtime behaviour', 'a test assertion']) {
+    assert.match(rules, new RegExp('route a remaining fix to the responsible task writer if it changes[^.]*' + trigger, 'i'));
+  }
+  for (const pattern of [/orchestrator handles remaining small fixes/i, /content-preserving rename.*one file/i, /importer edit.*another file/i, /standalone review.*direct/i]) assert.match(rules, pattern);
+});
+
+test('writer review fix handoff preserves the integration boundary', () => {
+  const guide = read(root + 'references/verbs/implement.md');
+  const skill = read(root + 'SKILL.md');
+  const brief = read(root + 'references/templates/writer-brief.md');
+  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /validated correction paths/i, /single-file locus/i, /worktree commit --review-fix/i]) assert.match(guide, pattern);
+  assert.match(guide, /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i);
+  assert.match(guide, /reserve Git writes and toolkit actions for the orchestrator/i);
+  assert.match(guide, /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i);
+  assert.match(skill, /assigned review fix, a follow-up answer returns inline and writes no file; an assigned review fix also replies inline/i);
+  const routing = skill.split('## Routing\n')[1]!.split('\n## ')[0]!;
+  assert.match(routing, /implementation integration mechanical fixes that a deterministic check confirms \| Utility subagent/i);
+  assert.match(routing, /remaining implementation integration fixes per \[writer triggers\]\(references\/review-rules\.md\) \| Writer at run level/i);
+  assert.match(routing, /remaining small integration fixes and standalone review fixes \| Orchestrator/i);
+  assert.match(read(root + 'references/toolkit.md'), /accepted fixes, including inspected assigned writer or utility deltas/i);
+  assert.match(brief, /For the ordinary task, reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `\{\{reportPath\}\}`; a one-line summary; and `concerns: <n>`/i);
+  assert.match(brief, /integration worktree.*listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results\. Preserve the original `\{\{reportPath\}\}` and RED evidence/i);
+});

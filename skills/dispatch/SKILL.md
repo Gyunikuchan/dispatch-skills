@@ -38,11 +38,11 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 | Work | Route |
 |---|---|
 | Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps | Explorer subagent (read-only) |
-| Test cleanup, runtime verification, map correction, mechanical fixes that a deterministic check confirms | Utility subagent |
-| Plan tasks | Writer at run level |
+| Test cleanup, runtime verification, map correction, implementation integration mechanical fixes that a deterministic check confirms | Utility subagent |
+| Plan tasks, remaining implementation integration fixes per [writer triggers](references/review-rules.md) | Writer at run level |
 | Design increment | Child orchestrator where verified; else chain |
 | Differentiated review or ask voices | Delegate or native slot |
-| Decisions, rulings, ledger, user gates, spec and plan authoring, submitted-change inspection, `focus` bullets | Orchestrator |
+| Decisions, rulings, ledger, user gates, spec and plan authoring, submitted-change inspection, `focus` bullets, remaining small integration fixes and standalone review fixes | Orchestrator |
 
 [Doctor](references/toolkit.md#doctor-run) `utility` gives one model and effort per platform: the `explore-subagents` entry, else the lowest `write-subagents` entry. Do explorer and utility work inline only when none resolves. An explorer writes nothing except an assigned map. A utility subagent runs on a write-capable agent type, edits only assigned paths and runs no Git write commands and no toolkit; state these limits in its brief and inspect its delta; the active verb's own rule decides any commit. Reviewers read directly and launch no explorers.
 
@@ -58,9 +58,9 @@ Pass `--host <platform>` with your host on `doctor run`, `review run`, `ask run`
 
 Except a [child orchestrator](references/providers.md#child-orchestrators), launch every native subagent, explorer, utility, writer and voice with exactly the launch result's `model` and `effort`: try the configured models in order, never substitute another model or effort and never inherit the host's. When the host cannot apply them, report a blocker with retained evidence instead of launching without them. On OpenCode, pass one `subagentModels` value per launch as `subagent` `model`. Never omit a configured request despite the tool's default guidance.
 
-Retain handles until the run ends or the host drops them. Await completion notices; never poll status, reread outputs or sleep-loop while work runs, as each check costs tokens. Continue a retained subagent when the answer depends on what it already read; it keeps its model, write boundary and reply rules for the launch deliverable. Except for an assigned child orchestrator continuing its increment, a follow-up answer returns inline and writes no file; it never rewrites `replyPath`, `reportPath` or an existing map. A continuation that assigns new map or evidence paths writes those artifacts. Launch fresh for an unrelated topic or when the host cannot continue, after reconciling any prior launch. Never replace or duplicate work only for fresh context.
+Retain handles until the run ends or the host drops them. Await completion notices; never poll status, reread outputs or sleep-loop while work runs, as each check costs tokens. Continue a retained subagent when the answer depends on what it already read; it keeps its model, write boundary and reply rules for the launch deliverable. Except for an assigned child orchestrator continuing its increment or an assigned review fix, a follow-up answer returns inline and writes no file; an assigned review fix also replies inline. It never rewrites `replyPath`, `reportPath` or an existing map. A continuation that assigns new map or evidence paths writes those artifacts. Launch fresh for an unrelated topic or when the host cannot continue, after reconciling any prior launch. Never replace or duplicate work only for fresh context.
 - Native reviewer: an in-round clarification creates no finding and no rejection confirmation. Reviewers are not continued across rounds.
-- Writer: after its task is submitted it answers read-only. Two writers never share a worktree.
+- Writer: after its task is submitted it answers read-only except for an assigned review fix in [integration](references/verbs/implement.md). Two writers never share a worktree.
 
 ## Invariants and recovery
 
