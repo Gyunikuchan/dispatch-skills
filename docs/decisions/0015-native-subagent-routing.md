@@ -2,15 +2,22 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-04
+- **Updated**: 2026-11-12
 - **Audience**: Maintainers
 
 ## Context
 
 Explorer rules lived in grounding, although every verb has token-heavy reading. Continuation rules were split across two references, and `SKILL.md` required a `providers.md` read before each launch. Low-risk routine work, such as test cleanup and the diagnostics retrospective, ran on the host model or had a one-off routing rule. Each cost fell on the user as tokens and on the run as orchestrator context.
 
+One design invocation delivering every increment needs each increment's work to run outside the parent's context, while keeping user gates and decisions with the parent.
+
 ## Decision
 
-The orchestrator is the user's deputy ([ADR 0012](0012-orchestrator-user-deputy.md)) and middle-manages dispatched agents, whether native subagents or provider delegates. `SKILL.md` carries the routing table, the context guard and the launch and continuation rules inline. Explorer subagents take research, triage, evidence gathering, sweeps and grounding maps. Utility subagents take test cleanup, map correction and mechanical fixes that a deterministic check confirms. Writers take plan tasks, delegates and native slots take differentiated voices, and the orchestrator keeps decisions, rulings, the ledger, user gates and spec and plan authoring. Grounding ([ADR 0014](0014-ground-first-intent-and-evidence-based-level.md)) is one prescribed explorer use.
+The orchestrator is the user's deputy ([ADR 0012](0012-orchestrator-user-deputy.md)) and middle-manages dispatched agents, whether native subagents or provider delegates. `SKILL.md` carries the routing table, the context guard and the launch and continuation rules inline. Explorer subagents take research, triage, evidence gathering, sweeps and grounding maps. Utility subagents take test cleanup, map correction and mechanical fixes that a deterministic check confirms. Writers take plan tasks, delegates and native slots take differentiated voices, and the orchestrator keeps decisions, rulings, the ledger, user gates and spec and plan authoring. A design increment goes to a child orchestrator where verified, else the same orchestrator chains it. Grounding ([ADR 0014](0014-ground-first-intent-and-evidence-based-level.md)) is one prescribed explorer use.
+
+Each increment runs in its own session owned by the parent, so the child keeps a clean context and history is linked through recorded session paths rather than shared. The parent owns the design session, user gates, every `by: "user"` record, session creation and seeding, plan reads, deviation rulings and design edits, plan approvals and caller commits; the child owns one increment's plan, reviews, writers, verification, uncommitted delivery, report and cleanup. On hosts without the capability the same orchestrator chains increments in sequence, carrying earlier outcomes only through their walkthroughs.
+
+A child orchestrator is a native subagent one layer below the parent. It runs on the parent's model and effort through documented inheritance, as an exception to the rule that native launches use exactly the launch result's model and effort; writers, explorers, utility subagents and voices the child launches keep the launch-result rule. Claude Code is the verified host; other hosts chain until verified. The child first replies capability-ready or capability-missing for native subagent launch in its own context, and waits for parent continuation before increment work; on capability-missing the parent chains that increment in its session. A continued child writes files inside its launch boundary, as an exception to the follow-up-answers-inline rule, as does a writer continued for an assigned review fix. At each checkpoint or gate the child returns to the parent with a deviation request, gate request or result and waits for continuation. See [child orchestrators](../../skills/dispatch/references/providers.md#child-orchestrators).
 
 Explorer and utility subagents share one resolution: the host's `explore-subagents` entry, else its lowest `write-subagents` entry. Doctor reports it as `utility` per canonical platform, so no agent matches platform aliases by hand. Explorer work on a writer-tier entry stays read-only through its brief. The orchestrator works inline only when no entry resolves. A utility subagent edits only assigned paths and runs no Git write commands and no toolkit. Writer briefs carry the resolved explorer model, because a writer runs no toolkit.
 
