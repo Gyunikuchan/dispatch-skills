@@ -20,7 +20,7 @@ const sha256 = (text: string): string => crypto.createHash('sha256').update(text
 // SECTION: skill file hashing
 
 // Key-sorted re-serialization so JSON key order and whitespace do not change the hash.
-function sortedJson(value: unknown): string {
+export function sortedJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>;

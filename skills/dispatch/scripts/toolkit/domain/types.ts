@@ -226,5 +226,3 @@ export type WalkthroughView = {
   revisions: readonly RevisionView[];
   rounds: readonly ResolutionRound[];
 };
-
-export type ReportView = { title: string; kind: ReviewKind; target: string; summary: string; rounds: readonly ResolutionRound[] };

@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { sortedJson } from './integrity.ts';
+
 export const SAMPLE_NAME = 'config.sample.jsonc';
 export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const;
 const HINT = `diff against ${SAMPLE_NAME}`;
@@ -103,12 +105,6 @@ export function loadReadCommands(skillRoot: string, read: ReadFile = readReal): 
   return (value as string[] | undefined) ?? [];
 }
 
-export function loadDiagnosticToggle(skillRoot: string): boolean {
-  const value = loadConfig(skillRoot).config['diagnostics'];
-  if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
-  return value === true;
-}
-
 // SECTION: Validation
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,12 +116,6 @@ const nonNegativeInt = (value: unknown): boolean => Number.isSafeInteger(value) 
 const positiveInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) > 0;
 
 const goodName = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '' && !value.trim().endsWith(':');
-
-function sortedJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
-  if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${sortedJson(value[key])}`).join(',')}}`;
-  return JSON.stringify(value);
-}
 
 // Plain words only: an allowlist prefix must not smuggle shell operators, globs or quoting.
 const READ_COMMAND = /^[A-Za-z0-9._/:=@+-]+(?: [A-Za-z0-9._/:=@+-]+)*$/;

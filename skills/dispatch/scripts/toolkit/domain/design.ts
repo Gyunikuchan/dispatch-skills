@@ -160,15 +160,6 @@ export function governedDesignText(source: string): string {
   return withoutSections(source, [EXECUTION_STATUS_HEADING, RESOLUTION_HEADING]);
 }
 
-export function sharedDesignSections(source: string): string {
-  const lines = structuralLines(source);
-  const sections = ['## Approach', '## Architecture & Boundaries', '## Final Integration'];
-  return sections.map((heading) => {
-    const body = (sectionBody(lines, heading) ?? []).map((l) => l.text.trim()).filter(Boolean).join('\n');
-    return `${heading}\n${body}`;
-  }).join('\n\n');
-}
-
 const detailField = (details: Record<string, string> | undefined, field: string): string =>
   Object.entries(details ?? {}).find(([k]) => k.toLowerCase() === field.toLowerCase())?.[1] ?? '';
 
