@@ -258,3 +258,80 @@ test('repository note keys require a report suffix', () => {
   assert.deepEqual(parseRepositoryNoteKey('repository-changes:code-worktree-abc:1:99'), {kind: 'changes', review: 'code-worktree-abc', round: 1, reportSeq: 99});
   assert.deepEqual(parseRepositoryNoteKey('repository-rerun:code-worktree-abc:1:12'), {kind: 'rerun', review: 'code-worktree-abc', round: 1, reportSeq: 12});
 });
+
+test('malformed data errors include the kind allowed field shape within 1024 UTF-8 bytes', () => {
+  const hash = 'sha256:' + 'a'.repeat(64);
+  const git = 'a'.repeat(40);
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [
+      {kind: 'note', by: 'orchestrator', key: 'k', data: {text: 2}},
+      /^data\.text is invalid; expected a non-blank string; allowed for note: an object with text$/,
+    ],
+    [
+      {kind: 'bind', by: 'user', quote: 'yes', key: 'k', data: {spec: 's.spec.md'}},
+      /^data is invalid; expected a spec and at least one plan or design; allowed for bind: an object with spec, plan\?, design\?$/,
+    ],
+    [
+      {kind: 'evidence', by: 'tool', data: {criterion: 'SC1', commandDigest: hash, tree: 'bad', clean: true, before: git, after: git, exit: 0, path: 'p'}},
+      /; allowed for evidence: an object with criterion, commandDigest, tree, clean, before, after, exit, path, artifacts\?$/,
+    ],
+    [
+      {kind: 'writer', by: 'tool', data: {phase: 'finished', task: 'T1', launch: 1, candidate: 'bad'}},
+      /; allowed for writer: an object with phase, task, launch, candidate$/,
+    ],
+    [
+      {kind: 'integrate', by: 'tool', data: {phase: 'verification', cycle: 1, outcome: 'partial', head: git, reason: 'open', open: []}},
+      /; allowed for integrate: an object with phase, cycle, outcome, head, reason, open, report\?, artifacts\?, dirty\?$/,
+    ],
+  ];
+  for (const [record, pattern] of cases) {
+    assert.throws(() => validateRecord(record), (error) => {
+      const failure = error as Error & {reason: string};
+      assert.equal(failure.reason, 'invalid-record');
+      assert.match(failure.message, pattern);
+      assert.ok(Buffer.byteLength(failure.message, 'utf8') <= 1024, failure.message);
+      return true;
+    });
+  }
+  assert.throws(() => validateRecord({kind: 'note', by: 'orchestrator', key: 'k', data: []}), (error) => {
+    const failure = error as Error & {reason: string};
+    assert.equal(failure.reason, 'invalid-record');
+    assert.equal(failure.message, 'data is invalid; expected an object with text');
+    return true;
+  });
+
+  for (const [kind, phaseSummary] of [
+    ['writer', 'launched(task,path,base), finished(task,launch,candidate), abandoned(task,launch,reason)'],
+    ['integrate', 'opened(path,branch,base,dest), verification(cycle,outcome,head,reason,open,report?,artifacts?,dirty?), test-cleanup(from,fromTree,to,removed,deleted,merged), started(task,candidate), conflict(task,paths), done(task,commit), abandoned(task,candidate,reason), fix(commit,reason,reviewFix?), deliver-started(mode,dest,from,source), delivered(mode,dest,from,source,noop?), committed(commit,source,differing?), closed(reason)'],
+  ] as const) {
+    const expectedSuffix = `; allowed for ${kind}: an object with phase: ${phaseSummary}`;
+    for (const [data, prefix] of [
+      [null, /^data is invalid; expected an object/],
+      [[], /^data is invalid; expected an object/],
+      [{}, /^data\.phase is invalid; expected one of /],
+      [{phase: 'unknown'}, /^data\.phase is invalid; expected one of /],
+    ] as const) {
+      assert.throws(() => validateRecord({kind, by: 'tool', data}), (error) => {
+        const failure = error as Error & {reason: string};
+        assert.equal(failure.reason, 'invalid-record');
+        assert.match(failure.message, prefix);
+        assert.ok(failure.message.endsWith(expectedSuffix), failure.message);
+        assert.ok(Buffer.byteLength(failure.message, 'utf8') <= 1024, failure.message);
+        return true;
+      });
+    }
+  }
+
+  for (const [kind, key, expectedSuffix] of [
+    ['note', 'k'.repeat(1100), '; allowed for note: an object with text'],
+    ['evidence', 'é'.repeat(600), '; allowed for evidence: an object with criterion, commandDigest, tree, clean, before, after, exit, path, artifacts?'],
+  ] as const) {
+    assert.throws(() => validateRecord({kind, by: 'orchestrator', key: 'k', data: {[key]: 1}}), (error) => {
+      const failure = error as Error & {reason: string};
+      assert.equal(failure.reason, 'invalid-record');
+      assert.ok(failure.message.endsWith(expectedSuffix), failure.message);
+      assert.ok(Buffer.byteLength(failure.message, 'utf8') <= 1024, String(Buffer.byteLength(failure.message, 'utf8')));
+      return true;
+    });
+  }
+});

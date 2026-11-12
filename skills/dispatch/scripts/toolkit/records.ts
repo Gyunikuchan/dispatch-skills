@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { IMPACTS, TRIGGERS } from './domain/severity.ts';
 import { stableValue } from './domain/stable-value.ts';
-import { ToolError } from './output.ts';
+import { ToolError, clipBytes } from './output.ts';
 
 export const KINDS = ['bind', 'approval', 'level', 'waiver', 'manual-complete', 'escalation', 'ruling', 'note', 'edit', 'evidence', 'writer', 'integrate', 'focus', 'confirm'] as const;
 export type LedgerRecord = { seq: number; key: string; at: string; kind: string; by: string; quote?: string; batchEndSeq?: number; data: Record<string, any> };
@@ -118,6 +118,9 @@ export function coverageDecision(summary: unknown): {accept: string[]} | {grant:
   return /^grant: \S/.test(text) ? {grant: text.slice(7)} : null;
 }
 
+const phaseOptional = (kind: string, phase: unknown): string[] =>
+  kind !== 'integrate' ? [] : phase === 'verification' ? ['report', 'artifacts', 'dirty'] : phase === 'delivered' ? ['noop'] : phase === 'committed' ? ['differing'] : phase === 'fix' ? ['reviewFix'] : [];
+
 export function validateRecord(input: unknown, stored = false): RecordInput | LedgerRecord {
   const envelope: Record<string, Rule> = {
     kind: choice(...KINDS), by: choice('user', 'orchestrator', 'tool'),
@@ -134,47 +137,69 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
   let fields = shapes[value.kind];
   if (value.kind === 'writer' || value.kind === 'integrate') {
     const phases = value.kind === 'writer' ? writers : integrations;
-    if (!value.data || !Object.hasOwn(phases, value.data['phase'])) invalid('data.phase', 'one of ' + Object.keys(phases).join(', '));
+    const phaseList = Object.keys(phases).join(', ');
+    const phaseSummary = Object.entries(phases).map(([phase, pf]) => {
+      const opt = phaseOptional(value.kind, phase);
+      return `${phase}(${Object.keys(pf).map((k) => opt.includes(k) ? k + '?' : k).join(',')})`;
+    }).join(', ');
+    const phaseShape = `an object with phase: ${phaseSummary}`;
+    if (!value.data || typeof value.data !== 'object' || Array.isArray(value.data)) {
+      invalid('data', `an object; allowed for ${value.kind}: ${phaseShape}`);
+    }
+    if (!Object.hasOwn(phases, value.data['phase'])) {
+      invalid('data.phase', `one of ${phaseList}; allowed for ${value.kind}: ${phaseShape}`);
+    }
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : value.kind==='integrate' && value.data['phase']==='verification' ? ['report', 'artifacts', 'dirty'] : value.kind==='integrate' && value.data['phase']==='delivered' ? ['noop'] : value.kind==='integrate' && value.data['phase']==='committed' ? ['differing'] : value.kind==='integrate' && value.data['phase']==='fix' ? ['reviewFix'] : [];
-  object(value.data, fields!, optional);
-  if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
-    invalid('data', 'a spec and at least one plan or design');
-  if (value.kind === 'integrate' && value.data['phase'] === 'verification') {
-    const data = value.data;
-    if (data['open'].some((item: string) => !new RegExp('^' + data['cycle'] + ':V[0-9]+$').test(item))) invalid('data.open', 'issue IDs for the verification cycle');
-    if (data['outcome'] !== 'partial' && data['open'].length) invalid('data.open', 'empty for proved or no-op');
-    if (data['outcome'] !== 'no-op' && !data['report']) invalid('data.report', 'required for proved or partial');
-  }
-  if (value.kind === 'ruling' && (value.data['subject'].startsWith('review:') || value.data['subject'].startsWith('verification:'))) {
-    choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
-  }
-  if (value.kind === 'ruling' && ('impact' in value.data || 'trigger' in value.data)) {
-    for (const dimension of ['impact', 'trigger']) if (!(dimension in value.data)) invalid('data.' + dimension, 'required with the other corrected dimension');
-    if (!value.data['subject'].startsWith('review:') || value.data['ruling'] !== 'accepted') invalid('data.impact', 'absent unless an accepted ruling names a review finding');
-  }
-  if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
-  const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(value.kind) ||
-    (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));
-  if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {
-    throw new ToolError(1, 'user-only', 'record requires by user and non-blank quote');
-  }
-  if (value.kind === 'escalation' && value.data['state'] === 'resolved' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('ceiling:')) {
-    const id = value.data['id'];
-    if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'ceiling resolution requires by user and non-blank quote');
-    const option = /^(re-author|model-effort|relax-split|defer):/.exec(value.data['summary']);
-    if (!option) invalid('data.summary', 'one of re-author:, model-effort:, relax-split:, defer:');
-    if (option[1] === 'defer') {
-      const review = id.slice('ceiling:'.length, id.lastIndexOf(':'));
-      if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a defer resolution');
+  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : phaseOptional(value.kind, value.data['phase']);
+  const shape = describe(fields!, optional);
+  try {
+    object(value.data, fields!, optional);
+    if (value.kind === 'bind' && !Object.hasOwn(value.data, 'plan') && !Object.hasOwn(value.data, 'design'))
+      invalid('data', 'a spec and at least one plan or design');
+    if (value.kind === 'integrate' && value.data['phase'] === 'verification') {
+      const data = value.data;
+      if (data['open'].some((item: string) => !new RegExp('^' + data['cycle'] + ':V[0-9]+$').test(item))) invalid('data.open', 'issue IDs for the verification cycle');
+      if (data['outcome'] !== 'partial' && data['open'].length) invalid('data.open', 'empty for proved or no-op');
+      if (data['outcome'] !== 'no-op' && !data['report']) invalid('data.report', 'required for proved or partial');
     }
-  }
-  if (value.kind === 'escalation' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('coverage:')) {
-    if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'coverage decision requires by user and non-blank quote');
-    if (!/^coverage:[^:\s]+:[^:\s]+$/.test(value.data['id'])) invalid('data.id', 'coverage:<review>:<key>');
-    if (value.data['state'] !== 'resolved') invalid('data.state', 'resolved');
-    if (!coverageDecision(value.data['summary'])) invalid('data.summary', 'accept: <slot>[, <slot>]* with unique name[index] slots, or grant: <reason>');
+    if (value.kind === 'ruling' && (value.data['subject'].startsWith('review:') || value.data['subject'].startsWith('verification:'))) {
+      choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');
+    }
+    if (value.kind === 'ruling' && ('impact' in value.data || 'trigger' in value.data)) {
+      for (const dimension of ['impact', 'trigger']) if (!(dimension in value.data)) invalid('data.' + dimension, 'required with the other corrected dimension');
+      if (!value.data['subject'].startsWith('review:') || value.data['ruling'] !== 'accepted') invalid('data.impact', 'absent unless an accepted ruling names a review finding');
+    }
+    if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
+    const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(value.kind) ||
+      (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));
+    if (userOnly && (value.by !== 'user' || !value.quote?.trim())) {
+      throw new ToolError(1, 'user-only', 'record requires by user and non-blank quote');
+    }
+    if (value.kind === 'escalation' && value.data['state'] === 'resolved' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('ceiling:')) {
+      const id = value.data['id'];
+      if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'ceiling resolution requires by user and non-blank quote');
+      const option = /^(re-author|model-effort|relax-split|defer):/.exec(value.data['summary']);
+      if (!option) invalid('data.summary', 'one of re-author:, model-effort:, relax-split:, defer:');
+      if (option[1] === 'defer') {
+        const review = id.slice('ceiling:'.length, id.lastIndexOf(':'));
+        if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a defer resolution');
+      }
+    }
+    if (value.kind === 'escalation' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('coverage:')) {
+      if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'coverage decision requires by user and non-blank quote');
+      if (!/^coverage:[^:\s]+:[^:\s]+$/.test(value.data['id'])) invalid('data.id', 'coverage:<review>:<key>');
+      if (value.data['state'] !== 'resolved') invalid('data.state', 'resolved');
+      if (!coverageDecision(value.data['summary'])) invalid('data.summary', 'accept: <slot>[, <slot>]* with unique name[index] slots, or grant: <reason>');
+    }
+  } catch (err) {
+    if (err instanceof ToolError && err.reason === 'invalid-record' && err.message.startsWith('data') && err.message !== 'data is invalid; expected ' + shape) {
+      const suffix = `; allowed for ${value.kind}: ${shape}`;
+      const maxHead = 1024 - Buffer.byteLength(suffix, 'utf8');
+      const head = maxHead > 0 ? clipBytes(err.message, maxHead) : '';
+      throw new ToolError(1, 'invalid-record', head + suffix);
+    }
+    throw err;
   }
   if (value.kind === 'note' && typeof value.key === 'string' && value.key.startsWith('repository-rerun:')) {
     if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'repository rerun requires by user and non-blank quote');

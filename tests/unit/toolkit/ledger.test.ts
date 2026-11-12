@@ -217,3 +217,66 @@ test('ledger append processes record arrays atomically', async () => {
     assert.equal(fs.existsSync(ledgerFile(e.session)),false);
   } finally {e.cleanup();}
 });
+
+test('severity correction and missing-bind approval rejections include current state within 1024 bytes', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    f.artifact('mission.spec.md', '# Mission\n');
+    const specHash = currentHashes(f.root, { data: { spec: 'mission.spec.md' } }).spec;
+    await assert.rejects(
+      appendRecord(f.session, { kind: 'approval', key: 'approval-before-bind', by: 'user', quote: 'approved', data: { spec: specHash, plan: specHash } }, f.deps),
+      error => {
+        const message = (error as Error).message;
+        return reasonOf(error) === 'invalid-record'
+          && /spec,\s*plan\?,\s*design\?/.test(message)
+          && /none/i.test(message)
+          && Buffer.byteLength(message, 'utf8') <= 1024;
+      },
+    );
+
+    const reviewDir = path.join(f.session, '.state', 'reviews', 'plan-work.plan', 'round-1');
+    fs.mkdirSync(reviewDir, { recursive: true });
+    fs.writeFileSync(path.join(reviewDir, 'findings.json'), JSON.stringify({
+      review: 'plan-work.plan',
+      round: 1,
+      findings: [
+        { id: 'R1-F001', severity: 'SHOULD', impact: 'degrades', trigger: 'realistic' },
+        { id: 'R1-F002', severity: 'MUST', impact: 'critical', trigger: 'realistic' },
+      ],
+    }));
+
+    const cases: [object, RegExp][] = [
+      [
+        {
+          kind: 'ruling', key: 'ruling-unchanged', by: 'orchestrator',
+          data: { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'impact: unchanged', impact: 'degrades', trigger: 'realistic' },
+        },
+        /current: impact=degrades, trigger=realistic/,
+      ],
+      [
+        {
+          kind: 'ruling', key: 'ruling-missing-dim', by: 'orchestrator',
+          data: { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'only severity changed', impact: 'blocks', trigger: 'realistic' },
+        },
+        /current: impact=degrades, trigger=realistic/,
+      ],
+      [
+        {
+          kind: 'ruling', key: 'ruling-lower-critical', by: 'orchestrator',
+          data: { subject: 'review:plan-work.plan:R1-F002', ruling: 'accepted', rationale: 'impact: lower', impact: 'blocks', trigger: 'realistic' },
+        },
+        /current: impact=critical, trigger=realistic/,
+      ],
+    ];
+    for (const [record, pattern] of cases) {
+      await assert.rejects(appendRecord(f.session, record, f.deps), error => {
+        const message = (error as Error).message;
+        return reasonOf(error) === 'invalid-record'
+          && pattern.test(message)
+          && Buffer.byteLength(message, 'utf8') <= 1024;
+      });
+    }
+  } finally {
+    f.cleanup();
+  }
+});

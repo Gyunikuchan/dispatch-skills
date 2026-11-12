@@ -176,11 +176,12 @@ function checkCorrection(session: string, fold: Fold, data: Record<string, any>)
   if (!finding) refuse('stored finding ' + match![2] + ' is absent or unreadable');
   if (!IMPACTS.includes(finding!['impact']) || !TRIGGERS.includes(finding!['trigger'])) refuse('finding ' + match![2] + ' has no stored impact and trigger to correct');
   const current: Record<string, any> = currentRating(finding as never, fold.records.filter(row => row.kind === 'ruling' && row.data['subject'] === data['subject']));
-  if (current['impact'] === 'critical' && data['impact'] !== 'critical') refuse('a critical impact cannot be lowered by correction; rule the finding rejected, which needs reviewer confirmation');
+  const currentSummary = `; current: impact=${current['impact']}, trigger=${current['trigger']}`;
+  if (current['impact'] === 'critical' && data['impact'] !== 'critical') refuse('a critical impact cannot be lowered by correction; rule the finding rejected, which needs reviewer confirmation' + currentSummary);
   const changed = ['impact', 'trigger'].filter(dimension => current[dimension] !== data[dimension]);
-  if (!changed.length) refuse('the corrected rating is unchanged');
+  if (!changed.length) refuse('the corrected rating is unchanged' + currentSummary);
   const unnamed = changed.filter(dimension => !new RegExp('\\b' + dimension + '\\b', 'i').test(data['rationale']));
-  if (unnamed.length) refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', '));
+  if (unnamed.length) refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', ') + currentSummary);
 }
 
 type PreparedRecord = { record: RecordInput; key: string } | { seq: number; deduped: true };
@@ -216,7 +217,7 @@ function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRec
     }
   }
   if (record.kind === 'approval') {
-    if (!bind) throw new ToolError(1, 'invalid-record', 'approval needs bound artifacts; append a bind record for the spec and plan or design first.');
+    if (!bind) throw new ToolError(1, 'invalid-record', 'approval needs bound artifacts; append a bind record (data: an object with spec, plan?, design?) first. Currently bound artifact kinds: none.');
     const hashes = currentHashes(root, bind);
     const artifacts = Object.keys(bind.data).sort();
     const approvedArtifacts = Object.keys(record.data).sort();
