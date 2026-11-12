@@ -13,11 +13,8 @@ export function checkTestLayout(files: FileTable): string[] {
     .map(({ path }) => `test layout rule: ${path} is outside every tier; move it under one of ${TIERS.join(', ')}`);
 }
 
-test('every test file sits under a known tier', () => {
+test('every test file sits under a known tier and a misplaced test fails with the rule and the fix', () => {
   assert.deepEqual(checkTestLayout(scanOverlay(undefined, false)), []);
-});
-
-test('a misplaced test fails with the rule and the fix', () => {
   const errors = checkTestLayout([{ path: 'tests/misc/a.test.ts', text: '' }, { path: 'tests/unit/policy/b.test.ts', text: '' }]);
   assert.equal(errors.length, 1);
   assert.match(errors[0] ?? '', /^test layout rule: tests\/misc\/a\.test\.ts is outside every tier; move it under one of tests\/unit\/policy\//);

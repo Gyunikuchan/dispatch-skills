@@ -271,6 +271,15 @@ test('codex does not count resumed child usage after unreadable or oversized his
     assert.equal(result.rows.filter(row => row.role === 'subagent').length, 0);
     assert.equal(result.notes?.subagent?.[failure === 'read' ? 'unreadable files' : 'unverified candidates'], 1);
   }
+  // A vanished prior history skips the resumed thread the same way.
+  const vanished = memoryFs({ [host]: lines(context, event(1)), [prior]: lines(meta('host'), context, event(7, 1000)), [live]: lines(meta('host'), context, event(7, 3000)) });
+  let priorStats = 0;
+  const vanishedResult = codex.read({ ...query, startMs: 2000, budget: { remaining: 10000 } }, {
+    ...vanished,
+    stat: file => file.includes('00-00-02-child.jsonl') && ++priorStats > 1 ? null : vanished.stat(file),
+  });
+  assert.equal(vanishedResult.rows.filter(row => row.role === 'subagent').length, 0);
+  assert.equal(vanishedResult.notes?.subagent?.['unreadable files'], 1);
 });
 test('codex keeps earlier child rows but stops that thread after later read failure', () => {
   const host = rollout('00-01', 'host'); const first = rollout('00-02', 'child'); const failed = rollout('00-03', 'child'); const last = rollout('00-04', 'child');
@@ -284,12 +293,6 @@ test('codex discovery stat failure blocks newer same-thread totals while retaini
   const fs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs, stat: file => { if (file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl')) throw Object.assign(Error('private'), { code: 'EACCES' }); return fs.stat(file); } });
   assert.equal(result.unavailable, 'read-error:EACCES'); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
-});
-test('codex notes a vanished older child before skipping the resumed thread', () => {
-  const host = rollout('00-01', 'host'); const prior = rollout('00-02', 'child'); const live = rollout('00-03', 'child');
-  const fs = memoryFs({ [host]: lines(context, event(1)), [prior]: lines(meta('host'), context, event(7, 1000)), [live]: lines(meta('host'), context, event(7, 3000)) }); let priorStats = 0;
-  const result = codex.read({ ...query, startMs: 2000, budget: { remaining: 10000 } }, { ...fs, stat: file => file.includes('00-00-02-child.jsonl') && ++priorStats > 1 ? null : fs.stat(file) });
-  assert.equal(result.rows.filter(row => row.role === 'subagent').length, 0); assert.equal(result.notes?.subagent?.['unreadable files'], 1);
 });
 test('codex with inaccessible host-search directory avoids uncertain attribution', () => {
   const host = rollout('00-01', 'host'); const hidden = '/home/.codex/sessions/1969/12/31/rollout-1969-12-31T00-00-01-other.jsonl'; const fs = memoryFs({ [host]: lines(context, event(1)), [hidden]: 'x' });

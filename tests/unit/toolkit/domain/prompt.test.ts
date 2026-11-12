@@ -74,12 +74,9 @@ const read = (base: URL, name: string) => readFileSync(new URL(name, base), 'utf
 const specStage = read(templates, '../spec-stage.md');
 const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage), read(templates, 'review-severity.md'), '## rereview\n'];
 
-test('prompt: fill rejects missing declared values and undeclared value names', () => {
+test('prompt fill validates declared values single-pass', () => {
   assert.throws(() => fillTemplate('<A> <B>', ['A', 'B'], { A: '1' }), /Missing value\(s\) for declared variable\(s\): B/);
   assert.throws(() => fillTemplate('<A>', ['A'], { A: '1', C: '3' }), /Unknown variable\(s\).*C/);
-});
-
-test('prompt: fill is single-pass and passes undeclared placeholders through', () => {
   assert.equal(fillTemplate('<A> at <file>:L<line> tag <tag>', ['A'], { A: '<A> <tag>' }), '<A> <tag> at <file>:L<line> tag <tag>');
 });
 
@@ -204,18 +201,14 @@ function gcd(left: number, right: number): number {
   return left;
 }
 
-test('prompt: a slot without a kind section, or a section without a slot, throws', () => {
-  const frame = '## Prompt template\n````markdown\n<<slot:a>>\n````\n';
-  assert.throws(() => assembleTemplate(frame, '## b\ntext\n'), /no section for slot/);
-  assert.throws(() => assembleTemplate(frame, '## a\nx\n## b\ny\n'), /no frame slot/);
-  const frameTwo = '## Prompt template\n````markdown\n<<slot:a>> <<slot:b>>\n````\n';
-  assert.throws(() => assembleTemplate(frameTwo, '## a\nx\n## b\ny\n', undefined, ['## b\nz\n']), /declares section "b" twice/);
-  assert.throws(() => assembleTemplate(frameTwo, '## a\nx\n', undefined, ['## b\ny\n', '## b\nz\n']), /declares section "b" twice/);
-});
-
-test('prompt: a shared kind block fills its frame slot and adds its declared variables', () => {
-  const frame = '## Prompt template\n- `<A>` — frame\n````markdown\n<<slot:a>> <<slot:b>>\n````\n';
-  const { variables, template } = assembleTemplate(frame, '## a\nkind\n', undefined, ['- `<S>` — shared\n\n## b\nshared <S>\n']);
+test('assembleTemplate binds slots and rejects mismatches', () => {
+  const frame = '## Prompt template\n````markdown\n<<slot:a>> <<slot:b>>\n````\n';
+  const single = '## Prompt template\n````markdown\n<<slot:a>>\n````\n';
+  assert.throws(() => assembleTemplate(single, '## b\ntext\n'), /no section for slot/);
+  assert.throws(() => assembleTemplate(single, '## a\nx\n## b\ny\n'), /no frame slot/);
+  assert.throws(() => assembleTemplate(frame, '## a\nx\n## b\ny\n', undefined, ['## b\nz\n']), /declares section "b" twice/);
+  assert.throws(() => assembleTemplate(frame, '## a\nx\n', undefined, ['## b\ny\n', '## b\nz\n']), /declares section "b" twice/);
+  const { variables, template } = assembleTemplate('## Prompt template\n- `<A>` — frame\n````markdown\n<<slot:a>> <<slot:b>>\n````\n', '## a\nkind\n', undefined, ['- `<S>` — shared\n\n## b\nshared <S>\n']);
   assert.equal(template, 'kind shared <S>');
   assert.deepEqual(variables, ['A', 'S']);
 });

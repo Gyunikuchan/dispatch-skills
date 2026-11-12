@@ -27,11 +27,8 @@ export function checkTiming(files: FileTable, allow: readonly string[] = ALLOW_T
   return errors;
 }
 
-test('non-e2e tests contain no sleeps or timing', () => {
+test('non-e2e tests contain no sleeps or timing and violations fail with the rule and the fix', () => {
   assert.deepEqual(checkTiming(scanOverlay(path.join(OVERLAY_ROOT, 'tests')).map((file) => ({ ...file, path: 'tests/' + file.path }))), []);
-});
-
-test('a timing call fails with the rule and the fix unless allowed or e2e', () => {
   const text = `await new Promise((r) => ${TOKENS[0]}(r, 10));`;
   assert.deepEqual(checkTiming([{ path: 'tests/unit/core/a.test.ts', text }, { path: 'tests/e2e/b.test.ts', text }]), [
     `timing rule: tests/unit/core/a.test.ts uses ${TOKENS[0]}; non-e2e tests never sleep or time, so inject Ports.clock (or list a justified exception in ALLOW_TIMING)`,

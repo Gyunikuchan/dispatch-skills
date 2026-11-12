@@ -243,21 +243,16 @@ test('checkout rerun notes require a quoted user decision while keep notes accep
 
 // SECTION: Repository rerun and change note keys.
 
-test('rerun keys require a report suffix while bad shapes refuse', () => {
+test('repository note keys require a report suffix', () => {
   const rerun = (key: string) => ({kind: 'note', by: 'user', quote: 'Rerun the affected voices', key, data: {text: 'rerun'}});
   assert.doesNotThrow(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1:12')));
-  assert.throws(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1')), {reason: 'invalid-record'});
-  assert.throws(() => validateRecord(rerun('repository-rerun:code-worktree-abc')), {reason: 'invalid-record'});
-  assert.throws(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1:x')), {reason: 'invalid-record'});
-});
-
-test('repository change notes require a report suffix', () => {
+  for (const key of ['repository-rerun:code-worktree-abc:1', 'repository-rerun:code-worktree-abc', 'repository-rerun:code-worktree-abc:1:x'])
+    assert.throws(() => validateRecord(rerun(key)), {reason: 'invalid-record'});
   const change = (key: string) => ({kind: 'note', by: 'orchestrator', key, data: {text: 'explained'}});
   assert.doesNotThrow(() => validateRecord({kind: 'note', by: 'user', quote: 'q', key: 'repository-changes:code-worktree-abc:1:99', data: {text: 'explained'}}));
   assert.doesNotThrow(() => validateRecord(change('repository-changes:code-worktree-abc:1:99')));
-  assert.throws(() => validateRecord(change('repository-changes:code-worktree-abc:1')), {reason: 'invalid-record'});
-  assert.throws(() => validateRecord(change('repository-changes:code-worktree-abc')), {reason: 'invalid-record'});
-  assert.throws(() => validateRecord(change('repository-changes:code-worktree-abc:1:x')), {reason: 'invalid-record'});
+  for (const key of ['repository-changes:code-worktree-abc:1', 'repository-changes:code-worktree-abc', 'repository-changes:code-worktree-abc:1:x'])
+    assert.throws(() => validateRecord(change(key)), {reason: 'invalid-record'});
   assert.equal(parseRepositoryNoteKey('repository-changes:code-worktree-abc:1'), null);
   assert.equal(parseRepositoryNoteKey('repository-rerun:code-worktree-abc:1'), null);
   assert.deepEqual(parseRepositoryNoteKey('repository-changes:code-worktree-abc:1:99'), {kind: 'changes', review: 'code-worktree-abc', round: 1, reportSeq: 99});

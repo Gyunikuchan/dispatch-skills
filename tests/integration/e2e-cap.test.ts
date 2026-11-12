@@ -15,13 +15,10 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
     : [];
 }
 
-test('tests/e2e/ stays within the cap', () => {
+test('tests/e2e/ stays within the cap and exceeding it fails with the rule and the fix', () => {
   const files = e2eFiles();
   assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 16);
   assert.deepEqual(checkE2eCap(files), []);
-});
-
-test('exceeding the cap fails with the rule and the fix', () => {
-  const files = ['a', 'b', 'c', 'd'].map((name) => ({ path: `tests/e2e/${name}.test.ts`, text: '' }));
-  assert.deepEqual(checkE2eCap(files, 3), ['e2e cap rule: tests/e2e/ holds 4 files (cap 3); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit']);
+  const over = ['a', 'b', 'c', 'd'].map((name) => ({ path: `tests/e2e/${name}.test.ts`, text: '' }));
+  assert.deepEqual(checkE2eCap(over, 3), ['e2e cap rule: tests/e2e/ holds 4 files (cap 3); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit']);
 });

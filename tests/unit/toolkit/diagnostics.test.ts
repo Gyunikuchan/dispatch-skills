@@ -923,7 +923,7 @@ test('OpenCode lifecycle steps survive failure without private data', async () =
  } finally {f.cleanup();}
 });
 
-test('nudge: resume marker passes through collector and renders', async () => {
+test('nudge marker persists only for boolean resume launches', async () => {
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
@@ -947,20 +947,17 @@ test('nudge: resume marker passes through collector and renders', async () => {
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, / · nudge/);
   } finally { f.cleanup(); }
-});
-
-test('nudge: non-boolean marker is dropped', async () => {
-  const f = sessionFixture({ memory: true });
+  const g = sessionFixture({ memory: true });
   try {
-    captureRuns(f.session, [
+    captureRuns(g.session, [
       {phase: 'plan-review', attempt: 1, provider: 'codex', model: 'm', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'codex[0]', subject: 'aaaaaaaaaaaaaaaa', nudge: 'yes'},
       {phase: 'plan-review', attempt: 2, provider: 'codex', model: 'm', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'codex[0]', subject: 'aaaaaaaaaaaaaaaa', nudge: 1},
     ]);
-    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
     assert.ok(facts.invocations.every((i) => !('nudge' in i)));
-    const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    const report = fs.readFileSync(writeDiagnostics(g.session, facts), 'utf8');
     assert.doesNotMatch(report, / · nudge/);
-  } finally { f.cleanup(); }
+  } finally { g.cleanup(); }
 });
 
 test('nudge: recovered stalls yield no waste finding', async () => {
@@ -1018,7 +1015,7 @@ test('nudge: waste counts a recovered stall exactly', async () => {
   } finally { g.cleanup(); }
 });
 
-test('diagnostics resume chain: consecutive resumes that end ok leave no waste', async () => {
+test('diagnostics resume chain leaves waste only without a successful end', async () => {
   const f = sessionFixture({ memory: true });
   try {
     const subject = 'eeeeeeeeeeeeeeee';
@@ -1033,22 +1030,19 @@ test('diagnostics resume chain: consecutive resumes that end ok leave no waste',
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.equal((report.match(/ · nudge/g) ?? []).length, 3, 'every resume launch is marked');
   } finally { f.cleanup(); }
-});
-
-test('diagnostics resume chain: a chain without a successful end stays waste', async () => {
-  const f = sessionFixture({ memory: true });
+  const g = sessionFixture({ memory: true });
   try {
     const subject = 'ffffffffffffffff';
-    captureRuns(f.session, [
+    captureRuns(g.session, [
       {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout'})},
       {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 2, outcome: 'timeout'}), nudge: true},
       {...attempt(subject, {slot: 'codex[0]', provider: 'codex', model: 'm', attempt: 3, outcome: 'timeout'}), nudge: true},
     ]);
-    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
+    const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
     const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
     assert.equal(findings.length, 1);
     assert.match(findings[0]!.evidence, /`timeout`: 3 of 3 CLI attempts failed/);
-  } finally { f.cleanup(); }
+  } finally { g.cleanup(); }
 });
 
 test('origin: a nonzero fix-induced count renders the column', async () => {
@@ -1074,30 +1068,28 @@ test('origin: a nonzero fix-induced count renders the column', async () => {
     assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| — \|$/m);
   } finally { f.cleanup(); }
 });
-test('attempt rows persist before the delegate returns', async () => {
- const f=sessionFixture({memory:true});try {
-  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
-  f.deps.delegate=async (_provider,request)=>{
-   const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok'};
-   request.onInvocation?.(row);
-   const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete');
-   assert.equal(facts.invocations.length,1);
-   return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[row]};
-  };
-  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
-  await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
-  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
- }finally{f.cleanup();}
-});
-test('a launch-failed row is persisted once', async () => {
- const f=sessionFixture({memory:true});try {
-  const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
-  const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:false,outcome:'launch-failed'};
-  f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(row);throw Object.assign(new Error('launch'),{invocations:[row]});};
-  const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
-  await assert.rejects(observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli'),/launch/);
-  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
- }finally{f.cleanup();}
+test('attempt rows persist once across callback and launch failure', async () => {
+  const f=sessionFixture({memory:true});try {
+   const skill=path.join(f.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});f.deps.skillRoot=skill;
+   f.deps.delegate=async (_provider,request)=>{
+    const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok'};
+    request.onInvocation?.(row);
+    const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete');
+    assert.equal(facts.invocations.length,1);
+    return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[row]};
+   };
+   const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
+   await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
+   assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+  }finally{f.cleanup();}
+  const g=sessionFixture({memory:true});try {
+   const skill=path.join(g.root,'skill');fs.mkdirSync(skill);writeJson(path.join(skill,'config.jsonc'),{diagnostics:true});g.deps.skillRoot=skill;
+   const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:false,outcome:'launch-failed'};
+   g.deps.delegate=async (_provider,request)=>{request.onInvocation?.(row);throw Object.assign(new Error('launch'),{invocations:[row]});};
+   const observer=observeTool(g.session,'ask','run',undefined,g.deps)!;
+   await assert.rejects(observer.deps.delegate('claude',{logPath:path.join(g.session,'logs','claude[0].log')} as never,'cli'),/launch/);
+   assert.equal(sessionFacts(g.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+  }finally{g.cleanup();}
 });
 test('the first persisted row keeps its preflight lifecycle steps', async t => {
  const f=sessionFixture({memory:true});try {

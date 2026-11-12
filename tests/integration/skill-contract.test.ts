@@ -186,7 +186,7 @@ test('spec stage critiques the request premise before confirmation', () => {
   assert.match(confirm, /record no `edit` or `confirm` until the user accepts the repeated exchange/);
 });
 
-test('spec stage lays out grounded approaches', () => {
+test('spec stage critique lays out grounded approaches with simplicity and question admission', () => {
   const {refine, author} = stageParts();
   assert.match(refine, /two or three grounded approaches with trade-offs and one recommendation/i);
   assert.match(refine, /drop approaches that work against the user's why or that existing work rules out/i);
@@ -199,23 +199,14 @@ test('spec stage lays out grounded approaches', () => {
   assert.match(author, /override[^.]*updates that DEC with the user's actual quote/i);
   const template = read(root + 'references/templates/spec.md');
   assert.match(template, /verbatim user quote[^.\n]*`\(user\)`/i);
-});
-
-test('spec stage offers the simplest worthwhile approach', () => {
-  const {refine} = stageParts();
   assert.match(refine, /simplest approach with a reasonable trade-off worth considering/i);
   assert.match(refine, /\[simplicity order\]\(templates\/quality-bar\.md#shared\)/);
   assert.match(refine, /never a strawman/i);
   assert.match(refine, /already that option[^.]*say so/i);
   assert.match(refine, /trade-off, limitation and risk/i);
   assert.match(refine, /recommend the simplest presented approach that meets intent and the simplicity floor[^.]*heavier[^.]*reason/i);
-  const template = read(root + 'references/templates/spec.md');
   assert.match(template, /<option: trade-off, limitation, risk>/);
   assert.doesNotMatch(template, /<option and trade-off>/);
-});
-
-test('spec stage asks only build-changing questions', () => {
-  const {refine} = stageParts();
   assert.match(refine, /only decisions that change scope, behavior or risk and that grounding cannot answer/i);
   assert.match(refine, /other calls[^.]*`\(assumption\)`/i);
   assert.match(refine, /never questions, and never ask process steps/i);
@@ -637,20 +628,23 @@ test('implement guide bounds active task writers by doctor run writeConcurrency'
   assert.doesNotMatch(implement, /Honor configured native capacity\./);
 });
 
-test('configuration documentation recommends strongest model for orchestrator', () => {
+test('configuration recommends the strongest model and doctor run documents writeConcurrency', () => {
   const config = read(root + 'references/readme/configuration.md');
   assert.match(config, /strongest available model for the orchestrator/i);
   assert.match(config, /cheap explorers and writers depend on a strong lead/i);
+  assert.match(section(read(root + 'references/toolkit.md'), 'doctor run'), /writeConcurrency/);
 });
 
-test('toolkit doctor run documents writeConcurrency in result shape', () => {
-  const toolkit = read(root + 'references/toolkit.md');
-  assert.match(section(toolkit, 'doctor run'), /writeConcurrency/);
+test('implement runs verification before test cleanup and verify states the approval loop and proof guidance', () => {
+  const implementGuide = read(root + 'references/verbs/implement.md');
+  assert.ok(implementGuide.indexOf('verification step') < implementGuide.indexOf('Apply [shared]'));
+  for (const term of ['criterion and contract checks must pass on the new HEAD', 'Any verifier-added test launches cleanup', 'all review rounds settle', 'accepted review fixes changed proved behaviour', 'V0', 'before launching', 'covering those fixes together', 'Never re-check between rounds', 'add tests in a re-check', 'another code review round', 'three fix rounds per issue']) assert.ok(implementGuide.includes(term), term);
+  const verifyGuide = read(root + 'references/verbs/verify.md');
+  for (const term of ['finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(verifyGuide.includes(term), term);
+  const verifyManual = read(root + 'references/readme/verify.md');
+  assert.match(verifyManual, /verification\/report\.md/);
+  assert.match(verifyManual, /Verification/);
 });
-
-test('implement runs verification before test cleanup', () => { const s = read(root + 'references/verbs/implement.md'); assert.ok(s.indexOf('verification step') < s.indexOf('Apply [shared]')); for (const term of ['criterion and contract checks must pass on the new HEAD', 'Any verifier-added test launches cleanup', 'all review rounds settle', 'accepted review fixes changed proved behaviour', 'V0', 'before launching', 'covering those fixes together', 'Never re-check between rounds', 'add tests in a re-check', 'another code review round', 'three fix rounds per issue']) assert.ok(s.includes(term), term); });
-test('verify guide states approval and issue loop', () => { const s = read(root + 'references/verbs/verify.md'); for (const term of ['finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(s.includes(term), term); });
-test('verify manual describes proof and host guidance', () => { const s = read(root + 'references/readme/verify.md'); assert.match(s, /verification\/report.md/); assert.match(s, /Verification/); });
 
 test('call table lists every tool action, record kind and session command with its section argument form', () => {
   const toolkit = read(root + 'references/toolkit.md');
@@ -725,22 +719,13 @@ test('design increments route isolated sessions', () => {
   assert.match(design, /earlier outcomes only through their walkthroughs/i);
 });
 
-test('child launch uses documented inheritance without mandatory telemetry', () => {
+test('child launch documents inheritance, mismatch fallback, chaining and continuation gating', () => {
   const providers = read(root + 'references/providers.md');
   assert.match(providers, /definition with `model: inherit`/);
   assert.match(providers, /on the same model Claude Code inherits session effort\./);
   assert.match(providers, /Missing telemetry alone does not block documented inheritance\./);
-});
-
-test('unapplied child launch settings report a blocker', () => {
-  assert.match(read(root + 'references/providers.md'), /If the host cannot apply the settings or reports a mismatch, report the existing launch blocker with evidence\./);
-});
-
-test('missing child launch capability chains the increment', () => {
+  assert.match(providers, /If the host cannot apply the settings or reports a mismatch, report the existing launch blocker with evidence\./);
   assert.match(read(root + 'references/verbs/design.md'), /on capability-missing chain the increment in its session\./);
-});
-
-test('child waits for parent continuation before increment work', () => {
   assert.match(read(root + 'references/templates/increment-orchestrator-brief.md'), /Wait for the parent to continue you before any increment work\./);
 });
 

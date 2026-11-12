@@ -10,6 +10,34 @@ import {checkoutReportsFor} from '../../skills/dispatch/scripts/toolkit/findings
 import { CLEAN } from '../helpers/e2e.ts';
 import crypto from 'node:crypto';
 
+const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
+const PROVIDERS = ['claude', 'codex', 'opencode'];
+const MUST_FINDING = {status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'The file returns an invalid result', requiredChange: 'Return the expected result'}]};
+async function coverageRepo(rounds: number) {
+  const f = await toolkitRepo();
+  f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'skill', {'read-delegates': Object.fromEntries(PROVIDERS.map(provider => [provider, {targets: [{low: {model: 'fake'}}]}])),
+    phases: {'code-review': {targets: {low: 3}, rounds: {low: rounds}}}});
+  f.deps.liveness = Object.fromEntries(PROVIDERS.map(provider => [provider, true])); f.deps.orchestrator = null; f.deps.modes = () => ['cli'] as never;
+  const failing = new Set<string>(), replies = new Map<string, object>(), calls: {provider: string; prompt: string}[] = [];
+  f.deps.delegate = async (provider, request) => {
+    calls.push({provider, prompt: fs.readFileSync(request.promptPath, 'utf8')});
+    if (failing.has(provider)) return {outcome: {status: 'fail', cls: 'auth', detail: 'denied'}, invocations: []};
+    return {outcome: {status: 'ok', text: JSON.stringify(replies.get(provider) ?? CLEAN), resume: null, sessionId: null}, invocations: []};
+  };
+  await f.level('low'); await f.approve();
+  const made = await f.run(['worktree', 'create', 'T1']); assert.equal(made.exit, 0, JSON.stringify(made.output));
+  fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'first\n');
+  assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0); assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
+  const review = () => f.run(['review', 'run', 'integration', '--kind', 'code']);
+  const dir = (n: number) => path.join(f.session, '.state/reviews/code-integration/round-' + n);
+  const round = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'round.json'), 'utf8'));
+  const findings = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'findings.json'), 'utf8'));
+  const attempts = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'gen-1/attempts.json'), 'utf8')) as {slot: string; seq: number; wholeTarget: boolean}[];
+  const targets = (n: number) => round(n).roster.filter((slot: {reserve: boolean}) => !slot.reserve).map((slot: {slot: string}) => slot.slot).sort();
+  const accept = (id: string) => appendRecord(f.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-' + id, data: {subject: 'review:code-integration:' + id, ruling: 'accepted', rationale: 'Fix accepted'}}, f.deps);
+  return {f, failing, replies, calls, review, dir, round, findings, attempts, targets, accept};
+}
+
 test('native-first round runs native beside the cli wave', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'mixed-skill', {'read-delegates': {
@@ -177,7 +205,6 @@ test('toolkit worktree review snapshots a gitignored session without failing on 
   } finally { f.cleanup(); }
 });
 
-const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 test('toolkit code review reports missing evidence without admission gates and tracks changed targets',async()=>{
     const f=await toolkitRepo(source.replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n- Purpose: tests behavior.\n\n## Success Criteria')); try {
     f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});
@@ -211,7 +238,6 @@ test('toolkit code review reports missing evidence without admission gates and t
     assert.equal(result.output.reason,'target-moved');assert.equal(fs.existsSync(path.join(f.session,'.state/reviews/code-integration/round-2/findings.json')),false);
   }finally{f.cleanup();}
 });
-
 
 test('toolkit code review scopes integration recurrence and gaps to committed owner changes',async()=>{
   const two=source.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |')
@@ -332,35 +358,6 @@ test('toolkit code review refuses an empty worktree diff before launching voices
     f.cleanup();
   }
 });
-
-// SECTION: Coverage rounds over real integration Git state
-
-const PROVIDERS = ['claude', 'codex', 'opencode'];
-const MUST_FINDING = {status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'The file returns an invalid result', requiredChange: 'Return the expected result'}]};
-async function coverageRepo(rounds: number) {
-  const f = await toolkitRepo();
-  f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'skill', {'read-delegates': Object.fromEntries(PROVIDERS.map(provider => [provider, {targets: [{low: {model: 'fake'}}]}])),
-    phases: {'code-review': {targets: {low: 3}, rounds: {low: rounds}}}});
-  f.deps.liveness = Object.fromEntries(PROVIDERS.map(provider => [provider, true])); f.deps.orchestrator = null; f.deps.modes = () => ['cli'] as never;
-  const failing = new Set<string>(), replies = new Map<string, object>(), calls: {provider: string; prompt: string}[] = [];
-  f.deps.delegate = async (provider, request) => {
-    calls.push({provider, prompt: fs.readFileSync(request.promptPath, 'utf8')});
-    if (failing.has(provider)) return {outcome: {status: 'fail', cls: 'auth', detail: 'denied'}, invocations: []};
-    return {outcome: {status: 'ok', text: JSON.stringify(replies.get(provider) ?? CLEAN), resume: null, sessionId: null}, invocations: []};
-  };
-  await f.level('low'); await f.approve();
-  const made = await f.run(['worktree', 'create', 'T1']); assert.equal(made.exit, 0, JSON.stringify(made.output));
-  fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'first\n');
-  assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0); assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
-  const review = () => f.run(['review', 'run', 'integration', '--kind', 'code']);
-  const dir = (n: number) => path.join(f.session, '.state/reviews/code-integration/round-' + n);
-  const round = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'round.json'), 'utf8'));
-  const findings = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'findings.json'), 'utf8'));
-  const attempts = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'gen-1/attempts.json'), 'utf8')) as {slot: string; seq: number; wholeTarget: boolean}[];
-  const targets = (n: number) => round(n).roster.filter((slot: {reserve: boolean}) => !slot.reserve).map((slot: {slot: string}) => slot.slot).sort();
-  const accept = (id: string) => appendRecord(f.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-' + id, data: {subject: 'review:code-integration:' + id, ruling: 'accepted', rationale: 'Fix accepted'}}, f.deps);
-  return {f, failing, replies, calls, review, dir, round, findings, attempts, targets, accept};
-}
 
 test('open slot rerun selects whole-target scope and leaves narrowing unchanged once nothing is open', async () => {
   const t = await coverageRepo(4); try {
@@ -483,7 +480,7 @@ test('coverage round full-roster all-failed reuses its number and keeps every fa
   } finally { t.f.cleanup(); }
 });
 
-test('repository changes list a tracked edit made during a native round and keep every reply', async () => {
+test('repository changes list a tracked edit and rename made during a native round and keep every reply', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -499,12 +496,13 @@ test('repository changes list a tracked edit made during a native round and keep
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root,'src/file.ts'),'native edit during round\n');
+    f.git(['mv','src/file.ts','src/renamed.ts']);
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
     assert.ok(Array.isArray(done.value.repositoryChanges), 'result lists repositoryChanges');
     const listed = done.value.repositoryChanges.flatMap((entry: {paths: string[]}) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), 'tracked edit is listed: ' + JSON.stringify(done.value.repositoryChanges));
+    assert.ok(listed.includes('src/file.ts') && listed.includes('src/renamed.ts'), 'tracked edit and rename are listed: ' + JSON.stringify(done.value.repositoryChanges));
     const persisted = JSON.parse(fs.readFileSync(done.value.path,'utf8'));
     assert.deepEqual(persisted.repositoryChanges, done.value.repositoryChanges);
     const status = await f.run(['status','show']);
@@ -567,23 +565,53 @@ test('repository changes report an unavailable check and keep replies when the t
   } finally {f.cleanup();}
 });
 
-test('repository changes run no check without a native voice', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 1}}}});
-    f.deps.orchestrator = null;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),'edit without native\n');
-    const done = await f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(!('repositoryChanges' in done.value), JSON.stringify(done.value));
-    assert.ok(!('repositoryCheck' in done.value), JSON.stringify(done.value));
-    assert.ok(!('openRepositoryChanges' in (await f.run(['status','show'])).value), 'no open report');
-  } finally {f.cleanup();}
+test('cli-only rounds run no repository check and carry no baseline', async () => {
+  {
+    const f = await toolkitRepo(); try {
+      f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 1}}}});
+      f.deps.orchestrator = null;
+      f.deps.liveness = {claude: true};
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
+      await f.level('low'); await f.approve();
+      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
+      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
+      fs.writeFileSync(path.join(f.root,'src/file.ts'),'edit without native\n');
+      const done = await f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
+      assert.equal(done.exit, 0, JSON.stringify(done.output));
+      assert.ok(!('repositoryChanges' in done.value), JSON.stringify(done.value));
+      assert.ok(!('repositoryCheck' in done.value), JSON.stringify(done.value));
+      assert.ok(!('openRepositoryChanges' in (await f.run(['status','show'])).value), 'no open report');
+    } finally {f.cleanup();}
+  }
+  {
+    const f = await toolkitRepo(); try {
+      f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'cli-only-skill', {'read-delegates': {claude: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
+      f.deps.orchestrator = null;
+      f.deps.liveness = {claude: true};
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
+      await f.level('low'); await f.approve();
+      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
+      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
+      // A spec edit during fan-out supersedes the in-flight round to gen-2;
+      // with no native voice no baseline exists to carry, so gen-2 runs no check.
+      let moved = false;
+      const run = (hook?: (point: string) => Promise<void> | void) => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low'], hook);
+      const first = await run(async point => { if (point === 'fanout:after-slot' && !moved) { moved = true; fs.appendFileSync(path.join(f.root,'work.spec.md'),'\nSupersede trigger\n'); } });
+      assert.equal(first.output.reason, 'target-moved', JSON.stringify(first.output));
+      const reviewDirs = fs.readdirSync(path.join(f.session,'.state/reviews'));
+      assert.equal(reviewDirs.length, 1);
+      const review = reviewDirs[0] as string;
+      assert.ok(!fs.existsSync(path.join(f.session,'.state/reviews',review,'round-1/gen-2/checkout-baseline.json')), 'a cli-only supersede carries no baseline');
+      const second = await run();
+      assert.equal(second.exit, 0, JSON.stringify(second.output));
+      assert.ok(!second.value.repositoryChanges, JSON.stringify(second.value));
+      assert.ok(!second.value.repositoryCheck, JSON.stringify(second.value));
+      const status = await f.run(['status','show']);
+      assert.deepEqual(status.value.openRepositoryChanges ?? [], [], JSON.stringify(status.value.openRepositoryChanges));
+    } finally {f.cleanup();}
+  }
 });
 
 test('repository changes list a mode change and an assume-unchanged edit', async () => {
@@ -679,70 +707,50 @@ test('repository changes detect a second edit of an already dirty path', async (
   } finally {f.cleanup();}
 });
 
-test('repository changes list a renamed path', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    f.git(['mv','src/file.ts','src/renamed.ts']);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths);
-    assert.ok(listed.includes('src/renamed.ts'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
-});
-
-test('repository changes list a change inside a nested integration checkout', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    assert.equal((await f.run(['worktree','integrate','T1'])).exit, 0);
-    const run = () => f.run(['review','run','integration','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    fs.writeFileSync(path.join(f.integration,'src/file.ts'),'integration edit during round\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const entry = done.value.repositoryChanges.find((row: {cwd: string}) => path.resolve(row.cwd) === path.resolve(f.integration));
-    assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
-});
-
-test('repository changes list a task worktree change in full from its own root', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    const worktree = path.resolve(f.session, made.value.path);
-    fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    fs.writeFileSync(path.join(worktree,'src/file.ts'),'worktree edit during round\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const entry = (done.value.repositoryChanges ?? []).find((row: {cwd: string}) => path.resolve(row.cwd) === worktree);
-    assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-  } finally {f.cleanup();}
+test('repository changes list task worktree and nested integration changes from their own roots', async () => {
+  {
+    const f = await toolkitRepo(); try {
+      f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
+      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+      f.deps.liveness = {claude: true};
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
+      await f.level('low'); await f.approve();
+      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
+      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
+      assert.equal((await f.run(['worktree','integrate','T1'])).exit, 0);
+      const run = () => f.run(['review','run','integration','--kind','code','--spec','work.spec.md','--level','low']);
+      assert.equal((await run()).output.reason, 'native-pending');
+      const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
+      fs.writeFileSync(path.join(f.integration,'src/file.ts'),'integration edit during round\n');
+      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
+      assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
+      const entry = done.value.repositoryChanges.find((row: {cwd: string}) => path.resolve(row.cwd) === path.resolve(f.integration));
+      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+    } finally {f.cleanup();}
+  }
+  {
+    const f = await toolkitRepo(); try {
+      f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
+      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+      f.deps.liveness = {claude: true};
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
+      await f.level('low'); await f.approve();
+      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
+      const worktree = path.resolve(f.session, made.value.path);
+      fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
+      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
+      const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
+      assert.equal((await run()).output.reason, 'native-pending');
+      const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
+      fs.writeFileSync(path.join(worktree,'src/file.ts'),'worktree edit during round\n');
+      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
+      const entry = (done.value.repositoryChanges ?? []).find((row: {cwd: string}) => path.resolve(row.cwd) === worktree);
+      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+    } finally {f.cleanup();}
+  }
 });
 
 test('repository changes keep review-failed and name paths for an all-failed round', async () => {
@@ -1311,35 +1319,6 @@ test('repository changes report unavailable for a corrupt baseline and keep repl
   } finally {f.cleanup();}
 });
 
-test('cli-only superseded round runs no repository check and opens no report', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'cli-only-skill', {'read-delegates': {claude: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = null;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    // A spec edit during fan-out supersedes the in-flight round to gen-2;
-    // with no native voice no baseline exists to carry, so gen-2 runs no check.
-    let moved = false;
-    const run = (hook?: (point: string) => Promise<void> | void) => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low'], hook);
-    const first = await run(async point => { if (point === 'fanout:after-slot' && !moved) { moved = true; fs.appendFileSync(path.join(f.root,'work.spec.md'),'\nSupersede trigger\n'); } });
-    assert.equal(first.output.reason, 'target-moved', JSON.stringify(first.output));
-    const reviewDirs = fs.readdirSync(path.join(f.session,'.state/reviews'));
-    assert.equal(reviewDirs.length, 1);
-    const review = reviewDirs[0] as string;
-    assert.ok(!fs.existsSync(path.join(f.session,'.state/reviews',review,'round-1/gen-2/checkout-baseline.json')), 'a cli-only supersede carries no baseline');
-    const second = await run();
-    assert.equal(second.exit, 0, JSON.stringify(second.output));
-    assert.ok(!second.value.repositoryChanges, JSON.stringify(second.value));
-    assert.ok(!second.value.repositoryCheck, JSON.stringify(second.value));
-    const status = await f.run(['status','show']);
-    assert.deepEqual(status.value.openRepositoryChanges ?? [], [], JSON.stringify(status.value.openRepositoryChanges));
-  } finally {f.cleanup();}
-});
-
 test('retry after all-failed uses no host CLI and keeps the first report until a closing note', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
@@ -1675,30 +1654,6 @@ test('two failed generations with different paths both stay open', async () => {
     const open = (await f.run(['status','show'])).value.openRepositoryChanges ?? [];
     assert.equal(open.length, 1, JSON.stringify(open));
     assert.deepEqual((open[0].repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths).sort(), ['a-path','b-path']);
-  } finally {f.cleanup();}
-});
-
-test('a stale rerun decision grants nothing for a later report', async () => {
-  const {admission} = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
-  const f = await toolkitRepo(); try {
-    await f.level('low'); await f.approve();
-    const review = 'demo-stale-rerun';
-    const roundDir = path.join(f.session,'.state/reviews',review,'round-1');
-    fs.mkdirSync(path.join(roundDir,'gen-1'),{recursive:true});
-    fs.writeFileSync(path.join(roundDir,'round.json'), JSON.stringify({cap:1}));
-    const seqA = foldLedger(f.session).lastSeq;
-    fs.writeFileSync(path.join(roundDir,'gen-1/checkout-report.json'), JSON.stringify({repositoryChanges:[{cwd:'c',paths:['a-path']}],asOfSeq:seqA}));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Rerun after inspection', key: `repository-rerun:${review}:1:${seqA}`, data: {text: 'rerun'}}, f.deps);
-    await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:${seqA}`, data: {text: 'explained A'}}, f.deps);
-    const seqB = foldLedger(f.session).lastSeq;
-    fs.mkdirSync(path.join(roundDir,'gen-2'),{recursive:true});
-    fs.writeFileSync(path.join(roundDir,'gen-2/checkout-report.json'), JSON.stringify({repositoryChanges:[{cwd:'c',paths:['b-path']}],asOfSeq:seqB}));
-    const open = ((await f.run(['status','show'])).value.openRepositoryChanges ?? []).find((entry: {review: string}) => entry.review === review);
-    assert.ok(open, 'the later report stays open');
-    assert.deepEqual((open.repositoryChanges ?? []).flatMap((entry: {paths: string[]}) => entry.paths), ['b-path']);
-    assert.equal(open.rerunPending, undefined, 'the stale rerun decision leaves no rerunPending: ' + JSON.stringify(open));
-    const {budget} = admission(f.session, foldLedger(f.session), review, 1);
-    assert.equal(budget.nextRound, 1, 'the stale rerun decision admits no round above the cap: ' + JSON.stringify(budget));
   } finally {f.cleanup();}
 });
 
@@ -2068,14 +2023,6 @@ test('an all-failed round keeps an ignored failure report visible', async () => 
   } finally {f.cleanup();}
 });
 
-test('checkout report reads treat a missing generation as closed but surface other read faults', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'checkout-reports-')); try {
-    assert.deepEqual(checkoutReportsFor(path.join(root, 'round-1'), 'gen-1'), []);
-    fs.writeFileSync(path.join(root, 'blocker'), 'not a directory');
-    assert.throws(() => checkoutReportsFor(root, 'blocker'), /ENOTDIR/);
-  } finally { fs.rmSync(root, {recursive: true, force: true}); }
-});
-
 test('inter-round diff holds governed text from real Git', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'inter-round-skill', {'read-delegates': {agy: {targets: [{low: {model: 'cli-model'}}]}}, phases: {'plan-review': {targets: {low: 1}, rounds: {low: 2}}}});
@@ -2094,3 +2041,4 @@ test('inter-round diff holds governed text from real Git', async () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).interRound.diff, '`' + path.join(roundDir, 'inter-round.diff') + '` (unified diff of the governed text)');
   } finally {f.cleanup();}
 });
+

@@ -66,67 +66,73 @@ const GUIDES = ['plan', 'implement'] as const;
 
 // SECTION: Manifest completeness and classes
 
-for (const name of GUIDES) {
-  test(`${name} path manifest classifies exactly the links of its guide`, () => {
+test('path manifests classify exactly the links of their guides', () => {
+  for (const name of GUIDES) {
     const links = MANIFEST[name].links;
     const found = new Set(guideOccurrences(name).map(item => item.target));
     assert.deepEqual([...found].filter(target => !(target in links)).sort(), [], `${name} guide links missing from the manifest`);
     assert.deepEqual(Object.keys(links).filter(target => !found.has(target)).sort(), [], `${name} manifest lists links the guide no longer has`);
-  });
+  }
+});
 
-  test(`${name} path link classes follow the step text and the stated conditions`, () => {
+test('path link classes follow the step text and the stated conditions', () => {
+  for (const name of GUIDES) {
     const links = MANIFEST[name].links;
     const occurrences = guideOccurrences(name);
     for (const [target, entry] of Object.entries(links)) {
       const own = occurrences.filter(item => item.target === target);
-      if (target === 'references/toolkit.md') { assert.equal(entry.class, 'owner', 'an anchorless toolkit link names the contract owner'); continue; }
-      assert.notEqual(entry.class, 'owner', `${target} is not an owner link`);
+      if (target === 'references/toolkit.md') { assert.equal(entry.class, 'owner', `${name}: an anchorless toolkit link names the contract owner`); continue; }
+      assert.notEqual(entry.class, 'owner', `${name}: ${target} is not an owner link`);
       const rows = own.filter(item => item.stepText !== null);
       if (rows.length) {
         const derived = rows.some(item => !/\b(when|only)\b/i.test(item.stepText!)) ? 'unconditional' : 'conditional';
-        assert.equal(entry.class, derived, `${target} class follows its Step reads text`);
+        assert.equal(entry.class, derived, `${name}: ${target} class follows its Step reads text`);
       }
       if (entry.class === 'conditional') {
-        assert.ok(entry.when, `${target} states its condition`);
+        assert.ok(entry.when, `${name}: ${target} states its condition`);
         for (const item of own.filter(candidate => candidate.stepText === null && !rows.some(row => !/\b(when|only)\b/i.test(row.stepText!)))) {
-          assert.ok(item.line.toLowerCase().includes(entry.when!.toLowerCase()), `${target} paragraph carries its condition "${entry.when}": ${item.line}`);
+          assert.ok(item.line.toLowerCase().includes(entry.when!.toLowerCase()), `${name}: ${target} paragraph carries its condition "${entry.when}": ${item.line}`);
         }
       } else if (!rows.length) {
-        for (const item of own) assert.doesNotMatch(item.sentence, /^\W*(when|if|for)\b|\bonly (on|when|if|for)\b/i, `${target} is unconditional but its sentence states a condition: ${item.sentence}`);
+        for (const item of own) assert.doesNotMatch(item.sentence, /^\W*(when|if|for)\b|\bonly (on|when|if|for)\b/i, `${name}: ${target} is unconditional but its sentence states a condition: ${item.sentence}`);
       }
     }
-  });
+  }
+});
 
-  test(`${name} path call sequence covers every toolkit anchor of its guide`, () => {
+test('path call sequences cover every toolkit anchor of their guides', () => {
+  for (const name of GUIDES) {
     const { links, calls } = MANIFEST[name];
     const headings = toolkitHeadings();
     for (const [target, entry] of Object.entries(links)) {
       const anchor = /^references\/toolkit\.md#(.+)$/.exec(target)?.[1];
       if (!anchor) continue;
       const heading = headings.get(anchor);
-      assert.ok(heading, `${target} resolves to a toolkit heading`);
+      assert.ok(heading, `${name}: ${target} resolves to a toolkit heading`);
       const call = heading.group === 'Ledger records'
         ? calls.find(item => item.action === 'ledger append' && item.kind === heading.title)
         : calls.find(item => item.action === heading.title && item.kind === undefined);
-      assert.ok(call, `${target} is in the ${name} call sequence`);
-      if (entry.class === 'conditional') assert.equal(call.count, 0, `${target} is conditional, so it counts 0`);
-      else assert.ok(call.count > 0, `${target} is unconditional, so it counts at least 1`);
+      assert.ok(call, `${name}: ${target} is in the call sequence`);
+      if (entry.class === 'conditional') assert.equal(call.count, 0, `${name}: ${target} is conditional, so it counts 0`);
+      else assert.ok(call.count > 0, `${name}: ${target} is unconditional, so it counts at least 1`);
     }
-  });
+  }
+});
 
-  test(`${name} path ledger calls name a record kind and other calls name a tool action`, () => {
+test('path ledger calls name a record kind and other calls name a tool action', () => {
+  for (const name of GUIDES) {
     const headings = toolkitHeadings();
     for (const call of MANIFEST[name].calls) {
       if (call.action === 'ledger append') {
-        assert.ok(call.kind && (KINDS as readonly string[]).includes(call.kind), `ledger append names a record kind: ${call.kind}`);
+        assert.ok(call.kind && (KINDS as readonly string[]).includes(call.kind), `${name}: ledger append names a record kind: ${call.kind}`);
         assert.equal(headings.get(slug(call.kind))?.group, 'Ledger records');
       } else {
-        assert.equal(call.kind, undefined, `${call.action} takes no record kind`);
-        assert.equal(headings.get(slug(call.action))?.group, 'Tool actions', `${call.action} is a tool action`);
+        assert.equal(call.kind, undefined, `${name}: ${call.action} takes no record kind`);
+        assert.equal(headings.get(slug(call.action))?.group, 'Tool actions', `${name}: ${call.action} is a tool action`);
       }
     }
-  });
-}
+  }
+});
 
 // SECTION: Measure formulas
 

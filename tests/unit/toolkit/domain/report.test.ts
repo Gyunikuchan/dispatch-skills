@@ -609,10 +609,28 @@ test('H8 names the handling module of repeated rejections and ignores one-offs',
   assert.match(mixed!.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
 });
 
-test('diagnostics report: heuristic H1 fires for CLI failures', () => {
-  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
-  assert.equal(finding.component, 'references/providers.md');
-  assert.match(finding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
+test('heuristic H1 fires on repeated failures and suppresses isolated failures', () => {
+  const cliFinding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
+  assert.equal(cliFinding.component, 'references/providers.md');
+  assert.match(cliFinding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
+
+  const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
+  assert.deepEqual(only(heuristics(reserve), 'H1'), []);
+  const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
+  assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
+
+  const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
+  assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
+  assert.equal(only(heuristics(run), 'H1').length > 0, true);
+
+  const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);
+  for (const cls of ['quota', 'timeout', 'model-not-loaded', 'unclassified']) {
+    const [item] = only(heuristics(facts({ invocations: [invocation({ outcome: cls, slot: 'codex' }), invocation({ outcome: cls, slot: 'codex' })] })), 'H1');
+    assert.ok(item, cls);
+    assert.doesNotMatch(item.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
+  }
 });
 
 test('diagnostics fix text for capacity and no-report', () => {
@@ -689,7 +707,12 @@ test('diagnostics amendment convergence: evaluates caps, reraises, and escalatio
   assert.match(twoRoundEscalated.evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
 });
 
-test('H2 review convergence phrasing distinguishes plain cap from re-raise deadlock', () => {
+test('H2 wording separates designed continuation, cap arrival, and deadlock', () => {
+  const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({
+    phase: 'review', round: i + 1, accepted: 1, rejected: 0, cap: 3, ...(i === count - 1 ? last : {}),
+  }));
+  const h2 = (reviews: RunFacts['reviews']) => assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
+
   const capEnded = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
     ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}) }));
   const findingCap = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
@@ -702,13 +725,6 @@ test('H2 review convergence phrasing distinguishes plain cap from re-raise deadl
   const findingDeadlock = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
   assert.match(findingDeadlock.evidence, /deadlock escalation \(R1-F001\)/);
   assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
-});
-
-test('H2 cap wording separates designed continuation from a deadlock at the cap', () => {
-  const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({
-    phase: 'review', round: i + 1, accepted: 1, rejected: 0, cap: 3, ...(i === count - 1 ? last : {}),
-  }));
-  const h2 = (reviews: RunFacts['reviews']) => assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
 
   const continued = h2(rounds(4, { reraised: ['R1-F001'] }));
   assert.match(continued.evidence, /continued past the cap \(3\)/);
@@ -912,29 +928,6 @@ test('diagnostics report: never renders resume objective or absolute paths', () 
   assert.match(text, /- Host retro: collected · 1 accepted · 2 rejected/);
 });
 
-test('heuristic H1 fires on repeated slot failures and suppresses isolated failures', () => {
-  // Isolated failures stay silent
-  const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
-  assert.deepEqual(only(heuristics(reserve), 'H1'), []);
-  const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
-  assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
-
-  // Sanitized slot facts gate H1
-  const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
-  assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
-  assert.equal(only(heuristics(run), 'H1').length > 0, true);
-
-  // Repeated failures emit actionable H1 across classes
-  const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
-  assert.equal(findings.length, 1);
-  assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);
-  for (const cls of ['quota', 'timeout', 'model-not-loaded', 'unclassified']) {
-    const [finding] = only(heuristics(facts({ invocations: [invocation({ outcome: cls, slot: 'codex' }), invocation({ outcome: cls, slot: 'codex' })] })), 'H1');
-    assert.ok(finding, cls);
-    assert.doesNotMatch(finding.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
-  }
-});
-
 test('host rows preserve totals and notes, scrub labels, and surface unavailability', () => {
   const run=facts({hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'m',effort:null,input:10,output:2,cacheRead:5,cacheWrite:2,reasoning:4},{stage:'plan',role:'subagent',model:'m',effort:null,input:20,output:3}],notes:{host:{'unparsed lines':2},subagent:{'read budget reached':1}}},invocations:[invocation({provider:'claude',usage:{input:7,output:1}})]});
   (run.hostUsage!.rows[0] as unknown as Record<string,unknown>)['text']='secret transcript';
@@ -964,17 +957,14 @@ test('Codex delegates keep their own platform under a Claude host and timing sco
   assert.match(text, /Timing scope:.*native\/writer timing/);
 });
 
-test('missing orchestrator renders no adapter coverage under the dash platform', () => {
-  const text=render([facts({hostUsage:{platform:null,rows:[],unavailable:'no adapter'},invocations:[]})]);
-  assert.ok(text.includes('| — | — | — | — | — | — | host unavailable: no adapter |'));
-});
-
-test('a registry-only adapter contributes its host rows to both token tables', () => {
-  const fs={list:()=>[],stat:()=>null,read:()=>Buffer.alloc(0),decompress:null};
-  const hostUsage=readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},fs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,input:17,output:4,cacheRead:2}]})}});
-  const text=render([facts({hostUsage,invocations:[]})]);
-  assert.ok(text.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
-  assert.ok(text.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
+test('host platform edges render adapter coverage or explicit unavailability', () => {
+  const missing = render([facts({hostUsage:{platform:null,rows:[],unavailable:'no adapter'},invocations:[]})]);
+  assert.ok(missing.includes('| — | — | — | — | — | — | host unavailable: no adapter |'));
+  const onlyFs = {list:()=>[],stat:()=>null,read:()=>Buffer.alloc(0),decompress:null};
+  const hostUsage = readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},onlyFs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,input:17,output:4,cacheRead:2}]})}});
+  const covered = render([facts({hostUsage,invocations:[]})]);
+  assert.ok(covered.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
+  assert.ok(covered.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
 });
 test('diagnostics report names each lifecycle step outcome and keeps raw details out', () => {
   const step = (name: string, outcome: string, extra: Record<string, unknown> = {}) => ({ step: name, elapsedMs: 120, budgetMs: 5000, outcome, ...extra });
@@ -1021,15 +1011,12 @@ test('origin: collected origin follows the round table', () => {
   assert.deepEqual(collectFindings(2, drafts).map(entry => entry.origin), ['fix-induced', 'original', 'unknown', 'unknown', 'unknown']);
 });
 
-test('origin: duplicate findings in one reply merge to fix-induced, and a known value replaces unknown', () => {
+test('origin: duplicate findings merge to fix-induced within one reply and across replies', () => {
   const duplicate = (origin?: string) => finding(origin === undefined ? {} : {origin});
   assert.deepEqual(draftsOf(report([duplicate('original'), duplicate('fix-induced')])).map(draft => draft.origin), ['fix-induced']);
   assert.deepEqual(draftsOf(report([duplicate('fix-induced'), duplicate('original')])).map(draft => draft.origin), ['fix-induced']);
   assert.deepEqual(draftsOf(report([duplicate('unknown'), duplicate('original')])).map(draft => draft.origin), ['original']);
   assert.deepEqual(draftsOf(report([duplicate(), duplicate('original')])).map(draft => draft.origin), ['original']);
-});
-
-test('origin: duplicate findings across replies merge into the kept finding', () => {
   const parse = (source: string, origin?: string) => { const result = parseReport({kind: 'code', source, text: report([finding(origin === undefined ? {} : {origin})])}); assert.ok(result.ok); return result.findings; };
   const merged = collectFindings(2, [...parse('codex[0]', 'original'), ...parse('claude[0]', 'fix-induced')]);
   assert.equal(merged[0]?.origin, 'fix-induced');

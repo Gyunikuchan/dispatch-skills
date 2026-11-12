@@ -16,11 +16,8 @@ export function checkSnapshots(files: FileTable): string[] {
   return errors;
 }
 
-test('snapshots stay confined to the review-prompt golden dir', () => {
+test('snapshots stay confined to the review-prompt golden dir and violations fail with the rule and the fix', () => {
   assert.deepEqual(checkSnapshots(scanOverlay(undefined, false)), []);
-});
-
-test('a snapshot outside the golden dir fails with the rule and the fix', () => {
   const files = ['tests/unit/a.snap', 'tests/unit/b.golden.json', 'tests/fixtures/plan.md', `${GOLDEN_DIR}ok.md`, 'skills/dispatch/SKILL.md'];
   const errors = checkSnapshots(files.map((path) => ({ path, text: '' })));
   assert.equal(errors.length, 3);

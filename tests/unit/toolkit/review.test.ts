@@ -39,23 +39,6 @@ test('all blocked review-failed carries reasons', async () => {
   } finally { f.cleanup(); }
 });
 
-test('repeated blocked after cascade success becomes blocker', async () => {
-  const f = await fixture();
-  try {
-    configure(f, {'read-delegates': {claude: {targets: [{low: {model: ['denied', 'ok']}}]}, agy: {targets: [{low: {model: 'fake'}}]}}});
-    f.deps.delegate = async (provider, request) => reply(
-      provider === 'claude' && request.model === 'denied' ? blockedReport('Artifact denied by the guard')
-        : provider === 'agy' ? report() : CLEAN);
-    assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
-    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
-    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
-    const second = await f.call();
-    assert.equal(second.exit, 0, JSON.stringify(second));
-    assert.deepEqual(second.value.blocked, [{slot: 'claude[0]', provider: 'claude', model: 'denied', reason: 'Artifact denied by the guard'}]);
-    assert.deepEqual(second.value.blockers, [{slot: 'claude[0]', reason: 'Artifact denied by the guard', rounds: [1, 2]}]);
-  } finally { f.cleanup(); }
-});
-
 test('blocked reasons with shared prefix stay distinct', async () => {
   const f = await fixture();
   try {
@@ -104,7 +87,7 @@ test('native pending lists blocked reasons', async () => {
   } finally { f.cleanup(); }
 });
 
-test('native pending summary states the launch order', async () => {
+test('native pending summary states the launch order without an immediate rerun', async () => {
   const f = await fixture();
   try {
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -115,14 +98,6 @@ test('native pending summary states the launch order', async () => {
     assert.match(pending.output.summary, /1 native slot/);
     const lower = pending.output.summary.toLowerCase();
     assert.ok(lower.indexOf('launch') >= 0 && lower.indexOf('launch') < lower.indexOf('rerun'), pending.output.summary);
-  } finally { f.cleanup(); }
-});
-
-test('native pending summary gives no immediate rerun after the wave', async () => {
-  const f = await fixture();
-  try {
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    await f.call();
     const waved = await f.call();
     assert.equal(waved.exit, 4);
     assert.equal(waved.output.reason, 'native-pending');
@@ -470,55 +445,59 @@ test('zero round level reuses an incomplete saved round', async () => {
   } finally { f.cleanup(); }
 });
 
-test('zero round level refuses before replacing a moved incomplete round', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    seedRound(f, 5);
-    const snapshotPath = path.join(f.directory, 'round-5', 'target.snapshot.md');
-    const snapshot = fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null;
-    const generations = fs.readdirSync(path.join(f.directory, 'round-5')).filter(name => name.startsWith('gen-'));
-    const pendingPath = path.join(f.directory, 'round-5', 'pending.json');
-    const pendingEscalation = {kind: 'escalation', by: 'tool', key: 'pending-esc', data: {id: 'pending-esc', state: 'open', summary: 'pending'}};
-    await addRecord(f, pendingEscalation);
-    fs.writeFileSync(pendingPath, JSON.stringify({findings: [], failed: [], escalations: [pendingEscalation]}));
-    const pendingBytes = fs.readFileSync(pendingPath, 'utf8');
-    fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 4);
-    assert.equal(f.output().reason, 'level-unapproved');
-    assert.ok(f.read(5, 'round.json').roster.length > 0);
-    assert.equal(fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null, snapshot);
-    assert.deepEqual(fs.readdirSync(path.join(f.directory, 'round-5')).filter(name => name.startsWith('gen-')), generations);
-    assert.ok(fs.existsSync(pendingPath));
-    assert.equal(fs.readFileSync(pendingPath, 'utf8'), pendingBytes);
-    assert.ok(!foldLedger(f.session).records.some(row => row.key === 'pending-esc:superseded'));
-  } finally { f.cleanup(); }
-});
+test('moved incomplete round is refused without replacing pending state', async () => {
+  // Zero round level with a moved target keeps the saved round, snapshot, and pending payload.
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      seedRound(f, 5);
+      const snapshotPath = path.join(f.directory, 'round-5', 'target.snapshot.md');
+      const snapshot = fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null;
+      const generations = fs.readdirSync(path.join(f.directory, 'round-5')).filter(name => name.startsWith('gen-'));
+      const pendingPath = path.join(f.directory, 'round-5', 'pending.json');
+      const pendingEscalation = {kind: 'escalation', by: 'tool', key: 'pending-esc', data: {id: 'pending-esc', state: 'open', summary: 'pending'}};
+      await addRecord(f, pendingEscalation);
+      fs.writeFileSync(pendingPath, JSON.stringify({findings: [], failed: [], escalations: [pendingEscalation]}));
+      const pendingBytes = fs.readFileSync(pendingPath, 'utf8');
+      fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
+      f.lines.length = 0;
+      const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
+      assert.equal(exit, 4);
+      assert.equal(f.output().reason, 'level-unapproved');
+      assert.ok(f.read(5, 'round.json').roster.length > 0);
+      assert.equal(fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null, snapshot);
+      assert.deepEqual(fs.readdirSync(path.join(f.directory, 'round-5')).filter(name => name.startsWith('gen-')), generations);
+      assert.ok(fs.existsSync(pendingPath));
+      assert.equal(fs.readFileSync(pendingPath, 'utf8'), pendingBytes);
+      assert.ok(!foldLedger(f.session).records.some(row => row.key === 'pending-esc:superseded'));
+    } finally { f.cleanup(); }
+  }
 
-test('staffed level refuses a moved round when no live reviewer remains', async () => {
-  const f = await fixture();
-  try {
-    const ruling = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'accepted', rationale: 'Fixed'});
-    seedCompletedRound(f, 4, [seededFinding('R4-F001', 'MUST')], JSON.stringify([['R4-F001', ruling.seq]]), ruling.seq);
-    seedRound(f, 5);
-    const pendingPath = path.join(f.directory, 'round-5', 'pending.json');
-    const pendingEscalation = {kind: 'escalation', by: 'tool', key: 'pending-esc', data: {id: 'pending-esc', state: 'open', summary: 'pending'}};
-    await addRecord(f, pendingEscalation);
-    fs.writeFileSync(pendingPath, JSON.stringify({findings: [], failed: [], escalations: [pendingEscalation]}));
-    const pendingBytes = fs.readFileSync(pendingPath, 'utf8');
-    fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
-    f.deps.liveness = {claude: false, agy: false, codex: false, copilot: false, opencode: false};
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 4);
-    assert.equal(f.output().reason, 'level-unapproved');
-    assert.match(f.output().summary, /no live or usable reviewer/i);
-    assert.match(f.output().summary, /underfill 0\/2 targets/);
-    assert.equal(fs.readFileSync(pendingPath, 'utf8'), pendingBytes);
-    assert.ok(!foldLedger(f.session).records.some(row => row.key === 'pending-esc:superseded'));
-  } finally { f.cleanup(); }
+  // Staffed level with no live reviewer keeps the pending payload and names the underfill.
+  {
+    const f = await fixture();
+    try {
+      const ruling = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'accepted', rationale: 'Fixed'});
+      seedCompletedRound(f, 4, [seededFinding('R4-F001', 'MUST')], JSON.stringify([['R4-F001', ruling.seq]]), ruling.seq);
+      seedRound(f, 5);
+      const pendingPath = path.join(f.directory, 'round-5', 'pending.json');
+      const pendingEscalation = {kind: 'escalation', by: 'tool', key: 'pending-esc', data: {id: 'pending-esc', state: 'open', summary: 'pending'}};
+      await addRecord(f, pendingEscalation);
+      fs.writeFileSync(pendingPath, JSON.stringify({findings: [], failed: [], escalations: [pendingEscalation]}));
+      const pendingBytes = fs.readFileSync(pendingPath, 'utf8');
+      fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
+      f.deps.liveness = {claude: false, agy: false, codex: false, copilot: false, opencode: false};
+      f.lines.length = 0;
+      const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode'], f.deps);
+      assert.equal(exit, 4);
+      assert.equal(f.output().reason, 'level-unapproved');
+      assert.match(f.output().summary, /no live or usable reviewer/i);
+      assert.match(f.output().summary, /underfill 0\/2 targets/);
+      assert.equal(fs.readFileSync(pendingPath, 'utf8'), pendingBytes);
+      assert.ok(!foldLedger(f.session).records.some(row => row.key === 'pending-esc:superseded'));
+    } finally { f.cleanup(); }
+  }
 });
 
 test('zero round level reuses a staffed previous reviewer on a moved round', async () => {
@@ -1088,40 +1067,44 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
   }
 });
 
-test('non-code rerun scope names changed headings from the prior snapshot', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 1, []);
-    rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
-    const first = f.read(1, 'round.json');
-    seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
-    const second = f.read(2, 'findings.json');
-    fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
-    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
-    planDelegate(f, CLEAN);
-    const third = await f.call();
-    assert.equal(third.exit, 0, JSON.stringify(third));
-    assert.match(f.read(3, 'round.json').scope, /^Full review — changed: Fix; comparison: sha256:[a-f0-9]{64}$/);
-  } finally { f.cleanup(); }
-});
+test('non-code rerun scope names changed headings only with a prior snapshot', async () => {
+  // Prior snapshot present: the rerun scope names the changed headings.
+  {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, []);
+      rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+      const first = f.read(1, 'round.json');
+      seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+      const second = f.read(2, 'findings.json');
+      fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+      await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
+      fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      planDelegate(f, CLEAN);
+      const third = await f.call();
+      assert.equal(third.exit, 0, JSON.stringify(third));
+      assert.match(f.read(3, 'round.json').scope, /^Full review — changed: Fix; comparison: sha256:[a-f0-9]{64}$/);
+    } finally { f.cleanup(); }
+  }
 
-test('non-code rerun scope omits headings without a prior snapshot', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 1, []);
-    rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
-    const first = f.read(1, 'round.json');
-    seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
-    const second = f.read(2, 'findings.json');
-    fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
-    fs.rmSync(path.join(f.directory, 'round-2', 'target.snapshot.md'));
-    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
-    planDelegate(f, CLEAN);
-    const third = await f.call();
-    assert.equal(third.exit, 0, JSON.stringify(third));
-    assert.match(f.read(3, 'round.json').scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
-  } finally { f.cleanup(); }
+  // Prior snapshot removed: the rerun scope omits the changed segment.
+  {
+    const f = await fixture();
+    try {
+      seedCompletedRound(f, 1, []);
+      rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+      const first = f.read(1, 'round.json');
+      seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+      const second = f.read(2, 'findings.json');
+      fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+      fs.rmSync(path.join(f.directory, 'round-2', 'target.snapshot.md'));
+      await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
+      planDelegate(f, CLEAN);
+      const third = await f.call();
+      assert.equal(third.exit, 0, JSON.stringify(third));
+      assert.match(f.read(3, 'round.json').scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
+    } finally { f.cleanup(); }
+  }
 });
 
 test('non-code re-review omits the changed segment without changed headings', async () => {

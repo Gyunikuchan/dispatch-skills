@@ -13,11 +13,8 @@ export function checkRuntimeVersion(files: FileTable): string[] {
   return errors;
 }
 
-test('shipped code has no .mjs or nested package.json', () => {
+test('shipped code has no .mjs or nested package.json and violations identify the runtime rule', () => {
   assert.deepEqual(checkRuntimeVersion(scanOverlay(undefined, false)), []);
-});
-
-test('legacy JavaScript and nested packages identify the runtime rule and corrective action', () => {
   const errors = checkRuntimeVersion([{ path: 'skills/dispatch/scripts/guard.mjs', text: '' }, { path: 'skills/dispatch/package.json', text: '{}' }]);
   assert.deepEqual(errors, [
     'runtime rule: skills/dispatch/scripts/guard.mjs is .mjs; shipped code is TypeScript run by type stripping, so rename it to .ts',

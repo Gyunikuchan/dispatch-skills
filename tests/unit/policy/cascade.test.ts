@@ -26,17 +26,11 @@ test('delegates-failure-classes: every class has a disposition; integrity and co
 
 // SECTION: Model and mode cascade
 
-test('delegates-model-array-cascade: every cascade class, auth and quota included, tries the next model first', () => {
-  for (const cls of ['auth', 'timeout', 'quota'] as const) {
+test('delegates-model-array-cascade: cascade classes advance to the next model', () => {
+  for (const cls of ['auth', 'timeout', 'quota', 'capacity', 'no-report'] as const) {
     assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
   }
   assert.deepEqual(next('sandbox-unsupported', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'slot', reason: 'agy[0] failed: sandbox-unsupported' });
-});
-
-test('delegates-model-array-cascade: capacity and no-report advance to the next model', () => {
-  for (const cls of ['capacity', 'no-report'] as const) {
-    assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
-  }
 });
 
 test('delegates-mode-cascade: only provider-declared classes advance the mode, resetting the model', () => {

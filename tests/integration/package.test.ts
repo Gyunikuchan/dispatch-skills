@@ -26,12 +26,9 @@ export function checkPackage(pkg: Record<string, unknown>): string[] {
   return errors;
 }
 
-test('root package.json adds no dependency and uses the approved engine range', () => {
+test('root package.json holds the approved manifest and rejects unapproved changes with the rule and the fix', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual(checkPackage(pkg), []);
-});
-
-test('a new dependency or engines change fails with the rule and the fix', () => {
   const errors = checkPackage({ dependencies: { zod: '1' }, devDependencies: { husky: '1' }, engines: { node: '>=24' } });
   assert.equal(errors.length, 2);
   assert.match(errors[0] ?? '', /^package rule: dependencies adds zod; remove it/);

@@ -40,23 +40,6 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree','create','T1'])).exit,0);
     assert.notEqual(launchPath(r),cwd);
   });
-  it('refuses until prerequisites integrate and leaves no trace of the refusal', async t => {
-    const r=await toolkitRepo(twoTaskPlan('T1')); t.after(r.cleanup); await r.level();
-    const before=foldLedger(r.session).lastSeq;
-    const refused=await r.run(['worktree','create','T2']);
-    assert.equal(refused.exit,4,JSON.stringify(refused)); assert.equal(refused.output.reason,'prerequisite-pending',JSON.stringify(refused));
-    assert.match(refused.value.message,/\bT1\b/);
-    assert.equal(foldLedger(r.session).lastSeq,before);
-    assert.equal(fs.existsSync(r.integration),false);
-    assert.equal(fs.existsSync(path.join(r.session,'.state/worktrees/T2-1')),false);
-    assert.equal((await r.run(['worktree','create','T1'])).exit,0);
-    fs.writeFileSync(path.join(launchPath(r),'src/file.ts'),'integrated\n');
-    assert.equal((await r.run(['worktree','submit','T1'])).exit,0);
-    assert.equal((await r.run(['worktree','create','T2'])).output.reason,'prerequisite-pending');
-    assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
-    assert.equal((await r.run(['worktree','create','T2'])).exit,0);
-    assert.equal(fs.readFileSync(path.join(launchPath(r),'src/file.ts'),'utf8'),'integrated\n');
-  });
   it('refuses until prerequisites integrate except relaunch or restore of an open launch', async t => {
     const r=await toolkitRepo(twoTaskPlan('none')); t.after(r.cleanup);
     assert.equal((await r.run(['worktree','create','T2'])).exit,0); const cwd=launchPath(r);
@@ -65,6 +48,22 @@ describe('toolkit writer worktrees', () => {
     fs.rmSync(cwd,{recursive:true,force:true});
     const restored=await r.run(['worktree','create','T2']); assert.equal(restored.exit,0,JSON.stringify(restored));
     assert.equal(restored.value.restored,true); assert.equal(fs.existsSync(cwd),true);
+    // A fresh launch under a new prerequisite is refused without a trace;
+    // satisfying the prerequisite admits it.
+    assert.equal((await r.run(['worktree','abandon','T2','--reason','stop'])).exit,0);
+    await r.level();
+    const before=foldLedger(r.session).lastSeq;
+    const refused=await r.run(['worktree','create','T2']);
+    assert.equal(refused.exit,4,JSON.stringify(refused)); assert.equal(refused.output.reason,'prerequisite-pending',JSON.stringify(refused));
+    assert.match(refused.value.message,/\bT1\b/);
+    assert.equal(foldLedger(r.session).lastSeq,before);
+    assert.equal(fs.existsSync(path.join(r.session,'.state/worktrees/T2-2')),false);
+    assert.equal((await r.run(['worktree','create','T1'])).exit,0);
+    fs.writeFileSync(path.join(launchPath(r),'src/file.ts'),'integrated\n');
+    assert.equal((await r.run(['worktree','submit','T1'])).exit,0);
+    assert.equal((await r.run(['worktree','integrate','T1'])).exit,0);
+    assert.equal((await r.run(['worktree','create','T2'])).exit,0);
+    assert.equal(fs.readFileSync(path.join(launchPath(r),'src/file.ts'),'utf8'),'integrated\n');
   });
   it('refuses to adopt a crash worktree that predates a prerequisite and keeps it until removed', async t => {
     const r=await toolkitRepo(twoTaskPlan('none')); t.after(r.cleanup);

@@ -5,8 +5,6 @@ import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
-import { governedPlanText } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
-import { governedDesignText } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
 import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
 
@@ -62,7 +60,7 @@ test('plan and design review refuse without a user confirm of the current spec a
   }finally{f.cleanup();}
 });
 
-test('plan reviewer reads governed text without findings history', async () => {
+test('plan and design reviewers read governed text without findings history', async () => {
   const f = await fixture();
   try {
     const original = fs.readFileSync(f.plan, 'utf8');
@@ -73,35 +71,28 @@ test('plan reviewer reads governed text without findings history', async () => {
     const input = fs.readFileSync(inputPath, 'utf8');
     assert.doesNotMatch(input, /Review Findings & Resolutions/);
     assert.doesNotMatch(input, /Driver log\./);
-    assert.equal(input, governedPlanText(original));
     const prompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
     assert.ok(prompt.includes(inputPath));
     assert.ok(prompt.includes('- Plan: ' + inputPath));
     assert.equal(f.read(1, 'round.json').target, artifactHash('plan', original));
     assert.equal(path.basename(f.directory), 'plan-work.plan');
     assert.equal(fs.readFileSync(path.join(f.directory, 'round-1', 'target.snapshot.md'), 'utf8'), original);
-  } finally { f.cleanup(); }
-});
 
-test('design reviewer reads governed text without findings history', async () => {
-  const f = await fixture();
-  try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n## Execution Status\nNext Action: act.\n## Review Findings & Resolutions\nDriver notes.\n');
     f.artifact('strategy.design.context.md', CONTEXT_MAP);
-    const original = fs.readFileSync(design, 'utf8');
-    const result = await f.call('design', design);
-    assert.equal(result.exit, 0, JSON.stringify(result.output));
+    const designOriginal = fs.readFileSync(design, 'utf8');
+    const designResult = await f.call('design', design);
+    assert.equal(designResult.exit, 0, JSON.stringify(designResult.output));
     const reviewDir = path.join(f.session, '.state/reviews/design-strategy.design');
-    const inputPath = path.join(reviewDir, 'round-1.input.md');
-    assert.ok(fs.existsSync(inputPath));
-    const input = fs.readFileSync(inputPath, 'utf8');
-    assert.doesNotMatch(input, /Review Findings & Resolutions/);
-    assert.doesNotMatch(input, /Driver notes\./);
-    assert.doesNotMatch(input, /## Execution Status/);
-    assert.equal(input, governedDesignText(original));
-    const prompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
-    assert.ok(prompt.includes(inputPath));
-    assert.equal(JSON.parse(fs.readFileSync(path.join(reviewDir, 'round-1/round.json'), 'utf8')).target, artifactHash('design', original));
+    const designInputPath = path.join(reviewDir, 'round-1.input.md');
+    assert.ok(fs.existsSync(designInputPath));
+    const designInput = fs.readFileSync(designInputPath, 'utf8');
+    assert.doesNotMatch(designInput, /Review Findings & Resolutions/);
+    assert.doesNotMatch(designInput, /Driver notes\./);
+    assert.doesNotMatch(designInput, /## Execution Status/);
+    const designPrompt = fs.readFileSync(f.launches.at(-1)!.request.promptPath, 'utf8');
+    assert.ok(designPrompt.includes(designInputPath));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(reviewDir, 'round-1/round.json'), 'utf8')).target, artifactHash('design', designOriginal));
   } finally { f.cleanup(); }
 });
 

@@ -375,7 +375,7 @@ test('task behaviour: warns on hidden, missing, count-only, and placeholder bull
   assert.ok(!emptySummary.ok && emptySummary.defects.some((item) => item.code === 'task-map'));
 });
 
-test('task visuals pass lint: admits markdown table, fenced mermaid and text summary', () => {
+test('task visuals pass lint and stay out of task behaviour', () => {
   const tableTask = PLAN.replace(
     '### T1 — Cap fetch retries',
     [
@@ -387,8 +387,7 @@ test('task visuals pass lint: admits markdown table, fenced mermaid and text sum
       '| 1 | 100ms |',
     ].join('\n'),
   );
-  const tableResult = parsePlan(tableTask);
-  assert.ok(tableResult.ok, JSON.stringify(tableResult));
+  assert.ok(parsePlan(tableTask).ok, JSON.stringify(parsePlan(tableTask)));
 
   const diagramTask = PLAN.replace(
     '### T1 — Cap fetch retries',
@@ -404,11 +403,8 @@ test('task visuals pass lint: admits markdown table, fenced mermaid and text sum
       'Text summary: Attempt sequence leading to exhaustion.',
     ].join('\n'),
   );
-  const diagramResult = parsePlan(diagramTask);
-  assert.ok(diagramResult.ok, JSON.stringify(diagramResult));
-});
+  assert.ok(parsePlan(diagramTask).ok, JSON.stringify(parsePlan(diagramTask)));
 
-test('task visuals stay out of behaviour: table and text summary do not enter task behaviour', () => {
   const source = PLAN.replace(
     '### T1 — Cap fetch retries',
     [
@@ -512,13 +508,6 @@ test('task-plan: derives summary and brief from the graph', () => {
 const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
 const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return [...(result.ok ? [] : result.defects), ...result.warnings].filter((item) => item.code === code); };
-
-test('missing satisfies emits one diagnostic per criterion', () => {
-  for (const replacement of ['', '  - Satisfies:\n', '  - Satisfies: REQ-x\n', '  - Satisfies: REQ-x\n  - Satisfies: wrong\n']) {
-    const source = PLAN.replace('  - Satisfies: REQ-1\n', replacement);
-    assert.equal(defectsOf(source, 'missing-satisfies').length, 1, replacement);
-  }
-});
 
 test('grouped delete registers every path, accepting bare and backticked paths', () => {
   const source = withDelete('src/old-a.ts, src/old-b.ts');
@@ -876,11 +865,13 @@ test('plan summary: Parent rejects invalid pins (user request, unsuffixed)', () 
   }
 });
 
-test('plan criterion satisfies ids parsed', () => {
+test('plan criterion satisfies ids parse with one diagnostic per missing criterion', () => {
   const plan = parsed(PLAN.replace('Satisfies: REQ-1', 'Satisfies: REQ-1, REQ-2'));
   assert.deepEqual(plan.criteria[0]?.satisfies, ['REQ-1', 'REQ-2']);
-  for (const value of ['', '  - Satisfies: \n', '  - Satisfies: REQ-1, DEC-1\n']) {
-    assert.ok(defects(PLAN.replace('  - Satisfies: REQ-1\n', value)).includes('missing-satisfies'));
+  for (const value of ['', '  - Satisfies: \n', '  - Satisfies: REQ-1, DEC-1\n', '  - Satisfies:\n', '  - Satisfies: REQ-x\n', '  - Satisfies: REQ-x\n  - Satisfies: wrong\n']) {
+    const source = PLAN.replace('  - Satisfies: REQ-1\n', value);
+    assert.equal(defectsOf(source, 'missing-satisfies').length, 1, value);
+    assert.ok(defects(source).includes('missing-satisfies'), value);
   }
 });
 

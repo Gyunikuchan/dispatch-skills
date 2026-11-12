@@ -138,7 +138,7 @@ test('ask run follows native-first launch wave consume order', async () => {
   } finally {f.cleanup();}
 });
 
-test('native pending summary states the launch order', async () => {
+test('native pending summary states the launch order without an immediate rerun', async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -151,17 +151,6 @@ test('native pending summary states the launch order', async () => {
     assert.match(launched.output.summary, /1 native slot/);
     const lower = launched.output.summary.toLowerCase();
     assert.ok(lower.indexOf('launch') >= 0 && lower.indexOf('launch') < lower.indexOf('rerun'), launched.output.summary);
-  } finally {f.cleanup();}
-});
-
-test('native pending summary gives no immediate rerun after the wave', async () => {
-  const f = fixture(); try {
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
-      claude: {targets: [{medium: {model: 'target'}}]},
-    }, phases: {ask: {targets: {medium: 1}}}}));
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    f.deps.liveness = {claude: true, agy: true};
-    await f.call();
     const waved = await f.call();
     assert.equal(waved.output.reason, 'native-pending');
     assert.equal(waved.value.cliWave, 'done');
@@ -346,32 +335,37 @@ test('ask run falls back to cli when the host changes before the reply', async (
   } finally {f.cleanup();}
 });
 
-test('ask runs the deferred cli wave in the same call when no native voice is launchable', async () => {
-  const f = fixture(); try {
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
-      claude: {targets: [{medium: {model: 'target'}}]},
-      agy: {targets: [{medium: {model: 'answer'}}]},
-    }, phases: {ask: {targets: {medium: 2}}}}));
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    // Claude is not live, so the roster holds only the agy cli target while
-    // the seeded claude answer stays saved: the launch holds no launchable
-    // native, so the deferred wave reconciles both in the same call.
-    f.deps.liveness = {claude: false, agy: true};
-    f.script('agy', 'answer', 'Deferred cli answer');
-    // A saved done orphan plus an unsaved cli target: the launch holds no
-    // launchable native, so the deferred wave reconciles both at once.
-    const digest = crypto.createHash('sha256').update(fs.readFileSync(f.question, 'utf8')).digest('hex').slice(0, 16);
-    const dir = path.join(f.session, '.state', 'asks', digest, 'attempt-1');
-    for (const sub of ['slots', 'prompts', 'replies']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
-    fs.writeFileSync(path.join(dir, 'prompts', 'claude[0].md'), 'Why does this work?');
-    fs.writeFileSync(path.join(dir, 'slots', 'claude[0].json'), JSON.stringify({slot: 'claude[0]', state: 'done', text: 'kept', responder: {slot: 'claude[0]', provider: 'claude', model: 'target', native: false}}));
-    const done = await f.call();
-    assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.equal(done.value.answers.length, 2, JSON.stringify(done.value.answers));
-    assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'agy[0]')?.text, 'Deferred cli answer');
-    assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'claude[0]')?.text, 'kept');
-    assert.equal(f.launches.length, 1, 'only the unsaved cli voice launches');
-  } finally {f.cleanup();}
+test('ask runs the deferred cli wave with a saved orphan of either slot shape', async () => {
+  for (const legacy of [false, true]) {
+    const f = fixture(); try {
+      fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+        claude: {targets: [{medium: {model: 'target'}}]},
+        agy: {targets: [{medium: {model: 'answer'}}]},
+      }, phases: {ask: {targets: {medium: 2}}}}));
+      f.deps.orchestrator = {platform: 'claude', model: null};
+      // Claude is not live, so the roster holds only the agy cli target while
+      // the seeded claude answer stays saved: the launch holds no launchable
+      // native, so the deferred wave reconciles both in the same call.
+      f.deps.liveness = {claude: false, agy: true};
+      f.script('agy', 'answer', 'Deferred cli answer');
+      // A saved done orphan plus an unsaved cli target: the launch holds no
+      // launchable native, so the deferred wave reconciles both at once.
+      const digest = crypto.createHash('sha256').update(fs.readFileSync(f.question, 'utf8')).digest('hex').slice(0, 16);
+      const dir = path.join(f.session, '.state', 'asks', digest, 'attempt-1');
+      for (const sub of ['slots', 'prompts', 'replies']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
+      fs.writeFileSync(path.join(dir, 'prompts', 'claude[0].md'), 'Why does this work?');
+      fs.writeFileSync(path.join(dir, 'slots', 'claude[0].json'), legacy
+        ? JSON.stringify({slot: 'claude[0]', state: 'done', text: 'kept', provider: 'claude', model: 'target'})
+        : JSON.stringify({slot: 'claude[0]', state: 'done', text: 'kept', responder: {slot: 'claude[0]', provider: 'claude', model: 'target', native: false}}));
+      const done = await f.call();
+      assert.equal(done.exit, 0, JSON.stringify(done.output));
+      assert.equal(done.value.answers.length, 2, JSON.stringify(done.value.answers));
+      assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'agy[0]')?.text, 'Deferred cli answer');
+      assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'claude[0]')?.text, 'kept');
+      assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'claude[0]')?.provider, 'claude');
+      assert.equal(f.launches.length, 1, 'only the unsaved cli voice launches');
+    } finally {f.cleanup();}
+  }
 });
 
 test('ask reconciles a saved native-first reserve attempt after a host change', async () => {
@@ -399,31 +393,6 @@ test('ask reconciles a saved native-first reserve attempt after a host change', 
     assert.equal(reconciled?.text, 'Reserve answer');
     assert.equal(reconciled?.responder.provider, 'codex');
     assert.equal(done.value.ignoredFailureReports, undefined, 'the matching report is consumed, not ignored: ' + JSON.stringify(done.value));
-  } finally {f.cleanup();}
-});
-
-test('ask run keeps a responder-less saved orphan without throwing', async () => {
-  const f = fixture(); try {
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
-      claude: {targets: [{medium: {model: 'target'}}]},
-      agy: {targets: [{medium: {model: 'answer'}}]},
-    }, phases: {ask: {targets: {medium: 2}}}}));
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    // Claude is not live, so the roster holds only the agy cli target while
-    // the seeded claude answer stays saved with no responder object.
-    f.deps.liveness = {claude: false, agy: true};
-    f.script('agy', 'answer', 'Deferred cli answer');
-    const digest = crypto.createHash('sha256').update(fs.readFileSync(f.question, 'utf8')).digest('hex').slice(0, 16);
-    const dir = path.join(f.session, '.state', 'asks', digest, 'attempt-1');
-    for (const sub of ['slots', 'prompts', 'replies']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
-    fs.writeFileSync(path.join(dir, 'prompts', 'claude[0].md'), 'Why does this work?');
-    fs.writeFileSync(path.join(dir, 'slots', 'claude[0].json'), JSON.stringify({slot: 'claude[0]', state: 'done', text: 'kept', provider: 'claude', model: 'target'}));
-    const done = await f.call();
-    assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.equal(done.value.answers.length, 2, JSON.stringify(done.value.answers));
-    assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'claude[0]')?.text, 'kept');
-    assert.equal(done.value.answers.find((answer: {slot: string}) => answer.slot === 'claude[0]')?.provider, 'claude');
-    assert.equal(f.launches.length, 1, 'only the unsaved cli voice launches');
   } finally {f.cleanup();}
 });
 
