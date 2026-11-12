@@ -378,7 +378,8 @@ test('root skill routes work and guards orchestrator context', () => {
   assert.ok(definition >= 0 && definition < skill.indexOf('## Tool loop'), 'orchestrator definition precedes the tool loop');
   const block = (heading: string) => skill.split('## ' + heading + '\n')[1]?.split('\n## ')[0] ?? '';
   const routing = block('Routing');
-  const rows = routing.split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Work')).map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
+  const workTable = routing.split(/\n\| Role \|/)[0] ?? routing;
+  const rows = workTable.split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Work')).map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
   const route = (work: string) => rows.find(([cell]) => cell!.includes(work))?.[1];
   for (const [work, target] of [
     ['log and verify triage', 'Explorer subagent (read-only)'], ['grounding maps', 'Explorer subagent (read-only)'],
@@ -389,12 +390,12 @@ test('root skill routes work and guards orchestrator context', () => {
   assert.equal(route('retro'), undefined);
   assert.equal(rows.length, 6, 'six routes');
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
-  for (const phrase of ['the `explore-subagents` entry, else the lowest `write-subagents` entry', 'Do explorer and utility work inline only when none resolves', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
+  for (const phrase of ['from the `utility-subagents` entry', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
   for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'creates no finding and no rejection confirmation', 'Reviewers are not continued across rounds', 'answers read-only', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -608,18 +609,96 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   assert.match(append, /findings refresh/i);
 });
 
-test('grounding guidance defines gap explorer triggers limits scout role and remaining gap handling', () => {
+test('grounding guidance defines two explorer kinds and limit-based conditions', () => {
   const grounding = read(root + 'references/grounding.md');
   for (const signal of ['Not covered', 'Surprises', '(text-only)', 'unresolved-dispatch', 'map size warning']) {
     assert.ok(grounding.includes(signal), signal);
   }
-  assert.match(grounding, /Launch a gap explorer only when the answer could change a REQ, DEC, scope or blast radius and its reading exceeds the \[context guard\]\(\.\.\/SKILL\.md#context-guard\) threshold/);
-  assert.match(grounding, /read smaller gaps inline/);
-  assert.match(grounding, /touches a shared contract, schema or predicate with consumers in several areas, one slot is a scout/);
-  assert.match(grounding, /gets the objective and the paths already covered, not the findings, and reports surfaces absent from them/);
-  assert.match(grounding, /A scout is new work, not duplicated work for fresh context/);
-  assert.match(grounding, /Launch at most three in one round, one per independent surface, fresh, as research explorers/);
-  assert.match(grounding, /Remaining gaps stay in `Not covered` or the spec's Open Questions/);
+  // Two explorer kinds: map and research
+  assert.match(grounding, /two explorer kinds/i);
+  assert.match(grounding, /map explorer/i);
+  assert.match(grounding, /research explorer/i);
+  // Limit-based continue-or-launch-fresh condition
+  assert.match(grounding, /exceeded the limit|passes the limit/i);
+  // Gap handling: follow-up to lead or research explorer for new topic
+  assert.match(grounding, /gap.*(?:could change a REQ, DEC, scope or blast radius)/i);
+  assert.match(grounding, /follow-up.*lead|research explorer/i);
+  // Map correction has one owner: orchestrator
+  assert.match(grounding, /orchestrator.*correct.*map/i);
+  // No file under skills/dispatch, docs, or tests names gap explorer, scout as a kind, or three-per-round cap
+  function walk(dir: string): string[] {
+    const full = path.join(OVERLAY_ROOT, dir);
+    if (!fs.existsSync(full)) return [];
+    return fs.readdirSync(full, { withFileTypes: true }).flatMap((entry) => {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '.scratch') return [];
+        return walk(rel);
+      }
+      return [rel];
+    });
+  }
+  const checkFiles = [
+    ...walk('skills/dispatch'),
+    ...walk('docs'),
+    ...walk('tests'),
+  ];
+  const violations: string[] = [];
+  for (const file of checkFiles) {
+    if (file.replaceAll('\\', '/').endsWith('skill-contract.test.ts')) continue;
+    const content = fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
+    if (/\bgap explorer\b/i.test(content) || /\bscout explorer\b/i.test(content) || /\bone slot is a scout\b/i.test(content) || /\bat most three in one round\b/i.test(content)) {
+      violations.push(file.replaceAll('\\', '/'));
+    }
+  }
+  assert.deepEqual(violations, [], `files referencing gap/scout explorer or 3-per-round cap: ${violations.join(', ')}`);
+});
+
+test('subagent role table, shared rules and delegation contract', () => {
+  const skill = read(root + 'SKILL.md');
+  for (const col of ['Launched by', 'May launch', 'Model source', 'Writes', 'May be continued']) {
+    assert.match(skill, new RegExp(col, 'i'), `missing column: ${col}`);
+  }
+  for (const role of [
+    'Child orchestrator',
+    'Writer',
+    'Explorer',
+    'Utility subagent',
+    'Reviewer or voice',
+  ]) {
+    assert.match(skill, new RegExp(role, 'i'), `missing role row: ${role}`);
+  }
+  assert.match(skill, /Explorer[^\n]*map[^\n]*research/i);
+  assert.match(skill, /Child orchestrator[^\n]*(?:inheritance|parent)/i);
+  assert.match(skill, /writes nothing except an assigned map/i);
+  assert.match(skill, /test cleanup/i);
+  assert.match(skill, /ask voice/i);
+  assert.match(skill, /fresh context without parent history/i);
+  assert.match(skill, /exact.*model.*effort/i);
+  assert.match(skill, /retain handles/i);
+  assert.match(skill, /never poll/i);
+  assert.match(skill, /claims/i);
+  assert.match(skill, /5 files or 20 KB/i);
+  assert.match(skill, /distilled, cited reply/i);
+  assert.match(skill, /one (?:explorer|launch) per independent topic/i);
+  assert.match(skill, /research explorer.*any step of any verb/i);
+  assert.match(skill, /parallel/i);
+  assert.match(skill, /brief explorer/i);
+  assert.match(skill, /follow-up.*(?:any time|retained)/i);
+  assert.match(skill, /inline/i);
+  assert.match(skill, /8,192|8192/i);
+  assert.match(skill, /rewrit(?:es?|ing) no map/i);
+  assert.match(skill, /utility subagent under a writer is not a second writer/i);
+  assert.doesNotMatch(skill, /when no `?utility`? entry resolves/i);
+  assert.match(skill, /when the host has no launch tool|host with no launch tool/i);
+});
+
+test('spec stage critique requires each intent question states its consequence', () => {
+  const stage = read(root + 'references/spec-authoring.md');
+  const refine = stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '';
+  assert.match(refine, /each question.*states what its answer (?:would )?change/i);
+  assert.match(refine, /grilling/i);
+  assert.match(refine, /Confirm/i);
 });
 
 test('implement guide bounds active task writers by doctor run writeConcurrency', () => {
@@ -766,4 +845,49 @@ test('writer review fix handoff preserves the integration boundary', () => {
   assert.match(read(root + 'references/toolkit.md'), /accepted fixes, including inspected assigned writer or utility deltas/i);
   assert.match(brief, /For the ordinary task, reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `\{\{reportPath\}\}`; a one-line summary; and `concerns: <n>`/i);
   assert.match(brief, /integration worktree.*listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results\. Preserve the original `\{\{reportPath\}\}` and RED evidence/i);
+});
+
+test('removed explorer config key explore-subagents is absent from code, tests and docs except allowed list', () => {
+  const allowed = new Set([
+    'docs/decisions/0001-strict-dispatch-config-format.md',
+    'docs/decisions/0015-native-subagent-routing.md',
+    'skills/dispatch/scripts/lib/config.ts',
+    'tests/unit/lib/config.test.ts',
+    'tests/integration/skill-contract.test.ts',
+    'skills/dispatch/config.local.jsonc',
+  ].map(p => path.normalize(p)));
+
+  function walk(dir: string): string[] {
+    const full = path.join(OVERLAY_ROOT, dir);
+    if (!fs.existsSync(full)) return [];
+    return fs.readdirSync(full, { withFileTypes: true }).flatMap((entry) => {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '.scratch') return [];
+        return walk(rel);
+      }
+      return [rel];
+    });
+  }
+
+  const filesToCheck = [
+    ...walk('skills/dispatch'),
+    ...walk('docs'),
+    ...walk('tests'),
+    'README.md',
+  ];
+
+  const violations: string[] = [];
+  for (const rel of filesToCheck) {
+    if (allowed.has(path.normalize(rel))) continue;
+    const full = path.join(OVERLAY_ROOT, rel);
+    try {
+      const content = fs.readFileSync(full, 'utf8');
+      if (content.includes('explore-subagents')) {
+        violations.push(path.normalize(rel).replaceAll('\\', '/'));
+      }
+    } catch {}
+  }
+
+  assert.deepEqual(violations, [], `files unexpectedly referencing explore-subagents: ${violations.join(', ')}`);
 });

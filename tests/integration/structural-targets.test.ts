@@ -16,20 +16,20 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 15526 ceiling covers phase-aware silence limits, resumed usage, per-attempt records and slot resume (15513 lines); cutting was tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
+  // NOTE: 15590 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, and explorer brief kind selection and utility subagent resolution (15579 lines); cutting was tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
-    lines <= 15526,
-    `driver TS LOC ${lines} exceeds 15526 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 15590,
+    `driver TS LOC ${lines} exceeds 15590 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,
     `ledger kinds ${KINDS.length} exceeds 14 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   const bytes = fs.statSync(path.join(root, 'skills/dispatch/SKILL.md')).size;
-  // NOTE: 8900 covers child routing, assigned review-fix exceptions and the precise writer-route pointer; consolidation was tried first. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
+  // NOTE: 10100 covers the subagent role table, shared native subagent rules, research explorer inline limits, delegation thresholds, and retained explorer follow-up rules (10051 bytes); consolidation was tried first. It is a hint: move branch-specific detail out first; a genuine rule that every branch needs may raise it with a recorded reason.
   assert.ok(
-    bytes <= 8900,
-    `SKILL.md bytes ${bytes} exceeds 8900 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
+    bytes <= 10100,
+    `SKILL.md bytes ${bytes} exceeds 10100 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
   );
 });
 
@@ -106,7 +106,8 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   // NOTE: 10784 retains the original writer contract and states separate task and assigned-fix reply forms; consolidation was tried first.
   assert.ok(writer <= 10784, `writer brief pack ${writer} exceeds 10784 budget`);
   const explorerBrief = templateBytes('explorer-brief.md');
-  assert.ok(explorerBrief <= 5418, `explorer brief template ${explorerBrief} exceeds 5418 budget`);
+  // NOTE: 7820 ceiling holds shared limit and nesting rules with reading conversion (~4 B/tok) plus two delimited output blocks (map with coverage checklist and research) in explorer-brief.md (7812 bytes); consolidation was tried first.
+  assert.ok(explorerBrief <= 7820, `explorer brief template ${explorerBrief} exceeds 7820 budget`);
   const explorer = explorerBrief + templateBytes('context-map.md') + qualityBytes('explorer');
   assert.ok(explorer <= 12638, `explorer pack ${explorer} exceeds 12638 budget`);
   const cleanupQuality = qualityBytes('cleanup');

@@ -407,12 +407,12 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
 });
 const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
-test('diagnostics config renders explore-subagents and redacts read-command locators', () => {
-  const config = { 'explore-subagents': { codex: { model: 'gpt-6-luna', effort: 'low' } } };
+test('diagnostics config renders utility-subagents and redacts read-command locators', () => {
+  const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300000 } } };
   const sanitized = sanitizeFacts(facts({ config }));
-  assert.deepEqual(sanitized.config?.['explore-subagents'], config['explore-subagents']);
+  assert.deepEqual(sanitized.config?.['utility-subagents'], config['utility-subagents']);
   const text = render([facts({ config })]);
-  assert.match(text, /"explore-subagents": \{/);
+  assert.match(text, /"utility-subagents": \{/);
   assert.match(text, /"effort": "low"/);
   const redacted = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));
   assert.deepEqual(redacted.config?.['read-commands'], ['codegraph explore', '—', '—']);
@@ -979,8 +979,8 @@ test('grounding phase retro observation passes gate and renders evidence in repo
     id: 'grounding-spec',
     component: 'references/grounding.md',
     category: 'information-access' as const,
-    evidence: 'map 1, gap 2, scout 1, not-covered 0, yield 2/3, tokens unavailable',
-    impact: 'Keep the follow-up limit at 3.',
+    evidence: 'map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable',
+    impact: 'Keep the token limit at 150000.',
     proposedFix: 'Keep the current discovery bounds.',
   };
   const gated = retroObservations([item]);
@@ -992,7 +992,7 @@ test('grounding phase retro observation passes gate and renders evidence in repo
   const text = render([facts({ observations: [item] })]);
   assert.match(text, /host retro `grounding-spec`/);
   assert.match(text, /Information access · `references\/grounding\.md`/);
-  assert.match(text, /map 1, gap 2, scout 1, not-covered 0, yield 2\/3, tokens unavailable/);
+  assert.match(text, /map 1, nested 2, research 1, not-covered 0, yield 2\/3, tokens unavailable/);
 });
 
 // SECTION: Finding origin

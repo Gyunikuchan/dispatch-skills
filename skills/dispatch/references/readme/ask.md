@@ -2,7 +2,7 @@
 
 Use `ask` when you have a focused question about code, behavior, or a decision in the repository.
 
-`ask` is strictly user-initiated. Your host agent runs `ask` only when you explicitly request it; agents are barred from invoking `ask run` autonomously for their own internal research. For autonomous research, agents launch native explorer subagents ([routing](../../SKILL.md#routing)) and read the sources themselves only when no entry resolves.
+`ask` is strictly user-initiated. Your host agent runs `ask` only when you explicitly request it; agents are barred from invoking `ask run` autonomously for their own internal research. For autonomous research, agents launch native explorer subagents ([routing](../../SKILL.md#routing)) and read the sources themselves only when the host has no launch tool.
 
 Prominent non-exhaustive use cases include:
 - **Cross-referencing and verification:** Verify factual claims, edge cases, and invariants across independent models against repository evidence.

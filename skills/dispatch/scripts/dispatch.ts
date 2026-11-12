@@ -12,7 +12,7 @@ import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
-const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor\'s `utility` entry for this platform; self-ground only when none resolves.';
+const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor\'s `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery.';
 
 // SECTION: help — prints one toolkit.md section as raw text; reads no session, config or ledger.
 function printHelp(heading: string, deps: EntryDeps): number {

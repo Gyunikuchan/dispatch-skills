@@ -126,7 +126,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
 const DASH = '—';
 const VERBS = ['ask', 'design', 'plan', 'review', 'implement'];
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'read-commands'];
+const CONFIG_KEYS = ['diagnostics', 'write-concurrency', 'read-delegates', 'write-subagents', 'utility-subagents', 'phases', 'read-commands'];
 const ID = /^[A-Za-z0-9_-]{1,48}$/;
 // Host text may name dispatch files and slash commands, never machine, network, or identity locators.
 const PROHIBITED: readonly RegExp[] = [

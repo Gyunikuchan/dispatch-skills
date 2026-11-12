@@ -37,6 +37,13 @@ function getBaseOverlayTemplate(): string {
     const config = {
       'read-delegates': { opencode: { sandbox: false, targets: [{ low: { model: 'stub' } }] } },
       'write-subagents': { codex: { low: { model: 'native-stub', effort: 'low' } } },
+      'utility-subagents': {
+        claude: { model: 'native-stub', effort: 'low', 'context-limit': 150000 },
+        codex: { model: 'native-stub', effort: 'low', 'context-limit': 300000 },
+        opencode: { model: 'stub', 'context-limit': 300000 },
+        agy: { model: 'stub', 'context-limit': 300000 },
+        copilot: { model: 'stub', 'context-limit': 300000 },
+      },
       phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 2 }, targets: { low: 1 } } },
     };
     fs.writeFileSync(path.join(baseOverlayTemplate, 'skills/dispatch/config.local.jsonc'), JSON.stringify(config));

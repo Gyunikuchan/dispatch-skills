@@ -15,7 +15,7 @@ test('config resolution is first-existing-wins with no merge', () => {
   };
   const local = loadConfig('/s', (file) => files[file] ?? null);
   assert.equal(local.path, path.join('/s', 'config.local.jsonc'));
-  assert.deepEqual(local.config, { 'read-delegates': { claude: [] }, 'write-subagents': {}, 'explore-subagents': {}, phases: {} });
+  assert.deepEqual(local.config, { 'read-delegates': { claude: [] }, 'write-subagents': {}, 'utility-subagents': {}, phases: {} });
   const only = loadConfig('/s', (file) => (file.endsWith(`${path.sep}config.jsonc`) ? files[file] ?? null : null));
   assert.deepEqual(only.config['phases'], { x: 1 });
   assert.throws(() => loadConfig('/s', () => null), /Config file not found.*config\.sample\.jsonc/);
@@ -35,25 +35,58 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'))), []);
 });
 
-test('explore-subagents validates a flat entry and reports deep as unrecognized', () => {
+test('utility-subagents validates entries, requires context-limit, and reports old key', () => {
   const valid = {
     ...minimal,
-    'explore-subagents': {
-      codex: { model: 'fast-explorer', effort: 'low' },
+    'utility-subagents': {
+      codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300000 },
+      claude: { model: 'fast-explorer', 'context-limit': 150000 },
     },
   };
   assert.deepEqual(validateConfig(valid), []);
 
+  // Shipped sample limit values: 150,000 for claude and 300,000 for every other listed platform
+  const sample = parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8')) as Record<string, any>;
+  const utilitySample = sample['utility-subagents'];
+  assert.ok(utilitySample, 'sample has utility-subagents');
+  assert.equal(utilitySample.claude['context-limit'], 150000);
+  for (const [platform, entry] of Object.entries(utilitySample)) {
+    if (platform !== 'claude') {
+      assert.equal((entry as any)['context-limit'], 300000, platform);
+    }
+  }
+
+  // Missing, non-positive, or fractional limit, and unknown keys
   const invalidCases: Array<[unknown, RegExp]> = [
-    [{ bogus: { model: 'fast-explorer' } }, /explore-subagents: unknown platform "bogus"/],
-    [{ codex: { bogus: { model: 'fast-explorer' } } }, /explore-subagents\.codex has unrecognized key "bogus"/],
-    [{ codex: { low: { model: 'fast-explorer' } } }, /explore-subagents\.codex has unrecognized key "low"/],
-    [{ codex: { model: ' ' } }, /explore-subagents\.codex\.model must be a nonblank string/],
-    [{ codex: { model: 'fast-explorer', deep: true } }, /explore-subagents\.codex has unrecognized key "deep"\. Valid keys: model, effort/],
+    [{ bogus: { model: 'fast-explorer', 'context-limit': 300000 } }, /utility-subagents: unknown platform "bogus"/],
+    [{ codex: { bogus: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "bogus"/],
+    [{ codex: { low: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "low"/],
+    [{ codex: { model: ' ' } }, /utility-subagents\.codex\.model must be a nonblank string/],
+    [{ codex: { model: 'fast-explorer', deep: true, 'context-limit': 300000 } }, /utility-subagents\.codex has unrecognized key "deep"\. Valid keys: model, effort, context-limit/],
+    [{ codex: { model: 'fast-explorer' } }, /utility-subagents\.codex\.context-limit/],
+    [{ codex: { model: 'fast-explorer', 'context-limit': 0 } }, /utility-subagents\.codex\.context-limit/],
+    [{ codex: { model: 'fast-explorer', 'context-limit': -100 } }, /utility-subagents\.codex\.context-limit/],
+    [{ codex: { model: 'fast-explorer', 'context-limit': 1.5 } }, /utility-subagents\.codex\.context-limit/],
+    [{ codex: { model: 'fast-explorer', 'context-limit': '300000' } }, /utility-subagents\.codex\.context-limit/],
   ];
   for (const [table, expected] of invalidCases) {
-    assert.match(validateConfig({ ...minimal, 'explore-subagents': table }).join(' '), expected);
+    assert.match(validateConfig({ ...minimal, 'utility-subagents': table }).join(' '), expected);
   }
+
+  // context-limit in write-subagents entry is an unrecognized key
+  assert.match(
+    validateConfig({ ...minimal, 'write-subagents': { codex: { low: { model: 'm', 'context-limit': 300000 } } } }).join(' '),
+    /write-subagents\.codex\.low has unrecognized key "context-limit"/,
+  );
+
+  // loadConfig defaults utility-subagents to {}
+  const loaded = loadConfig('/s', (file) => (file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null));
+  assert.deepEqual(loaded.config['utility-subagents'], {});
+
+  // old key explore-subagents gets one problem naming utility-subagents
+  const oldProblems = validateConfig({ ...minimal, 'explore-subagents': { codex: { model: 'fast-explorer', effort: 'low' } } });
+  assert.equal(oldProblems.length, 1);
+  assert.match(oldProblems[0]!, /explore-subagents.*utility-subagents/);
 });
 
 // SECTION: Write concurrency

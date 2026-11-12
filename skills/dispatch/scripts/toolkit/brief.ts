@@ -4,19 +4,19 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { currentSnapshot, foldLedger, gate, latest, withLedger } from './ledger.ts';
 import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
 import { qualityCriteria } from './domain/prompt.ts';
-import { DEFAULT_MAP_BUDGET } from './domain/context.ts';
+import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
 import { opencodeSubagentModels } from '../lib/platform.ts';
-import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
+import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
 import type { Level } from './types.ts';
 
 type LaunchValues = { model: string[] | null; effort: string | null; subagentModels?: string[] };
 
-function launchValues(resolved: ResolvedSubagent | undefined, normalized: string): LaunchValues {
+function launchValues(resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues {
   if (!resolved) return {model: null, effort: null};
   const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
   return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
@@ -36,17 +36,21 @@ function writerLaunchValues(skillRoot: string, host: string | undefined, level: 
   } catch { return {model: null, effort: null}; }
 }
 
+/** Explorer, test-cleanup and writer utility entry; null when the host or config does not resolve. */
+function resolveHostUtility(skillRoot: string, host: string | undefined): ResolvedUtility | undefined {
+  try {
+    if (!host) return undefined;
+    const {config} = loadConfig(skillRoot);
+    if (validateConfig(config).length) return undefined;
+    const utility = resolveUtility((config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>);
+    return utility[normalizeProvider(host)];
+  } catch { return undefined; }
+}
+
 /** Explorer and test-cleanup launch values from the `utility` entry; null when the host or config does not resolve. */
 function utilityLaunchValues(skillRoot: string, host: string | undefined): LaunchValues {
-  try {
-    if (!host) return {model: null, effort: null};
-    const normalized = normalizeProvider(host);
-    const {config} = loadConfig(skillRoot);
-    if (validateConfig(config).length) return {model: null, effort: null};
-    const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined ?? {};
-    const explorerTable = config['explore-subagents'] as Record<string, SubagentEntry> | undefined ?? {};
-    return launchValues(resolveUtility(explorerTable, writerTable)[normalized], normalized);
-  } catch { return {model: null, effort: null}; }
+  const normalized = host ? normalizeProvider(host) : '';
+  return launchValues(resolveHostUtility(skillRoot, host), normalized);
 }
 
 function taskParts(source: string, selected: NonNullable<ReturnType<typeof selectTaskBrief>>) {
@@ -139,15 +143,15 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
 
 /** The host's utility entry as brief text; an undetected host or unusable config never refuses the render. */
 function explorerText(skillRoot: string, platform: string | undefined): string {
-  let entry: ResolvedSubagent | undefined;
-  try {
-    const {config} = loadConfig(skillRoot);
-    const tables = [config['explore-subagents'], config['write-subagents']] as [Record<string, SubagentEntry>, Record<string, LevelMap<SubagentEntry>>];
-    if (platform && !validateConfig(config).length) entry = resolveUtility(...tables)[normalizeProvider(platform)];
-  } catch { /* Missing or unparsable config resolves nothing. */ }
-  if (!entry) return 'none resolves';
+  const entry = resolveHostUtility(skillRoot, platform);
+  if (!entry) {
+    return 'Utility subagent entry for this host is not configured; the orchestrator reports a blocker.';
+  }
   const models = 'model ' + entry.models.map(model => '`' + model + '`').join(' or ');
-  return entry.effort ? models + ', effort `' + entry.effort + '`' : models + ', no effort set';
+  const launch = entry.effort ? models + ', effort `' + entry.effort + '`' : models + ', no effort set';
+  const limit = entry.contextLimit.toLocaleString('en-US');
+  const replyLimit = DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US');
+  return `Explorer subagent for this host: ${launch}. For heavy reading outside your task paths, you may launch a research explorer on this entry (token limit ${limit} tokens, reply size limit ${replyLimit} UTF-8 bytes). Require it to stay read-only: no edits, no Git write commands and no toolkit. Read the files you edit yourself and treat its reply as claims. If the host has no launch tool, read directly. For tedious, simple edits inside your task paths, you may launch a utility subagent on the same entry. Assign each utility subagent explicit disjoint paths inside your task paths, with no path shared between two running utility subagents. Require it to run no Git write commands, no toolkit, and launch nothing; no token limit applies to it. Inspect its delta and run the task verification yourself. If the host has no launch tool, perform the edits yourself.`;
 }
 
 /** Shared `{{slot}}` substitution; an unknown slot name refuses instead of emitting raw braces. */
@@ -170,7 +174,11 @@ function nextBriefPath(directory: string, base: string): string {
 }
 
 /** Reads a JSON values file; a missing, unreadable, unknown or blank value refuses before anything is written. */
-function readValues<const Keys extends string>(valuesPath: string, expected: readonly Keys[]): Record<Keys, string> {
+function readValues<const Req extends string, const Opt extends string = never>(
+  valuesPath: string,
+  required: readonly Req[],
+  optional: readonly Opt[] = []
+): Record<Req, string> & Partial<Record<Opt, string>> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripBom(fs.readFileSync(path.resolve(valuesPath), 'utf8')));
@@ -179,16 +187,31 @@ function readValues<const Keys extends string>(valuesPath: string, expected: rea
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError(1, 'invalid-input', 'Values file must hold a JSON object: ' + valuesPath);
   const record = parsed as Record<string, unknown>;
+  const allowed = new Set<string>([...required, ...optional]);
   for (const key of Object.keys(record)) {
-    if (!(expected as readonly string[]).includes(key)) throw new ToolError(1, 'invalid-input', 'Unknown value ' + key);
+    if (!allowed.has(key)) throw new ToolError(1, 'invalid-input', 'Unknown value ' + key);
   }
-  const out = {} as Record<Keys, string>;
-  for (const key of expected) {
+  const out: Record<string, string> = {};
+  for (const key of [...required, ...optional]) {
     const value = record[key];
-    if (typeof value !== 'string' || !value.trim()) throw new ToolError(1, 'invalid-input', 'Missing value ' + key);
-    out[key] = value;
+    if (value === undefined) {
+      if ((required as readonly string[]).includes(key)) {
+        throw new ToolError(1, 'invalid-input', 'Missing value ' + key);
+      }
+      continue;
+    }
+    if (key === 'questions' && Array.isArray(value)) {
+      if (!value.length || !value.every((q) => typeof q === 'string' && q.trim())) {
+        throw new ToolError(1, 'invalid-input', 'Malformed value ' + key);
+      }
+      out[key] = value.join('\n');
+    } else if (typeof value === 'string' && value.trim()) {
+      out[key] = value;
+    } else {
+      throw new ToolError(1, 'invalid-input', 'Malformed value ' + key);
+    }
   }
-  return out;
+  return out as Record<Req, string> & Partial<Record<Opt, string>>;
 }
 
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
@@ -242,33 +265,59 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   return {ok: true, exit: 0, value, summary: task + ' launch ' + launch.launch + ': ' + file + ' (' + value.bytes + ' bytes)'};
 }
 
-const EXPLORER_VALUES = ['objective', 'questions', 'outputPath'] as const;
+function selectExplorerKind(text: string, kind: 'map' | 'research'): string {
+  const other = kind === 'map' ? 'research' : 'map';
+  return text
+    .replace(new RegExp(`<!--\\s*kind:\\s*${other}\\s*-->[\\s\\S]*?<!--\\s*/kind:\\s*${other}\\s*-->\\r?\\n?`, 'g'), '')
+    .replace(new RegExp(`<!--\\s*/?kind:\\s*${kind}\\s*-->\\r?\\n?`, 'g'), '');
+}
+
+const EXPLORER_REQUIRED_VALUES = ['objective', 'questions'] as const;
+const EXPLORER_OPTIONAL_VALUES = ['outputPath'] as const;
 const TEST_CLEANUP_VALUES = ['base', 'integrationPath'] as const;
 
 export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
-  const values = readValues(ctx.args[0]!, EXPLORER_VALUES);
+  const values = readValues(ctx.args[0]!, EXPLORER_REQUIRED_VALUES, EXPLORER_OPTIONAL_VALUES);
+  const kind = values.outputPath ? 'map' : 'research';
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
   const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
+
+  const entry = resolveHostUtility(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
+  const contextLimit = entry ? entry.contextLimit : null;
+  const limit = entry ? `${entry.contextLimit.toLocaleString('en-US')} tokens` : 'utility entry not configured; the orchestrator reports a blocker';
+  const nestedLaunch = entry
+    ? `model ${entry.models.map(m => '`' + m + '`').join(' or ')}${entry.effort ? `, effort \`${entry.effort}\`` : ', no effort set'}`
+    : 'utility entry not configured; the orchestrator reports a blocker';
+
+  const templateText = fs.readFileSync(path.join(templates, 'explorer-brief.md'), 'utf8');
+  const kindTemplate = selectExplorerKind(templateText, kind);
+
   const slots: Record<string, string> = {
     objective: values.objective,
     questions: values.questions,
-    outputPath: values.outputPath,
-    cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
-    session: ctx.session,
-    mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
-    contextMapTemplate: fs.readFileSync(path.join(templates, 'context-map.md'), 'utf8'),
+    limit,
+    nestedLaunch,
     quality: qualityCriteria(bar, 'explorer', 0, specStage),
+    ...(kind === 'map' ? {
+      outputPath: values.outputPath!,
+      cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
+      session: ctx.session,
+      mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
+      contextMapTemplate: fs.readFileSync(path.join(templates, 'context-map.md'), 'utf8'),
+    } : {
+      replyLimit: DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US'),
+    }),
   };
-  const text = fillSlots('explorer', fs.readFileSync(path.join(templates, 'explorer-brief.md'), 'utf8'), slots);
+  const text = fillSlots('explorer', kindTemplate, slots);
   assertFilled('explorer', text);
   const directory = path.join(ctx.session, '.state', 'briefs');
   fs.mkdirSync(directory, {recursive: true});
   const file = nextBriefPath(directory, 'explorer');
   fs.writeFileSync(file, text);
   const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
+  const value = {briefPath: file, bytes: Buffer.byteLength(text), kind, contextLimit, ...launchValues};
   return {ok: true, exit: 0, value, summary: 'explorer brief: ' + file + ' (' + value.bytes + ' bytes)'};
 }
 

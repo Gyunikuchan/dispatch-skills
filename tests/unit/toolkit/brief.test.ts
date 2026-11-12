@@ -3,6 +3,7 @@ import { after, describe, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main as dispatchMain } from '../../../skills/dispatch/scripts/dispatch.ts';
 import { taskMarkdown } from '../../../skills/dispatch/scripts/toolkit/brief.ts';
 import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
@@ -383,7 +384,7 @@ test('writer brief keeps task behaviour and criterion fields from collapsed plan
   } finally { f.cleanup(); }
 });
 
-test('writer brief states the host explorer model and effort or that none resolves', async () => {
+test('writer brief states explorer and utility subagent rules', async () => {
   const f = await fixture(false, PLAN);
   const {skillRoot, orchestrator} = f.deps;
   const skill = path.join(f.root, 'explorer-skill');
@@ -395,7 +396,10 @@ test('writer brief states the host explorer model and effort or that none resolv
   const config = path.join(skill, 'config.jsonc');
   const valid = JSON.stringify({
     'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
-    'explore-subagents': {'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium'}},
+    'utility-subagents': {
+      'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
+      'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
+    },
     'write-subagents': {claude: {low: {model: 'claude-writer'}}, 'openai-codex': {medium: {model: 'codex-mid'}, high: {model: 'codex-high', effort: 'high'}}},
   });
   try {
@@ -405,21 +409,39 @@ test('writer brief states the host explorer model and effort or that none resolv
       f.deps.orchestrator = {platform: host as 'claude', model: null};
       const result = await f.call('high');
       assert.equal(result.exit, 0, JSON.stringify(result.output));
-      const brief = fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
-      assert.match(brief, /stay read-only: no edits, no Git write commands and no toolkit/);
-      assert.ok(!brief.includes('delegation already permitted'), 'brief carries no delegation sentence');
-      return /Explorer subagent for this host: (.*?)\. For heavy reading/.exec(brief)?.[1];
+      return fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
     };
     fs.writeFileSync(config, valid);
-    assert.equal(await render('claude'), 'model `cheap-a` or `cheap-b`, effort `medium`');
-    assert.equal(await render('codex'), 'model `codex-mid`, no effort set');
-    assert.equal(await render('copilot'), 'none resolves');
+    const claudeBrief = await render('claude');
+    assert.match(claudeBrief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+    assert.match(claudeBrief, /token limit 150,000 tokens/);
+    assert.match(claudeBrief, /reply size limit 8,192 UTF-8 bytes/);
+    assert.match(claudeBrief, /stay read-only: no edits, no Git write commands and no toolkit/);
+    assert.match(claudeBrief, /read directly/);
+    assert.match(claudeBrief, /tedious, simple edits/);
+    assert.match(claudeBrief, /explicit disjoint paths inside your task paths/);
+    assert.match(claudeBrief, /no path shared between two running utility subagents/);
+    assert.match(claudeBrief, /run no Git write commands, no toolkit, and launch nothing/);
+    assert.match(claudeBrief, /no token limit applies to it/);
+    assert.match(claudeBrief, /inspects? its delta and run(s)? (the )?task verification/i);
+    assert.match(claudeBrief, /perform the edits yourself/);
+    assert.match(claudeBrief, /A utility subagent under a writer is not a second writer/);
+
+    const codexBrief = await render('codex');
+    assert.match(codexBrief, /model `codex-mid`, no effort set/);
+    assert.match(codexBrief, /token limit 300,000 tokens/);
+
+    const copilotBrief = await render('copilot');
+    assert.match(copilotBrief, /utility.*not configured; the orchestrator reports a blocker/i);
+    assert.ok(!copilotBrief.includes('read directly'));
+    assert.ok(!copilotBrief.includes('perform the edits yourself'));
+
     fs.writeFileSync(config, '{"unknown":true}');
-    assert.equal(await render('claude'), 'none resolves');
+    assert.match(await render('claude'), /utility.*not configured; the orchestrator reports a blocker/i);
     fs.writeFileSync(config, '{');
-    assert.equal(await render('claude'), 'none resolves');
+    assert.match(await render('claude'), /utility.*not configured; the orchestrator reports a blocker/i);
     fs.unlinkSync(config);
-    assert.equal(await render('claude'), 'none resolves');
+    assert.match(await render('claude'), /utility.*not configured; the orchestrator reports a blocker/i);
   } finally {
     f.deps.skillRoot = skillRoot;
     f.deps.orchestrator = orchestrator;
@@ -446,22 +468,165 @@ describe('explorer brief', () => {
       assert.doesNotMatch(brief, /\{\{\w+\}\}/);
       assert.doesNotMatch(brief, /]\(/);
       for (const text of [values.objective, values.questions, values.outputPath, 'lint run', 'dispatch.ts', '16,384', '# Context map:', '## Not covered', 'Host rule files:']) assert.ok(brief.includes(text), text);
+      assert.match(brief, /^- callers and impacted tests of each changed shared helper$/m);
       assert.ok(!brief.includes('Writer focus (task writers only'), 'explorer quality carries no writer directive');
       assert.ok(output.summary.includes(value.briefPath));
     } finally { f.cleanup(); }
   });
 
-  test('explorer brief lists callers and impacted tests of a changed shared helper', async () => {
+  test('explorer brief states the limit and nesting rules', async () => {
     const f = await fixture();
+    const {skillRoot, orchestrator} = f.deps;
+    const skill = path.join(f.root, 'explorer-skill-sc4');
+    const templates = path.join(skill, 'references', 'templates');
+    fs.mkdirSync(templates, {recursive: true});
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'explorer-brief.md'), path.join(templates, 'explorer-brief.md'));
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'context-map.md'), path.join(templates, 'context-map.md'));
+    fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
+    fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
+    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+      'utility-subagents': {
+        'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
+        'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
+      },
+    }));
     try {
       await f.approve();
-      const valuesPath = path.join(f.session, 'explorer-helper-values.json');
-      fs.writeFileSync(valuesPath, JSON.stringify({objective: 'Map a shared helper change.', questions: '- Who calls the helper?', outputPath: '.scratch/session/work.spec.context.md'}));
+      f.deps.skillRoot = skill;
+      const values = {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'};
+      const valuesPath = path.join(f.session, 'explorer-values-sc4.json');
+      fs.writeFileSync(valuesPath, JSON.stringify(values));
       f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
-      const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
-      assert.match(brief, /^- callers and impacted tests of each changed shared helper$/m);
-    } finally { f.cleanup(); }
+      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'claude'], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      assert.equal(value.kind, 'map');
+      assert.equal(value.contextLimit, 150000);
+      const brief = fs.readFileSync(value.briefPath, 'utf8');
+
+      // host limit and nested launch model and effort
+      assert.match(brief, /150,000/);
+      assert.match(brief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+
+      // solo and split rules with minimum size, cap and one level
+      assert.match(brief, /work solo/i);
+      assert.match(brief, /never split a job that fits/i);
+      assert.match(brief, /15 files or 60 KB/i);
+      assert.match(brief, /at most four/i);
+      assert.match(brief, /one level/i);
+      assert.match(brief, /nested explorer launches nothing/i);
+
+      // no-launch-tool fallback
+      assert.match(brief, /no tool to launch a subagent.*do the work.*reply/is);
+
+      // partial-map and consolidation rules
+      assert.match(brief, /partial map/i);
+      assert.match(brief, /consolidat/i);
+      assert.match(brief, /keep partial maps/i);
+      assert.match(brief, /Not covered/i);
+
+      // shared contract assignment
+      assert.match(brief, /shared contract, schema or predicate.*assign one nested explorer.*objective and the covered paths/is);
+
+      // per-nested-explorer model and token report
+      assert.match(brief, /model and tokens.*unavailable/i);
+
+      // Unresolved entry gives contextLimit null and states not configured
+      f.lines.length = 0;
+      const unresExit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'copilot'], f.deps);
+      assert.equal(unresExit, 0);
+      const unresValue = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      assert.equal(unresValue.contextLimit, null);
+      const unresBrief = fs.readFileSync(unresValue.briefPath, 'utf8');
+      assert.match(unresBrief, /utility.*not configured; the orchestrator reports a blocker/i);
+    } finally {
+      f.deps.skillRoot = skillRoot;
+      f.deps.orchestrator = orchestrator;
+      f.cleanup();
+    }
+  });
+
+  test('research brief renders without outputPath and handles array questions and help', async () => {
+    const f = await fixture();
+    const {skillRoot, orchestrator} = f.deps;
+    const skill = path.join(f.root, 'explorer-skill-sc5');
+    const templates = path.join(skill, 'references', 'templates');
+    fs.mkdirSync(templates, {recursive: true});
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'explorer-brief.md'), path.join(templates, 'explorer-brief.md'));
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'context-map.md'), path.join(templates, 'context-map.md'));
+    fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
+    fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
+    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(config, JSON.stringify({
+      'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+      'utility-subagents': {
+        'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
+        'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
+      },
+    }));
+    try {
+      await f.approve();
+      f.deps.skillRoot = skill;
+
+      // 1. Research brief without outputPath
+      const researchValues = {objective: 'Research logs.', questions: '- Why did step 3 fail?'};
+      const valuesPath = path.join(f.session, 'research-values.json');
+      fs.writeFileSync(valuesPath, JSON.stringify(researchValues));
+      f.lines.length = 0;
+      const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'claude'], f.deps);
+      assert.equal(exit, 0, JSON.stringify(f.lines));
+      const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      assert.equal(value.kind, 'research');
+      assert.equal(value.contextLimit, 150000);
+      const brief = fs.readFileSync(value.briefPath, 'utf8');
+
+      // Token limit and 8,192 byte reply limit
+      assert.match(brief, /150,000/);
+      assert.match(brief, /8,192 UTF-8 bytes/);
+
+      // Nesting rule with consolidation of nested replies into one bounded reply
+      assert.match(brief, /nesting:.*nested explorer replies inline.*consolidates the nested replies into its one reply within the 8,192/is);
+
+      // Launch model and effort
+      assert.match(brief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+
+      // No map instructions
+      assert.ok(!brief.includes('lint run'), 'research brief has no lint run');
+      assert.ok(!brief.includes('16,384'), 'research brief has no 16,384 map budget');
+      assert.ok(!brief.includes('## Context map template'), 'research brief has no context map template');
+      assert.ok(!brief.includes('# Context map:'), 'research brief has no context map template text');
+      assert.ok(!brief.includes('partial map'), 'research brief has no partial map');
+      assert.ok(!brief.includes('## Map, budget and output'), 'research brief has no map output section');
+      assert.ok(!brief.includes('## Coverage checklist'), 'research brief has no coverage checklist');
+      assert.ok(!brief.includes('agent type that can write files'), 'research brief has no writable-agent requirement');
+
+      // 2. Questions as array of strings renders one per line
+      const arrayValues = {objective: 'Research array questions.', questions: ['- First question?', '- Second question?']};
+      const arrayValuesPath = path.join(f.session, 'array-questions.json');
+      fs.writeFileSync(arrayValuesPath, JSON.stringify(arrayValues));
+      f.lines.length = 0;
+      const arrayExit = await main(['brief', 'explorer', arrayValuesPath, '--session', f.session, '--host', 'codex'], f.deps);
+      assert.equal(arrayExit, 0, JSON.stringify(f.lines));
+      const arrayBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.match(arrayBrief, /- First question\?\r?\n- Second question\?/);
+
+      // 3. help brief explorer states both questions forms and optional outputPath
+      f.deps.skillRoot = skillRoot;
+      f.lines.length = 0;
+      const helpExit = await dispatchMain(['help', 'brief explorer'], f.deps);
+      assert.equal(helpExit, 0);
+      const helpText = f.lines.join('\n');
+      assert.match(helpText, /questions.*string.*array of strings/i);
+      assert.match(helpText, /optional `?outputPath`?/i);
+      assert.match(helpText, /map brief.*research brief/i);
+      assert.match(helpText, /kind.*contextLimit/i);
+    } finally {
+      f.deps.skillRoot = skillRoot;
+      f.deps.orchestrator = orchestrator;
+      f.cleanup();
+    }
   });
 
   test('refuses missing or unknown value without writing', async () => {
@@ -471,9 +636,10 @@ describe('explorer brief', () => {
       const briefs = path.join(f.session, '.state', 'briefs');
       const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       const cases: Record<string, string>[] = [
-        {objective: 'Map.', questions: '- Q?'},
+        {questions: '- Q?'},
         {objective: 'Map.', questions: '- Q?', outputPath: 'out.md', extra: 'x'},
         {objective: '   ', questions: '- Q?', outputPath: 'out.md'},
+        {objective: 'Map.', questions: '- Q?', outputPath: '   '},
       ];
       for (const [index, values] of cases.entries()) {
         const valuesPath = path.join(f.session, `explorer-bad-${index}.json`);
@@ -579,9 +745,9 @@ test('brief results name the host model and effort', async () => {
       opencode: {low: {model: 'prov/model', effort: 'my-eff'}, high: {model: 'prov/plain'}},
       agy: {low: {model: 'agy-low', effort: 'low'}},
     },
-    'explore-subagents': {
-      opencode: {model: 'exp/model', effort: 'exp-eff'},
-      codex: {model: 'codex-exp'},
+    'utility-subagents': {
+      opencode: {model: 'exp/model', effort: 'exp-eff', 'context-limit': 300000},
+      codex: {model: 'codex-exp', 'context-limit': 300000},
     },
   }));
   try {
@@ -645,14 +811,14 @@ test('brief results name the host model and effort', async () => {
     assert.deepEqual(expCodex.model, ['codex-exp']);
     assert.equal(expCodex.effort, null);
     assert.equal('subagentModels' in expCodex, false);
-    // Utility falls back to the lowest writer when no explorer entry exists, independent of level.
+    // No utility entry gives null launch values, independent of writer entries or level.
     await f.add('level', {level: 'high'});
     const expAgyHigh = await explorerValue('agy');
     await f.add('level', {level: 'low'});
     const expAgyLow = await explorerValue('agy');
     for (const value of [expAgyHigh, expAgyLow]) {
-      assert.deepEqual(value.model, ['agy-low']);
-      assert.equal(value.effort, 'low');
+      assert.equal(value.model, null);
+      assert.equal(value.effort, null);
     }
     const expMissing = await explorerValue('copilot');
     assert.equal(expMissing.model, null);

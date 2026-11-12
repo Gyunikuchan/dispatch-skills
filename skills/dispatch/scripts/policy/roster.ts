@@ -38,14 +38,14 @@ export type ResolvedSubagent = { models: string[]; effort: string | null };
 
 export const resolveSubagent = (entry: SubagentEntry): ResolvedSubagent => ({ models: typeof entry.model === 'string' ? [entry.model] : entry.model, effort: entry.effort ?? null });
 
-/** Per canonical platform: its explorer entry, else its lowest writer entry; independent of run level. */
-export function resolveUtility(
-  explorers: Record<string, SubagentEntry>,
-  writers: Record<string, LevelMap<SubagentEntry>>,
-): Record<string, ResolvedSubagent> {
-  // Explorer entries come last so they replace the writer fallback.
-  const entries = [...Object.entries(writers).map(([key, levels]) => [key, resolveLevel(levels, 'low')] as const), ...Object.entries(explorers)];
-  return Object.fromEntries(entries.flatMap(([key, entry]) => (entry ? [[normalizeProvider(key), resolveSubagent(entry)]] : [])));
+export type UtilityEntry = SubagentEntry & { 'context-limit': number };
+export type ResolvedUtility = ResolvedSubagent & { contextLimit: number };
+
+/** Per canonical platform: its utility-subagents entry; independent of run level. */
+export function resolveUtility(utility: Record<string, UtilityEntry>): Record<string, ResolvedUtility> {
+  return Object.fromEntries(Object.entries(utility).flatMap(([key, entry]) =>
+    entry && typeof entry['context-limit'] === 'number' ? [[normalizeProvider(key), { ...resolveSubagent(entry), contextLimit: entry['context-limit'] }]] : [],
+  ));
 }
 
 // SECTION: Pins

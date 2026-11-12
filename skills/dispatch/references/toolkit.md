@@ -4,7 +4,7 @@
 
 ### call table
 
-Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
+Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. The orchestrator runs toolkit commands. Dispatched agents run no toolkit commands, with one explorer exception: a map explorer may run `lint run` on its own assigned map. Brief and descriptor results return launch `model` and `effort` fields (with `subagentModels` on OpenCode) for native launches. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
 
 Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
 
@@ -96,8 +96,8 @@ Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unkno
 
 ### brief explorer
 
-Arguments: `brief explorer <values.json> --session <session> --host <platform>`. `<values.json>` is a file path holding `objective`, `questions`, and `outputPath`.
-Result path: explorer brief path, UTF-8 bytes and launch `model`/`effort` values (plus `subagentModels` on an OpenCode host).
+Arguments: `brief explorer <values.json> --session <session> --host <platform>`. `<values.json>` is a file path holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
+Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit` and launch `model`/`effort` values (plus `subagentModels` on an OpenCode host).
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
 
 ### brief test-cleanup
@@ -224,7 +224,7 @@ Refusals: positional arguments or invalid filters. Invalid `kind` names the allo
 ### doctor run
 
 Arguments: `doctor run --session <session> --host <platform> [--level <level>]`.
-Result path: integrity, configuration path/problems, explorer models/efforts per platform independent of level, selected level, configured writer models/efforts, `writeConcurrency` (the configured `write-concurrency`, or 1 when omitted or invalid), and `host` (`{platform, source}`: the declared session host and `declared`, or `null` and `none` when absent or invalid) and `utility` (per canonical platform `claude`, `agy`, `copilot`, `opencode` or `codex`: its explorer entry, else its lowest writer entry; independent of level; the `opencode` entry also carries `subagentModels`). `sandboxRemoved` lists each live non-host read delegate that an unpinned roster drops because its requested sandbox cannot run on the host platform, derived from the provider table. `--level` selects writer models. Doctor does not probe provider/mode availability, authentication or runtime sandbox activation.
+Result path: integrity, configuration path/problems (including a problem when the host has no `utility-subagents` entry), selected level, configured writer models/efforts, `writeConcurrency` (the configured `write-concurrency`, or 1 when omitted or invalid), `host` (`{platform, source}`: the declared session host and `declared`, or `null` and `none` when absent or invalid) and `utility` (per canonical platform `claude`, `agy`, `copilot`, `opencode` or `codex`: its `utility-subagents` entry with `contextLimit`; independent of level; the `opencode` entry also carries `subagentModels`). `sandboxRemoved` lists each live non-host read delegate that an unpinned roster drops because its requested sandbox cannot run on the host platform, derived from the provider table. `--level` selects writer models. Doctor does not probe provider/mode availability, authentication or runtime sandbox activation.
 Refusals: positional arguments, invalid configuration or missing/unknown `--host`. Inspect ok and reason for failed integrity or unavailable capabilities.
 
 ### status show

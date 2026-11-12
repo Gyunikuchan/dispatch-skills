@@ -44,14 +44,15 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host 
 node scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
-Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, explorers per platform, and the `utility` entry per platform that explorer and utility subagents use. Explorer and `utility` output do not vary with level. Doctor does not probe provider executables, authentication, native capacity or runtime sandbox activation; inspect provider launch failures for those limits.
+Doctor returns a JSON summary and result path. Read the result for integrity, configuration problems, writer models at the selected level, and the `utility` entry per platform that explorer and utility subagents use. `utility` output does not vary with level. Doctor does not probe provider executables, authentication, native capacity or runtime sandbox activation; inspect provider launch failures for those limits.
 
 ## Common problems
 
 | Problem | What to do |
 |---|---|
 | No delegates are available | Add at least one entry to `read-delegates`. Confirm the provider CLI is installed and authenticated, and that a model is configured for the requested level. |
-| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Explorer entries are per platform and ignore level; run Doctor to see the declared host, resolved writer models and the `utility` entry for explorer and utility subagents. |
+| The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Utility entries are per platform and ignore level; run Doctor to see the declared host, resolved writer models and the `utility` entry for explorer and utility subagents. |
+| Missing or invalid utility subagent configuration | Add a `utility-subagents` entry for the host platform with `model` and a positive integer `context-limit` (tokens) in `config.jsonc` or `config.local.jsonc`. |
 | Fewer reviewers than configured, or a host-sensitive action refuses `usage` for a missing or unknown host | Pass `--host <platform>` with your current host on `doctor run`, `review run`, `ask run` and the `brief` actions, then rerun. Doctor shows `host`. |
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that the plan is settled and required design approval is complete. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |

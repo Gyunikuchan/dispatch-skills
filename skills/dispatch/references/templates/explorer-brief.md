@@ -12,13 +12,24 @@ Map the landscape around the planned decision (constraints, consumers, reuse can
 
 Answer the planned-decision questions, not a general repository survey.
 
-For a scope round, use the confirmed spec's REQs and DECs as the baseline, then answer any related or unrelated planning questions the caller adds.
+## Limit and nesting rules
 
-When inspecting a file for a pre-spec map (`Commit: <sha>`), resolve any symlinked path with `realpath` and require the result inside the repository root. Check the cited path and its resolved target path: `git ls-tree <sha> -- <path>` lists the path and `git diff --name-only <sha> -- <path>` is empty. Mark any untracked, ignored, out-of-repository symlink or dirty cited path `(uncommitted)`.
+Token limit for this host: {{limit}}.
+Launch model and effort for nested launches: {{nestedLaunch}}.
+
+Work solo by default. Never split a job that fits the token limit. Estimate expected reading in files and bytes against the limit using ~4 bytes per token (about 20 KB or ~5 files per ~5k tokens); a job will not fit when expected reading across needed files exceeds the token limit.
+
+After recon, hand off only an independent sub-topic (no other shard reads its files) of about 15 files or 60 KB of expected reading. Use the fewest nested explorers that bring the remaining work under the limit, at most four. Nesting is limited to one level; a nested explorer launches nothing.
+
+If the job exceeds the limit and no sub-topic qualifies for hand-off under the split condition, finish what fits within the limit and report the rest (under `Not covered` for a map, or as open items for a research reply).
+
+When you have no tool to launch a subagent, do the work yourself and say so in your reply.
+
+In your reply, report each nested explorer's model and tokens where available, or `unavailable`.
 
 ## Host rules and tools
 
-Apply the host rule discovery rule below. Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow the native slots rule. Launch the map explorer on an agent type that can write files.
+Apply the host rule discovery rule below. Use repository read tools and skills named by applicable host rules before the generic tool order below (for example, a wiki reader or code index). Host tool caches follow the native slots rule.
 
 ## Tool order
 
@@ -28,9 +39,12 @@ For callers and references, use the first available tool in this order, moving o
 2. Language-server references
 3. Text search
 
-Mark consumers found only by text search as `(text-only)` and list unresolved dynamic dispatch under `Not covered`.
+Mark consumers found only by text search as `(text-only)` and list unresolved dynamic dispatch under Not covered (map) or as open items (research).
 
+<!-- kind: map -->
 ## Coverage checklist
+
+Launch the map explorer on an agent type that can write files.
 
 Complete every item; the checklist is the completeness contract, not a search order. For each item, give refs or `Not covered — <reason>`:
 
@@ -55,16 +69,29 @@ For map tasks, use the embedded context map template below, including its source
 
 Keep this map within {{mapBudget}} UTF-8 bytes. If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 
-For a scope round, the caller provides the confirmed spec path and the spec-phase map path when it exists. Read the spec and map; if the map is absent, use the spec alone. In a scope round, carry forward an entry from the spec-phase map only when its recorded `Commit: <sha>` is present, no cited path is marked `(uncommitted)`, every symlink resolves inside the repository root, `git ls-tree <sha> -- <cited-and-resolved-paths>` lists every cited and resolved target path, and `git diff --name-only <sha> -- <cited-and-resolved-paths>` is empty. Otherwise it re-reads the file. Dedicate the search budget to thorough discovery of refined `REQ`s, `DEC`s, local seams, callers, invariants and `Not covered` items. Write the full scope map to the phase path for its phase. When the spec-phase map exists, add to the reply entries added, corrected and removed and new `Surprises`; “no material delta” is valid. If the map must be returned inline, return the full map for the caller to save under its phase path.
+When inspecting a file for a pre-spec map (`Commit: <sha>`), resolve any symlinked path with `realpath` and require the result inside the repository root. Check the cited path and its resolved target path: `git ls-tree <sha> -- <path>` lists the path and `git diff --name-only <sha> -- <path>` is empty. Mark any untracked, ignored, out-of-repository symlink or dirty cited path `(uncommitted)`.
 
-Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round. Follow the output rule for `{{outputPath}}` and the inline fallback. After writing a map, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step. For every written map, reply only with its path, lint status, and counts of `Surprises` and `Not covered` entries; a scope round also includes its delta when the spec-phase map exists.
+For a scope round, use the confirmed spec's REQs and DECs as the baseline, then answer any related or unrelated planning questions the caller adds. The caller provides the confirmed spec path and the spec-phase map path when it exists. Read the spec and map; if the map is absent, use the spec alone. In a scope round, carry forward an entry from the spec-phase map only when its recorded `Commit: <sha>` is present, no cited path is marked `(uncommitted)`, every symlink resolves inside the repository root, `git ls-tree <sha> -- <cited-and-resolved-paths>` lists every cited and resolved target path, and `git diff --name-only <sha> -- <cited-and-resolved-paths>` is empty. Otherwise it re-reads the file. Dedicate the search budget to thorough discovery of refined `REQ`s, `DEC`s, local seams, callers, invariants and `Not covered` items. Write the full scope map to the phase path for its phase. When the spec-phase map exists, add to the reply entries added, corrected and removed and new `Surprises`; “no material delta” is valid. If the map must be returned inline, return the full map for the caller to save under its phase path.
 
-For non-map research and follow-up questions, return a distilled answer inline with cited sources; write no file. Use no prescribed format or context-map lint.
+When the change touches a shared contract, schema or predicate with consumers in several areas, assign one nested explorer the objective and the covered paths, not the findings, to report surfaces absent from them.
 
-## Quality
+Assign each nested explorer a partial map path in the session directory `{{session}}`. Nested explorers reply with only their partial map path and counts (they run no map lint). Consolidate the partial maps into the one phase map at `{{outputPath}}` within {{mapBudget}} UTF-8 bytes; keep partial maps as evidence. Answer every base grounding question and Coverage item or list it under `Not covered`.
 
-{{quality}}
+Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round. Follow the output rule for `{{outputPath}}` and the inline fallback. After the lead writes the consolidated map at `{{outputPath}}`, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step. For the lead's consolidated map at `{{outputPath}}`, reply only with its path, lint status, counts of `Surprises` and `Not covered` entries, and the per-nested-explorer model and token report; a scope round also includes its delta when the spec-phase map exists. Nested map explorers reply only with their assigned partial-map path and counts as specified above.
 
 ## Context map template
 
 {{contextMapTemplate}}
+<!-- /kind: map -->
+
+<!-- kind: research -->
+## Research output and budget
+
+Reply inline with a distilled answer and cited sources within {{replyLimit}} UTF-8 bytes; write no map file, use no prescribed format, and run no context-map lint. List any unread remainder as open items.
+
+When nesting: each nested explorer replies inline to the lead within {{replyLimit}} UTF-8 bytes. The lead consolidates the nested replies into its one reply within the {{replyLimit}} UTF-8 byte limit, preserves their citations, and adds the per-nested-explorer model and token report (or `unavailable`).
+<!-- /kind: research -->
+
+## Quality
+
+{{quality}}

@@ -1,6 +1,6 @@
 # Ask
 
-`ask` is user-initiated: invoke `ask run` only for explicit user requests, never autonomous internal research. Route research, exploration and grounding under [routing](../../SKILL.md#routing); self-ground under [self-grounding](../grounding.md#publish) only when no entry resolves. An unlaunchable configured explorer is a blocker.
+`ask` is user-initiated: invoke `ask run` only for explicit user requests, never autonomous internal research. Route research, exploration and grounding under [routing](../../SKILL.md#routing); self-ground under [self-grounding](../grounding.md#publish) only when the host has no launch tool. An unlaunchable configured explorer is a blocker.
 
 Use it for source cross-checks and differentiated model opinions or suggestions.
 

@@ -7,6 +7,9 @@ export type ContextSection = typeof CONTEXT_SECTIONS[number];
 /** Map byte budget rendered into the explorer brief; the warning threshold for context maps. */
 export const DEFAULT_MAP_BUDGET = 16_384;
 
+/** Research explorer inline reply size limit rendered into the explorer brief. */
+export const DEFAULT_RESEARCH_REPLY_LIMIT = 8_192;
+
 export type ParsedContextMap = {
   title: string | null;
   commit: string | null;

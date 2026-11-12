@@ -45,8 +45,8 @@ test('diagnostics instructions specify grounding retro items and yield format', 
   assert.ok(instruction.includes('id: grounding-<phase>'));
   assert.ok(instruction.includes('component: references/grounding.md'));
   assert.ok(instruction.includes('category: information-access'));
-  assert.ok(instruction.includes('evidence: map <n>, gap <n>, scout <n>, not-covered <n>, yield <changed>/<launched>, tokens <n|unavailable>'));
-  assert.match(instruction, /`yield` counts gap and scout explorers whose reply changed a REQ, DEC, scope or blast radius/);
-  assert.match(instruction, /record whether to keep or change the follow-up limit/);
+  assert.ok(instruction.includes('evidence: map <n>, nested <n>, research <n>, not-covered <n>, yield <changed>/<launched>, tokens <per explorer|unavailable>'));
+  assert.match(instruction, /`yield` counts nested and research explorers whose reply changed a REQ, DEC, scope or blast radius/);
+  assert.doesNotMatch(instruction, /\b(?:gap|scout)\b/i);
   assert.doesNotMatch(read('SKILL.md'), /grounding-<phase>/);
 });

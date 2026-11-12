@@ -15,6 +15,7 @@ test('diagnostics stay observational across CLI recovery and report completion',
       fs.writeFileSync(configPath, JSON.stringify({ diagnostics: true,
         'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } },
         'write-subagents': { codex: { low: { model: 'native', effort: 'low' } } },
+        'utility-subagents': { codex: { model: 'native', effort: 'low', 'context-limit': 300000 } },
         phases: { ask: { targets: { low: 1 }, rounds: { low: 1 } } },
       }));
       const env = { ...process.env };

@@ -9,10 +9,10 @@ import { sortedJson } from './integrity.ts';
 
 export const SAMPLE_NAME = 'config.sample.jsonc';
 export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const;
-const HINT = `diff against ${SAMPLE_NAME}`;
+export const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'explore-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands'];
+const TABLES = ['read-delegates', 'write-subagents', 'utility-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -88,7 +88,7 @@ export function loadConfig(skillRoot: string, read: ReadFile = readReal): { conf
     const text = read(file);
     if (text === null) continue;
     const parsed = parseJsonc(text);
-    const config = isRecord(parsed) ? { ...parsed, 'write-subagents': parsed['write-subagents'] ?? {}, 'explore-subagents': parsed['explore-subagents'] ?? {}, phases: parsed['phases'] ?? {} } : {};
+    const config = isRecord(parsed) ? { ...parsed, 'write-subagents': parsed['write-subagents'] ?? {}, 'utility-subagents': parsed['utility-subagents'] ?? {}, phases: parsed['phases'] ?? {} } : {};
     if (!isRecord(parsed)) throw new Error(`${file}: config must be a JSON object (${HINT}).`);
     return { config, path: file };
   }
@@ -127,10 +127,13 @@ function checkReadCommands(value: unknown, problems: string[]): void {
   }
 }
 
-function checkLevelConfig(where: string, value: unknown, problems: string[]): void {
-  if (!isRecord(value)) { problems.push(where + ' must be an object with model and optional effort (' + HINT + ').'); return; }
+function checkLevelConfig(where: string, value: unknown, problems: string[], utility = false): void {
+  const desc = utility ? 'model, context-limit and optional effort' : 'model and optional effort';
+  if (!isRecord(value)) { problems.push(`${where} must be an object with ${desc} (${HINT}).`); return; }
+  const valid = utility ? 'model, effort, context-limit' : 'model, effort';
+  const validKeys = utility ? ['model', 'effort', 'context-limit'] : ['model', 'effort'];
   for (const key of Object.keys(value)) {
-    if (key !== 'model' && key !== 'effort') problems.push(`${where} has unrecognized key "${key}". Valid keys: model, effort (${HINT}).`);
+    if (!validKeys.includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${valid} (${HINT}).`);
   }
   const model = value['model'];
   if (model === undefined) problems.push(`${where}.model is required (${HINT}).`);
@@ -141,6 +144,7 @@ function checkLevelConfig(where: string, value: unknown, problems: string[]): vo
     if (dup !== undefined) problems.push(`${where}.model has duplicate alias "${String(dup)}" (${HINT}).`);
   }
   if ('effort' in value && !goodName(value['effort'])) problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${HINT}).`);
+  if (utility && (value['context-limit'] === undefined || !positiveInt(value['context-limit']))) problems.push(`${where}.context-limit must be a positive integer (${HINT}).`);
 }
 
 function checkLevelMap(where: string, value: unknown, problems: string[]): void {
@@ -240,8 +244,9 @@ export function validateConfig(config: unknown): string[] {
   if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean') problems.push(`diagnostics must be a boolean (${HINT}).`);
   if (config['write-concurrency'] !== undefined && !positiveInt(config['write-concurrency'])) problems.push(`write-concurrency must be a positive integer (${HINT}).`);
   checkReadCommands(config['read-commands'], problems);
+  if ('explore-subagents' in config) problems.push(`explore-subagents was renamed to utility-subagents (${HINT}).`);
   for (const key of Object.keys(config)) {
-    if (!TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
+    if (key !== 'explore-subagents' && !TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
   }
   let readKeys: string[] = [];
   const read = config['read-delegates'];
@@ -252,8 +257,8 @@ export function validateConfig(config: unknown): string[] {
   }
   const write = config['write-subagents'];
   if (write !== undefined) checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
-  const explore = config['explore-subagents'];
-  if (explore !== undefined) checkPlatformTable('explore-subagents', explore, problems, (where, entry) => checkLevelConfig(where, entry, problems));
+  const utility = config['utility-subagents'];
+  if (utility !== undefined) checkPlatformTable('utility-subagents', utility, problems, (where, entry) => checkLevelConfig(where, entry, problems, true));
   if (config['phases'] !== undefined) checkPhases(config['phases'], readKeys, problems);
   return problems;
 }

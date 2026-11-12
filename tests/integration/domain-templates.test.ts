@@ -177,6 +177,14 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
       }
       text = stripped;
     }
+    if (name === 'explorer-brief.md') {
+      const stripped = text.split('\n').filter((line) => !/^\s*<!--\s*\/?kind:\s*(map|research)\s*-->\s*$/.test(line)).join('\n');
+      assert.ok(!/<!--/.test(stripped), `${name} contains non-kind <!--`);
+      for (const line of text.split('\n').filter((line) => line.includes('<!--'))) {
+        assert.match(line, /^\s*<!--\s*\/?kind:\s*(map|research)\s*-->\s*$/, `${name}: invalid kind tag ${line.trim()}`);
+      }
+      text = stripped;
+    }
     for (const token of [/<!--/, /rebuttal/i, /consensus/i]) assert.ok(!token.test(text), `${name} contains ${String(token)}`);
   }
 });
@@ -233,7 +241,7 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   assert.ok(revision.includes('for a confirmed standalone spec revision that cannot, use the [note fallback](toolkit.md#note), which grants no edit or approval authority'));
   const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8').replace(/\s+/g, ' ');
   for (const rule of ['With a plan, its `## Key Decisions & Context` entries are settled', 'An attached "Approved technical-design context"', 'Obey an explicit Git range in Scope', 'when the diff changes a shared invariant, contract, or signature']) assert.ok(codePrompt.includes(rule), rule);
-  const explorerInputs: Record<string, string> = { objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md', cliPath: 'skills/dispatch/scripts/toolkit/cli.ts', session: '.scratch/session', mapBudget: '16,384', contextMapTemplate: readFileSync(new URL('context-map.md', root), 'utf8'), quality: qualityCriteria(quality, 'explorer', 0, specStage) };
+  const explorerInputs: Record<string, string> = { objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', limit: '150,000 tokens', nestedLaunch: 'model `claude-haiku-5-5`, effort `medium`', replyLimit: '8,192', outputPath: '.scratch/session/work.spec.context.md', cliPath: 'skills/dispatch/scripts/toolkit/cli.ts', session: '.scratch/session', mapBudget: '16,384', contextMapTemplate: readFileSync(new URL('context-map.md', root), 'utf8'), quality: qualityCriteria(quality, 'explorer', 0, specStage) };
   const renderedExplorer = explorer.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
     assert.ok(Object.hasOwn(explorerInputs, name), name);
     return explorerInputs[name]!;

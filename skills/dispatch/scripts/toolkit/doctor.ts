@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { CONFIG_CANDIDATES, loadConfig, validateConfig } from '../lib/config.ts';
+import { CONFIG_CANDIDATES, HINT, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
 import { opencodeSubagentModels, type ProviderKey } from '../lib/platform.ts';
-import { resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type SubagentEntry } from '../policy/roster.ts';
+import { normalizeProvider, resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
@@ -19,24 +19,22 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [];
   const writers: Record<string, ResolvedSubagent> = {};
-  const explorers: Record<string, ResolvedSubagent> = {};
-  let utility: Record<string, ResolvedSubagent & { subagentModels?: string[] }> = {};
+  let utility: Record<string, ResolvedUtility & { subagentModels?: string[] }> = {};
   let sandboxRemoved: string[] = [], writeConcurrency = 1;
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
     problems = validateConfig(loaded.config);
     if (!problems.length) { writeConcurrency = (loaded.config['write-concurrency'] as number) ?? 1;
-      const writerTable = loaded.config['write-subagents'] as Record<string, LevelMap<SubagentEntry>>;
+      const writerTable = (loaded.config['write-subagents'] ?? {}) as Record<string, LevelMap<SubagentEntry>>;
       for (const [platform, levels] of Object.entries(writerTable)) writers[platform] = resolveSubagent(resolveLevel(levels, level)!);
-      const explorerTable = loaded.config['explore-subagents'] as Record<string, SubagentEntry>;
-      for (const [platform, entry] of Object.entries(explorerTable)) explorers[platform] = resolveSubagent(entry);
-      utility = resolveUtility(explorerTable, writerTable);
+      utility = resolveUtility((loaded.config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>);
       const opencode = utility['opencode'];
       if (opencode) {
         const subagentModels = opencodeSubagentModels(opencode.models, opencode.effort);
         if (subagentModels !== undefined) utility['opencode'] = {...opencode, subagentModels};
       }
+      if (host && !utility[normalizeProvider(host)]) problems.push(`Missing required entry "utility-subagents.${host}" (${HINT}).`);
       sandboxRemoved = resolveRoster({
         level, readDelegates: loaded.config['read-delegates'] as Record<string, ReadDelegate>, orchestrator: host ? { platform: host } : null,
         ...(liveness ? { liveness } : {}), ...(sandboxSupported ? { sandboxSupported } : {}),
@@ -50,7 +48,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
     ok: reason === undefined, ...(reason ? { reason } : {}),
     host: { platform: host, source: host ? 'declared' : 'none' },
     integrity,
-    config: { path: configPath, problems }, level, writers, explorers, utility, sandboxRemoved,
+    config: { path: configPath, problems }, level, writers, utility, sandboxRemoved,
     writeConcurrency,
   };
 }

@@ -21,7 +21,7 @@ Your current agent is the **host agent**. It acts as your deputy: it routes heav
 
 A typical run:
 
-1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's `explore-subagents` entry, else its lowest `write-subagents` entry; with neither, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that lays out two or three approach options with a recommendation, where one option is the simplest worth considering and each option states its trade-off, limitation and risk, and asks only decisions that change scope, behavior or risk; when nothing is open, it skips the questions and goes straight to the confirmation, which also carries the critique without `grilling`. It then writes the spec and, in the exchange that ends the questions, confirms what it assumed and recommends `plan` or `design`.
+1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's required `utility-subagents` entry (Doctor reports a missing entry; report a blocker); when the host has no launch tool, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that lays out two or three approach options with a recommendation, where one option is the simplest worth considering and each option states its trade-off, limitation and risk, and asks only decisions that change scope, behavior or risk; when nothing is open, it skips the questions and goes straight to the confirmation, which also carries the critique without `grilling`. It then writes the spec and, in the exchange that ends the questions, confirms what it assumed and recommends `plan` or `design`.
 2. **Ground the scope, then write and review.** After you confirm the spec, Dispatch grounds the confirmed scope before authoring a standalone plan or design. It then writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
 3. **Approve.** At `medium` and above you approve the spec, the artifact, and any proposed level before implementation. At `low`, Dispatch shows them at handoff.
 4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
@@ -140,7 +140,7 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 | `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
-| `explore-subagents` | Optional native explorers for research and grounding; utility subagents use the same entry. Without one, both use the lowest `write-subagents` entry |
+| `utility-subagents` | Native explorers and utility subagents per platform in use; requires a token `context-limit` |
 | `phases` | Optional review breadth and round limits |
 
 The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.
