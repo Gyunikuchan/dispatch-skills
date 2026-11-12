@@ -91,6 +91,12 @@ export function underfillNote(roster: {underfill?: Underfill}): string {
   return `; underfill ${u.resolved}/${u.configured} targets, host ${u.host ?? 'undetected'}, excluded native-only: ${u.excluded.join(', ') || 'none'}${u.sandboxUnsupported?.length ? `, sandbox unsupported: ${u.sandboxUnsupported.join(', ')}` : ''}`;
 }
 
+export function nativePendingNote(count: number, wave: 'pending' | 'done' | undefined): string {
+  const noun = count === 1 ? 'native slot pending' : 'native slots pending';
+  if (wave === 'pending') return `${count} ${noun}; launch them now, then rerun this call to start the CLI wave`;
+  return `${count} ${noun}; wait for every retained handle to finish or be reported, launch any slot without a handle, then rerun to consume`;
+}
+
 type FanoutState = {nativeFirst?: true; cliWaveDone?: true; reserveUsedBy?: string; nativeLaunched?: true};
 
 export function cliWaveState(dir: string): 'pending' | 'done' | undefined {

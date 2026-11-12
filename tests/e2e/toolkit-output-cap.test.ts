@@ -49,4 +49,20 @@ describe('help command',()=>{
       assert.deepEqual(fs.readdirSync(dir),[]);
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   });
+  test('runs with empty stderr for each host module type',()=>{
+    const hosts=[{name:'typeless',manifest:{name:'host'}},{name:'commonjs',manifest:{name:'host',type:'commonjs'}}] as const;
+    for(const host of hosts){
+      const dir=fs.mkdtempSync(path.join(os.tmpdir(),'host-'));
+      try{
+        fs.writeFileSync(path.join(dir,'package.json'),JSON.stringify(host.manifest));
+        fs.cpSync(path.resolve('skills/dispatch'),path.join(dir,'dispatch'),{recursive:true});
+        const entry=path.join(dir,'dispatch','scripts','dispatch.ts');
+        const env={...process.env}; for(const key of ['NODE_OPTIONS','NODE_TEST_CONTEXT']) delete env[key];
+        const result=spawnSync(process.execPath,[entry,'help','call','table'],{cwd:dir,env,encoding:'utf8'});
+        assert.equal(result.status,0,host.name+' stderr: '+result.stderr);
+        assert.equal(result.stderr,'',host.name);
+        assert.ok(result.stdout.startsWith('### call table'),host.name);
+      } finally {fs.rmSync(dir,{recursive:true,force:true});}
+    }
+  });
 });

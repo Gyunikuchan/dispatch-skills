@@ -5,7 +5,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
+import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
@@ -713,7 +713,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         await writeBaselineIfMissing(dir, round.generation, baselineDirs, session, deps);
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
         const wave = cliWaveState(fanoutDir);
-        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + native.length + ' native slots pending' + (notice ? '; ' + notice : '') + underfillNote(round)};
+        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: 'review ' + review + ': ' + nativePendingNote(native.length, wave) + (notice ? '; ' + notice : '') + underfillNote(round)};
       }
       // A capture or compare failure never blocks finalization: it keeps all
       // replies and reports repositoryCheck. Runs after the existing same check,

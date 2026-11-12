@@ -138,6 +138,38 @@ test('ask run follows native-first launch wave consume order', async () => {
   } finally {f.cleanup();}
 });
 
+test('native pending summary states the launch order', async () => {
+  const f = fixture(); try {
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+      claude: {targets: [{medium: {model: 'target'}}]},
+    }, phases: {ask: {targets: {medium: 1}}}}));
+    f.deps.orchestrator = {platform: 'claude', model: null};
+    f.deps.liveness = {claude: true, agy: true};
+    const launched = await f.call();
+    assert.equal(launched.output.reason, 'native-pending');
+    assert.equal(launched.value.cliWave, 'pending');
+    assert.match(launched.output.summary, /1 native slot/);
+    const lower = launched.output.summary.toLowerCase();
+    assert.ok(lower.indexOf('launch') >= 0 && lower.indexOf('launch') < lower.indexOf('rerun'), launched.output.summary);
+  } finally {f.cleanup();}
+});
+
+test('native pending summary gives no immediate rerun after the wave', async () => {
+  const f = fixture(); try {
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+      claude: {targets: [{medium: {model: 'target'}}]},
+    }, phases: {ask: {targets: {medium: 1}}}}));
+    f.deps.orchestrator = {platform: 'claude', model: null};
+    f.deps.liveness = {claude: true, agy: true};
+    await f.call();
+    const waved = await f.call();
+    assert.equal(waved.output.reason, 'native-pending');
+    assert.equal(waved.value.cliWave, 'done');
+    assert.doesNotMatch(waved.output.summary, /at once/i);
+    assert.doesNotMatch(waved.output.summary, /launch them now/i);
+  } finally {f.cleanup();}
+});
+
 test('ask run attributes reserve and cross-provider native answers to their actual responder', async () => {
   for (const native of [false, true]) {
     const f = fixture(); try {

@@ -56,12 +56,14 @@ function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<st
   }
 }
 
-/** Hashes SKILL.md, scripts (.ts), and references (.md/.json), sorted by path. */
+/** Hashes SKILL.md, scripts (.ts plus the package manifest), and references (.md/.json), sorted by path. */
 export function generateSkillHashes(skillDir: string): Record<string, string> {
   const entries: Record<string, string> = {};
   const skillMd = path.join(skillDir, 'SKILL.md');
   if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashSkillFile(skillMd);
   collect(skillDir, 'scripts', SCRIPT_EXTENSION, entries);
+  const packageManifest = path.join(skillDir, 'scripts', 'package.json');
+  if (fs.existsSync(packageManifest)) entries['scripts/package.json'] = hashSkillFile(packageManifest);
   collect(skillDir, 'references', REFERENCE_EXTENSION, entries);
   return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key] ?? '']));
 }

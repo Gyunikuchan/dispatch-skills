@@ -79,3 +79,19 @@ test('integrity drift reports ts whitespace and markdown or json meaning changes
     fs.writeFileSync(target, original);
   }
 });
+
+test('integrity tracks the scripts package manifest', () => {
+  const skill = skillWith({
+    'SKILL.md': '# skill\n',
+    'scripts/a.ts': 'export {};\n',
+    'scripts/package.json': '{"type":"module"}\n',
+  });
+  fs.writeFileSync(path.join(skill, MANIFEST_NAME), JSON.stringify(generateSkillHashes(skill)));
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+  fs.writeFileSync(path.join(skill, 'scripts', 'package.json'), '{\n  "type": "module"\n}\n');
+  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
+  fs.rmSync(path.join(skill, 'scripts', 'package.json'));
+  assert.deepEqual(checkIntegrity(skill), { status: 'drift', violations: ['scripts/package.json'] });
+  fs.writeFileSync(path.join(skill, 'scripts', 'package.json'), '{"type":"commonjs"}\n');
+  assert.deepEqual(checkIntegrity(skill), { status: 'drift', violations: ['scripts/package.json'] });
+});

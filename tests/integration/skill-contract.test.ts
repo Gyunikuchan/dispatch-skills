@@ -448,6 +448,37 @@ test('native voice launch order failure reports and change rules are documented'
   ]) assert.ok(toolkit.includes(term), term);
   const ask = read(root + 'references/verbs/ask.md');
   for (const term of ['`cliWave: "pending"`', '--native-failed']) assert.ok(ask.includes(term), term);
+  const nativeSlotReplies = toolkit.split('## Native-slot replies')[1]?.split('\n## ')[0] ?? '';
+  const reviewRun = section(toolkit, 'review run');
+  const askRun = section(toolkit, 'ask run');
+  const nativeSlots = providers.split('## Native slots')[1]?.split('\n## ')[0] ?? '';
+  for (const [name, text] of [['toolkit native-slot replies', nativeSlotReplies], ['toolkit review run', reviewRun], ['toolkit ask run', askRun], ['providers native slots', nativeSlots], ['verbs/ask', ask]] as const) {
+    assert.ok(text.toLowerCase().includes('cliwave'), name + ': mentions cliWave');
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    const pendings = sentences.filter(sentence => {
+      const lower = sentence.toLowerCase();
+      return lower.includes('rerun') && (lower.includes('pending') || lower.includes('cliwave') || lower.includes('backgrounded rerun') || lower.includes('cli wave'));
+    });
+    assert.ok(pendings.length > 0, name + ': pending rerun instruction');
+    for (const pending of pendings) {
+      const lower = pending.toLowerCase();
+      assert.ok(/launch/.test(lower) && lower.includes('rerun'), name + ': pending sentence names launch and rerun');
+      const rerunAtOnce = lower.search(/rerun at once/);
+      const rerunIdx = rerunAtOnce >= 0 ? rerunAtOnce : lower.indexOf('rerun');
+      const launchEvery = lower.search(/launch every native slot/);
+      assert.ok(launchEvery >= 0 && launchEvery < rerunIdx, name + ': native-slot launch precedes pending rerun');
+      assert.ok(lower.search(/retain/) >= 0 && lower.search(/retain/) < rerunIdx, name + ': handle retained before pending rerun');
+      assert.ok(lower.search(/handle/) >= 0 && lower.search(/handle/) < rerunIdx, name + ': handle retained before pending rerun');
+      assert.match(pending, /every native slot/i, name + ': every native slot launches');
+      for (const match of pending.matchAll(/rerun at once/gi)) {
+        const before = pending.slice(0, (match.index ?? 0)).toLowerCase();
+        assert.ok(/launch every native slot/.test(before), name + ': rerun at once follows native-slot launch');
+      }
+    }
+  }
+  assert.match(nativeSlots, /Rerun the consume call only after the complete reply is in `replyPath`/);
+  assert.match(reviewRun, /Start a long `review run` as a background command and wait for its completion notice/);
+  assert.match(reviewRun, /before the backgrounded rerun/i);
 });
 test('native slots launch by prompt path', t => {
   const providers = read(root + 'references/providers.md');

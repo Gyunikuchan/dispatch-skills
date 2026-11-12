@@ -2313,3 +2313,17 @@ test('rerun resumes with the resumes spent before the stop', async () => {
     await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
   }finally{f.cleanup();}
 });
+
+test('native pending note covers each wave state', async () => {
+  const {nativePendingNote}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const pending=nativePendingNote(2,'pending');
+  assert.match(pending,/2 native slots pending/);
+  assert.ok(pending.toLowerCase().indexOf('launch')<pending.toLowerCase().indexOf('rerun'),'launch precedes rerun');
+  assert.match(pending,/launch them now/i);
+  for(const wave of ['done',undefined] as const){
+    const note=nativePendingNote(1,wave);
+    assert.match(note,/1 native slot pending/);
+    assert.doesNotMatch(note,/at once/i);
+    assert.doesNotMatch(note,/launch them now/i);
+  }
+});

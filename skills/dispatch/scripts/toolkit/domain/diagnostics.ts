@@ -118,6 +118,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize severity spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief cli confirmations coverage deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-checkout review-findings review-identity status types verify walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
+  'scripts/package.json',
 ]);
 
 // SECTION: Field gates

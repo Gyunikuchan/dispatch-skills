@@ -104,6 +104,34 @@ test('native pending lists blocked reasons', async () => {
   } finally { f.cleanup(); }
 });
 
+test('native pending summary states the launch order', async () => {
+  const f = await fixture();
+  try {
+    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+    const pending = await f.call();
+    assert.equal(pending.exit, 4);
+    assert.equal(pending.output.reason, 'native-pending');
+    assert.equal(pending.value.cliWave, 'pending');
+    assert.match(pending.output.summary, /1 native slot/);
+    const lower = pending.output.summary.toLowerCase();
+    assert.ok(lower.indexOf('launch') >= 0 && lower.indexOf('launch') < lower.indexOf('rerun'), pending.output.summary);
+  } finally { f.cleanup(); }
+});
+
+test('native pending summary gives no immediate rerun after the wave', async () => {
+  const f = await fixture();
+  try {
+    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+    await f.call();
+    const waved = await f.call();
+    assert.equal(waved.exit, 4);
+    assert.equal(waved.output.reason, 'native-pending');
+    assert.equal(waved.value.cliWave, 'done');
+    assert.doesNotMatch(waved.output.summary, /at once/i);
+    assert.doesNotMatch(waved.output.summary, /launch them now/i);
+  } finally { f.cleanup(); }
+});
+
 test('many blocked reasons keep blocker notice', async () => {
   const f = await fixture();
   try {
