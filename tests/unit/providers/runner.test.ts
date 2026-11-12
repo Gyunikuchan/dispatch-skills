@@ -1151,3 +1151,243 @@ test('cumulative session usage reaches the observer without diagnostics', async 
   h.finish(ok({stdout:'FINAL'}));await run;
   assert.equal(rows[1].usage.input,0);
 });
+
+test('agy runner normalizes model and effort and unions multi-model session usage', async () => {
+  const { sumSessionUsage } = await import('../../../skills/dispatch/scripts/providers/runner.ts');
+  const { agy } = await import('../../../skills/dispatch/scripts/providers/agy.ts');
+
+  // 1. sumSessionUsage multi-model and effort union semantics
+  const row1 = {
+    input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+    actualModels: ['model-a'], actualEffort: 'medium',
+    models: { 'model-a': { input: 100, output: 10 } },
+  };
+  const row2 = {
+    input: 200, output: 20, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+    actualModels: ['model-b'], actualEffort: 'medium',
+    models: { 'model-b': { input: 200, output: 20 } },
+  };
+  const united = sumSessionUsage([row1, row2]);
+  assert.deepEqual(united?.actualModels, ['model-a', 'model-b']);
+  assert.equal(united?.actualEffort, 'medium');
+  assert.deepEqual(united?.models?.['model-a'], { input: 100, output: 10 });
+  assert.deepEqual(united?.models?.['model-b'], { input: 200, output: 20 });
+
+  // Mixed efforts -> actualEffort: null
+  const mixedEffort = sumSessionUsage([row1, { ...row2, actualEffort: 'high' }]);
+  assert.equal(mixedEffort?.actualEffort, null);
+  const withNullEffort = sumSessionUsage([row1, { ...row2, actualEffort: null }]);
+  assert.equal(withNullEffort?.actualEffort, null);
+  const { actualEffort: _e1, ...row1NoEffort } = row1;
+  const { actualEffort: _e2, ...row2NoEffort } = row2;
+  const withUndefEffort = sumSessionUsage([row1NoEffort, row2NoEffort]);
+  assert.equal(withUndefEffort?.actualEffort, undefined);
+
+  // 2. usageDelta per-invocation model/effort delta attribution on resumed agy runs
+  {
+    // model A/medium in invocation 1 then model B/high in invocation 2
+    const h = harness(posix);
+    const u1 = {
+      input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a'], actualEffort: 'medium',
+      models: { 'model-a': { input: 100, output: 10 } },
+    };
+    const u2 = {
+      input: 300, output: 30, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a', 'model-b'], actualEffort: 'high',
+      models: { 'model-a': { input: 100, output: 10 }, 'model-b': { input: 200, output: 20 } },
+    };
+    let call = 0;
+    const spec = {
+      ...makeNudgeSpec('sess-multi'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => (call++ === 0 ? u1 : u2),
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ exit: 1, stdout: 'empty' }));
+    await flush(); await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.model, 'model-a');
+    assert.equal(done.invocations[0]?.effort, 'medium');
+    assert.deepEqual(done.invocations[0]?.usage?.actualModels, ['model-a']);
+
+    assert.equal(done.invocations[1]?.model, 'model-b');
+    assert.equal(done.invocations[1]?.effort, 'high');
+    assert.deepEqual(done.invocations[1]?.usage?.actualModels, ['model-b']);
+    assert.deepEqual(done.invocations[1]?.usage?.models?.['model-b'], { input: 200, output: 20 });
+    assert.equal(done.invocations[1]?.usage?.actualEffort, 'high');
+  }
+
+  {
+    // model A/medium in invocation 1 then model B with no effort label in Tag 1.21 records effort: null
+    const h = harness(posix);
+    const u1 = {
+      input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a'], actualEffort: 'medium',
+      models: { 'model-a': { input: 100, output: 10 } },
+    };
+    const u2 = {
+      input: 300, output: 30, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a', 'model-b'], actualEffort: null,
+      models: { 'model-a': { input: 100, output: 10 }, 'model-b': { input: 200, output: 20 } },
+    };
+    let call = 0;
+    const spec = {
+      ...makeNudgeSpec('sess-null-effort'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => (call++ === 0 ? u1 : u2),
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ exit: 1, stdout: 'empty' }));
+    await flush(); await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[1]?.effort, null);
+    assert.equal(done.invocations[1]?.usage?.actualEffort, null);
+  }
+
+  {
+    // Tag 1.19 model without Tag 1.21 leaves actualEffort: undefined so Invocation.effort falls back to normalized launch effort
+    const h = harness(posix);
+    const u1 = {
+      input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a'], actualEffort: 'medium',
+      models: { 'model-a': { input: 100, output: 10 } },
+    };
+    const u2 = {
+      input: 300, output: 30, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a', 'model-b'], actualEffort: undefined,
+      models: { 'model-a': { input: 100, output: 10 }, 'model-b': { input: 200, output: 20 } },
+    };
+    let call = 0;
+    const spec = {
+      ...makeNudgeSpec('sess-undef-effort'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => (call++ === 0 ? u1 : u2),
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ exit: 1, stdout: 'empty' }));
+    await flush(); await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[1]?.effort, 'low');
+    assert.equal(done.invocations[1]?.usage?.actualEffort, undefined);
+  }
+
+  {
+    // incomplete prior row lacking models followed by a DB-less envelope model/effort run preserves explicit envelope attribution
+    const h = harness(posix);
+    const envelopeUsage = {
+      input: 50, output: 10, scope: 'invocation' as const, provenance: 'agy.usage.envelope', inputSemantics: 'uncached' as const,
+      actualModels: ['envelope-model'], actualEffort: 'high',
+      models: { 'envelope-model': { input: 50, output: 10 } },
+    };
+    const spec = {
+      ...makeNudgeSpec('sess-envelope'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => envelopeUsage,
+    };
+    const priorUsage = { input: 20, output: 5, scope: 'invocation' as const, provenance: 'agy.usage', inputSemantics: 'uncached' as const };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'sess-envelope', priorUsage, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.model, 'envelope-model');
+    assert.equal(done.invocations[0]?.effort, 'high');
+    assert.deepEqual(done.invocations[0]?.usage?.actualModels, ['envelope-model']);
+    assert.equal(done.invocations[0]?.usage?.actualEffort, 'high');
+  }
+
+  {
+    // DB-less non-envelope run drops actualModels/actualEffort and falls back to normalized launch values
+    const h = harness(posix);
+    const nonEnvelopeUsage = {
+      input: 50, output: 10, scope: 'invocation' as const, provenance: 'agy.usage', inputSemantics: 'uncached' as const,
+    };
+    const spec = {
+      ...makeNudgeSpec('sess-non-envelope'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => nonEnvelopeUsage,
+    };
+    const priorUsage = { input: 20, output: 5, scope: 'invocation' as const, provenance: 'agy.usage', inputSemantics: 'uncached' as const };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'sess-non-envelope', priorUsage, model: 'launch-model-trial', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.model, 'launch-model');
+    assert.equal(done.invocations[0]?.effort, 'low');
+    assert.equal(done.invocations[0]?.usage?.actualModels, undefined);
+    assert.equal(done.invocations[0]?.usage?.actualEffort, undefined);
+  }
+
+  {
+    // multi-model single invocation sets Invocation.model = actualModels[0]
+    const h = harness(posix);
+    const multiUsage = {
+      input: 100, output: 20, scope: 'invocation' as const, provenance: 'agy.usage', inputSemantics: 'uncached' as const,
+      actualModels: ['first-model', 'second-model'], actualEffort: 'medium',
+      models: { 'first-model': { input: 60, output: 10 }, 'second-model': { input: 40, output: 10 } },
+    };
+    const spec = {
+      ...makeNudgeSpec('sess-multi-single'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => multiUsage,
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.model, 'first-model');
+  }
+
+  {
+    // resumed agy run whose per-model counters are unchanged deletes empty models map so Invocation falls back to launch model
+    const h = harness(posix);
+    const u1 = {
+      input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a'], actualEffort: 'medium',
+      models: { 'model-a': { input: 100, output: 10 } },
+    };
+    const u2 = {
+      input: 100, output: 10, scope: 'invocation' as const, provenance: 'fixture', inputSemantics: 'uncached' as const,
+      actualModels: ['model-a'], actualEffort: 'medium',
+      models: { 'model-a': { input: 100, output: 10 } },
+    };
+    let call = 0;
+    const spec = {
+      ...makeNudgeSpec('sess-unchanged-models'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => (call++ === 0 ? u1 : u2),
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ exit: 1, stdout: 'empty' }));
+    await flush(); await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[1]?.model, 'launch-model');
+    assert.equal(done.invocations[1]?.usage?.models, undefined);
+  }
+
+  {
+    // resumed envelope run with multi-model usage and prior usage without models deletes models map but retains actualModels
+    const h = harness(posix);
+    const multiEnvelopeUsage = {
+      input: 150, output: 30, scope: 'invocation' as const, provenance: 'agy.usage.envelope', inputSemantics: 'uncached' as const,
+      actualModels: ['model-x', 'model-y'], actualEffort: 'medium',
+      models: { 'model-x': { input: 100, output: 20 }, 'model-y': { input: 50, output: 10 } },
+    };
+    const spec = {
+      ...makeNudgeSpec('sess-envelope-multi-resume'),
+      id: 'agy' as const,
+      resumeUsage: 'cumulative' as const,
+      usage: () => multiEnvelopeUsage,
+    };
+    const priorUsage = { input: 50, output: 10, scope: 'invocation' as const, provenance: 'agy.usage', inputSemantics: 'uncached' as const };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'sess-envelope-multi-resume', priorUsage, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout: 'FINAL' }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.usage?.models, undefined);
+    assert.deepEqual(done.invocations[0]?.usage?.actualModels, ['model-x', 'model-y']);
+  }
+});

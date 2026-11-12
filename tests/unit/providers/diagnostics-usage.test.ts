@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
+import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
   codex: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8')),
@@ -101,4 +106,291 @@ test('codex sums distinct turns', () => {
   const equalTurns = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'));
   assert.equal(equalTurns?.input, 200);
   assert.equal(equalTurns?.output, 20);
+});
+
+function encodeVarint(val: number | bigint): number[] {
+  const bytes: number[] = [];
+  let n = BigInt(val);
+  while (n > 0x7fn) {
+    bytes.push(Number((n & 0x7fn) | 0x80n));
+    n >>= 7n;
+  }
+  bytes.push(Number(n & 0x7fn));
+  return bytes;
+}
+function encodeTag(fieldNum: number, wireType: number): number[] {
+  return encodeVarint((fieldNum << 3) | wireType);
+}
+function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
+  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
+  return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
+}
+function buildGenMetadataBlob(options: {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  reasoning?: number;
+  modelSlug?: string;
+  displayName?: string;
+  lastStepIndex?: number;
+  unknownField?: boolean;
+}): Uint8Array {
+  const tag1Fields: number[] = [];
+  const counters: number[] = [];
+  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
+  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
+  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
+  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
+  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
+  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  if (options.lastStepIndex !== undefined) {
+    const kv = [
+      ...encodeLengthDelimited(1, 'last_step_index'),
+      ...encodeLengthDelimited(2, String(options.lastStepIndex)),
+    ];
+    tag1Fields.push(...encodeLengthDelimited(20, kv));
+  }
+  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  if (options.unknownField) {
+    tag1Fields.push(...encodeTag(99, 1), 1, 2, 3, 4, 5, 6, 7, 8);
+  }
+  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
+}
+
+test('agy model and effort normalization and gen_metadata attribution', () => {
+  // 1. normalizeAgyModelEffort
+  // display-name effort precedence over rawEffort and rawModel suffix
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash (Medium)'), { model: 'gemini-3.8-flash', effort: 'medium' });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash'), { model: 'gemini-3.8-flash', effort: 'high' });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', null, 'Gemini 3.8 Flash'), { model: 'gemini-3.8-flash', effort: 'low' });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash', null, null), { model: 'gemini-3.8-flash', effort: null });
+
+  // backend suffixes -trial, -tiered, -control, -n
+  assert.deepEqual(normalizeAgyModelEffort('gemini-4-argon-trial'), { model: 'gemini-4-argon', effort: null });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-tiered'), { model: 'gemini-3.8-flash', effort: null });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-control'), { model: 'gemini-3.8-flash', effort: null });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-n'), { model: 'gemini-3.8-flash', effort: null });
+
+  // Claude / Gemini / GPT-OSS naming
+  assert.deepEqual(normalizeAgyModelEffort('c0', 'low', 'Claude Opus 5.5 (Low)'), { model: 'claude-opus-5-5', effort: 'low' });
+  assert.deepEqual(normalizeAgyModelEffort(null, null, 'Gemini 4 Argon (Medium)'), { model: 'gemini-4-argon', effort: 'medium' });
+  assert.deepEqual(normalizeAgyModelEffort(null, null, 'GPT-OSS 120B (High)'), { model: 'gpt-oss-120b', effort: 'high' });
+  // rawModel containing display name with parenthesized effort
+  assert.deepEqual(normalizeAgyModelEffort('Gemini 4 Argon (Medium)'), { model: 'gemini-4-argon', effort: 'medium' });
+
+  // 2. decodeAgyGenMetadata
+  const blob = buildGenMetadataBlob({
+    input: 1200,
+    output: 80,
+    cacheRead: 300,
+    reasoning: 50,
+    modelSlug: 'gemini-4-argon-trial',
+    displayName: 'Gemini 4 Argon (Medium)',
+    lastStepIndex: 42,
+    unknownField: true,
+  });
+  const decoded = decodeAgyGenMetadata(blob);
+  assert.deepEqual(decoded, {
+    model: 'gemini-4-argon',
+    effort: 'medium',
+    hasDisplayName: true,
+    lastStepIndex: 42,
+    input: 1200,
+    output: 80,
+    cacheRead: 300,
+    reasoning: 50,
+  });
+
+  // non-throwing on truncated or malformed buffers
+  assert.doesNotThrow(() => decodeAgyGenMetadata(blob.subarray(0, 15)));
+  assert.doesNotThrow(() => decodeAgyGenMetadata(new Uint8Array([0xff, 0xff, 0xff])));
+  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array(0)), { model: null, effort: null });
+  // varint negative/overflow does not hang
+  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array([0x0a, 0xfa, 0xff, 0xff, 0xff, 0x0f])), { model: null, effort: null });
+
+  // 3. readAgySqliteGenMetadata
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-usage-test-'));
+  try {
+    const dbPath = path.join(tmpDir, 'test.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
+    const insertStmt = db.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+    insertStmt.run(0, blob);
+    db.close();
+
+    const readBlobs = readAgySqliteGenMetadata(dbPath);
+    assert.equal(readBlobs?.length, 1);
+    assert.deepEqual(readBlobs[0], blob);
+
+    // 64 MiB MAX_FILE_BYTES cap
+    assert.equal(readAgySqliteGenMetadata(dbPath, { maxBytes: 10 }), null);
+    assert.throws(() => readAgySqliteGenMetadata(dbPath, { maxBytes: 10, throwOnError: true }), /maxBytes/);
+
+    // 4. agy.usage with context and profile resolution
+    const tempHome = path.join(tmpDir, 'home');
+    const cliConvDir = path.join(tempHome, '.gemini', 'antigravity-cli', 'conversations');
+    fs.mkdirSync(cliConvDir, { recursive: true });
+
+    // multi-turn DB: turn 0 has effort, turn 1 has no effort
+    const conv1Id = 'c1-multi';
+    const conv1Path = path.join(cliConvDir, `${conv1Id}.db`);
+    const db1 = new DatabaseSync(conv1Path);
+    db1.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
+    const insert1 = db1.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+    const turn0 = buildGenMetadataBlob({ input: 100, output: 10, displayName: 'Gemini 4 Argon (High)', modelSlug: 'gemini-4-argon' });
+    const turn1 = buildGenMetadataBlob({ input: 264, output: 35, displayName: 'Gemini 4 Argon', modelSlug: 'gemini-4-argon' });
+    insert1.run(0, turn0);
+    insert1.run(1, turn1);
+    db1.close();
+
+    const makePlatform = (home: string): PlatformEnv => ({
+      os: process.platform as PlatformEnv['os'],
+      arch: 'x64',
+      wsl: false,
+      bubblewrap: false,
+      argvLimit: 100000,
+      home,
+      path: [],
+      pathExt: [],
+    });
+
+    const stdout1 = JSON.stringify({
+      conversation_id: conv1Id,
+      usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824 },
+    });
+    const parsed1 = agy.usage?.(stdout1, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: { ANTIGRAVITY_APP_DATA_DIR: '/other/host/dir' },
+    });
+    assert.deepEqual(parsed1, {
+      input: 364,
+      output: 45,
+      cacheRead: 7824,
+      reasoning: 39,
+      scope: 'invocation',
+      provenance: 'agy.usage',
+      inputSemantics: 'uncached',
+      actualModels: ['gemini-4-argon'],
+      models: {
+        'gemini-4-argon': { input: 364, output: 45, cacheRead: 7824, reasoning: 39 },
+      },
+      actualEffort: null, // turn 1 had Tag 1.21 without effort!
+    });
+
+    // DB where Tag 1.21 is absent
+    const conv2Id = 'c2-no-display';
+    const conv2Path = path.join(cliConvDir, `${conv2Id}.db`);
+    const db2 = new DatabaseSync(conv2Path);
+    db2.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
+    const insert2 = db2.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+    insert2.run(0, buildGenMetadataBlob({ input: 50, output: 5, modelSlug: 'gemini-3.8-flash' }));
+    db2.close();
+
+    const stdout2 = JSON.stringify({
+      conversation_id: conv2Id,
+      usage: { input_tokens: 50, output_tokens: 5 },
+    });
+    const parsed2 = agy.usage?.(stdout2, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.equal(parsed2?.actualEffort, undefined);
+    assert.deepEqual(parsed2?.actualModels, ['gemini-3.8-flash']);
+
+    // Envelope model/effort fallback when DB is absent
+    const stdoutEnv = JSON.stringify({
+      conversation_id: 'c-no-db',
+      model: 'gemini-3.8-flash-tiered',
+      effort: 'high',
+      usage: { input_tokens: 20, output_tokens: 5 },
+    });
+    const parsedEnv = agy.usage?.(stdoutEnv, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.deepEqual(parsedEnv, {
+      input: 20,
+      output: 5,
+      scope: 'invocation',
+      provenance: 'agy.usage.envelope',
+      inputSemantics: 'uncached',
+      actualModels: ['gemini-3.8-flash'],
+      actualEffort: 'high',
+      models: {
+        'gemini-3.8-flash': { input: 20, output: 5 },
+      },
+    });
+
+    // Envelope with display name and per-model usage when DB is absent
+    const stdoutEnvModels = JSON.stringify({
+      conversation_id: 'c-models-env',
+      model: 'Gemini 4 Argon (Medium)',
+      usage: { input_tokens: 300, output_tokens: 40 },
+      models: {
+        'Gemini 4 Argon (Medium)': { input_tokens: 200, output_tokens: 30 },
+        'gemini-3.8-flash': { input_tokens: 100, output_tokens: 10 },
+      },
+    });
+    const parsedEnvModels = agy.usage?.(stdoutEnvModels, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.deepEqual(parsedEnvModels?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
+    assert.equal(parsedEnvModels?.actualEffort, 'medium');
+    assert.equal(parsedEnvModels?.models?.['gemini-4-argon']?.input, 200);
+
+    // Envelope models map keys accumulate counters across identical slugs and infer key effort
+    const stdoutCollision = JSON.stringify({
+      conversation_id: 'c-collision',
+      usage: { input_tokens: 300, output_tokens: 40 },
+      models: {
+        'Gemini 4 Argon (Low)': { input_tokens: 150, output_tokens: 20 },
+        'Gemini 4 Argon (High)': { input_tokens: 150, output_tokens: 20 },
+      },
+    });
+    const parsedCollision = agy.usage?.(stdoutCollision, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.deepEqual(parsedCollision?.actualModels, ['gemini-4-argon']);
+    assert.equal(parsedCollision?.actualEffort, null);
+    assert.equal(parsedCollision?.models?.['gemini-4-argon']?.input, 300);
+
+    // Consensus key effort when all model keys agree
+    const stdoutAgree = JSON.stringify({
+      conversation_id: 'c-agree',
+      usage: { input_tokens: 300, output_tokens: 40 },
+      models: {
+        'Gemini 4 Argon (Medium)': { input_tokens: 150, output_tokens: 20 },
+        'Gemini 3.8 Flash (Medium)': { input_tokens: 150, output_tokens: 20 },
+      },
+    });
+    const parsedAgree = agy.usage?.(stdoutAgree, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.deepEqual(parsedAgree?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
+    assert.equal(parsedAgree?.actualEffort, 'medium');
+
+    // Traversal conversation_id rejection
+    const stdoutTraversal = JSON.stringify({
+      conversation_id: '../../x',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const parsedTraversal = agy.usage?.(stdoutTraversal, {
+      mode: 'cli',
+      platform: makePlatform(tempHome),
+      env: {},
+    });
+    assert.equal(parsedTraversal?.actualModels, undefined);
+    assert.equal(parsedTraversal?.actualEffort, undefined);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

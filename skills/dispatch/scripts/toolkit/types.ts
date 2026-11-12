@@ -14,7 +14,7 @@ export type QuotaDecision = { key: QuotaKey; generation: string | null; skipped:
 export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: number; decisions: QuotaDecision[] };
 
 export type DiagnosticModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number };
-export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage> };
+export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage>; actualEffort?: string | null };
 
 /** Why a launched CLI invocation has no measured usage; fixed enum so exception text never renders. */
 export type CoverageReason = 'no usage output';

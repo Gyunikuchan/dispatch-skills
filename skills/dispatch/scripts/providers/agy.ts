@@ -1,6 +1,7 @@
 // Antigravity (spec §6.1): headless plan mode; token, subscription, and execution
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
+import path from 'node:path';
 import { agyUsage } from '../lib/diagnostic-usage.ts';
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
@@ -42,7 +43,14 @@ export const agy: ProviderSpec = {
   resumeCommand: (id) => `conversation://${id}`,
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
-  usage: agyUsage,
+  usage(raw, context) {
+    const appDataDir = context?.appDataDir
+      ?? (context?.platform?.home && context?.mode ? path.join(context.platform.home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
+    return agyUsage(raw, {
+      ...(appDataDir ? { appDataDir } : {}),
+      ...(context?.readSqliteGenMetadata ? { readSqliteGenMetadata: context.readSqliteGenMetadata } : {}),
+    });
+  },
   resumeUsage: 'cumulative',
   attemptSession: (out: ProcessResult): string | null =>
     validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),

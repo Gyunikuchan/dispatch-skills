@@ -126,7 +126,7 @@ export type ProviderSpec = {
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
   stepEvent?(line: string): 'step-start' | 'step-end' | null;
-  usage?(raw: string): DiagnosticUsage | undefined;
+  usage?(raw: string, context?: { mode: ModeId; platform: PlatformEnv; env: Readonly<Record<string, string | undefined>>; appDataDir?: string; readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null }): DiagnosticUsage | undefined;
   resumeUsage?: 'per-launch' | 'cumulative' | undefined;
   /** Marks a launched invocation whose provider has no machine-readable usage output. */
   usageUnavailable?: CoverageReason;

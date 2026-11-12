@@ -4,6 +4,7 @@
 
 import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
+import { normalizeAgyModelEffort } from '../lib/diagnostic-usage.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
@@ -287,11 +288,29 @@ const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] a
 export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
   let completeModels = true;
+  const modelList: string[] = [];
+  const efforts: (string | null)[] = [];
   for (const row of rows) {
     if (!row) continue;
-    if (!total) { total = { ...row, input: 0, output: 0 }; delete total.models; delete total.cacheRead; delete total.cacheWrite; delete total.reasoning; }
+    if (!total) {
+      total = { ...row, input: 0, output: 0 };
+      delete total.models;
+      delete total.cacheRead;
+      delete total.cacheWrite;
+      delete total.reasoning;
+      delete total.actualModels;
+      delete total.actualEffort;
+    }
     if (!row.models) completeModels = false;
     for (const key of USAGE_KEYS) if (row[key] !== undefined) total[key] = (total[key] ?? 0) + row[key];
+    if (row.actualModels) {
+      for (const m of row.actualModels) {
+        if (!modelList.includes(m)) modelList.push(m);
+      }
+    }
+    if (row.actualEffort !== undefined) {
+      efforts.push(row.actualEffort);
+    }
     if (row.models) {
       total.models ??= Object.create(null) as NonNullable<DiagnosticUsage['models']>;
       for (const [model, part] of Object.entries(row.models)) {
@@ -300,18 +319,74 @@ export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]):
       }
     }
   }
-  if (total && !completeModels) delete total.models;
+  if (total) {
+    if (!completeModels) delete total.models;
+    if (modelList.length > 0) total.actualModels = modelList.slice(0, 8);
+    if (efforts.length > 0) {
+      const first = efforts[0]!;
+      const allAgree = efforts.every((e) => e === first && e !== null);
+      total.actualEffort = allAgree ? first : null;
+    }
+  }
   return total;
 }
 function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefined): DiagnosticUsage {
   const result: DiagnosticUsage = { ...usage, scope: 'invocation' };
-  if (usage.models && (!previous || previous.models)) result.models = Object.create(null) as NonNullable<DiagnosticUsage['models']>;
-  else delete result.models;
   for (const key of USAGE_KEYS) if (usage[key] !== undefined) result[key] = Math.max(0, usage[key] - (previous?.[key] ?? 0));
-  if (usage.models && result.models) for (const [model, part] of Object.entries(usage.models)) {
-    const target = { ...part };
-    for (const key of USAGE_KEYS) if (part[key] !== undefined) target[key] = Math.max(0, part[key] - (previous?.models && Object.hasOwn(previous.models, model) ? previous.models[model]?.[key] ?? 0 : 0));
-    result.models[model] = target;
+
+  if (previous !== undefined) {
+    if (!previous.models || !usage.models) {
+      if (usage.provenance === 'agy.usage.envelope') {
+        if (usage.models) {
+          const modelKeys = Object.keys(usage.models);
+          if (modelKeys.length === 1) {
+            result.models = Object.assign(Object.create(null), {
+              [modelKeys[0]!]: {
+                input: result.input,
+                output: result.output,
+                ...(result.cacheRead !== undefined ? { cacheRead: result.cacheRead } : {}),
+                ...(result.reasoning !== undefined ? { reasoning: result.reasoning } : {}),
+              },
+            });
+          } else {
+            delete result.models;
+          }
+        }
+      } else {
+        delete result.models;
+        delete result.actualModels;
+        delete result.actualEffort;
+      }
+    } else {
+      result.models = Object.create(null) as NonNullable<DiagnosticUsage['models']>;
+      const activeModels: string[] = [];
+      for (const [model, part] of Object.entries(usage.models)) {
+        const prevPart = Object.hasOwn(previous.models, model) ? previous.models[model] : undefined;
+        const target = { ...part };
+        let increased = false;
+        for (const key of USAGE_KEYS) {
+          if (part[key] !== undefined) {
+            const delta = Math.max(0, part[key] - (prevPart?.[key] ?? 0));
+            target[key] = delta;
+            if (delta > 0) increased = true;
+          }
+        }
+        if (increased) {
+          result.models[model] = target;
+          activeModels.push(model);
+        }
+      }
+      if (activeModels.length > 0) {
+        result.actualModels = activeModels;
+        if (usage.actualEffort !== undefined) result.actualEffort = usage.actualEffort;
+      } else {
+        delete result.models;
+        delete result.actualModels;
+        delete result.actualEffort;
+      }
+    }
+  } else if (usage.models) {
+    result.models = Object.assign(Object.create(null), usage.models);
   }
   return result;
 }
@@ -450,7 +525,8 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
     return await runAttempts(spec, req, mode, ports, track);
   } catch (error) {
     // NOTE: the original error object is rethrown unchanged; it only gains the attempts so far for the slot row.
-    recordInvocation(track.invocations, req, { provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: 'launch-failed' });
+    const normalized = spec.id === 'agy' ? normalizeAgyModelEffort(track.model, track.effort) : { model: track.model, effort: track.effort };
+    recordInvocation(track.invocations, req, { provider: spec.id, model: normalized.model, mode, effort: normalized.effort, launched: false, outcome: 'launch-failed' });
     if (error !== null && typeof error === 'object') (error as { invocations?: Invocation[] }).invocations = [...track.invocations];
     throw error;
   }
@@ -470,7 +546,8 @@ export const sandboxBlocked = (spec: ProviderSpec, sandbox: boolean, platform: P
 async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
   const { invocations } = track;
   const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null, steps?: LifecycleStep[]): DelegateRun => {
-    recordInvocation(invocations, req, { provider: spec.id, model: track.model, mode, effort: track.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
+    const normalized = spec.id === 'agy' ? normalizeAgyModelEffort(track.model, track.effort) : { model: track.model, effort: track.effort };
+    recordInvocation(invocations, req, { provider: spec.id, model: normalized.model, mode, effort: normalized.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
     return { outcome, result: null, attempts, briefFile, invocations };
   };
   const deadline = ports.clock.now() + req.timeoutMs;
@@ -545,14 +622,17 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let usage: DiagnosticUsage | undefined;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try {
-      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout) : undefined;
+      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env }) : undefined;
       const perLaunchClaudeUsage = spec.id === 'claude' && usage?.provenance === 'claude.result.usage';
       if (usage && current.resume && spec.resumeUsage === 'cumulative' && !perLaunchClaudeUsage) {
         const lastFresh = invocations.findLastIndex(row => !row.nudge);
         usage = usageDelta(usage, sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]));
       }
     } catch { usage = undefined; /* A usage parse failure cannot change provider results. */ }
-    recordInvocation(invocations, req, { provider: spec.id, model: current.model, mode, effort: current.effort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
+    const rowModel = spec.id === 'agy' ? (usage?.actualModels?.length ? usage.actualModels[0]! : normalizedLaunch.model) : current.model;
+    const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : current.effort;
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;

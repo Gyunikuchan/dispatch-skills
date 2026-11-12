@@ -3,11 +3,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
+import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
+import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
@@ -1124,4 +1127,121 @@ test('attempt persistence retries a failed write without repeating successful wr
   await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
   assert.equal(writes,1,'return does not repeat successful callback persistence');
  }finally{t.mock.restoreAll();f.cleanup();}
+});
+
+function encodeVarint(val: number | bigint): number[] {
+  const bytes: number[] = [];
+  let n = BigInt(val);
+  while (n > 0x7fn) {
+    bytes.push(Number((n & 0x7fn) | 0x80n));
+    n >>= 7n;
+  }
+  bytes.push(Number(n & 0x7fn));
+  return bytes;
+}
+function encodeTag(fieldNum: number, wireType: number): number[] {
+  return encodeVarint((fieldNum << 3) | wireType);
+}
+function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
+  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
+  return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
+}
+function buildGenMetadataBlob(options: {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  reasoning?: number;
+  modelSlug?: string;
+  displayName?: string;
+  lastStepIndex?: number;
+}): Uint8Array {
+  const tag1Fields: number[] = [];
+  const counters: number[] = [];
+  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
+  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
+  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
+  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
+  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
+  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  if (options.lastStepIndex !== undefined) {
+    const kv = [
+      ...encodeLengthDelimited(1, 'last_step_index'),
+      ...encodeLengthDelimited(2, String(options.lastStepIndex)),
+    ];
+    tag1Fields.push(...encodeLengthDelimited(20, kv));
+  }
+  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
+}
+
+test('agy delegate invocations render resolved model and effort in diagnostics report', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+
+    const turnInit = buildGenMetadataBlob({
+      input: 100, output: 20, cacheRead: 50, reasoning: 10,
+      modelSlug: 'gemini-4-argon-trial', displayName: 'Gemini 4 Argon (Medium)', lastStepIndex: 1,
+    });
+    const turnResume = buildGenMetadataBlob({
+      input: 150, output: 30, cacheRead: 60, reasoning: 15,
+      modelSlug: 'gemini-3.8-flash-tiered', displayName: 'Gemini 3.8 Flash (High)', lastStepIndex: 5,
+    });
+
+    const context = {
+      appDataDir: '/home/.gemini/antigravity-cli',
+      readSqliteGenMetadata: (file: string) => file.includes('conv-init') ? [turnInit] : [turnInit, turnResume],
+    };
+
+    const stdoutInit = JSON.stringify({ conversation_id: 'conv-init', usage: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, thinking_tokens: 10 } });
+    const stdoutResume = JSON.stringify({ conversation_id: 'conv-resume', usage: { input_tokens: 250, output_tokens: 50, cache_read_tokens: 110, thinking_tokens: 25 } });
+
+    const usageInit = agy.usage?.(stdoutInit, context as never);
+    const usageResume = agy.usage?.(stdoutResume, context as never);
+
+    f.deps.delegate = async (_provider, request) => {
+      const isResume = Boolean(request.resume);
+      const usage = isResume ? usageResume : usageInit;
+      const row = {
+        provider: 'agy' as const,
+        model: usage?.actualModels?.[0] ?? request.model,
+        effort: usage?.actualEffort !== undefined ? usage.actualEffort : request.effort,
+        mode: 'cli' as const,
+        launched: true,
+        outcome: 'ok',
+        ...(isResume ? { nudge: true as const } : {}),
+        ...(usage ? { usage } : {}),
+      };
+      request.onInvocation?.(row);
+      return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [row] };
+    };
+
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    const dir = path.join(f.session, 'work');
+    await observer.deps.delegate('agy', { promptPath: '/p.md', model: 'launch-m1', effort: 'low', sandbox: false, schemaPath: null, resume: null, cwd: f.root, timeoutMs: 5000, outputCapBytes: 100, attachments: [], logPath: path.join(dir, 'logs', 'agy[0].log'), briefPath: '/b.md' } as never, 'cli');
+    await observer.deps.delegate('agy', { promptPath: '/p.md', model: 'launch-m2', effort: 'low', sandbox: false, schemaPath: null, resume: 'conv-1', cwd: f.root, timeoutMs: 5000, outputCapBytes: 100, attachments: [], logPath: path.join(dir, 'logs', 'agy[0].log'), briefPath: '/b.md' } as never, 'cli');
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+
+    const fold = { records: [], lastSeq: 0, torn: null } as Fold;
+    const facts = sessionFacts(f.session, fold, 'complete');
+    assert.equal(facts.invocations.length, 2);
+
+    const reportPath = writeDiagnostics(f.session, facts);
+    const report = fs.readFileSync(reportPath, 'utf8');
+
+    // Tokens by stage should render resolved models without (configured)
+    assert.match(report, /### Tokens by stage/);
+    assert.match(report, /^\| ask \| agy \| delegate \| gemini-4-argon \| medium \|/m);
+    assert.match(report, /^\| ask \| agy \| delegate \| gemini-3.8-flash \| high \|/m);
+    assert.doesNotMatch(report, /gemini-4-argon \(configured\)/);
+    assert.doesNotMatch(report, /gemini-3.8-flash \(configured\)/);
+
+    // Appendix should render reportedModels
+    assert.match(report, /gemini-4-argon \(reported: gemini-4-argon\)/);
+  } finally {
+    f.cleanup();
+  }
 });

@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 15590 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, and explorer brief kind selection and utility subagent resolution (15579 lines); cutting was tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
+  // NOTE: 16500 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, explorer brief kind selection, utility subagent resolution, Antigravity model/effort normalization, gen_metadata protobuf decoding, and native Antigravity host-usage adapter (16421 lines); cutting and consolidation were tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
-    lines <= 15590,
-    `driver TS LOC ${lines} exceeds 15590 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 16500,
+    `driver TS LOC ${lines} exceeds 16500 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,

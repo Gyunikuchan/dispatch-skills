@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
 import { nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
 import { readTranscript, stageAt } from '../../../../skills/dispatch/scripts/toolkit/host-usage/read.ts';
@@ -100,4 +101,83 @@ test('host discovery ignores non-directory entries without masking missing ids',
       const missing = readHostUsage(platform, { ...input, home, env: name => name === 'CODEX_THREAD_ID' || name === 'CLAUDE_CODE_SESSION_ID' ? 'missing' : undefined }, nodeHostUsageFs); assert.equal(missing.unavailable, 'host id file missing');
     }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageFs', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-discovery-'));
+  try {
+    const brain = path.join(home, '.gemini', 'antigravity', 'brain', 'host-session', '.system_generated', 'logs');
+    const conv = path.join(home, '.gemini', 'antigravity', 'conversations');
+    fs.mkdirSync(brain, { recursive: true });
+    fs.mkdirSync(conv, { recursive: true });
+
+    const step = {
+      step_index: 2,
+      type: 'PLANNER_RESPONSE',
+      created_at: new Date(3000).toISOString(),
+      input_tokens: 120,
+      output_tokens: 15,
+      cache_read_tokens: 30,
+    };
+    fs.writeFileSync(path.join(brain, 'transcript.jsonl'), JSON.stringify(step) + '\n');
+
+    const dbPath = path.join(conv, 'host-session.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
+      // Build protobuf blob: Tag 1.4 (input: 120, output: 15, cacheRead: 30, reasoning: 10), Tag 1.19, Tag 1.20, Tag 1.21
+      const tag14 = [
+        ...[0x10, 120], // tag 2, varint 120
+        ...[0x18, 15],  // tag 3, varint 15
+        ...[0x28, 30],  // tag 5, varint 30
+        ...[0x48, 10],  // tag 9, varint 10
+      ];
+      const kv = [
+        ...[0x0a, 15], ...Buffer.from('last_step_index', 'utf8'),
+        ...[0x12, 1], ...Buffer.from('1', 'utf8'),
+      ];
+      const modelSlug = Buffer.from('gemini-4-argon-trial', 'utf8');
+      const dispName = Buffer.from('Gemini 4 Argon (Medium)', 'utf8');
+      const tag1 = [
+        ...[0x22, tag14.length], ...tag14,
+        ...[0x9a, 0x01, modelSlug.length], ...modelSlug,
+        ...[0xa2, 0x01, kv.length], ...kv,
+        ...[0xaa, 0x01, dispName.length], ...dispName,
+      ];
+      const blob = new Uint8Array([0x0a, tag1.length, ...tag1]);
+      const stmt = db.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+      stmt.run(0, blob);
+    } finally {
+      db.close();
+    }
+
+    assert.ok(nodeHostUsageFs.sqliteGenMetadata, 'sqliteGenMetadata is defined on nodeHostUsageFs');
+    const readBlobs = nodeHostUsageFs.sqliteGenMetadata(dbPath);
+    assert.equal(readBlobs?.length, 1);
+
+    const result = readHostUsage('agy', {
+      ...input,
+      home,
+      env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'host-session' : undefined),
+    }, nodeHostUsageFs);
+
+    assert.equal(result.unavailable, undefined);
+    assert.equal(result.rows.length, 1);
+    assert.equal(result.rows[0]?.role, 'host');
+    assert.equal(result.rows[0]?.model, 'gemini-4-argon');
+    assert.equal(result.rows[0]?.effort, 'medium');
+    assert.equal(result.rows[0]?.input, 120);
+    assert.equal(result.rows[0]?.output, 15);
+    assert.equal(result.rows[0]?.cacheRead, 30);
+    assert.equal(result.rows[0]?.reasoning, 10);
+
+    const missing = readHostUsage('agy', {
+      ...input,
+      home,
+      env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'missing-session' : undefined),
+    }, nodeHostUsageFs);
+    assert.equal(missing.unavailable, 'host id file missing');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
