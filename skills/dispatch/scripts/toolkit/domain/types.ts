@@ -48,7 +48,7 @@ export type LintDefectCode =
   | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-check' | 'missing-seams'
   // Plan criteria
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
-  | 'criterion-change-path' | 'criterion-check' | 'criterion-evidence'
+  | 'criterion-change-path' | 'criterion-check' | 'criterion-check-tests' | 'criterion-evidence'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
   | 'criterion-review' | 'criterion-critical-review'
   | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name' | 'outside-increment'

@@ -23,7 +23,8 @@ function printHelp(heading: string, deps: EntryDeps): number {
   let lines: string[];
   try { lines = fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8').split(/\r?\n/); }
   catch (error) { return fail(error instanceof Error ? error.message : String(error), 'fault', 2); }
-  const start = heading ? lines.findIndex((line) => line === '## ' + heading || line === '### ' + heading) : -1;
+  const key = heading.toLowerCase();
+  const start = key ? lines.findIndex((line) => line.toLowerCase() === '## ' + key || line.toLowerCase() === '### ' + key) : -1;
   if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => /^#{2,3} /.test(line)).map((line) => line.replace(/^#{2,3} /, '')).join(', '), 'usage', 1);
   const stop = lines[start]!.startsWith('## ') ? /^#{1,2} / : /^#{1,3} /;
   let end = start; while (++end < lines.length && !stop.test(lines[end]!)) {}
@@ -34,7 +35,11 @@ function printHelp(heading: string, deps: EntryDeps): number {
 export type EntryDeps = CliDeps & { cwd?: () => string };
 
 export async function main(argv: readonly string[] = process.argv.slice(2), deps: EntryDeps = nodeDeps()): Promise<number> {
-  if (argv[0] === 'help') return printHelp(argv.slice(1).join(' ').trim(), deps);
+  if (argv[0] === 'help') {
+    // NOTE: a `--flag` token and the token after it are options, not heading text.
+    const words = argv.slice(1).filter((arg, index, rest) => !arg.startsWith('--') && !rest[index - 1]?.startsWith('--'));
+    return printHelp(words.join(' ').trim(), deps);
+  }
   if (argv[0] !== 'session') return toolkitMain([...argv], deps);
   const print = (value: Record<string, unknown>) => deps.stdout(JSON.stringify(value) + '\n');
   try {

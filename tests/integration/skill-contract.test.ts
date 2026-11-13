@@ -12,6 +12,7 @@ const scanned = ['SKILL.md', ...refs.map(v => 'references/' + v + '.md')];
 const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(m => m[1]!);
 const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
 const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
+const backgroundStart = (command: string) => 'Always start `' + command + '` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).';
 
 test('decision records resolve local links and headings', () => {
   for (const file of markdown('docs/decisions')) for (const target of links(read(file))) {
@@ -472,7 +473,9 @@ test('native voice launch order failure reports and change rules are documented'
     }
   }
   assert.match(nativeSlots, /Rerun the consume call only after the complete reply is in `replyPath`/);
-  assert.match(reviewRun, /Start a long `review run` as a background command and wait for its completion notice/);
+  for (const [command, text] of [['review run', reviewRun], ['ask run', askRun], ['check run', section(toolkit, 'check run')]] as const) {
+    assert.equal(text.split(backgroundStart(command)).length - 1, 1, command + ': background start stated once');
+  }
   assert.match(reviewRun, /before the backgrounded rerun/i);
 });
 test('native slots launch by prompt path', t => {
@@ -548,7 +551,8 @@ test('reference duplicates keep one home and link to it', () => {
   const planTemplate = read(root + 'references/templates/plan.md');
   assert.ok(links(planTemplate).includes('plan-field-notes.md'));
   const fieldNotes = read(root + 'references/templates/plan-field-notes.md');
-  for (const code of ['glance-restates-task-map', 'section-order', 'task-behaviour', 'plan-id-in-test-name', 'criterion-red-test-path', 'criterion-tests-path', 'undeclared-test-path', 'criterion-red-command', 'red-downgraded', 'overlap', 'duplicate-change-path', 'criterion-task-changes']) assert.ok(fieldNotes.includes(code), code);
+  for (const code of ['glance-restates-task-map', 'section-order', 'task-behaviour', 'plan-id-in-test-name', 'criterion-red-test-path', 'criterion-tests-path', 'undeclared-test-path', 'criterion-red-command', 'red-downgraded', 'overlap', 'duplicate-change-path', 'criterion-task-changes', 'criterion-check-tests']) assert.ok(fieldNotes.includes(code), code);
+  assert.ok(fieldNotes.includes('A title-filtered Check does not cover its file; also run each filtered file unfiltered in another Check or under Automated Tests.'), 'title-filtered Check rule');
   assert.doesNotMatch(planTemplate.split('## Field notes')[1] ?? '', /glance-restates-task-map/);
   // The map budget is rendered from DEFAULT_MAP_BUDGET; no reference hardcodes it.
   assert.doesNotMatch(ref('templates/context-map'), /16,384|32,768/);
@@ -803,9 +807,7 @@ test('merged rules keep one home', () => {
   }
 });
 
-test('flow defect repairs state background review start and verifier disposable and refused-write rules', () => {
-  const toolkit = read(root + 'references/toolkit.md');
-  assert.match(section(toolkit, 'review run'), /Start a long `review run` as a background command and wait for its completion notice/);
+test('flow defect repairs state and verifier disposable and refused-write rules', () => {
   const brief = read(root + 'references/templates/verifier-brief.md');
   assert.match(brief, /disposable repositories you create and remove are excepted/);
   assert.match(brief, /When the host refuses the report write, return the full report text/);

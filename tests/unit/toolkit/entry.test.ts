@@ -222,6 +222,24 @@ test('help prints each toolkit section linked from skill prose and nested subsec
   } finally { f.cleanup(); }
 });
 
+test('help resolves headings regardless of letter case and trailing flags', async () => {
+  const f = sessionFixture();
+  try {
+    const cases: [string[], string][] = [
+      [['native-slot', 'replies'], 'Native-slot replies'],
+      [['LEDGER', 'APPEND'], 'ledger append'],
+      [['ledger', 'append', '--session', 'x'], 'ledger append'],
+      [['native-slot', 'replies', '--json'], 'Native-slot replies'],
+    ];
+    for (const [args, heading] of cases) {
+      f.lines.length = 0;
+      assert.equal(await entry.main(['help', ...args], f.deps), 0, args.join(' '));
+      assert.equal(f.lines.length, 1);
+      assert.equal(f.lines[0], sectionOf(heading), args.join(' '));
+    }
+  } finally { f.cleanup(); }
+});
+
 test('help refuses an unknown or empty heading with the valid headings inside the summary cap', async () => {
   const f = sessionFixture();
   try {

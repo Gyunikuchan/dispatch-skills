@@ -449,6 +449,23 @@ test('writer brief states explorer and utility subagent rules', async () => {
   }
 });
 
+/** Skill root whose claude-code utility entry has a 150,000-token limit, with the explorer templates copied in. */
+function limitSkill(skill: string, skillRoot: string): string {
+  const templates = path.join(skill, 'references', 'templates');
+  fs.mkdirSync(templates, {recursive: true});
+  for (const name of ['explorer-brief.md', 'context-map.md']) fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
+  fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
+  fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
+  fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
+    'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+    'utility-subagents': {
+      'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
+      'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
+    },
+  }));
+  return skill;
+}
+
 describe('explorer brief', () => {
   test('renders complete with no unfilled placeholder', async () => {
     const f = await fixture();
@@ -477,21 +494,7 @@ describe('explorer brief', () => {
   test('explorer brief states the limit and nesting rules', async () => {
     const f = await fixture();
     const {skillRoot, orchestrator} = f.deps;
-    const skill = path.join(f.root, 'explorer-skill-sc4');
-    const templates = path.join(skill, 'references', 'templates');
-    fs.mkdirSync(templates, {recursive: true});
-    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'explorer-brief.md'), path.join(templates, 'explorer-brief.md'));
-    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'context-map.md'), path.join(templates, 'context-map.md'));
-    fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
-    fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
-    const config = path.join(skill, 'config.jsonc');
-    fs.writeFileSync(config, JSON.stringify({
-      'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
-      'utility-subagents': {
-        'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
-        'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
-      },
-    }));
+    const skill = limitSkill(path.join(f.root, 'explorer-skill-sc4'), skillRoot);
     try {
       await f.approve();
       f.deps.skillRoot = skill;
@@ -512,7 +515,7 @@ describe('explorer brief', () => {
 
       // solo and split rules with minimum size, cap and one level
       assert.match(brief, /work solo/i);
-      assert.match(brief, /never split a job that fits/i);
+      assert.match(brief, /split only when expected reading exceeds the split threshold/i);
       assert.match(brief, /15 files or 60 KB/i);
       assert.match(brief, /at most four/i);
       assert.match(brief, /one level/i);
@@ -541,6 +544,7 @@ describe('explorer brief', () => {
       assert.equal(unresValue.contextLimit, null);
       const unresBrief = fs.readFileSync(unresValue.briefPath, 'utf8');
       assert.match(unresBrief, /utility.*not configured; the orchestrator reports a blocker/i);
+      assert.match(unresBrief, /Split threshold: utility entry not configured; the orchestrator reports a blocker\./);
     } finally {
       f.deps.skillRoot = skillRoot;
       f.deps.orchestrator = orchestrator;
@@ -551,21 +555,7 @@ describe('explorer brief', () => {
   test('research brief renders without outputPath and handles array questions and help', async () => {
     const f = await fixture();
     const {skillRoot, orchestrator} = f.deps;
-    const skill = path.join(f.root, 'explorer-skill-sc5');
-    const templates = path.join(skill, 'references', 'templates');
-    fs.mkdirSync(templates, {recursive: true});
-    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'explorer-brief.md'), path.join(templates, 'explorer-brief.md'));
-    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', 'context-map.md'), path.join(templates, 'context-map.md'));
-    fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
-    fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
-    const config = path.join(skill, 'config.jsonc');
-    fs.writeFileSync(config, JSON.stringify({
-      'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
-      'utility-subagents': {
-        'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
-        'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
-      },
-    }));
+    const skill = limitSkill(path.join(f.root, 'explorer-skill-sc5'), skillRoot);
     try {
       await f.approve();
       f.deps.skillRoot = skill;
@@ -627,6 +617,49 @@ describe('explorer brief', () => {
       f.deps.orchestrator = orchestrator;
       f.cleanup();
     }
+  });
+
+  test('explorer brief split threshold is 112,500 tokens for a 150,000 limit in map and research briefs', async () => {
+    const f = await fixture();
+    const {skillRoot, orchestrator} = f.deps;
+    const skill = limitSkill(path.join(f.root, 'explorer-skill-split'), skillRoot);
+    try {
+      await f.approve();
+      f.deps.skillRoot = skill;
+      const kinds = {
+        map: {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'},
+        research: {objective: 'Research logs.', questions: '- Why did step 3 fail?'},
+      };
+      for (const [kind, values] of Object.entries(kinds)) {
+        const valuesPath = path.join(f.session, `split-${kind}.json`);
+        fs.writeFileSync(valuesPath, JSON.stringify(values));
+        f.lines.length = 0;
+        assert.equal(await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'claude'], f.deps), 0, JSON.stringify(f.lines));
+        const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+        assert.match(brief, /Split threshold: 112,500 tokens\./, kind);
+        assert.match(brief, /split only when expected reading exceeds the split threshold/i, kind);
+        assert.match(brief, /coherent single-topic work stays solo past the limit/i, kind);
+        assert.match(brief, /report the expected overrun/i, kind);
+        assert.doesNotMatch(brief, /finish what fits/i, kind);
+      }
+    } finally {
+      f.deps.skillRoot = skillRoot;
+      f.deps.orchestrator = orchestrator;
+      f.cleanup();
+    }
+  });
+
+  test('map brief Coverage checklist lists validation gates each new or changed input crosses', async () => {
+    const f = await fixture();
+    try {
+      await f.approve();
+      const mapValues = path.join(f.session, 'explorer-validation-gates.json');
+      fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+      const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.match(brief, /^- validation gates each new or changed input crosses$/m);
+    } finally { f.cleanup(); }
   });
 
   test('refuses missing or unknown value without writing', async () => {

@@ -76,6 +76,7 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'generated-command':
     case 'criterion-red-exception':
     case 'criterion-tests-path':
+    case 'criterion-check-tests':
     case 'criterion-red-command':
     case 'criterion-review':
     case 'missing-section':
@@ -403,6 +404,12 @@ export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
 const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//i;
 /** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` lint; a RED stage that changes or needs it must still list it in `Tests:`. */
 export const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
+const unquote = (value: string): string => value.replace(/^[`'"]+|[`'"]+$/g, '');
+/** Path-like tokens of a Check command; whitespace inside quotes does not split, so a quoted path with a space stays whole. */
+const checkPathTokens = (command: string): string[] => (command.match(/(?:"[^"]*"|'[^']*'|\S)+/g) ?? []).map((token) => {
+  const value = unquote(unquote(token).replace(/^--[^=\s]+=/, ''));
+  return value.replace(/\\/g, '/').replace(/^\.\//, '');
+});
 
 /** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
 export function planIdPattern(ids: readonly string[]): RegExp | null {
@@ -1084,6 +1091,13 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
   const changes = new Set(current.changes);
   for (const path of current.tests.filter((item) => !changes.has(item))) {
     out.push(lint('criterion-tests-path', current.testsLine ?? current.line, `Criterion ${name} Tests path ${path} is not in its Changes.`));
+  }
+  // Only test-like Check paths count: an aggregate Check such as `npm test` names no file and stays exempt.
+  const runnable = current.tests.filter((item) => !isTestSupportPath(item));
+  const named = current.verify.flatMap((item) => checkPathTokens(item.command));
+  const covers = (token: string) => runnable.some((item) => item === token || item.startsWith(token.endsWith('/') ? token : token + '/'));
+  if (runnable.length && named.some(isTestPath) && !named.some(covers)) {
+    out.push(lint('criterion-check-tests', current.verifyLines[0] ?? current.line, `Criterion ${name} Check names none of its Tests paths: ${runnable.join(', ')}.`));
   }
   if (current.evidence === 'red' && current.redException === null && !current.tests.length) {
     out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but declares no Tests: path; its red evidence downgrades to check.`));

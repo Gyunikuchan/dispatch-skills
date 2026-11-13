@@ -15,13 +15,14 @@ Answer the planned-decision questions, not a general repository survey.
 ## Limit and nesting rules
 
 Token limit for this host: {{limit}}.
+Split threshold: {{splitAt}}.
 Launch model and effort for nested launches: {{nestedLaunch}}.
 
-Work solo by default. Never split a job that fits the token limit. Estimate expected reading in files and bytes against the limit using ~4 bytes per token (about 20 KB or ~5 files per ~5k tokens); a job will not fit when expected reading across needed files exceeds the token limit.
+Work solo by default. Split only when expected reading exceeds the split threshold. Estimate expected reading in files and bytes using ~4 bytes per token (about 20 KB or ~5 files per ~5k tokens). The token limit is a soft budget.
 
-After recon, hand off only an independent sub-topic (no other shard reads its files) of about 15 files or 60 KB of expected reading. Use the fewest nested explorers that bring the remaining work under the limit, at most four. Nesting is limited to one level; a nested explorer launches nothing.
+After recon, hand off only an independent sub-topic (no other shard reads its files) of about 15 files or 60 KB of expected reading. Use the fewest nested explorers that bring the remaining work under the split threshold, at most four. Nesting is limited to one level; a nested explorer launches nothing.
 
-If the job exceeds the limit and no sub-topic qualifies for hand-off under the split condition, finish what fits within the limit and report the rest (under `Not covered` for a map, or as open items for a research reply).
+If no independent sub-topic qualifies, coherent single-topic work stays solo past the limit: finish it whole and report the expected overrun (tokens above the limit) in your reply.
 
 When you have no tool to launch a subagent, do the work yourself and say so in your reply.
 
@@ -49,6 +50,7 @@ Launch the map explorer on an agent type that can write files.
 Complete every item; the checklist is the completeness contract, not a search order. For each item, give refs or `Not covered — <reason>`:
 
 - entry points
+- validation gates each new or changed input crosses
 - callers of each symbol to change
 - callers and impacted tests of each changed shared helper
 - saved states, resume paths and callers that read a changed value
@@ -77,7 +79,7 @@ When the change touches a shared contract, schema or predicate with consumers in
 
 Assign each nested explorer a partial map path in the session directory `{{session}}`. Nested explorers reply with only their partial map path and counts (they run no map lint). Consolidate the partial maps into the one phase map at `{{outputPath}}` within {{mapBudget}} UTF-8 bytes; keep partial maps as evidence. Answer every base grounding question and Coverage item or list it under `Not covered`.
 
-Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round. Follow the output rule for `{{outputPath}}` and the inline fallback. After the lead writes the consolidated map at `{{outputPath}}`, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step. For the lead's consolidated map at `{{outputPath}}`, reply only with its path, lint status, counts of `Surprises` and `Not covered` entries, and the per-nested-explorer model and token report; a scope round also includes its delta when the spec-phase map exists. Nested map explorers reply only with their assigned partial-map path and counts as specified above.
+Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>.plan.context.md` or `<session>/<slug>.design.context.md` for a scope round. Follow the output rule for `{{outputPath}}` and the inline fallback. After the lead writes the consolidated map at `{{outputPath}}`, run `node {{cliPath}} lint run {{outputPath}} --session {{session}}` and fix every reported defect before returning. An explorer that returns its map inline skips this step. For the lead's consolidated map at `{{outputPath}}`, reply only with its path, lint status, counts of `Surprises` and `Not covered` entries, any expected overrun, and the per-nested-explorer model and token report; a scope round also includes its delta when the spec-phase map exists. Nested map explorers reply only with their assigned partial-map path and counts as specified above.
 
 ## Context map template
 

@@ -722,6 +722,52 @@ test('undeclared test path warning: a test-like Changes path outside every Tests
   assert.deepEqual(warningsOf(exemptSource, 'undeclared-test-path'), []);
 });
 
+const CHECK_LINE = '  - Check: `node --test tests/fetch.test.ts`\n';
+const checkTestsWarnings = (source: string) => warningsOf(source, 'criterion-check-tests');
+
+test('criterion-check-tests warns when a Check names a test file that no Tests path lists', () => {
+  const source = PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/other.test.ts`\n');
+  const found = checkTestsWarnings(source);
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.severity, 'warning');
+  assert.equal(found[0]?.line, criterionLine(source, '  - Check: `node --test tests/other.test.ts`'));
+  assert.match(found[0]?.message ?? '', /tests\/fetch\.test\.ts/);
+});
+
+test('criterion-check-tests passes an aggregate Check that names no test path', () => {
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `npm test`\n')), []);
+});
+
+test('criterion-check-tests passes when Tests lists only support files', () => {
+  const source = PLAN.replace(TESTS_LINE, '  - Tests: tests/helpers/fetch.ts\n')
+    .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts\n', '  - Changes: src/fetch.ts, tests/fetch.test.ts, tests/helpers/fetch.ts\n')
+    .replace(NEW_FETCH_TEST, `${NEW_FETCH_TEST}\n#### [NEW] tests/helpers/fetch.ts\n- Purpose: shares the retry fixture.`);
+  assert.deepEqual(checkTestsWarnings(source), []);
+});
+
+test('criterion-check-tests accepts ./-prefixed and quoted Check paths', () => {
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test "./tests/fetch.test.ts"`\n')), []);
+});
+
+test('criterion-check-tests keeps a quoted Tests path with a space whole', () => {
+  const spaced = 'tests/fetch case.test.ts';
+  const source = PLAN.replace('#### [NEW] tests/fetch.test.ts', `#### [NEW] \`${spaced}\``)
+    .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts', `  - Changes: src/fetch.ts, \`${spaced}\``)
+    .replace(TESTS_LINE, `  - Tests: \`${spaced}\`\n`)
+    .replace(CHECK_LINE, `  - Check: \`node --test "${spaced}"\`\n`);
+  assert.deepEqual(checkTestsWarnings(source), []);
+});
+
+test('criterion-check-tests counts a Tests file named in a second Check of the same criterion', () => {
+  const source = PLAN.replace(CHECK_LINE, `  - Check: \`node --test tests/other.test.ts\`\n${CHECK_LINE}`);
+  assert.deepEqual(checkTestsWarnings(source), []);
+});
+
+test('criterion-check-tests counts a Check directory that contains its Tests file', () => {
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/`\n')), []);
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests`\n')), []);
+});
+
 const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');
 const withPattern = (pattern: string) => PLAN.replace('`node --test tests/fetch.test.ts`', `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``);
 const withFinding = (id: string) => PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);

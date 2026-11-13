@@ -730,6 +730,8 @@ test('H2 wording separates designed continuation, cap arrival, and deadlock', ()
   assert.match(continued.evidence, /continued past the cap \(3\)/);
   assert.doesNotMatch(continued.evidence, /cap reached/);
   assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
+  assert.equal(continued.impact, 'Each extra round adds voice launches and a host ruling turn.');
+  assert.equal(continued.proposedFix, 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
 
   const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
   assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);
@@ -781,6 +783,13 @@ test('heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics',
   // H9 needs two relaunches
   assert.deepEqual(only(heuristics(facts({ relaunches: 1 })), 'H9'), [], 'one relaunch without a cause is not a pattern');
   assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
+});
+
+test('H5 impact names the voice exploration and proposes no byte caps', () => {
+  const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
+  const finding = assertShape(only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5')[0], 'token-economy');
+  assert.equal(finding.impact, 'One invocation dominates token spend; its own repository exploration likely drives most of it.');
+  assert.equal(finding.proposedFix, "Lower that slot's turn budget or effort, or assign it a cheaper model.");
 });
 
 test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
@@ -1082,9 +1091,22 @@ test('grounding phase retro observation passes gate and renders evidence in repo
   assert.deepEqual(gated.values[0], item);
 
   const text = render([facts({ observations: [item] })]);
-  assert.match(text, /host retro `grounding-spec`/);
-  assert.match(text, /Information access · `references\/grounding\.md`/);
-  assert.match(text, /map 1, nested 2, research 1, not-covered 0, yield 2\/3, tokens unavailable/);
+  assert.ok(text.includes('| 1 | spec | map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |'), text);
+});
+
+test('grounding retro items render only in the Overview Grounding table', () => {
+  const grounding = observation({ id: 'grounding-plan', component: 'references/grounding.md', category: 'information-access',
+    evidence: 'map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable', impact: 'Keep the token limit at 150000.', proposedFix: 'Keep the current discovery bounds.' });
+  const run = facts({ observations: [grounding, observation()] });
+  const text = render([run]);
+  assert.ok(text.includes('### Grounding\n\n| Run | Phase | Evidence | Assessment | Proposed change |\n| --- | --- | --- | --- | --- |\n'
+    + '| 1 | plan | map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |\n'), text);
+  assert.doesNotMatch(text, /grounding-plan/);
+  assert.match(text, /^- Source: host retro `o1` · run 1$/m, 'other retro items stay findings');
+  assert.doesNotMatch(text.slice(0, text.indexOf('## Overview')), /grounding/, 'summary top findings');
+  assert.equal(renderDiagnostics([run]).findings, 1);
+  assert.match(text, /- Host retro: collected · 2 accepted · 0 rejected/);
+  assert.match(render([facts()]), /### Grounding\n\n\| Run \|.*\n\| --- .*\n\| — \| — \| — \| — \| — \|\n/, 'empty table keeps a placeholder row');
 });
 
 // SECTION: Finding origin

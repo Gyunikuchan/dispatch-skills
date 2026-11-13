@@ -100,7 +100,8 @@ export type Finding = { source: string; run?: number; id?: string; category: Cat
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
 export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
-export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1536 } as const;
+// NOTE: 1600 leaves room for the grounding Overview rule in references/diagnostics.md.
+export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1600 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
 
@@ -495,7 +496,7 @@ export function heuristics(run: RunFacts): Finding[] {
       ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
       ...(escalation && !capReached ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
     ];
-    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round relaunches every voice and adds a host ruling turn.', capReached ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite the prior ruling when they raise a finding again, and close repeats as duplicates instead of opening a new round.');
+    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round adds voice launches and a host ruling turn.', capReached ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;
@@ -515,7 +516,7 @@ export function heuristics(run: RunFacts): Finding[] {
     const all = sum(sizes.map(([, n]) => n)) ?? 0;
     const [top, n] = sizes.reduce((a, b) => b[1] > a[1] ? b : a);
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
-    if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured uncached tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its prompt or attachments likely exceed what the task needs.', 'Cap per-voice prompt and attachment bytes, and pass large context by reference so no single launch dominates.');
+    if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) add('H5', 'token-economy', 'scripts/toolkit/prompts.ts', `${top.provider} ${top.model} in ${phaseName(run, top.phase)}: ${num(n)} of ${num(all)} measured uncached tokens (${pct(n / all)}).`, 'One invocation dominates token spend; its own repository exploration likely drives most of it.', 'Lower that slot\'s turn budget or effort, or assign it a cheaper model.');
   }
   // One clear refusal is not a pattern.
   const rejection = (item: { tool: string; action: string; cls: string }) => item.tool + ' ' + item.action + ': ' + item.cls;
@@ -559,7 +560,7 @@ function usageSummary(items: readonly InvocationFacts[]): string {
   return t ? `${num(t.all)} (input ${num(t.input)} · cache read ${num(t.cacheRead)} · cache write ${num(t.cacheWrite)} · output ${num(t.output)})` : DASH;
 }
 
-function overview(runs: readonly RunFacts[]): string[] {
+function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservation & {run: number})[]): string[] {
   const lines = ['## Overview', '', row(['Run', 'Phase', 'Outcome', 'Wall', 'Driver', 'Host', 'User wait', 'Invocations', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage']), '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'];
   const notes: string[] = [];
   runs.forEach((run, index) => {
@@ -573,6 +574,10 @@ function overview(runs: readonly RunFacts[]): string[] {
   });
   if (notes.length) lines.push('', ...notes);
   lines.push('', 'Overview token columns count CLI delegates only.', '');
+  lines.push('### Grounding', '', row(['Run', 'Phase', 'Evidence', 'Assessment', 'Proposed change']), '| --- | --- | --- | --- | --- |');
+  for (const g of grounding) lines.push(row([String(g.run), g.id.slice('grounding-'.length), g.evidence, g.impact, g.proposedFix]));
+  if (!grounding.length) lines.push(row(Array<string>(5).fill(DASH)));
+  lines.push('');
   type TokenRow = {stage:string; platform:string; role:string; model:string; effort:string; configured:boolean; usages:ModelUsage[]; measured:number; launched:number; reasons:Set<CoverageReason>};
   const rows = new Map<string,TokenRow>();
   const add = (stage:string,platform:string,role:string,model:string,effort:string,usage?:ModelUsage,reason?:CoverageReason,configured=false) => {
@@ -670,9 +675,12 @@ function appendix(runs: readonly RunFacts[]): string[] {
 export function renderDiagnostics(input: readonly RunFacts[]): { text: string; findings: number; top?: string } {
   const runs = input.map(sanitizeFacts);
   const retro = runs.map((run) => run.observations === undefined ? undefined : retroObservations(run.observations));
+  // Grounding phases report in their own Overview table; every other retro item stays a finding.
+  const isGrounding = (o: RetroObservation) => o.id.startsWith('grounding-');
+  const grounding = runs.flatMap((_, index) => (retro[index]?.values ?? []).filter(isGrounding).map((o) => ({ ...o, run: index + 1 })));
   const findings = bySeverity(runs.flatMap((run, index): Finding[] => [
     ...heuristics(run).map((f) => ({ ...f, run: index + 1 })),
-    ...(retro[index]?.values ?? []).map((o) => ({ source: 'retro', run: index + 1, id: o.id, category: o.category, component: o.component, evidence: o.evidence, impact: o.impact, proposedFix: o.proposedFix })),
+    ...(retro[index]?.values ?? []).filter((o) => !isGrounding(o)).map((o) => ({ source: 'retro', run: index + 1, id: o.id, category: o.category, component: o.component, evidence: o.evidence, impact: o.impact, proposedFix: o.proposedFix })),
   ]));
   const invocations = runs.flatMap((run) => run.invocations);
   const estimated = sum(invocations.map(estimate));
@@ -693,7 +701,7 @@ export function renderDiagnostics(input: readonly RunFacts[]): { text: string; f
     `- Collection health: ${runs.some(r=>Object.entries(r.collection??{}).some(([key,n])=>key!=='completed'&&n>0))?'partial':runs.some(r=>(r.collection?.completed??0)>0)?'complete for observed captures':'unknown'} · corrupt ${num(sum(runs.map(r=>r.collection?.corrupt)))} · unreadable ${num(sum(runs.map(r=>r.collection?.unreadable)))} · incomplete ${num(sum(runs.map(r=>r.collection?.incomplete)))} · storage-failed ${num(sum(runs.map(r=>r.collection?.storageFailed)))}`,
     '', 'Top findings:', '',
     ...(findings.length ? findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`) : ['- none']), '',
-    ...overview(runs),
+    ...overview(runs, grounding),
   ];
   const findingLines = (keep: number) => {
     if (!findings.length) return ['## Findings', '', 'No findings.', ''];

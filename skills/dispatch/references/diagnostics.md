@@ -8,7 +8,7 @@ Item: `{id,component,category,evidence,impact,proposedFix}`.
 - `category`: `correctness`, `token-economy`, `speed`, `review-convergence`, `instruction-clarity`, `information-access`.
 - `evidence`, `impact`, `proposedFix`: one line each, at most 512 bytes.
 
-Retro item for each grounding phase:
+Retro item for each grounding phase, shown in the Overview `### Grounding` table:
 - id: grounding-<phase>   component: references/grounding.md   category: information-access
 - evidence: map <n>, nested <n>, research <n>, not-covered <n>, yield <changed>/<launched>, tokens <per explorer|unavailable>
 `yield` counts nested and research explorers whose reply changed a REQ, DEC, scope or blast radius. `impact` and `proposedFix` record whether to keep or change the explorer token limit or nesting rules.

@@ -287,6 +287,8 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   const entry = resolveHostUtility(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const contextLimit = entry ? entry.contextLimit : null;
   const limit = entry ? `${entry.contextLimit.toLocaleString('en-US')} tokens` : 'utility entry not configured; the orchestrator reports a blocker';
+  // 75% margin: an explorer cannot count the tokens its tool output and reasoning add.
+  const splitAt = entry ? `${Math.floor(entry.contextLimit * 0.75).toLocaleString('en-US')} tokens` : limit;
   const nestedLaunch = entry
     ? `model ${entry.models.map(m => '`' + m + '`').join(' or ')}${entry.effort ? `, effort \`${entry.effort}\`` : ', no effort set'}`
     : 'utility entry not configured; the orchestrator reports a blocker';
@@ -298,6 +300,7 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
     objective: values.objective,
     questions: values.questions,
     limit,
+    splitAt,
     nestedLaunch,
     quality: qualityCriteria(bar, 'explorer', 0, specStage),
     ...(kind === 'map' ? {
