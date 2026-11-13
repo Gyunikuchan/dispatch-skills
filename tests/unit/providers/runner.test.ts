@@ -5,12 +5,13 @@ import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scri
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import {
   CONTINUE_PROMPT,
   IDLE_TIMEOUT_MS,
   batchInvocation, buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import type { DelegateRequest, Launch, PlatformEnv, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
+import type { DelegateRequest, Launch, PlatformEnv, ProcessResult, ProviderUsageContext } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = { os: 'linux', arch: 'x64', wsl: false, bubblewrap: true, argvLimit: 100000, home: '/h', path: [], pathExt: [] };
 const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24000 };
@@ -1071,6 +1072,93 @@ test('resumed launch records no usage without proven semantics', async () => {
   await flush(); h.finish(ok());
   assert.equal((await pending).invocations[0]?.usage, undefined);
   assert.equal(calls, 0);
+});
+
+const opencodeText = (text: string) => JSON.stringify({ type: 'text', sessionID: 'ses', part: { text } });
+
+test('OpenCode invocation rows use measured model and effort and receive the launch window', async () => {
+  const h = harness(posix);
+  let context: ProviderUsageContext | undefined;
+  const usage = {
+    input: 12, output: 4, scope: 'invocation' as const, provenance: 'opencode.db.messages', inputSemantics: 'uncached' as const,
+    actualModels: ['measured/model'], actualEffort: 'max', models: { 'measured/model#max': { input: 12, output: 4 } },
+  };
+  const spec = { ...opencode, usage: (_raw: string, seen?: ProviderUsageContext) => { context = seen; return usage; } };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch/model', effort: 'high', agent: 'explore', readOnlyVerified: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(25);
+  h.finish(ok({ stdout: opencodeText('R') }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.model, 'measured/model');
+  assert.equal(done.invocations[0]?.effort, 'max');
+  assert.equal(context?.launchStartMs, 0);
+  assert.equal(context?.launchEndMs, 25);
+  assert.equal(context?.readOpencodeMessages, readOpencodeMessages);
+});
+
+test('OpenCode resumed launch receives its own launch window', async () => {
+  const h = harness(posix);
+  const contexts: ProviderUsageContext[] = [];
+  const spec = {
+    ...opencode,
+    attemptSession: () => 'sess1',
+    usage: (_raw: string, seen?: ProviderUsageContext) => { contexts.push(seen!); return undefined; },
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+  };
+  const pending = runDelegate(spec, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(40);
+  h.finish(ok({ exit: 1, stdout: '' }));
+  await flush(); await flush();
+  h.clock.advance(60);
+  h.finish(ok({ stdout: 'FINAL' }));
+  await pending;
+  assert.equal(contexts.length, 2);
+  assert.equal(contexts[0]?.launchStartMs, 0);
+  assert.equal(contexts[0]?.launchEndMs, 40);
+  assert.equal(contexts[1]?.launchStartMs, 41);
+  assert.equal(contexts[1]?.launchEndMs, 100);
+});
+
+test('OpenCode resumed launch keeps a shared boundary millisecond in the earlier launch', async () => {
+  const windows = async (firstMs: number, pauseMs: number) => {
+    const h = harness(posix);
+    const contexts: ProviderUsageContext[] = [];
+    const spec = {
+      ...opencode,
+      attemptSession: () => 'sess1',
+      usage: (_raw: string, seen?: ProviderUsageContext) => { contexts.push(seen!); return undefined; },
+      parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+        ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
+        : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    };
+    const pending = runDelegate(spec, { ...req, collectUsage: true, onResume: () => h.clock.advance(pauseMs) }, 'cli', h.ports);
+    await flush();
+    h.clock.advance(firstMs);
+    h.finish(ok({ exit: 1, stdout: '' }));
+    await flush(); await flush();
+    h.finish(ok({ stdout: 'FINAL' }));
+    await pending;
+    return contexts;
+  };
+  const sameMillisecond = await windows(0, 0);
+  assert.equal(sameMillisecond[0]?.launchEndMs, 0);
+  assert.equal(sameMillisecond[1]?.launchStartMs, 1);
+  const advanced = await windows(40, 20);
+  assert.equal(advanced[1]?.launchStartMs, 60);
+});
+
+test('OpenCode invocation rows keep launch model and effort when usage reports none', async () => {
+  const h = harness(posix);
+  const usage = { input: 3, output: 1, scope: 'invocation' as const, provenance: 'opencode.step.finish', inputSemantics: 'uncached' as const };
+  const spec = { ...opencode, usage: () => usage };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch/model', effort: 'high', agent: 'explore', readOnlyVerified: true }, 'cli', h.ports);
+  await flush(); h.finish(ok({ stdout: opencodeText('R') }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.model, 'launch/model');
+  assert.equal(done.invocations[0]?.effort, 'high');
 });
 
 test('Claude resume records per-launch fallback usage alongside cumulative model usage', async () => {

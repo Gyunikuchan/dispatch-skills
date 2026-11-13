@@ -5,6 +5,7 @@
 import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import { normalizeAgyModelEffort } from '../lib/diagnostic-usage.ts';
+import { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
@@ -587,6 +588,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let stop: (() => void) | null = null;
     stop = ports.clock.every(ms, () => { stop?.(); resolve(); });
   });
+  let previousEndMs: number | null = null;
   for (;;) {
     const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
     const isResume = current.resume !== null;
@@ -607,11 +609,16 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
+    let launchStartMs = 0;
+    let launchEndMs = 0;
     try {
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
+      // A resumed launch counts only its own window; it starts after the previous end so a shared boundary millisecond stays with the earlier launch.
+      launchStartMs = previousEndMs === null ? ports.clock.now() : Math.max(ports.clock.now(), previousEndMs + 1);
       result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps);
+      launchEndMs = previousEndMs = ports.clock.now();
     } catch (error) {
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
@@ -622,7 +629,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let usage: DiagnosticUsage | undefined;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try {
-      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env }) : undefined;
+      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages }) : undefined;
       const perLaunchClaudeUsage = spec.id === 'claude' && usage?.provenance === 'claude.result.usage';
       if (usage && current.resume && spec.resumeUsage === 'cumulative' && !perLaunchClaudeUsage) {
         const lastFresh = invocations.findLastIndex(row => !row.nudge);
@@ -630,8 +637,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       }
     } catch { usage = undefined; /* A usage parse failure cannot change provider results. */ }
     const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
-    const rowModel = spec.id === 'agy' ? (usage?.actualModels?.length ? usage.actualModels[0]! : normalizedLaunch.model) : current.model;
-    const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : current.effort;
+    const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
+    const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
+    const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
     recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };

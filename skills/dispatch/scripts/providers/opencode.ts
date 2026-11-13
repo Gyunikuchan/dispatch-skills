@@ -5,8 +5,10 @@
 
 import { classifyFailure, failOutcome } from './runner.ts';
 import { opencodeModelValue } from '../lib/platform.ts';
-import { opencodeUsage } from '../lib/diagnostic-usage.ts';
-import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, RunOutcome } from './types.ts';
+import { opencodeDbUsage, opencodeUsage } from '../lib/diagnostic-usage.ts';
+import { opencodeDbPath } from '../lib/opencode-db.ts';
+import type { DiagnosticUsage } from '../toolkit/types.ts';
+import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, ProviderUsageContext, RunOutcome } from './types.ts';
 import { validSessionId } from './types.ts';
 
 export const PROXY_TRAP = 'http://127.0.0.1:0';
@@ -94,6 +96,24 @@ export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): 
   return { kind: 'launch', env, release };
 }
 
+/**
+ * DB rows beat stdout because stdout omits child sessions, model and variant.
+ * A failed, empty, or truncated read keeps the complete stdout totals instead of a partial DB sum.
+ */
+function delegateUsage(raw: string, context?: ProviderUsageContext): DiagnosticUsage | undefined {
+  const stdout = opencodeUsage(raw);
+  const sessionId = validSessionId(parseEvents(raw).sessionId);
+  if (!context || !sessionId || context.launchStartMs === undefined || context.launchEndMs === undefined || !context.readOpencodeMessages) return stdout;
+  try {
+    const dbPath = opencodeDbPath(context.platform.home, (name) => context.env[name]);
+    const read = context.readOpencodeMessages(dbPath, sessionId, { fromMs: context.launchStartMs, toMs: context.launchEndMs });
+    if (read.truncated !== null || read.messages.length === 0) return stdout;
+    return opencodeDbUsage(read.messages) ?? stdout;
+  } catch {
+    return stdout;
+  }
+}
+
 export const opencode: ProviderSpec = {
   id: 'opencode',
   stepEvent(line) {
@@ -113,7 +133,7 @@ export const opencode: ProviderSpec = {
   sandbox: { flags: ['bwrap'], inactive: /bwrap: [^\n]*(?:No permissions|Operation not permitted|setting up uid map)/i, supported: (env) => env.os === 'linux' && env.bubblewrap },
   native: 'opencode',
   modeCascadeOn: [],
-  usage: opencodeUsage,
+  usage: delegateUsage,
   resumeUsage: 'per-launch',
   outputCapBytes: 64 * 1024 * 1024,
   resumeCommand: (id) => id,

@@ -5,7 +5,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
-import { nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
+import { ADAPTERS, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
+import { readOpencodeMessages } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import { readTranscript, stageAt } from '../../../../skills/dispatch/scripts/toolkit/host-usage/read.ts';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES } from '../../../../skills/dispatch/scripts/toolkit/host-usage/types.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
@@ -24,6 +25,24 @@ test('registry requires a registered host and its declared safe session id', () 
     codex: { sessionEnv: ['CODEX_THREAD_ID'], read: q => ({ rows: [{ stage: 'spec', role: 'host', model: 'm', effort: null, input: q.budget.remaining, output: 0 }] }) },
   });
   assert.equal(result.rows[0]?.input, MAX_TOTAL_BYTES);
+});
+
+test('registry covers every host platform and accepts OpenCode host ids', () => {
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ['agy', 'claude', 'codex', 'opencode']);
+  assert.equal(typeof nodeHostUsageFs.opencodeMessages, 'function');
+  assert.equal(nodeHostUsageFs.opencodeMessages, readOpencodeMessages);
+  let calls = 0;
+  const read = (id: string | undefined) => readHostUsage('opencode', { ...input, env: () => id }, {
+    ...memoryFs({}),
+    opencodeMessages: () => { calls++; return { messages: [], skipped: 0, truncated: null }; },
+  });
+  assert.equal(read(undefined).unavailable, 'no host id');
+  assert.equal(read('ses_session-1').unavailable, 'no usage records');
+  assert.equal(calls, 1);
+  for (const id of ['ses/1', 'ses_1.2', '../ses_1']) {
+    assert.equal(read(id).unavailable, 'invalid host id');
+  }
+  assert.equal(calls, 1);
 });
 
 test('reader caps growing plain files and decoded compressed data', () => {

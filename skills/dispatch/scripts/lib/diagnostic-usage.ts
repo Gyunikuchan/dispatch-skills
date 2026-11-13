@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import type { OpencodeMessage } from './opencode-db.ts';
 import type { DiagnosticModelUsage, DiagnosticUsage } from '../toolkit/types.ts';
 type Row = Record<string, unknown>;
 const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
@@ -63,6 +64,40 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
   }
   return total;
 }
+/**
+ * Fold DB messages for one delegate session tree into one usage record.
+ * Keys carry their own effort (`<model>#<effort>`) so a child running another model or variant keeps its counters.
+ */
+export function opencodeDbUsage(messages: readonly OpencodeMessage[]): DiagnosticUsage | undefined {
+  if (messages.length === 0) return undefined;
+  const out: DiagnosticUsage = { input: 0, output: 0, scope: 'invocation', provenance: 'opencode.db.messages', inputSemantics: 'uncached' };
+  const models: Record<string, DiagnosticModelUsage> = Object.create(null) as Record<string, DiagnosticModelUsage>;
+  const modelList: string[] = [];
+  const efforts: (string | null)[] = [];
+  for (const message of messages) {
+    out.input += message.input;
+    out.output += message.output;
+    if (message.cacheRead !== undefined) out.cacheRead = (out.cacheRead ?? 0) + message.cacheRead;
+    if (message.cacheWrite !== undefined) out.cacheWrite = (out.cacheWrite ?? 0) + message.cacheWrite;
+    if (message.reasoning !== undefined) out.reasoning = (out.reasoning ?? 0) + message.reasoning;
+    // A null model or effort keeps its part empty, never inherited from another message.
+    const key = `${message.model ?? ''}#${message.effort ?? ''}`;
+    const part = models[key] ?? (models[key] = { input: 0, output: 0 });
+    part.input += message.input;
+    part.output += message.output;
+    if (message.cacheRead !== undefined) part.cacheRead = (part.cacheRead ?? 0) + message.cacheRead;
+    if (message.cacheWrite !== undefined) part.cacheWrite = (part.cacheWrite ?? 0) + message.cacheWrite;
+    if (message.reasoning !== undefined) part.reasoning = (part.reasoning ?? 0) + message.reasoning;
+    if (message.model !== null && !modelList.includes(message.model)) modelList.push(message.model);
+    efforts.push(message.effort);
+  }
+  out.models = models;
+  if (modelList.length > 0) out.actualModels = modelList.slice(0, 8);
+  const firstEffort = efforts[0]!;
+  out.actualEffort = efforts.every((effort) => effort === firstEffort) ? firstEffort : null;
+  return out;
+}
+
 export function claudeUsage(raw: string): DiagnosticUsage | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return undefined; }

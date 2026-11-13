@@ -28,7 +28,7 @@ export type Category = keyof typeof CATEGORIES;
 
 export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number };
 
-/** `input` is canonical uncached input; `models` holds per-model counters when the provider reports them. */
+/** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
 export type Usage = ModelUsage & { models?: Record<string, ModelUsage> };
 
 /** Tool-call durations can overlap; they do not measure session elapsed time. */
@@ -111,10 +111,10 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('references/templates', 'context-map design explorer-brief increment-orchestrator-brief plan plan-field-notes quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan review-severity spec test-cleanup-brief verifier-brief walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review verify', '.md'),
   ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-fixes review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
-  ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
+  ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext opencode-db platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
-  ...files('scripts/toolkit/host-usage', 'agy claude-code codex index read types', '.ts'),
+  ...files('scripts/toolkit/host-usage', 'agy claude-code codex index opencode read types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize severity spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief check cli confirmations coverage deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-checkout review-findings review-identity status types walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
@@ -146,7 +146,7 @@ const commandText = (v: unknown): string => typeof v === 'string' && v.length <=
 const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === 'string' && re.test(v) && locatorFree(v) ? v : undefined;
 const token = match(/^[a-z][a-z0-9-]{0,39}$/);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/);
-const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,95}$/);
+const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,95}$/);
 const modelName = (v: unknown): string | undefined => { const name = modelAlias(v); return name && !/^[A-Za-z]:|\/\//.test(name) ? name : undefined; };
 const count = (v: unknown): number | undefined => Number.isSafeInteger(v) && Number(v) >= 0 ? Number(v) : undefined;
 const millis = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
@@ -189,10 +189,27 @@ function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
   const base = counters(v);
   if (!base || !record(v)) return undefined;
   const canonical = (u: ModelUsage): ModelUsage => subtractCache ? { ...u, input: Math.max(0, u.input - (u.cacheRead ?? 0)) } : u;
+  const add = (a: ModelUsage, b: ModelUsage): ModelUsage => {
+    const sum: ModelUsage = { input: a.input + b.input, output: a.output + b.output };
+    for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) if (a[key] !== undefined || b[key] !== undefined) sum[key] = (a[key] ?? 0) + (b[key] ?? 0);
+    return sum;
+  };
   const out: Usage = canonical(base);
   const models = record(v['models']) ? Object.entries(v['models']) : [];
-  const parts = models.map(([name, part]) => [modelName(name), counters(part)] as const);
-  if (parts.length && parts.length <= 8 && parts.every(([name, part]) => name && part)) out.models = Object.fromEntries(parts.map(([name, part]) => [name!, canonical(part!)]));
+  // A `<model>#<effort>` key keeps its own effort; an empty or gate-failing part renders `—` but keeps its counters.
+  const parts = models.map(([key, part]) => {
+    const at = key.indexOf('#');
+    const name = modelName(at < 0 ? key : key.slice(0, at)), effort = at < 0 ? undefined : token(key.slice(at + 1)) ?? '';
+    return { key: at < 0 ? name : `${name ?? ''}#${effort}`, part: counters(part), keyed: at >= 0 };
+  });
+  if (parts.length && parts.length <= 8 && parts.every(({ key, part, keyed }) => part && (keyed || key))) {
+    const grouped = new Map<string, ModelUsage>();
+    for (const { key, part } of parts) {
+      const current = grouped.get(key!);
+      grouped.set(key!, current ? add(current, canonical(part!)) : canonical(part!));
+    }
+    out.models = Object.fromEntries(grouped);
+  }
   return out;
 }
 
@@ -569,7 +586,10 @@ function overview(runs: readonly RunFacts[]): string[] {
       if(i.surface!=='cli'||!i.launched) continue;
       const phase=run.phases.find(p=>p.key===i.phase)?.name, stage=phase==='integration review'?'code review':STAGE_ORDER.find(x=>x===phase)??DASH;
       const usage=measured(i), effort=i.effort??DASH;
-      if(usage?.models) for(const [model,part] of Object.entries(usage.models)) add(stage,i.provider,'delegate',model,effort,part);
+      if(usage?.models) for(const [key,part] of Object.entries(usage.models)) {
+        // A `#` key renders its own effort; a plain key keeps the invocation effort.
+        const at=key.indexOf('#'); add(stage,i.provider,'delegate',at<0?key:(key.slice(0,at)||DASH),at<0?effort:(key.slice(at+1)||DASH),part);
+      }
       else add(stage,i.provider,'delegate',(i.reportedModels?.length??0)>1?DASH:i.model,effort,usage,i.coverage,(i.reportedModels?.length??0)<=1);
     }
   }

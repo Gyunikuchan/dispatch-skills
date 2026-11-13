@@ -821,6 +821,98 @@ test('diagnostics report: renders per-model token rows across launch states', ()
   assert.doesNotMatch(multi, /\(configured\)/);
 });
 
+const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
+
+test('per model and effort rows: delegate keys keep their own effort and sum to invocation totals', () => {
+  const usage = {
+    input: 300, output: 40,
+    models: {
+      'opencode-go/deepseek-v4.1-flash#high': { input: 100, output: 10 },
+      'opencode-go/deepseek-v4.1-flash#max': { input: 120, output: 20 },
+      'opencode-go/muse-spark-1.3-contributor#low': { input: 80, output: 10 },
+    },
+  };
+  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', usage })] })]);
+  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+  assert.deepEqual(rows, [
+    '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | high | 100 | — | — | 10 | — | 1/1 |',
+    '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | max | 120 | — | — | 20 | — | 1/1 |',
+    '| code review | opencode | delegate | opencode-go/muse-spark-1.3-contributor | low | 80 | — | — | 10 | — | 1/1 |',
+  ]);
+  const counters = rows.map((line) => line.split(' | ').slice(5, 9).map((cell) => cell === '—' ? 0 : Number(cell)));
+  assert.deepEqual([
+    counters.reduce((n, row) => n + row[0]!, 0),
+    counters.reduce((n, row) => n + row[3]!, 0),
+  ], [usage.input, usage.output]);
+});
+
+test('per model and effort rows: unmatched key parts render unavailable with their counters', () => {
+  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
+    input: 15, output: 3,
+    models: {
+      '#Turbo_2': { input: 5, output: 1 },
+      'opencode-go/deepseek-v4.1-flash#': { input: 10, output: 2 },
+    },
+  } })] })]);
+  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+  assert.ok(rows.includes('| code review | opencode | delegate | — | — | 5 | — | — | 1 | — | 1/1 |'), text);
+  assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | — | 10 | — | — | 2 | — | 1/1 |'), text);
+  assert.equal(rows.length, 2, text);
+});
+
+test('per model and effort rows: host and subagent rows split per model and effort pair', () => {
+  const text = render([facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [
+    { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', input: 10, output: 1 },
+    { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'max', input: 20, output: 2 },
+    { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', input: 30, output: 3 },
+    { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'low', input: 40, output: 4 },
+  ] } })]);
+  const rows = stageRows(text).filter((line) => line.includes('| opencode | host |') || line.includes('| opencode | subagent |'));
+  assert.deepEqual(rows, [
+    '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | high | 10 | — | — | 1 | — | — |',
+    '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | max | 20 | — | — | 2 | — | — |',
+    '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | high | 30 | — | — | 3 | — | — |',
+    '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | low | 40 | — | — | 4 | — | — |',
+  ]);
+});
+
+test('per model and effort rows: local model tags render and emails stay rejected', () => {
+  const local = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'lmstudio/qwen3.8-27b@iq4_xs', effort: 'high', usage: {
+    input: 20, output: 2,
+    models: { 'lmstudio/qwen3.8-27b@iq4_xs#high': { input: 20, output: 2 } },
+  } })] })]);
+  assert.ok(local.includes('| code review | opencode | delegate | lmstudio/qwen3.8-27b@iq4_xs | high | 20 | — | — | 2 | — | 1/1 |'), local);
+  const email = render([facts({ invocations: [invocation({ provider: 'opencode', usage: { input: 10, output: 1, models: { 'user@example.com': { input: 10, output: 1 } } } })] })]);
+  assert.doesNotMatch(email, /user@example\.com/);
+  assert.ok(email.includes('| code review | opencode | delegate | gpt-6-sol (configured) | medium | 10 | — | — | 1 | — | 1/1 |'), email);
+});
+
+test('per model and effort rows: off-pattern model keys keep their own counters beside valid keys', () => {
+  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
+    input: 30, output: 3,
+    models: {
+      'opencode-go/deepseek-v4.1-flash': { input: 10, output: 1 },
+      'bad model#high': { input: 20, output: 2 },
+    },
+  } })] })]);
+  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+  assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | medium | 10 | — | — | 1 | — | 1/1 |'), text);
+  assert.ok(rows.includes('| code review | opencode | delegate | — | high | 20 | — | — | 2 | — | 1/1 |'), text);
+  assert.equal(rows.length, 2, text);
+});
+
+test('per model and effort rows: keys rendering to the same pair merge their counters', () => {
+  const text = render([facts({ invocations: [invocation({ provider: 'opencode', usage: {
+    input: 30, output: 3,
+    models: {
+      'bad model#high': { input: 10, output: 1 },
+      'worse model#high': { input: 20, output: 2 },
+    },
+  } })] })]);
+  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+  assert.deepEqual(rows, ['| code review | opencode | delegate | — | high | 30 | — | — | 3 | — | 1/1 |']);
+});
+
 // SECTION: Scope gate and redaction
 
 const LEAKS = [

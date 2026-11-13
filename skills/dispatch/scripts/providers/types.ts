@@ -2,6 +2,7 @@
 // through `ProcessPort` (core `SpawnPort` is buffered and cannot stream, cap, or kill a tree).
 
 import type { FailureClass } from '../toolkit/types.ts';
+import type { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
 import type { CoverageReason, DiagnosticUsage } from '../toolkit/types.ts';
 
@@ -118,6 +119,19 @@ export type SandboxSpec = {
   supported(env: PlatformEnv): boolean;
 };
 
+/** What a usage parser receives; DB-backed providers count only rows created inside the launch window. */
+export type ProviderUsageContext = {
+  mode: ModeId;
+  platform: PlatformEnv;
+  env: Readonly<Record<string, string | undefined>>;
+  appDataDir?: string;
+  readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null;
+  /** Epoch ms immediately before the launch and after its teardown. */
+  launchStartMs?: number;
+  launchEndMs?: number;
+  readOpencodeMessages?: typeof readOpencodeMessages;
+};
+
 export type ProviderSpec = {
   id: ProviderId;
   modes: readonly ModeSpec[];
@@ -126,7 +140,7 @@ export type ProviderSpec = {
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
   stepEvent?(line: string): 'step-start' | 'step-end' | null;
-  usage?(raw: string, context?: { mode: ModeId; platform: PlatformEnv; env: Readonly<Record<string, string | undefined>>; appDataDir?: string; readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null }): DiagnosticUsage | undefined;
+  usage?(raw: string, context?: ProviderUsageContext): DiagnosticUsage | undefined;
   resumeUsage?: 'per-launch' | 'cumulative' | undefined;
   /** Marks a launched invocation whose provider has no machine-readable usage output. */
   usageUnavailable?: CoverageReason;

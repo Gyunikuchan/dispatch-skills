@@ -8,7 +8,8 @@ import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
+import { normalizeAgyModelEffort, decodeAgyGenMetadata, opencodeDbUsage, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
+import type { OpencodeMessage } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
@@ -89,6 +90,54 @@ test('opencode json usage parses probe fixture', () => {
     input: 1491, output: 8, reasoning: 40, cacheRead: 70, cacheWrite: 0,
     scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached',
   });
+});
+
+test('OpenCode DB usage folds messages into per-model and effort keys', () => {
+  const usage = opencodeDbUsage([
+    { depth: 0, createdMs: 1, model: 'p/a', effort: 'high', input: 10, output: 2, cacheRead: 3, cacheWrite: 0, reasoning: 1 },
+    { depth: 1, createdMs: 2, model: 'p/a', effort: 'high', input: 5, output: 1 },
+    { depth: 2, createdMs: 3, model: 'p/b', effort: 'low', input: 7, output: 4, reasoning: 2 },
+  ]);
+  assert.equal(usage?.provenance, 'opencode.db.messages');
+  assert.equal(usage?.inputSemantics, 'uncached');
+  assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite, usage?.reasoning], [22, 7, 3, 0, 3]);
+  assert.deepEqual(usage?.actualModels, ['p/a', 'p/b']);
+  assert.equal(usage?.actualEffort, null);
+  assert.deepEqual({ ...usage?.models }, {
+    'p/a#high': { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 },
+    'p/b#low': { input: 7, output: 4, reasoning: 2 },
+  });
+});
+
+test('OpenCode DB usage shares one effort and leaves an empty part for a missing model or effort', () => {
+  const shared = opencodeDbUsage([
+    { depth: 0, createdMs: 1, model: 'p/a', effort: 'max', input: 1, output: 1 },
+    { depth: 1, createdMs: 2, model: 'p/a', effort: 'max', input: 2, output: 3 },
+  ]);
+  assert.equal(shared?.actualEffort, 'max');
+  const missing = opencodeDbUsage([
+    { depth: 0, createdMs: 1, model: null, effort: 'max', input: 1, output: 1 },
+    { depth: 0, createdMs: 2, model: 'p/a', effort: null, input: 2, output: 2 },
+    { depth: 0, createdMs: 3, model: null, effort: null, input: 3, output: 3 },
+  ]);
+  assert.deepEqual({ ...missing?.models }, {
+    '#max': { input: 1, output: 1 },
+    'p/a#': { input: 2, output: 2 },
+    '#': { input: 3, output: 3 },
+  });
+  assert.deepEqual(missing?.actualModels, ['p/a']);
+  assert.equal(missing?.actualEffort, null);
+});
+
+test('OpenCode DB usage caps measured models at eight while keeping every model and effort key', () => {
+  const messages: OpencodeMessage[] = Array.from({ length: 10 }, (_, index) => ({
+    depth: 0, createdMs: index, model: `p/m${index}`, effort: 'low', input: 1, output: 1,
+  }));
+  const usage = opencodeDbUsage(messages);
+  assert.equal(usage?.actualModels?.length, 8);
+  assert.deepEqual(usage?.actualModels, Array.from({ length: 8 }, (_, index) => `p/m${index}`));
+  assert.equal(Object.keys(usage?.models ?? {}).length, 10);
+  assert.deepEqual([usage?.input, usage?.output, usage?.actualEffort], [10, 10, 'low']);
 });
 
 const codexStarted = () => JSON.stringify({ type: 'turn.started' });
