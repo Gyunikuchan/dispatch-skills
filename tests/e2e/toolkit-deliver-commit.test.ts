@@ -95,7 +95,7 @@ describe('worktree deliver --commit',()=>{
 
  it('makes one empty commit for a delivery with no changes',async()=>{
   const r=await toolkitRepo();try{
-   await r.level();await r.run(['verify','run']);const from=head(r);r.git(['commit','--allow-empty','-m','internal empty'],r.integration);
+   await r.level();await r.run(['check','run']);const from=head(r);r.git(['commit','--allow-empty','-m','internal empty'],r.integration);
    assert.equal((await r.run(['worktree','deliver'])).exit,0);
    const result=await commit(r);assert.equal(result.exit,0,JSON.stringify(result));
    assert.equal(r.git(['rev-list','--count',from+'..HEAD']),'1');assert.equal(r.git(['rev-parse','HEAD^']),from);assert.equal(r.git(['rev-parse','HEAD^{tree}']),r.git(['rev-parse',from+'^{tree}']));
@@ -155,10 +155,10 @@ describe('worktree deliver --commit',()=>{
    const first=await commit(r);assert.equal(first.exit,0,JSON.stringify(first));const one=head(r);
    assert.equal(r.git(['rev-parse',one+'^']),start);
    // An increment built without the first one fails its verification.
-   assert.equal((await stale.run(['verify','run'])).output.reason,'checks-failed');
+   assert.equal((await stale.run(['check','run'])).output.reason,'checks-failed');
    const second=await r.second('next-increment');await open(second,current=>current+'second\n');
    r.git(['merge-base','--is-ancestor',one,'HEAD'],second.integration);
-   assert.equal((await second.run(['verify','run'])).output.ok,true);
+   assert.equal((await second.run(['check','run'])).output.ok,true);
    assert.equal((await second.run(['worktree','deliver'])).exit,0);
    const next=await commit(second);assert.equal(next.exit,0,JSON.stringify(next));
    assert.equal(r.git(['rev-parse','HEAD^']),one);assert.equal(r.git(['rev-list','--count',start+'..HEAD']),'2');

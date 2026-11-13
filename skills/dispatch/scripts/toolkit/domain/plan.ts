@@ -37,7 +37,8 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'criterion-id':
     case 'criterion-mapping':
     case 'criterion-change-path':
-    case 'criterion-verify':
+    case 'criterion-check':
+    case 'criterion-evidence':
     case 'duplicate-id':
     case 'task-heading':
     case 'task-ownership':
@@ -69,11 +70,10 @@ export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
     case 'task-behaviour':
     case 'increment-behaviour':
     case 'task-overlap':
-    case 'automated-test-duplicates-verify':
+    case 'automated-test-duplicates-check':
     case 'criterion-critical-review':
     case 'change-path-excluded':
     case 'generated-command':
-    case 'criterion-evidence':
     case 'criterion-red-exception':
     case 'criterion-tests-path':
     case 'criterion-red-command':
@@ -394,7 +394,7 @@ const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/i;
 const BEHAVIOUR_PLACEHOLDER = /^(?:TODO|TBD|implement later|fill in|<[^<>]+>)$/i;
 const FILE_COUNT_SUMMARY = /^\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?(?:(?:\s*[,;]\s*|\s+and\s+)\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?)*(?:\s+(?:touched|changed|modified))?$/i;
-const EVIDENCE: readonly EvidenceClass[] = ['red', 'verify', 'review'];
+const EVIDENCE: readonly EvidenceClass[] = ['red', 'check', 'review'];
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 // Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/i;
@@ -971,15 +971,18 @@ function readMapping(current: Criterion, entry: StructuralLine, approved: Readon
     else current.red = command;
     current.redCommandLine = entry.line;
   }
-  const verify = field('Verify');
-  if (verify !== undefined) {
+  const check = field('Check');
+  if (check !== undefined) {
     current.mapped = true;
-    const command = /^`([^`]+)`\s*$/.exec(verify);
-    if (!command?.[1]) out.push(lint('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
+    const command = /^`([^`]+)`\s*$/.exec(check);
+    if (!command?.[1]) out.push(lint('criterion-check', entry.line, 'Check requires exactly one inline-code command.'));
     else {
       current.verify = [...current.verify, { command: command[1].trim() }];
       current.verifyLines = [...current.verifyLines, entry.line];
     }
+  }
+  if (field('Verify') !== undefined) {
+    out.push(lint('criterion-check', entry.line, 'Verify: is retired; use Check: instead.'));
   }
   const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(entry.text)?.[1];
   if (evidence) {
@@ -1025,7 +1028,7 @@ function collectPlanIds(lines: readonly StructuralLine[], criteria: readonly Cri
   return [...ids].sort();
 }
 
-/** Tests outlive plans, so Verify commands and test file names must not carry plan-scoped IDs. */
+/** Tests outlive plans, so Check commands and test file names must not carry plan-scoped IDs. */
 function lintPlanIdNames(criteria: readonly Criterion[], changes: readonly PlanChange[], ids: readonly string[], out: LintDefect[]): void {
   const pattern = planIdPattern(ids);
   if (!pattern) return;
@@ -1034,7 +1037,7 @@ function lintPlanIdNames(criteria: readonly Criterion[], changes: readonly PlanC
     if (id) out.push(lint('plan-id-in-test-name', line, `${where} names plan ID ${id.toUpperCase()}; name the behavior instead.`));
   };
   for (const criterion of criteria) {
-    criterion.verify.forEach((item, index) => check(`Criterion ${criterion.id} Verify`, item.command, criterion.verifyLines[index] ?? criterion.line));
+    criterion.verify.forEach((item, index) => check(`Criterion ${criterion.id} Check`, item.command, criterion.verifyLines[index] ?? criterion.line));
     if (criterion.red !== null) check(`Criterion ${criterion.id} RED`, criterion.red, criterion.redCommandLine ?? criterion.line);
   }
   const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
@@ -1072,9 +1075,9 @@ function seamsFromDeclarations(declarations: readonly { value: string }[]): stri
 function finishCriterion(current: Criterion, out: LintDefect[]): void {
   if (!current.satisfies?.length && !out.some((defect) => defect.code === 'missing-satisfies' && defect.line !== null && defect.line >= current.line)) out.push(lint('missing-satisfies', current.line, 'Criterion requires Satisfies: REQ-<n>.'));
   const name = current.id || 'without an ID';
-  if (!current.mapped) out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
-  if (current.evidenceRaw === null) out.push(lint('criterion-evidence', current.line, `Criterion ${name} requires exactly one Evidence mapping: red, verify, or review.`));
-  else if (!current.evidence) out.push(lint('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidenceRaw}"; accepted classes are red, verify, review.`));
+  if (!current.mapped) out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Check mapping.'));
+  if (current.evidenceRaw === null) out.push(lint('criterion-evidence', current.line, `Criterion ${name} requires exactly one Evidence mapping: red, check, or review.`));
+  else if (!current.evidence) out.push(lint('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidenceRaw}"; accepted classes are red, check, review.`));
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(lint('criterion-red-exception', current.redLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   }
@@ -1083,10 +1086,10 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
     out.push(lint('criterion-tests-path', current.testsLine ?? current.line, `Criterion ${name} Tests path ${path} is not in its Changes.`));
   }
   if (current.evidence === 'red' && current.redException === null && !current.tests.length) {
-    out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but declares no Tests: path; its red evidence downgrades to verify.`));
+    out.push(lint('criterion-red-test-path', current.line, `Criterion ${name} uses red evidence but declares no Tests: path; its red evidence downgrades to check.`));
   }
   if (current.evidence === 'red' && current.redException === null && current.red === null) {
-    out.push(lint('red-downgraded', current.line, `Criterion ${name} declares no RED: \`<command>\`; its red evidence downgrades to verify.`));
+    out.push(lint('red-downgraded', current.line, `Criterion ${name} declares no RED: \`<command>\`; its red evidence downgrades to check.`));
   }
   if (current.evidence !== 'review') return;
   if (current.review === null) { out.push(lint('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.')); return; }
@@ -1205,7 +1208,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
       owner.set(id, task.id);
       if (criterion.integration !== null) out.push(lint('task-criteria', criterion.line, `Criterion ${id} is mapped to ${task.id} and marked Integration; choose one.`));
       // Admission requires each evidence row path in Changes, so a task-owned criterion without Changes can never pass.
-      else if (!criterion.changes.length) out.push(lint('criterion-task-changes', criterion.line, `Criterion ${id} is task-owned but has no Changes; list the task paths it proves in Changes, or mark it Integration: <reason> with Verify.`));
+      else if (!criterion.changes.length) out.push(lint('criterion-task-changes', criterion.line, `Criterion ${id} is task-owned but has no Changes; list the task paths it proves in Changes, or mark it Integration: <reason> with Check.`));
       const foreign = criterion.changes.filter((path) => !task.paths.includes(path));
       if (foreign.length) out.push(lint('task-criteria', criterion.line, `Criterion ${id} of ${task.id} changes ${foreign.join(', ')} outside the task; move the path or mark the criterion Integration.`));
     }
@@ -1214,7 +1217,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
   for (const criterion of criteria) {
     if (owner.has(criterion.id)) continue;
     if (criterion.integration === null) out.push(lint('task-criteria', criterion.line, `Criterion ${criterion.id} maps to no Task Map row; add it to a task's Criteria cell or provide Integration: <reason>.`));
-    else if (!criterion.integration.trim() || !criterion.verify.length) out.push(lint('task-criteria', criterion.line, `Integration criterion ${criterion.id} requires a reason and a Verify command.`));
+    else if (!criterion.integration.trim() || !criterion.verify.length) out.push(lint('task-criteria', criterion.line, `Integration criterion ${criterion.id} requires a reason and a Check command.`));
   }
 }
 
@@ -1278,7 +1281,7 @@ function lintAutomatedDuplicates(automated: readonly string[], criteria: readonl
   for (const command of automated) {
     if (!verifies.has(command)) continue;
     const line = lines.find((entry) => entry.text.includes(`\`${command}\``) && /^-\s+`/.test(entry.text))?.line ?? null;
-    out.push(lint('automated-test-duplicates-verify', line, `Automated test \`${command}\` repeats a criterion Verify command; list only extra commands.`));
+    out.push(lint('automated-test-duplicates-check', line, `Automated test \`${command}\` repeats a criterion Check command; list only extra commands.`));
   }
 }
 

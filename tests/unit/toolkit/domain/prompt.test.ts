@@ -215,7 +215,7 @@ test('assembleTemplate binds slots and rejects mismatches', () => {
 
 // SECTION: Severity rubric
 
-const CALIBRATION = "In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Verify gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.";
+const CALIBRATION = "In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Check gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.";
 const assembled = (kind: QualityConsumer) => assembleTemplate(read(templates, 'review-prompt.md'), read(templates, `review-prompt-${kind}.md`), undefined, shared(kind)).template;
 const rubricBody = () => read(templates, 'review-severity.md').split(/^## rubric$/m)[1]!.trim();
 
@@ -231,7 +231,7 @@ test('all kinds share an identical severity rubric', () => {
   assert.ok(flat('plan').includes(CALIBRATION));
   for (const kind of ['code', 'design'] as const) {
     const template = assembled(kind);
-    assert.ok(!template.includes('Verify gates') && !template.includes('<<slot:'), kind);
+    assert.ok(!template.includes('Check gates') && !template.includes('<<slot:'), kind);
   }
 });
 

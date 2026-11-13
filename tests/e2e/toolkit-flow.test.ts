@@ -35,15 +35,15 @@ describe('toolkit status sections', () => {
       await f.run(['worktree','integrate','T1']); s=await status();
       assert.equal(s.writers[0].state,'integrated'); assert.equal(s.integration.undelivered,true); assert.equal(s.integration.pendingConflict,null);
       assert.equal(s.integration.head,f.git(['rev-parse','HEAD'],f.integration)); assert.equal(s.integration.branch,'dispatch/test/integration');
-      await f.run(['verify','run']); assert.deepEqual((await status()).criteria,[]);
+      await f.run(['check','run']); assert.deepEqual((await status()).criteria,[]);
       const tracked=path.join(f.integration,'src/file.ts'); const original=fs.readFileSync(tracked);
       const extra=path.join(f.integration,'extra'); fs.writeFileSync(extra,'extra');
       fs.writeFileSync(tracked,'dirty'); assert.deepEqual((await status()).criteria,['SC1','contract']);
       fs.writeFileSync(tracked,original); fs.rmSync(extra); assert.deepEqual((await status()).criteria,[]);
       fs.writeFileSync(tracked,'fix\n'); await f.run(['worktree','commit','--reason','repair']); assert.deepEqual((await status()).criteria,['SC1','contract']);
-      await f.run(['verify','run']); await f.run(['worktree','deliver']); assert.equal((await status()).integration.undelivered,false);
+      await f.run(['check','run']); await f.run(['worktree','deliver']); assert.equal((await status()).integration.undelivered,false);
       fs.rmSync(f.integration,{recursive:true,force:true}); s=await status(); assert.equal(s.integration.state,'missing'); assert.deepEqual(s.criteria,['SC1','contract']);
-      assert.equal((await f.run(['verify','run'])).exit,0); assert.deepEqual((await status()).criteria,[]);
+      assert.equal((await f.run(['check','run'])).exit,0); assert.deepEqual((await status()).criteria,[]);
       await f.run(['worktree','close','--reason','done']); assert.equal((await status()).integration.closed,true);
     } finally {f.cleanup();}
   });
@@ -104,7 +104,7 @@ describe('toolkit session flow', () => {
     const f=await toolkitRepo(planSource.replace('node -e "process.exit(0)"',command)); try {
       await f.level(); const created=await f.run(['worktree','create','T1']); fs.writeFileSync(path.resolve(f.session,created.value.path,'src/file.ts'),'writer\n');
       const signal=path.join(f.integration,'ignored'); fs.mkdirSync(signal);
-      const verify=f.concurrent(['verify','run']);
+      const verify=f.concurrent(['check','run']);
       try {
         const deadline=Date.now()+15000;
         while(!fs.existsSync(path.join(signal,'started'))) {assert.ok(Date.now()<deadline); await new Promise(resolve=>setTimeout(resolve,20));}
@@ -124,8 +124,8 @@ describe('toolkit session flow', () => {
       const brief=(await f.run(['brief','render','T1'])).value; assert.ok(fs.existsSync(brief.path));
       const writer=JSON.parse(fs.readFileSync((await f.run(['status','show'])).output.path,'utf8')).writers[0].path;
       fs.writeFileSync(path.resolve(f.session,writer,'src/file.ts'),'delivered\n');
-      for(const args of [['worktree','submit','T1'],['worktree','integrate','T1'],['verify','run']]) assert.equal((await f.run(args)).output.ok,true);
-      fs.writeFileSync(path.join(f.integration,'src/file.ts'),'fixed\n'); assert.equal((await f.run(['worktree','commit','--reason','fix'])).exit,0); await f.run(['verify','run']);
+      for(const args of [['worktree','submit','T1'],['worktree','integrate','T1'],['check','run']]) assert.equal((await f.run(args)).output.ok,true);
+      fs.writeFileSync(path.join(f.integration,'src/file.ts'),'fixed\n'); assert.equal((await f.run(['worktree','commit','--reason','fix'])).exit,0); await f.run(['check','run']);
       assert.deepEqual((await f.run(['status','show'])).value.criteria,[]);
       const callerHead=f.git(['rev-parse','HEAD']); assert.equal((await f.run(['worktree','deliver'])).exit,0); assert.equal(f.git(['rev-parse','HEAD']),callerHead); assert.notEqual(callerHead,f.git(['rev-parse','HEAD'],f.integration)); assert.equal(fs.readFileSync(path.join(f.root,'src/file.ts'),'utf8'),'fixed\n'); assert.equal(f.git(['diff','--cached','--name-only']),'');
     } finally {f.cleanup();}
@@ -152,7 +152,7 @@ const capturePlanSource = [
   '  - Satisfies: REQ-1',
   '  - Changes: src/file.ts, `tests/with space.test.ts`',
   '  - Tests: `tests/with space.test.ts`',
-  '  - Verify: `node -e "process.exit(0)"`',
+  '  - Check: `node -e "process.exit(0)"`',
   '  - RED: `node -e "process.stdout.write(\'raw stdout\'); process.stderr.write(\'raw stderr\'); process.exit(7)" {files}`',
   '  - Evidence: red',
   '',

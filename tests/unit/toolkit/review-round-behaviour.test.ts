@@ -111,8 +111,8 @@ test('review rounds code review prompt uses intent and raw task markdown and ref
 ## Success Criteria
 - [SC1] Works
   - Changes: src/first.ts
-  - Verify: \`node check\`
-  - Evidence: verify
+  - Check: \`node check\`
+  - Evidence: check
 ## Verification Plan
 ### Automated Tests
 - \`node check\`
@@ -131,7 +131,7 @@ test('review rounds code review prompt uses intent and raw task markdown and ref
     assert.doesNotMatch(prompt,/absent or unfilled table/);
     assert.match(prompt,/selected diff and tests/);
     assert.match(prompt,/does not establish that verification commands ran or final gates passed/);
-    assert.equal(summary,'Keep captured work recoverable.\n\n### T1 — First\n#### [NEW] src/first.ts\n- Purpose: Keep captured work recoverable.\n\n- [SC1] Works\n  - Changes: src/first.ts\n  - Verify: `node check`\n  - Evidence: verify');
+    assert.equal(summary,'Keep captured work recoverable.\n\n### T1 — First\n#### [NEW] src/first.ts\n- Purpose: Keep captured work recoverable.\n\n- [SC1] Works\n  - Changes: src/first.ts\n  - Check: `node check`\n  - Evidence: check');
     assert.doesNotMatch(summary,/sha256:/);
     const findings=JSON.parse(fs.readFileSync(result.value.path,'utf8'));assert.deepEqual(findings.clusters.map((cluster:{file:string})=>cluster.file),['src/first.ts','src/second.ts']);
     f.deps.delegate=async(provider,request,mode)=>{f.launches.push({provider,request,mode});return provider==='agy'?{outcome:{status:'fail',cls:'auth',detail:'No access'},invocations:[]}:{outcome:{status:'ok',text:CLEAN,resume:null,sessionId:null},invocations:[]};};
@@ -163,8 +163,8 @@ test('review voices receive prompts rotated by roster position',async()=>{
 ## Success Criteria
 - [SC1] Works
   - Changes: src/first.ts
-  - Verify: \`node check\`
-  - Evidence: verify
+  - Check: \`node check\`
+  - Evidence: check
 ## Verification Plan
 ### Automated Tests
 - \`node check\`

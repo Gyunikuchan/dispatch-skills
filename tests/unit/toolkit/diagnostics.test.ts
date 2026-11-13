@@ -802,8 +802,8 @@ function hostTest_planSource(): string {
     '## Success Criteria',
     '- [SC1] Criterion works',
     '  - Changes: src/task-1.ts',
-    '  - Verify: `node verify-1.js`',
-    '  - Evidence: verify',
+    '  - Check: `node verify-1.js`',
+    '  - Evidence: check',
     '', '## Verification Plan', '### Automated Tests',
     '- `node verify-1.js`', '- `node contract-check.js`', '',
   ].join('\n');

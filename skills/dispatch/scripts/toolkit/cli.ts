@@ -15,7 +15,7 @@ import { sanitizeText } from './domain/sanitize.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import { normalizeProvider } from '../policy/roster.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
-import { verifyRun } from './verify.ts';
+import { checkRun } from './check.ts';
 import { renderBrief, renderExplorerBrief, renderTestCleanupBrief, renderVerifierBrief } from './brief.ts';
 import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
@@ -140,7 +140,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree create': create,
   'worktree submit': submit,
   'worktree abandon': abandon,
-  'verify run': verifyRun,
+  'check run': checkRun,
   'ledger append': async ({ session, manifest, args, deps }) => {
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file: ledger append <record.json> --session <session>');
     const file = path.resolve(args[0]!);
@@ -233,11 +233,12 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
+      'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, task: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
+    if (parsed.values['task'] !== undefined && (tool !== 'check' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--task is only for check run');
     if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
     if (parsed.values['commit'] !== undefined && (tool !== 'worktree' || action !== 'deliver')) throw new ToolError(1, 'invalid-input', '--commit is only for worktree deliver');
     const isReviewOrAsk = (tool === 'review' && action === 'run') || (tool === 'ask' && action === 'run');

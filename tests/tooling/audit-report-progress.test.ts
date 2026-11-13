@@ -15,7 +15,7 @@ test('audit report progress requires reviewed delivery before fixed status', () 
   unchanged(file, () => recordProgress(root, file, 'A-1,O-1', { ...base, phase: 'implemented', implementation: artifact(root, 'implementation.md') }), /phase|transition/);
   const reviewed = { ...base, planReview: artifact(root, 'plan-review.md') };
   recordProgress(root, file, 'A-1,O-1', { ...reviewed, phase: 'plan-reviewed' });
-  const implemented = { ...reviewed, implementation: 'implementation.md', evidence: 'All plan Verify commands pass.' };
+  const implemented = { ...reviewed, implementation: 'implementation.md', evidence: 'All plan Check commands pass.' };
   recordProgress(root, file, 'A-1,O-1', { ...implemented, phase: 'implemented' });
   unchanged(file, () => captured(() => status.cmdSet(root, file, ['set', 'A-1', 'fixed'])), /code-reviewed/);
   recordProgress(root, file, 'A-1,O-1', { ...implemented, phase: 'code-reviewed', codeReview: artifact(root, 'code-review.md') });

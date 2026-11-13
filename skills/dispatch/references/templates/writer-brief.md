@@ -11,7 +11,7 @@ For agent-consumed documents, read authoring references named in Shared plan con
 
 1. For each `RED:` criterion, write failing tests first. Run its RED command; use the generated RED capture command when present. Observe the failures. The RED command runs as written in the platform's subprocess shell.
 2. Treat plan `Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding; decide routine implementation choices yourself. You own the changed outcome and its Changes; the orchestrator runs post-integration `Evidence: review` checks.
-3. Apply the quality bar below; local coverage is optional feedback. Run full modified logical test files and known impacted consumers before aggregate checks; pass every Verify and contract command. Report evidence of out-of-scope paths or wrong/infeasible plan details to the orchestrator. Keep plan edits with the orchestrator.
+3. Apply the quality bar below; local coverage is optional feedback. Run full modified logical test files and known impacted consumers before aggregate checks; pass every Check and contract command. Report evidence of out-of-scope paths or wrong/infeasible plan details to the orchestrator. Keep plan edits with the orchestrator.
 4. For the ordinary task, reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `{{reportPath}}`; a one-line summary; and `concerns: <n>`.
 
 ## Shared plan context

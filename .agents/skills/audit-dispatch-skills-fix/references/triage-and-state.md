@@ -70,7 +70,7 @@ Each member receives the same `- **Execution**: <single-line JSON>`. The command
 |---|---|---|
 | planned | Dispatch plan, exact membership and scope | plan |
 | plan-reviewed | Dispatch plan review results and settled plan | planReview |
-| implemented | Dispatch walkthrough, criterion coverage and passing Verify commands | implementation |
+| implemented | Dispatch walkthrough, criterion coverage and passing Check commands | implementation |
 | code-reviewed | Dispatch code review results, adjudicated findings and post-fix verification | codeReview |
 
 Fields are paths to evidence **files**, not directories. A plan's inline review section or the session's plan review results can provide planReview; the walkthrough or a criterion evidence note supplies implementation; the code review results file supplies codeReview. The nonblank `evidence` summary must describe actual results and limitations. Record unsupported claims as open concerns, not passes.

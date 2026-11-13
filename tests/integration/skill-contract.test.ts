@@ -119,10 +119,10 @@ test('phase prose places each workflow rule in its canonical home', () => {
   }
   assert.ok(rules.includes('the round-1 cap + 2 + 2 per user-resolved grant'));
 
-  // Implement post-cleanup verification and review timing
+  // Implement post-cleanup checks and review timing
   const implementText = ref('verbs/implement');
-  assert.match(implementText, /start[^.]*verification[^.]*code review[^.]*same[^.]*HEAD[^.]*together/i);
-  assert.match(implementText, /verification fails[^.]*repair[^.]*review/i);
+  assert.match(implementText, /start[^\n]*checks[^\n]*code review[^\n]*same[^\n]*HEAD[^\n]*together/i);
+  assert.match(implementText, /checks fail[^\n]*repair[^\n]*review/i);
 
   // Scope round single canonical home
   const canonical = ref('grounding');
@@ -716,10 +716,34 @@ test('configuration recommends the strongest model and doctor run documents writ
 
 test('implement runs verification before test cleanup and verify states the approval loop and proof guidance', () => {
   const implementGuide = read(root + 'references/verbs/implement.md');
-  assert.ok(implementGuide.indexOf('verification step') < implementGuide.indexOf('Apply [shared]'));
-  for (const term of ['criterion and contract checks must pass on the new HEAD', 'Any verifier-added test launches cleanup', 'all review rounds settle', 'accepted review fixes changed proved behaviour', 'V0', 'before launching', 'covering those fixes together', 'Never re-check between rounds', 'add tests in a re-check', 'another code review round', 'three fix rounds per issue']) assert.ok(implementGuide.includes(term), term);
+  assert.ok(implementGuide.indexOf('verification stage') < implementGuide.indexOf('Apply [shared]'));
+  assert.ok(!implementGuide.includes('verification step'));
+  assert.ok(!implementGuide.includes('full contract and remaining criterion verification'));
+  for (const term of [
+    'check run --task',
+    'criterion and contract checks must pass on the new HEAD',
+    'Any verifier-added test launches cleanup',
+    'all review rounds settle',
+    'accepted review fixes changed proved behaviour',
+    'V0',
+    'before launching',
+    'covering those fixes together',
+    'Never re-check between rounds',
+    'add tests in a re-check',
+    'another code review round',
+    'three fix rounds per issue',
+  ]) assert.ok(implementGuide.includes(term), term);
+  assert.match(implementGuide, /check run`[^\n]*before the verifier launches/i);
   const verifyGuide = read(root + 'references/verbs/verify.md');
-  for (const term of ['finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(verifyGuide.includes(term), term);
+  for (const step of ['1. ', '2. ', '3. ', '4. ', '5. ', '6. ']) {
+    assert.ok(verifyGuide.includes('\n' + step), `missing numbered step ${step}`);
+  }
+  for (const term of ['status show', 'check run', 'checks passed', 'finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(verifyGuide.includes(term), term);
+  assert.match(verifyGuide, /failed check or baseline[^\n]*proved/i);
+  const skill = read(root + 'SKILL.md');
+  assert.match(skill, /runtime verification/);
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.match(section(toolkit, 'brief verifier'), /checks passed/);
   const verifyManual = read(root + 'references/readme/verify.md');
   assert.match(verifyManual, /verification\/report\.md/);
   assert.match(verifyManual, /Verification/);
@@ -890,4 +914,52 @@ test('removed explorer config key explore-subagents is absent from code, tests a
   }
 
   assert.deepEqual(violations, [], `files unexpectedly referencing explore-subagents: ${violations.join(', ')}`);
+});
+
+test('shipped SKILL.md and reference markdown name no retired verify spellings', () => {
+  const files: string[] = [path.join(OVERLAY_ROOT, 'skills', 'dispatch', 'SKILL.md')];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.md')) files.push(full);
+    }
+  };
+  walk(path.join(OVERLAY_ROOT, 'skills', 'dispatch', 'references'));
+  const retired = /\bverify run\b|\bVerify:|Evidence:\s*verify\b/;
+  const hits: string[] = [];
+  for (const file of files) {
+    const content = fs.readFileSync(file, 'utf8');
+    if (retired.test(content)) hits.push(path.relative(OVERLAY_ROOT, file).replaceAll('\\', '/'));
+  }
+  assert.deepEqual(hits, [], `retired verify spellings in shipped markdown: ${hits.join(', ')}`);
+});
+
+test('verifier brief states the ten proof standards and baseline rule with no URL', () => {
+  const brief = read(root + 'references/templates/verifier-brief.md');
+  assert.doesNotMatch(brief, /https?:\/\//);
+  for (const pattern of [
+    /real user path/i,
+    /action and the resulting state/i,
+    /side effects/i,
+    /mock only where a production boundary/i,
+    /dry-run or test mode/i,
+    /usable.*not process-up/i,
+    /read-only health check/i,
+    /stop only what you started.*never by process name/i,
+    /keep evidence after cleanup/i,
+    /never weaken a check/i,
+    /checks passed/,
+    /baseline row/i,
+  ]) {
+    assert.match(brief, pattern);
+  }
+});
+
+test('glossary defines verification stage terms with no banned synonyms', () => {
+  const glossary = read(root + 'references/glossary.md');
+  for (const term of ['check', 'contract command', 'verification stage', 'runtime verification', 'verifier']) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(glossary, new RegExp(`^\\| ${escaped} \\|[^|\\n]+\\|\\s*\\|$`, 'm'), term);
+  }
 });

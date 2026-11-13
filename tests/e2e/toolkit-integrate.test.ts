@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
 import { foldLedger, currentHashes } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
-const twoTasks=planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] src/file.ts\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/file.ts\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n\n## Verification Plan');
+const twoTasks=planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] src/file.ts\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/file.ts\n  - Check: `node -e "process.exit(0)"`\n  - Evidence: check\n\n## Verification Plan');
 type Repo=Awaited<ReturnType<typeof toolkitRepo>>;
 const rows=(r: Repo,phase: string)=>foldLedger(r.session).records.filter(x=>x.kind==='integrate' && x.data['phase']===phase);
 async function candidate(r: Repo,task='T1',text='writer\n') {

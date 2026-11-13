@@ -7,7 +7,7 @@ import { appendRecord, foldLedger } from '../../skills/dispatch/scripts/toolkit/
 const records = (r: Awaited<ReturnType<typeof toolkitRepo>>) => foldLedger(r.session).records.filter(x=>x.kind==='writer');
 const launchPath = (r: Awaited<ReturnType<typeof toolkitRepo>>) => path.resolve(r.session,records(r).findLast(x=>x.data['phase']==='launched')!.data['path']);
 const crash = (point: string) => (p: string) => { if(p===point) throw new Error('crash'); };
-const twoTaskPlan = (prerequisite: string) => planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | '+prerequisite+' | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] other\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: other\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n\n## Verification Plan');
+const twoTaskPlan = (prerequisite: string) => planSource.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | '+prerequisite+' | SC2 |').replace('## Success Criteria','### T2 — Other\n#### [MODIFY] other\n- Purpose: other.\n\n## Success Criteria').replace('## Verification Plan','- [SC2] Other works\n  - Changes: other\n  - Check: `node -e "process.exit(0)"`\n  - Evidence: check\n\n## Verification Plan');
 describe('toolkit writer worktrees', () => {
   it('creates records, refuses duplicate work, restores missing paths and uses fresh abandoned paths', async t => {
     const r=await toolkitRepo(); t.after(r.cleanup);

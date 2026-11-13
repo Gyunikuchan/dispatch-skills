@@ -13,6 +13,11 @@
 | **ledger** | Append-only record of approvals, edits, evidence, writers and integration. | |
 | **result file** | Full output artifact named by a tool's compact stdout path. | |
 | criterion | Checkable governing outcome. | |
+| check | Deterministic criterion or contract command executed by `check run`. | |
+| contract command | `Automated Tests` command that no criterion lists, executed by `check run` on the `contract` row. | |
+| verification stage | Two-layer stage that runs checks first and runtime verification second (run by `verify` and `implement`). | |
+| runtime verification | Second layer of the verification stage where the verifier exercises delivered behaviour at runtime. | |
+| verifier | Utility subagent executing runtime verification (and baseline checks when `checks passed` is absent) from `brief verifier`. | |
 | handoff | Delivered behavior, verification status, concerns and retained artifact paths. | |
 
 The [toolkit contract](toolkit.md) owns operational shapes and arguments.

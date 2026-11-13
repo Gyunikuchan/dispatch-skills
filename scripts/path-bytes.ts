@@ -74,7 +74,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       [`${TOOLKIT}#brief-render`]: unconditional,
       [`${TOOLKIT}#worktree-submit`]: unconditional,
       [`${TOOLKIT}#worktree-integrate`]: unconditional,
-      [`${TOOLKIT}#verify-run`]: unconditional,
+      [`${TOOLKIT}#check-run`]: unconditional,
       'references/verbs/verify.md': unconditional,
       [`${BAR}#shared`]: unconditional,
       [`${BAR}#testing`]: unconditional,
@@ -101,7 +101,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/templates/writer-brief.md': unconditional,
     },
     calls: [
-      call('doctor run', 1), call('lint run', 1), call('verify run', 4), call('worktree create', 2), call('brief render', 2),
+      call('doctor run', 1), call('lint run', 1), call('check run', 4), call('worktree create', 2), call('brief render', 2),
       call('worktree submit', 2), call('worktree integrate', 2), call('brief verifier', 1), call('brief test-cleanup', 1),
       call('worktree commit', 2), call('review run', 2), call('worktree deliver', 1), call('report complete', 1),
       call('worktree cleanup', 1), call('worktree continue', 0), call('worktree abort', 0), call('worktree abandon', 0),

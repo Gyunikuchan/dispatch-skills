@@ -4,7 +4,7 @@ import type { Check } from '../../../skills/dispatch/scripts/toolkit/plan-view.t
 describe('evidence eligibility', () => {
   test('only clean passing current tree and command evidence verifies a check', async () => {
     const { eligibility } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const checks: Check[] = [{ criterion: 'SC1', commands: ['node a'], commandDigest: 'digest', evidenceClass: 'verify' }];
+    const checks: Check[] = [{ criterion: 'SC1', commands: ['node a'], commandDigest: 'digest', evidenceClass: 'check' }];
     const good = { criterion: 'SC1', commandDigest: 'digest', tree: 'tree', clean: true, before: 'tree', after: 'tree', exit: 0 };
     const fold = (data: object[]) => ({ records: data.map((data, i) => ({ seq: i + 1, key: '' + i, at: '', kind: 'evidence', by: 'tool', data })), lastSeq: data.length, torn: null });
     const trees = { headTree: 'tree', testedTree: 'tree' };
@@ -20,16 +20,16 @@ describe('evidence eligibility', () => {
   test('criterion statuses', async () => {
     const { criterionStatuses } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const checks: Check[] = [
-      { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified', evidenceClass: 'verify' },
+      { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified', evidenceClass: 'check' },
       { criterion: 'manual', commands: [], commandDigest: 'digest-manual', evidenceClass: 'review' },
       { criterion: 'manual-only', commands: [], commandDigest: 'digest-manual-only', evidenceClass: 'review' },
       { criterion: 'waived', commands: [], commandDigest: 'digest-waived', evidenceClass: 'review' },
       { criterion: 'review-tool', commands: ['node review.ts'], commandDigest: 'digest-review-tool', evidenceClass: 'review' },
-      { criterion: 'failed', commands: ['node fail.ts'], commandDigest: 'digest-failed', evidenceClass: 'verify' },
-      { criterion: 'mutated', commands: ['node mutate.ts'], commandDigest: 'digest-mutated', evidenceClass: 'verify' },
-      { criterion: 'older-tree', commands: ['node old.ts'], commandDigest: 'digest-older', evidenceClass: 'verify' },
-      { criterion: 'stale-command', commands: ['node stale.ts'], commandDigest: 'digest-stale', evidenceClass: 'verify' },
-      { criterion: 'dirty-checkout', commands: ['node dirty.ts'], commandDigest: 'digest-dirty', evidenceClass: 'verify' },
+      { criterion: 'failed', commands: ['node fail.ts'], commandDigest: 'digest-failed', evidenceClass: 'check' },
+      { criterion: 'mutated', commands: ['node mutate.ts'], commandDigest: 'digest-mutated', evidenceClass: 'check' },
+      { criterion: 'older-tree', commands: ['node old.ts'], commandDigest: 'digest-older', evidenceClass: 'check' },
+      { criterion: 'stale-command', commands: ['node stale.ts'], commandDigest: 'digest-stale', evidenceClass: 'check' },
+      { criterion: 'dirty-checkout', commands: ['node dirty.ts'], commandDigest: 'digest-dirty', evidenceClass: 'check' },
       { criterion: 'contract', commands: [], commandDigest: 'digest-contract', evidenceClass: 'contract' },
     ];
     const evidence = (criterion: string, patch: Record<string, unknown> = {}) => ({
@@ -123,7 +123,7 @@ describe('evidence eligibility', () => {
 
 test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
  const {criterionStatuses}=await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
- const checks: Check[]=[{criterion:'SC1',commands:['step'],commandDigest:'one',evidenceClass:'verify'},{criterion:'SC2',commands:['kept'],commandDigest:'two',evidenceClass:'verify'}];
+ const checks: Check[]=[{criterion:'SC1',commands:['step'],commandDigest:'one',evidenceClass:'check'},{criterion:'SC2',commands:['kept'],commandDigest:'two',evidenceClass:'check'}];
  const row=(criterion:string,commandDigest:string,tree:string,patch={})=>({criterion,commandDigest,tree,before:tree,after:tree,clean:true,exit:0,path:criterion+'.json',...patch});
  const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
  const cleanup={from:'source-commit',fromTree:'source',removed:['SC1']};
@@ -142,7 +142,7 @@ test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
 test('review evidence never qualifies on the current or cleanup tree', async () => {
   const { eligibility, criterionStatuses, verifiedStage } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
   const checks: Check[] = [
-    { criterion: 'SC1', commands: ['step'], commandDigest: 'one', evidenceClass: 'verify' },
+    { criterion: 'SC1', commands: ['step'], commandDigest: 'one', evidenceClass: 'check' },
     { criterion: 'SC2', commands: ['review'], commandDigest: 'two', evidenceClass: 'review' },
     { criterion: 'contract', commands: [], commandDigest: 'contract-digest', evidenceClass: 'contract' },
   ];

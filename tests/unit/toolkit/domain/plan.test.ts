@@ -42,14 +42,14 @@ const PLAN = `# Add retry budget
   - Satisfies: REQ-1
   - Changes: src/fetch.ts, tests/fetch.test.ts
   - Tests: tests/fetch.test.ts
-  - Verify: \`node --test tests/fetch.test.ts\`
+  - Check: \`node --test tests/fetch.test.ts\`
   - RED: \`node --test {files}\`
   - Evidence: red
 - [SC2] Whole suite stays green
   - Satisfies: REQ-1
   - Changes: src/fetch.ts
-  - Verify: \`npm test\`
-  - Evidence: verify
+  - Check: \`npm test\`
+  - Evidence: check
 
 ## Verification Plan
 ### Automated Tests
@@ -67,7 +67,7 @@ const defects = (source: string) => {
 };
 
 test('presentation and traceability findings are warnings while structural findings block', () => {
-  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-verify', 'criterion-critical-review'] as const) {
+  for (const code of ['missing-summary-box', 'summary-label', 'leftover-placeholder', 'filler-note', 'section-order', 'missing-satisfies', 'missing-requirement-ref', 'unknown-requirement', 'plan-id-in-test-name', 'task-summary', 'task-overlap', 'automated-test-duplicates-check', 'criterion-critical-review'] as const) {
     assert.equal(lint(code, null, 'finding').severity, 'warning', code);
   }
   const result = parsePlan(PLAN.replace('> **Risk:** low — isolated helper\n', '').replaceAll('  - Satisfies: REQ-1\n', ''));
@@ -76,7 +76,7 @@ test('presentation and traceability findings are warnings while structural findi
   assert.ok(result.warnings.some(item => item.code === 'missing-satisfies'));
   for (const [source, code] of [
     [PLAN.replace('[SC1]', '[SC0]'), 'criterion-id'],
-    [PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`', '  - Verify: invalid'), 'criterion-verify'],
+    [PLAN.replace('  - Check: `node --test tests/fetch.test.ts`', '  - Check: invalid'), 'criterion-check'],
     [PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts'), 'change-heading'],
     [PLAN.replace('## Task Map', '## Tasks'), 'task-map'],
   ]) {
@@ -132,7 +132,7 @@ test('readable plan syntax: owned briefs carry Outcome, Constraints and every la
     .replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only.')
     .replace('#### [GENERATED] docs/api.md', '#### [GENERATED] docs/api.md')
     .replace('## Success Criteria', '### T2 — Check the companion\n- Constraints: Preserve companion shape.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria')
-    .replace('  - Changes: src/fetch.ts\n  - Verify: `npm test`', '  - Changes: src/companion.ts\n  - Verify: `npm test`');
+    .replace('  - Changes: src/fetch.ts\n  - Check: `npm test`', '  - Changes: src/companion.ts\n  - Check: `npm test`');
   const plan = parsed(source);
   const first = selectTaskBrief(plan, 'T1'), second = selectTaskBrief(plan, 'T2');
   assert.ok(first); assert.ok(second);
@@ -181,7 +181,7 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
   assert.equal(plan.title, 'Add retry budget');
   assert.equal(plan.box['Parent'], '`governing.spec.md` · sha256:' + 'a'.repeat(64));
   assert.deepEqual(plan.keyDecisions, ['Cap at three attempts (user)']);
-  assert.deepEqual(plan.criteria.map((item) => [item.id, item.evidence]), [['SC1', 'red'], ['SC2', 'verify']]);
+  assert.deepEqual(plan.criteria.map((item) => [item.id, item.evidence]), [['SC1', 'red'], ['SC2', 'check']]);
   assert.deepEqual(plan.criteria[0]?.changes, ['src/fetch.ts', 'tests/fetch.test.ts']);
   assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test' }]);
   assert.deepEqual(plan.changes.map((item) => [item.action, item.path]), [['MODIFY', 'src/fetch.ts'], ['NEW', 'tests/fetch.test.ts'], ['GENERATED', 'docs/api.md']]);
@@ -191,14 +191,14 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
 });
 
 test('implement-plan-lint: missing criterion fields, unknown markers, and GENERATED without Command fail', () => {
-  assert.ok(defects(PLAN.replace('  - Evidence: verify\n', '')).includes('criterion-evidence'));
+  assert.ok(defects(PLAN.replace('  - Evidence: check\n', '')).includes('criterion-evidence'));
   assert.ok(defects(PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [ADD] tests/fetch.test.ts')).includes('unknown-change-marker'));
   assert.ok(defects(PLAN.replace('- Command: `npm run docs`\n', '')).includes('generated-command'));
   assert.ok(defects(PLAN.replace('> **Risk:** low — isolated helper\n', '')).includes('summary-label'));
 });
 
 test('implement-plan-lint: leftover template placeholders fail when a vocabulary is supplied', () => {
-  const vocabulary = placeholderVocabulary(['````markdown\n# <Goal Description>\n- Verify: `<command>`\n````\n']);
+  const vocabulary = placeholderVocabulary(['````markdown\n# <Goal Description>\n- Check: `<command>`\n````\n']);
   const result = parsePlan(PLAN.replace('Observe logs.', 'Observe <Goal Description>.'), { placeholders: vocabulary });
   assert.ok(result.ok && result.warnings.some((item) => item.code === 'leftover-placeholder'));
 });
@@ -229,7 +229,7 @@ test('implement-plan-lint: rejects fenced automated commands, invalid Pre-existi
   const fenced = PLAN.replace('- `npm run lint`', '```sh\nnpm run lint\n```');
   assert.ok(defects(fenced).includes('automated-command'));
   assert.ok(defects(PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - Pre-existing: maybe\n')).includes('criterion-format'));
-  const review = PLAN.replace('  - Evidence: verify\n', '  - Evidence: review\n  - Review: artifact: ; scenario: ; pass:\n');
+  const review = PLAN.replace('  - Evidence: check\n', '  - Evidence: review\n  - Review: artifact: ; scenario: ; pass:\n');
   assert.ok(defects(review).includes('criterion-review'));
 });
 
@@ -276,22 +276,22 @@ const TASKS = `# Shared contract with consumers
 - [SC1] Contract exports the shape
   - Satisfies: REQ-1
   - Changes: src/contract.ts
-  - Verify: \`node --test tests/contract.test.ts\`
-  - Evidence: verify
+  - Check: \`node --test tests/contract.test.ts\`
+  - Evidence: check
 - [SC2] Reader consumes the contract
   - Satisfies: REQ-1
   - Changes: src/reader.ts
-  - Verify: \`node --test tests/reader.test.ts\`
-  - Evidence: verify
+  - Check: \`node --test tests/reader.test.ts\`
+  - Evidence: check
 - [SC3] Writer consumes the contract
   - Satisfies: REQ-1
   - Changes: src/writer.ts
-  - Verify: \`node --test tests/writer.test.ts\`
-  - Evidence: verify
+  - Check: \`node --test tests/writer.test.ts\`
+  - Evidence: check
 - [SC4] Reader and writer round-trip
   - Satisfies: REQ-1
-  - Verify: \`node --test tests/roundtrip.test.ts\`
-  - Evidence: verify
+  - Check: \`node --test tests/roundtrip.test.ts\`
+  - Evidence: check
   - Integration: spans reader and writer tasks.
 
 ## Verification Plan
@@ -466,7 +466,7 @@ test('a task-owned criterion without changes fails lint with a fix hint unless i
   assert.equal(found[0]?.severity, 'defect');
   assert.equal(found[0]?.line, verifyOnly.split('\n').indexOf('- [SC2] Reader consumes the contract') + 1);
   assert.match(found[0]?.message ?? '', /SC2.*Changes.*Integration/);
-  const integration = verifyOnly.replace('tests/reader.test.ts`\n  - Evidence: verify\n', 'tests/reader.test.ts`\n  - Evidence: verify\n  - Integration: spans the reader.\n');
+  const integration = verifyOnly.replace('tests/reader.test.ts`\n  - Evidence: check\n', 'tests/reader.test.ts`\n  - Evidence: check\n  - Integration: spans the reader.\n');
   assert.notDeepEqual(defects(integration), [], 'the mapped Integration variant still fails on its task mapping');
   assert.deepEqual(taskChanges(integration), []);
   const clean = parsePlan(TASKS);
@@ -643,11 +643,11 @@ test('seam advisory validates declarations, rejecting decoys and empty declarati
 });
 
 test('seam advisory accounts for review-only and verify-backed criteria', () => {
-  const reviewOnly = PLAN.replace(/  - Verify:.*\n/g, '').replace(/  - Evidence: (red|verify)/g,
+  const reviewOnly = PLAN.replace(/  - Check:.*\n/g, '').replace(/  - Evidence: (red|verify)/g,
     '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.deepEqual(seamWarnings(reviewOnly), []);
 
-  const laterVerify = PLAN.replace('  - Verify: `node --test tests/fetch.test.ts`\n', '')
+  const laterVerify = PLAN.replace('  - Check: `node --test tests/fetch.test.ts`\n', '')
     .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit');
   assert.equal(seamWarnings(laterVerify).length, 1);
 });
@@ -679,7 +679,7 @@ test('declared test paths: Tests parses normalized paths into the criterion', ()
   const downgradeFound = warningsOf(PLAN.replace(TESTS_LINE, ''), 'criterion-red-test-path');
   assert.equal(downgradeFound.length, 1);
   assert.equal(downgradeFound[0]?.severity, 'warning');
-  assert.match(JSON.stringify(downgradeFound[0]), /red evidence downgrades to verify/);
+  assert.match(JSON.stringify(downgradeFound[0]), /red evidence downgrades to check/);
   const named = PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts');
   const heading = criterionLine(named, '#### [NEW] tests/sc1.test.ts');
   assert.ok(namedDefects(named).some((item) => item.line === heading));
@@ -948,6 +948,24 @@ test('plan human layout: details wrappers and callouts leave parse results uncha
   assert.deepEqual(parsePlan(source, { placeholders: vocabulary }).warnings.filter(row => row.code === 'leftover-placeholder'), []);
   assert.ok(parsePlan(source + '\n<unfilled>', { placeholders: vocabulary }).warnings.some(row => row.code === 'leftover-placeholder'));
   assert.ok(defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<div>Other HTML</div>')).includes('task-map'));
+});
+
+test('plan parser rejects retired Verify: and Evidence: verify with Check: and check hints', () => {
+  const legacyVerify = parsePlan(PLAN.replace('  - Check: `node --test tests/fetch.test.ts`', '  - Verify: `node --test tests/fetch.test.ts`'));
+  assert.equal(legacyVerify.ok, false);
+  if (!legacyVerify.ok) {
+    const defect = legacyVerify.defects.find((d) => d.code === 'criterion-check');
+    assert.ok(defect, JSON.stringify(legacyVerify.defects));
+    assert.match(defect.message, /Check:/);
+  }
+
+  const legacyEvidence = parsePlan(PLAN.replace('  - Evidence: check', '  - Evidence: verify'));
+  assert.equal(legacyEvidence.ok, false);
+  if (!legacyEvidence.ok) {
+    const defect = legacyEvidence.defects.find((d) => d.code === 'criterion-evidence');
+    assert.ok(defect, JSON.stringify(legacyEvidence.defects));
+    assert.match(defect.message, /check/);
+  }
 });
 
  

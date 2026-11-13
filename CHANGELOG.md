@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Added runtime verification before test cleanup and the standalone verify verb.
+- **Breaking:** Renamed tool action `verify run` to `check run`, plan criterion field `Verify:` to `Check:`, and evidence class `Evidence: verify` to `Evidence: check` with no compatibility aliases; `criterion-evidence` lint errors (including missing, duplicate, or unknown `Evidence:` classes, not only `Evidence: verify`) now block lint; added `check run --task`, task-scoped checks per integration, two-layer verification stage ordering, and inline verifier proof standards.
 
 ## [0.8.4] - 2026-11-10
 

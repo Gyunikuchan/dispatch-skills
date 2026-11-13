@@ -100,9 +100,9 @@ Text summary: Optional visual under the visual-aid bar.
   - Satisfies: REQ-<n>[, REQ-<n>...]
   - Changes: <relative-path>[, <relative-path>...]
   - Tests: <relative-path>[, <relative-path>...]
-  - Verify: `<command>`
+  - Check: `<command>`
   - RED: `<focused command>`
-  - Evidence: <red|verify|review>
+  - Evidence: <red|check|review>
   - Pre-existing: <yes|no>
   - RED exception: <behavior-preserving|already-satisfied>
   - Review: <artifact: path; scenario: bounded inspection; pass: observable condition>
@@ -159,15 +159,15 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Tasks: every H4 belongs to one task. Under `## Proposed Changes`, use H3 only for `### T<n> — <title>` task headings; the parser reads every H3 there as a task. Put task behaviour bullets before `<details>` and file entries inside it. Author to the [plan standard](quality-bar.md#plan): it judges outcomes, task boundaries and which decisions the plan binds. Record shared-resource dependencies (ports, caches, outputs) as prerequisites with a rationale.
 
-- Seams: existing public test entry points that criteria verify through; the orchestrator chooses them from current tests and checks each criterion's Verify against them.
+- Seams: existing public test entry points that criteria check through; the orchestrator chooses them from current tests and checks each criterion's Check against them.
 
 - `[DELETE]`: may group comma-separated paths under one heading with one shared reason (`#### [DELETE] a.ts, b.ts`); `[NEW]`, `[MODIFY]` and `[GENERATED]` use one heading per path.
 
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add an exported or shared symbol, helper, module, or type, apply the [quality bar's shared reuse criterion](quality-bar.md#shared). Record the names searched and why none was reused, or write `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
 
-- Affected checks: criterion RED/Verify selectors give fast feedback; they do not replace full checks of modified logical test files or known impacted consumers before aggregate. A whole-file criterion Verify satisfies that file's check. List other affected-file checks under Automated Tests; lint rejects an exact repeat. Writers follow the [writer brief](writer-brief.md).
+- Affected checks: criterion RED/Check selectors give fast feedback; they do not replace full checks of modified logical test files or known impacted consumers before aggregate. A whole-file criterion Check satisfies that file's check. List other affected-file checks under Automated Tests; lint rejects an exact repeat. Writers follow the [writer brief](writer-brief.md).
 
-- Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, and `verify run` records it against the integrated tree. Put broad or slow gates in a criterion Verify.
+- Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, and `check run` records it against the integrated tree. Put broad or slow gates in a criterion Check.
 
 - `[GENERATED]`: name the Command and Inputs needed to reproduce the output; a task producing an Input must be a (transitive) prerequisite. Run the generator before verification. Own each golden or generated output that renders an edited file, and each file whose line budget or byte cap the change can exceed, as a `[MODIFY]` or `[GENERATED]` entry of the task that changes it; an unowned output forces a mid-run plan edit.
 

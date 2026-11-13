@@ -29,13 +29,13 @@ Shared gated context 日本語.
 - [SC1] First works
   - Changes: src/first.ts
   - Tests: src/first.ts
-  - Verify: \`node first-check\`
+  - Check: \`node first-check\`
   - RED: \`node first-red\`
   - Evidence: red
 - [SC2] Second works
   - Changes: src/second.ts
-  - Verify: \`node second-check\`
-  - Evidence: verify
+  - Check: \`node second-check\`
+  - Evidence: check
 ## Verification Plan
 ### Automated Tests
 - \`node first-check\`
@@ -49,8 +49,8 @@ const CAPTURE_PLAN = PLAN
     '#### [NEW] src/first.ts\n- Purpose: First implementation detail.\n#### [NEW] `tests/with space.test.ts`\n- Purpose: Exercise command capture.',
   )
   .replace(
-    '  - Changes: src/first.ts\n  - Tests: src/first.ts\n  - Verify: `node first-check`\n  - RED: `node first-red`\n',
-    '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Verify: `node first-check`\n  - RED: `node first-red {files}`\n',
+    '  - Changes: src/first.ts\n  - Tests: src/first.ts\n  - Check: `node first-check`\n  - RED: `node first-red`\n',
+    '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Check: `node first-check`\n  - RED: `node first-red {files}`\n',
   );
 
 const sharedFixture = sessionFixture({ memory: true });
@@ -304,7 +304,7 @@ describe('writer brief', () => {
     const source = CAPTURE_PLAN.replace('none | SC1 |', 'none | SC1, SC3 |').replace('## Verification Plan', `- [SC3] Another check
   - Changes: src/first.ts
   - Tests: src/first.ts
-  - Verify: \`node second-check\`
+  - Check: \`node second-check\`
   - RED: \`node second-red\`
   - Evidence: red
 ## Verification Plan`);
@@ -379,7 +379,7 @@ test('writer brief keeps task behaviour and criterion fields from collapsed plan
     const rendered = await f.call();
     assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
     const markdown = fs.readFileSync(rendered.value.path, 'utf8');
-    for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Verify: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(markdown.includes(text), text);
+    for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Check: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(markdown.includes(text), text);
     assert.equal(markdown.split(behaviour).length - 1, 1);
   } finally { f.cleanup(); }
 });
@@ -942,7 +942,7 @@ test('verifier brief launch works without a bound plan and refuses blanks; verif
     const brief = fs.readFileSync(value.briefPath, 'utf8');
     assert.ok(brief.includes(`Your write scope is evidence under \`${value.evidenceDir}\` and, only with \`test edits permitted\` in the focus, gap-filling tests in dedicated test files`));
     assert.ok(brief.includes(`Store artifacts in \`${value.evidenceDir}/<n>/\`, where \`<n>\` is the cycle number from the focus.`));
-    for (const phrase of ['best-effort', 'substantial', 'NEEDS_APPROVAL', 'not proved', 'dedicated test files', 'Host rule files:', 'Verification', 'install', values.focus, 'Give each artifact a new path.', 'If a report exists, append `## Cycle <n>` and leave earlier content unchanged']) assert.ok(brief.includes(phrase), phrase);
+    for (const phrase of ['best-effort', 'substantial', 'NEEDS_APPROVAL', 'not proved', 'dedicated test files', 'Host rule files:', 'checks passed', 'baseline', 'install', values.focus, 'Give each artifact a new path.', 'If a report exists, append `## Cycle <n>` and leave earlier content unchanged']) assert.ok(brief.includes(phrase), phrase);
     const before = fs.readdirSync(path.join(f.session, '.state', 'briefs'));
     fs.writeFileSync(file, JSON.stringify({...values, focus:' '}));
     assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 1);

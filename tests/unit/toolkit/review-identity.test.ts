@@ -11,7 +11,7 @@ import {stableValue} from '../../../skills/dispatch/scripts/toolkit/domain/stabl
 import {main} from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import {rejectionRequest, type RejectionRequest} from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
 import type {Finding} from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
-const source=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Verify: `node check`','  - Evidence: verify','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');
+const source=['# Work','## Task Map','| ID | Title | Outcome | Prerequisites | Criteria |','| --- | --- | --- | --- | --- |','| T1 | File | Works | none | SC1 |','## Proposed Changes','### T1 \u2014 File','#### [NEW] src/file.ts','- Purpose: behavior.','## Success Criteria','- [SC1] Works','  - Changes: src/file.ts','  - Check: `node check`','  - Evidence: check','## Verification Plan','### Automated Tests','- `node contract`'].join('\n');
 test('review identity keeps unexpected read errors',async()=>{
  const f=sessionFixture({memory:true});try {
   f.artifact('work.spec.md','# Work');f.artifact('work.plan.md',source);

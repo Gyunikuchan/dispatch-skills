@@ -37,8 +37,8 @@ function planSource(count = 4): string {
   ids.forEach((id, index) => lines.push(
     `- [${id}] Criterion ${index + 1} works`,
     `  - Changes: src/task-${index + 1}.ts`,
-    `  - Verify: \`node verify-${index + 1}.js\``,
-    '  - Evidence: verify',
+    `  - Check: \`node verify-${index + 1}.js\``,
+    '  - Evidence: check',
   ));
   lines.push('', '## Verification Plan', '### Automated Tests',
     ...ids.map((_id, index) => `- \`node verify-${index + 1}.js\``),
@@ -116,7 +116,7 @@ test('report render writes every missing criterion without Git and rewrites the 
 
 test('report render keeps tool evidence for review criteria in the missing section', async () => {
   const source = planSource(1).replace(
-    '  - Evidence: verify',
+    '  - Evidence: check',
     '  - Evidence: review\n  - Review: artifact: src/task-1.ts; scenario: inspect the change; pass: the user records review evidence',
   );
   const f = await fixture(1, source);

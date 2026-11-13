@@ -43,8 +43,8 @@ function planSource(count = 4, risk?: string): string {
   ids.forEach((id, index) => lines.push(
     `- [${id}] Criterion ${index + 1} works`,
     `  - Changes: src/task-${index + 1}.ts`,
-    `  - Verify: \`node verify-${index + 1}.js\``,
-    '  - Evidence: verify',
+    `  - Check: \`node verify-${index + 1}.js\``,
+    '  - Evidence: check',
   ));
   lines.push('', '## Verification Plan', '### Automated Tests',
     ...ids.map((_id, index) => `- \`node verify-${index + 1}.js\``),
@@ -130,7 +130,7 @@ async function deliver(f: ReturnType<typeof sessionFixture>, head: string, dest 
 
 test('review tool rows do not complete a report, while manual evidence does', async () => {
   const source = planSource(1).replace(
-    '  - Evidence: verify',
+    '  - Evidence: check',
     '  - Evidence: review\n  - Review: artifact: src/task-1.ts; scenario: inspect the delivered source; pass: the user records review evidence',
   );
   const f = await fixture(1, undefined, source);

@@ -102,7 +102,7 @@ Rate each finding on two dimensions; the toolkit derives severity from them. Rep
 A `critical` finding's `defect` names the boundary crossed or the data lost.
 Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
 In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
-constraint. A gap that the plan's own Verify gates would surface deterministically during
+constraint. A gap that the plan's own Check gates would surface deterministically during
 implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known

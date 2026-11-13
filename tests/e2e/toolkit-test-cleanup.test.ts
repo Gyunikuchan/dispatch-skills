@@ -23,7 +23,7 @@ async function integrated(verify = true, plan = source) {
   fs.writeFileSync(path.join(writer, target), 'step\n');
   assert.equal((await r.run(['worktree', 'submit', 'T1'])).exit, 0);
   assert.equal((await r.run(['worktree', 'integrate', 'T1'])).exit, 0);
-  if (verify) assert.equal((await r.run(['verify', 'run'])).output.ok, true);
+  if (verify) assert.equal((await r.run(['check', 'run'])).output.ok, true);
   return r;
 }
 const cleanupFile = (r: Repo, data: object) => {
@@ -78,7 +78,7 @@ test('test cleanup commit refuses missing evidence, unchanged test paths and emp
     assert.equal(cleanups(r).length, 0);
 
     fs.writeFileSync(path.join(r.integration, target), 'step\n');
-    assert.equal((await r.run(['verify', 'run'])).output.ok, true);
+    assert.equal((await r.run(['check', 'run'])).output.ok, true);
     fs.writeFileSync(path.join(r.integration, 'src/other.ts'), 'other\n');
     assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-paths-unchanged');
     assert.equal((await commit(r, { removed: [], deleted: 0, merged: 0 })).output.reason, 'test-cleanup-empty');
@@ -111,10 +111,10 @@ test('verify skips criteria whose tests cleanup removed and refuses to select th
   try {
     fs.rmSync(path.join(r.integration, target));
     assert.equal((await commit(r, removal)).output.ok, true);
-    const all = await r.run(['verify', 'run']);
+    const all = await r.run(['check', 'run']);
     assert.equal(all.output.ok, true, JSON.stringify(all));
     assert.deepEqual(all.value.checks.map((row: { criterion: string }) => row.criterion), ['contract']);
-    const named = await r.run(['verify', 'run', '--criteria', 'SC1']);
+    const named = await r.run(['check', 'run', '--criteria', 'SC1']);
     assert.equal(named.exit, 4);
     assert.equal(named.output.reason, 'test-cleanup-removed');
   } finally { r.cleanup(); }
@@ -130,7 +130,7 @@ test('status and report treat removed criteria as verified at the pre-cleanup co
     assert.equal((await commit(r, removal)).output.ok, true);
     const stale = await r.run(['status', 'show']);
     assert.deepEqual(stale.value.criteria, ['contract']);
-    assert.equal((await r.run(['verify', 'run'])).output.ok, true);
+    assert.equal((await r.run(['check', 'run'])).output.ok, true);
     const status = await r.run(['status', 'show']);
     assert.deepEqual(status.value.criteria, []);
     assert.deepEqual(status.value.testCleanup, { from: before, removed: ['SC1'], deleted: 2, merged: 1 });

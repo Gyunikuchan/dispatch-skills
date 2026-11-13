@@ -72,7 +72,7 @@ Invoke `/dispatch <level> implement:` with the batch IDs and report path, triage
 
 - `planned`: the Dispatch plan.
 - `plan-reviewed`: completed plan review results and settled plan.
-- `implemented`: walkthrough criterion evidence and passing Verify commands.
+- `implemented`: walkthrough criterion evidence and passing Check commands.
 - `code-reviewed`: completed code review results, settled findings and post-fix verification.
 
 Inspect findings against source and user decisions. Revised scope must remain within authorization; material intent choices go to the user. An invalid batch can be abandoned with its evidence preserved, then re-triaged. Review completion alone does not prove tests passed.

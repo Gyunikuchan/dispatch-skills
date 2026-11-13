@@ -204,7 +204,7 @@ test('host flag refused on other actions', async () => {
     for (const args of [
       ['status', 'show'],
       ['ledger', 'query'],
-      ['verify', 'run'],
+      ['check', 'run'],
       ['report', 'render'],
       ['diagnostics', 'render'],
       ['worktree', 'create', 'T1'],
@@ -351,5 +351,24 @@ test('refusal names the section for a resolved action and the call table otherwi
     assert.equal('help' in f.output(), false);
     assert.equal(await run(['status', 'show', '--session', f.session], deps => { deps.handler = async () => ({ok: true, value: {}, summary: 'fine', exit: 0}); }), 0);
     assert.equal('help' in f.output(), false);
+  } finally { f.cleanup(); }
+});
+
+test('check run is registered, accepts --task, and verify run is unknown', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    let seenTask: unknown;
+    const exit = await main(['check', 'run', '--session', f.session, '--task', 'T1'], {
+      ...f.deps,
+      handler: async (ctx) => { seenTask = ctx.values['task']; return {ok: true, summary: 'ok', value: {}, exit: 0}; },
+    });
+    assert.equal(exit, 0);
+    assert.equal(seenTask, 'T1');
+    f.lines.length = 0;
+    assert.equal(await main(['status', 'show', '--session', f.session, '--task', 'T1'], f.deps), 1);
+    assert.equal(f.output().reason, 'invalid-input');
+    f.lines.length = 0;
+    assert.equal(await main(['verify', 'run', '--session', f.session], f.deps), 1);
+    assert.equal(f.output().reason, 'usage');
   } finally { f.cleanup(); }
 });

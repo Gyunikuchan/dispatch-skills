@@ -40,7 +40,7 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 - **Discover:** Read relevant `SKILL.md` files or scripts and inspect current state before editing.
 - **Bound:** Set intended outcome, in-scope paths, and checkable completion criteria from the request or approved plan. Keep planning and review proportional to task risk.
 - **Execute:** Apply minimal, focused edits within scope, preserving existing comments and invariants.
-- **Verify:** Run plan Verify commands and `npm test` before completing an edit task; run `npm run test:e2e` when touching toolkit, Git, or subprocess behavior (CI runs `npm run test:all`). Record evidence for each criterion after the last change; failed or unrun checks remain open.
+- **Verify:** Run plan `Check:` commands and `npm test` before completing an edit task; run `npm run test:e2e` when touching toolkit, Git, or subprocess behavior (CI runs `npm run test:all`). Record evidence for each criterion after the last change; failed or unrun checks remain open.
 - **Handoff:** Use the format in [Long-Running Work and Handoff](#long-running-work-and-handoff).
 
 ### Implementing plans in this repository
@@ -104,7 +104,7 @@ Explain non-obvious rationale (e.g. quirks, non-obvious invariants, architectura
   node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts TEST_FILE
   ```
   Add `--test-name-pattern="PATTERN"` to narrow tests. With multiple test files, require a name match in each; prefer running single files when filtering. Before aggregate verification, run every modified and impacted test file with this command without `--test-name-pattern`.
-- **Plan checks:** A criterion Verify running a full test file satisfies that file's affected-file check; list under `Automated Tests` only checks not covered by criterion Verifies.
+- **Plan checks:** A criterion Check running a full test file satisfies that file's affected-file check; list under `Automated Tests` only checks not covered by criterion Checks.
 - **Brief sizing:** Use `node scripts/brief-size.ts <brief-file> [<brief-file> ...]` to report UTF-8 bytes (not token estimates). Store output in `.scratch/` and link in handoff.
 - **Test layers:** Toolkit tests verify tool results, ledgers, and rendered sections. Real Git and subprocess flows belong in `tests/e2e/`.
 - **Fixtures:** Keep unit fixtures in memory; use physical storage only when verifying filesystem behavior or byte output, preserving per-file timing budgets.

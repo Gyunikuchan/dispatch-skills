@@ -18,7 +18,7 @@ const PLAN = [
   '| T1 | Change a file | The file has the requested behavior. | none | SC1 |', '',
   '## Proposed Changes', '### T1 — Change a file', '#### [NEW] src/file.ts', '- Purpose: implements behavior.', '',
   '## Success Criteria', '- [SC1] File works', '  - Changes: src/file.ts',
-  '  - Verify: `node --test tests/file.test.ts`', '  - Evidence: verify', '',
+  '  - Check: `node --test tests/file.test.ts`', '  - Evidence: check', '',
   '## Verification Plan', '### Automated Tests', '- `npm run lint`', '',
 ].join('\n');
 const SPEC = '# Spec\n## Requirements\n### REQ-1 — Works\n- Acceptance: works\n## Decisions\n### DEC-1 — Use it\n';
@@ -52,7 +52,7 @@ async function lint(name: string, source: string) {
       '## Proposed Changes', '### T1 — Change files',
       ...changePaths.flatMap(p => [`#### [NEW] ${p}`, '- Purpose: implements behavior.']), '',
       '## Success Criteria', '- [SC1] Files work', `  - Changes: ${changePaths.join(', ')}`,
-      '  - Verify: `node --test tests/file.test.ts`', '  - Evidence: verify', '',
+      '  - Check: `node --test tests/file.test.ts`', '  - Evidence: check', '',
       '## Verification Plan', '### Automated Tests', '- `npm run lint`', '',
     ].join('\n');
     const outside = (r: { result: { warnings: { code: string; message: string }[] } }) => r.result.warnings.filter(x => x.code === 'outside-increment');

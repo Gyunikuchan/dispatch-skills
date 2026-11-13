@@ -45,10 +45,10 @@ export type LintDefectCode =
   // Plan structure
   | 'proposed-changes' | 'change-heading' | 'unknown-change-marker' | 'invalid-change-path' | 'duplicate-change-path'
   | 'change-path-excluded' | 'generated-command' | 'verification-plan' | 'automated-tests' | 'automated-tests-owner'
-  | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-verify' | 'missing-seams'
+  | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-check' | 'missing-seams'
   // Plan criteria
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
-  | 'criterion-change-path' | 'criterion-verify' | 'criterion-evidence'
+  | 'criterion-change-path' | 'criterion-check' | 'criterion-evidence'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
   | 'criterion-review' | 'criterion-critical-review'
   | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name' | 'outside-increment'
@@ -65,7 +65,7 @@ export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning';
 
 // SECTION: Plan
 
-export type EvidenceClass = 'red' | 'verify' | 'review';
+export type EvidenceClass = 'red' | 'check' | 'review';
 export type ChangeAction = 'NEW' | 'MODIFY' | 'DELETE' | 'GENERATED';
 
 export type PlanCommand = { command: string };
@@ -82,7 +82,7 @@ export type PlanCriterion = {
   evidence: EvidenceClass | null;
   preExisting: boolean | null;
   redException: string | null;
-  /** Focused failing-test command from `RED:`; `{files}` expands to declared `Tests:` paths. A missing command downgrades red evidence to verify. */
+  /** Focused failing-test command from `RED:`; `{files}` expands to declared `Tests:` paths. A missing command downgrades red evidence to check. */
   red: string | null;
   review: string | null;
   enforcementInfeasibility: string | null;

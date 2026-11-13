@@ -55,7 +55,7 @@ Judge the plan against its Plan standard. Report a missing decision that prevent
 ## severity
 
 In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
-constraint. A gap that the plan's own Verify gates would surface deterministically during
+constraint. A gap that the plan's own Check gates would surface deterministically during
 implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 
 ## budget

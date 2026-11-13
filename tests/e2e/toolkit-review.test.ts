@@ -10,7 +10,7 @@ import {checkoutReportsFor} from '../../skills/dispatch/scripts/toolkit/findings
 import { CLEAN } from '../helpers/e2e.ts';
 import crypto from 'node:crypto';
 
-const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: verify','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
+const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: check','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 const PROVIDERS = ['claude', 'codex', 'opencode'];
 const MUST_FINDING = {status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'The file returns an invalid result', requiredChange: 'Return the expected result'}]};
 async function coverageRepo(rounds: number) {
@@ -242,7 +242,7 @@ test('toolkit code review reports missing evidence without admission gates and t
 test('toolkit code review scopes integration recurrence and gaps to committed owner changes',async()=>{
   const two=source.replace('| T1 | File | Works | none | SC1 |','| T1 | File | Works | none | SC1 |\n| T2 | Other | Works | none | SC2 |')
     .replace('## Success Criteria','#### [MODIFY] tests/file.test.ts\n### T2 — Other\n#### [MODIFY] src/other.ts\n- Purpose: independent behavior.\n## Success Criteria')
-    .replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/other.ts\n  - Verify: `node -e "process.exit(0)"`\n  - Evidence: verify\n## Verification Plan');
+    .replace('## Verification Plan','- [SC2] Other works\n  - Changes: src/other.ts\n  - Check: `node -e "process.exit(0)"`\n  - Evidence: check\n## Verification Plan');
   for(const fixOwner of [false,true]) {
     const f=await toolkitRepo(two,{'src/other.ts':'initial\n'});try{
       f.deps.skillRoot=setupTestSkill(f.deps,f.session,'skill',{'read-delegates':{claude:{targets:[{low:{model:'fake'}}]}},phases:{'code-review':{targets:{low:1},rounds:{low:3}}}});

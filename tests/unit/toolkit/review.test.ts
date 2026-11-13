@@ -802,7 +802,7 @@ test('review budget matches admission after rulings and ceiling resolutions', as
 
 // SECTION: Confirmation-only fast path
 
-const VALID_TASK_PLAN = ['# Work', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '## Proposed Changes', '### T1 — File', '#### [NEW] src/file.ts', '- Purpose: behavior.', '## Success Criteria', '- [SC1] Works', '  - Changes: src/file.ts', '  - Verify: `node check`', '  - Evidence: verify', '## Verification Plan', '### Automated Tests', '- `node contract`'].join('\n');
+const VALID_TASK_PLAN = ['# Work', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |', '| --- | --- | --- | --- | --- |', '| T1 | File | Works | none | SC1 |', '## Proposed Changes', '### T1 — File', '#### [NEW] src/file.ts', '- Purpose: behavior.', '## Success Criteria', '- [SC1] Works', '  - Changes: src/file.ts', '  - Check: `node check`', '  - Evidence: check', '## Verification Plan', '### Automated Tests', '- `node contract`'].join('\n');
 const delegateSlots = (f: ReviewFixture) => f.launches.map(launch => launch.provider);
 const targetSlotIds = (metadata: {roster: {slot: string; reserve: boolean}[]}) =>
   metadata.roster.filter(slot => !slot.reserve).map(slot => slot.slot);

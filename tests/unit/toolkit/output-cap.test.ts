@@ -101,7 +101,7 @@ test('summary byte cap includes marker and preserves multibyte code points', () 
 test('summary byte cap keeps the full gated multibyte brief for two hundred criteria',async()=>{
   const f=sessionFixture(); try {
     const ids=Array.from({length:200},(_,i)=>'SC'+(i+1));
-    const source='# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | '+ids.join(', ')+' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n'+ids.map(id=>'- ['+id+'] 日本語 works\n  - Changes: src/file.ts\n  - Verify: `node check.ts`\n  - Evidence: verify').join('\n')+'\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
+    const source='# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | '+ids.join(', ')+' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n'+ids.map(id=>'- ['+id+'] 日本語 works\n  - Changes: src/file.ts\n  - Check: `node check.ts`\n  - Evidence: check').join('\n')+'\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
     const plan=f.artifact('large-multibyte.plan.md',source); f.artifact('mission.spec.md','# Mission\n');
     const skill=path.join(f.root,'skill'); const templates=path.join(skill,'references/templates'); fs.mkdirSync(templates,{recursive:true});
     for(const file of ['writer-brief.md','quality-bar.md']) fs.copyFileSync(path.join(f.deps.skillRoot,'references/templates',file),path.join(templates,file));
@@ -126,7 +126,7 @@ test('summary byte cap applies to every tool with full result files including re
     const input = f.artifact('record.json', JSON.stringify({ kind: 'note', key: 'append', by: 'tool', data: { text: '界'.repeat(600) } }));
     const invalid = f.artifact('invalid.json', '{}');
     const plan = f.artifact('large.plan.md', '## Success Criteria\n' + Array.from({ length: 200 }, (_, i) =>
-      '- [SC' + (i + 1) + '] File works\n  - Changes: src/file.ts\n  - Verify: `node check.ts`\n  - Evidence: verify\n').join('\n'));
+      '- [SC' + (i + 1) + '] File works\n  - Changes: src/file.ts\n  - Check: `node check.ts`\n  - Evidence: check\n').join('\n'));
     const skill = path.join(f.root, 'skill');
     fs.mkdirSync(skill);
     fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify(Object.fromEntries(Array.from({ length: 200 }, (_, i) => ['bad' + i, true]))));
@@ -153,7 +153,7 @@ test('summary byte cap keeps all report rows in its result file', async () => {
   const f = sessionFixture();
   try {
     const ids = Array.from({length: 300}, (_, i) => 'SC' + (i + 1));
-    const source = '# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | ' + ids.join(', ') + ' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n' + ids.map(id => '- [' + id + '] 日本語 works\n  - Changes: src/file.ts\n  - Verify: `node check.ts`\n  - Evidence: verify').join('\n') + '\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
+    const source = '# Work\n日本語の共有文\n## Task Map\n| ID | Title | Outcome | Prerequisites | Criteria |\n| --- | --- | --- | --- | --- |\n| T1 | Work | Works | none | ' + ids.join(', ') + ' |\n## Proposed Changes\n### T1 — Work\n#### [NEW] src/file.ts\n- Purpose: 日本語.\n## Success Criteria\n' + ids.map(id => '- [' + id + '] 日本語 works\n  - Changes: src/file.ts\n  - Check: `node check.ts`\n  - Evidence: check').join('\n') + '\n## Verification Plan\n### Automated Tests\n- `node check.ts`\n';
     f.artifact('report.spec.md', '# Mission\n');
     f.artifact('report.plan.md', source);
     await appendRecord(f.session, {kind: 'bind', by: 'orchestrator', key: 'bind',

@@ -19,9 +19,13 @@ export function loadPlan(session: string, manifest: Manifest): ParsedPlan {
 }
 function selection(plan: ParsedPlan, id: string) {
   const brief = selectTaskBrief(plan,id);
-  if (!brief) throw new ToolError(1,'invalid-input','Unknown task ' + id);
+  if (!brief) {
+    const valid = plan.tasks.map(t => t.id).join(', ');
+    throw new ToolError(1,'invalid-input',`Unknown task ${id}${valid ? `; valid: ${valid}` : ''}`);
+  }
   return brief;
 }
+export function taskCriteria(plan: ParsedPlan, id: string): string[] { return [...selection(plan,id).task.criteria]; }
 export function ownedPaths(plan: ParsedPlan, id: string): string[] { return selection(plan,id).changes.map(c=>c.path); }
 function stripPositions(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripPositions);

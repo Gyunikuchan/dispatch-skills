@@ -15,7 +15,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
       .replace('node -e "process.exit(0)"', `node -e "require('assert').match(require('fs').readFileSync('src/a.ts','utf8'),/value = 2/)"`)
       .replace('| T1 | File | Works | none | SC1 |', '| T1 | File | Works | none | SC1 |\n| T2 | Review | Source review is recorded | none | SC2 |')
       .replace('## Success Criteria', '### T2 — Review\n#### [NEW] docs/review.md\n- Purpose: records the review outcome.\n\n## Success Criteria')
-      .replace('  - Evidence: verify\n\n## Verification Plan', '  - Evidence: verify\n- [SC2] Source review is complete\n  - Changes: docs/review.md\n  - Evidence: review\n  - Review: artifact: docs/review.md; scenario: inspect the delivered behavior; pass: the user records review evidence\n\n## Verification Plan');
+      .replace('  - Evidence: check\n\n## Verification Plan', '  - Evidence: check\n- [SC2] Source review is complete\n  - Changes: docs/review.md\n  - Evidence: review\n  - Review: artifact: docs/review.md; scenario: inspect the delivered behavior; pass: the user records review evidence\n\n## Verification Plan');
     fs.writeFileSync(path.join(f.repo, 'work.plan.md'), plan);
     fs.writeFileSync(path.join(f.repo, 'work.plan.context.md'), contextMapSource);
     f.git('add', 'work.plan.md', 'work.plan.context.md'); f.git('commit', '-qm', 'plan');
@@ -61,12 +61,12 @@ test('uncommitted delivery through public entry preserves standalone review', as
     await tool(['worktree', 'submit', 'T1']);
     await tool(['worktree', 'integrate', 'T1']);
     const beforeReviewVerify = foldLedger(session).records.length;
-    const reviewRefusal = await run(['verify', 'run', '--criteria', 'SC2', '--session', session], 1);
+    const reviewRefusal = await run(['check', 'run', '--criteria', 'SC2', '--session', session], 1);
     assert.equal(reviewRefusal.reason, 'invalid-input');
     assert.match(reviewRefusal.summary, /review/i);
     assert.equal(foldLedger(session).records.length, beforeReviewVerify);
     assert.equal(fs.existsSync(path.join(session, '.state', 'evidence')), false);
-    await tool(['verify', 'run']);
+    await tool(['check', 'run']);
     const toolEvidence = foldLedger(session).records.filter(record => record.kind === 'evidence');
     assert.deepEqual(toolEvidence.map(record => record.data['criterion']), ['SC1', 'contract']);
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);

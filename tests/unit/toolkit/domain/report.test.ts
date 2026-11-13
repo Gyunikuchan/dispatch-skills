@@ -584,9 +584,9 @@ const rejections = (tool: string, action: string, cls: string, count = 2) => Arr
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
 test('H8 names the handling module of repeated rejections and ignores one-offs', () => {
-  const verify = assertShape(h8(rejections('verify', 'run', 'invalid-input'))[0], 'correctness');
-  assert.equal(verify.component, 'scripts/toolkit/verify.ts');
-  assert.match(verify.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
+  const verify = assertShape(h8(rejections('check', 'run', 'invalid-input'))[0], 'correctness');
+  assert.equal(verify.component, 'scripts/toolkit/check.ts');
+  assert.match(verify.evidence, /2 toolkit operations rejected \(check run: invalid-input ×2\)/);
 
   const unknown = assertShape(h8(rejections('record', 'append', 'invalid-record'))[0], 'correctness');
   assert.equal(unknown.component, 'scripts/toolkit/cli.ts');
@@ -602,11 +602,11 @@ test('H8 names the handling module of repeated rejections and ignores one-offs',
     assert.notEqual(finding.component, 'scripts/toolkit/cli.ts', `${name} has a module`);
   }
 
-  assert.deepEqual(h8(rejections('verify', 'run', 'invalid-input', 1)), []);
-  assert.deepEqual(h8([...rejections('verify', 'run', 'invalid-input', 1), ...rejections('verify', 'run', 'user-only', 1)]), []);
+  assert.deepEqual(h8(rejections('check', 'run', 'invalid-input', 1)), []);
+  assert.deepEqual(h8([...rejections('check', 'run', 'invalid-input', 1), ...rejections('check', 'run', 'user-only', 1)]), []);
   assert.deepEqual(h8([...rejections('ledger', 'append', 'key-conflict', 1), ...rejections('ledger', 'query', 'key-conflict', 1)]), []);
-  const [mixed] = h8([...rejections('verify', 'run', 'invalid-input'), ...rejections('verify', 'run', 'user-only', 1)]);
-  assert.match(mixed!.evidence, /2 toolkit operations rejected \(verify run: invalid-input ×2\)/);
+  const [mixed] = h8([...rejections('check', 'run', 'invalid-input'), ...rejections('check', 'run', 'user-only', 1)]);
+  assert.match(mixed!.evidence, /2 toolkit operations rejected \(check run: invalid-input ×2\)/);
 });
 
 test('heuristic H1 fires on repeated failures and suppresses isolated failures', () => {

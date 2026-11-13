@@ -31,7 +31,7 @@ In the table, `\|` separates alternative values. Append a record with `ledger ap
 | action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
 | action | worktree submit | `worktree submit <task> --session <session>` |
 | action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
-| action | verify run | `verify run --session <session> [--criteria SC1,SC2,contract]` |
+| action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>]` |
 | action | brief verifier | `brief verifier <values.json> --session <session> --host <platform>` |
 | action | ledger append | `ledger append <record.json> --session <session>` |
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
@@ -124,7 +124,7 @@ Arguments: `worktree commit --session <session> --reason <reason> [--review-fix 
 Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
-The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Verify commands no longer run any test, and non-negative counts of deleted and merged tests. The commit message is `fix(dispatch): <reason>` with trailers `Dispatch-Fix: <session>` and `Dispatch-Test-Cleanup-Data: <stable JSON of {removed, deleted, merged}>`.
+The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Check commands no longer run any test, and non-negative counts of deleted and merged tests. The commit message is `fix(dispatch): <reason>` with trailers `Dispatch-Fix: <session>` and `Dispatch-Test-Cleanup-Data: <stable JSON of {removed, deleted, merged}>`.
 
 The tool appends one `integrate` record with phase `test-cleanup` and data `{from, fromTree, to, removed, deleted, merged}` instead of a `fix` record. `from` is the commit's parent. A clean-tree retry whose HEAD carries matching trailers and no `test-cleanup` record appends the record without a second commit. A clean-tree `worktree commit` without `--test-cleanup` refuses no-changes when HEAD carries the cleanup trailer or a `test-cleanup` record names HEAD.
 
@@ -196,16 +196,16 @@ Arguments: `worktree abandon <task> --session <session> --reason <reason>`.
 Result path: preserved writer snapshot, task/launch and abandoned marker.
 Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and obtain user authority when discarding work.
 
-### verify run
+### check run
 
-Arguments: `verify run --session <session> [--criteria SC1,SC2,contract]`. `--criteria` IDs are comma-separated and trimmed. Without `--criteria`, verification skips criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its pre-cleanup evidence remains eligible under [report completion](#report-complete).
+Arguments: `check run --session <session> [--criteria SC1,SC2,contract | --task T<n>]`. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its pre-cleanup evidence remains eligible under [report completion](#report-complete).
 Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists. Within one run, criteria with identical commands on an unchanged tree share one execution and each gets its own evidence.
-Refusals: unknown criterion, which names each unknown ID and the valid IDs; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+Refusals: unknown criterion or unknown task, which names each unknown ID and the valid IDs; `--task` with `--criteria`; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 
 ### brief verifier
 
-Arguments: `brief verifier <values.json> --session <session> --host <platform>`; values are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. No plan binding is required.
+Arguments: `brief verifier <values.json> --session <session> --host <platform>`; values are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage, adding `checks passed` only when `check run` executed at least one command (`executed > 0`) and passed on the verified tree (otherwise omit `checks passed` so the verifier runs and reports the repository baseline). No plan binding is required.
 Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
 Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
@@ -237,7 +237,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 Arguments: `lint run <artifact> --session <session>`. Pass the artifact as the positional argument, for example `node <skills-dir>/dispatch/scripts/dispatch.ts lint run .scratch/dispatch-skills/<folder>/<name>.plan.md --session <session>`.
 Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
-Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Verify commands and task paths; other findings are warnings for review. A plan whose pinned design names increments warns `outside-increment` once per change path outside the pinned increment's Paths, on that change's line; a pinned design or increment that cannot be read gives one such warning that names it.
+Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Check commands and task paths; other findings are warnings for review. A plan whose pinned design names increments warns `outside-increment` once per change path outside the pinned increment's Paths, on that change's line; a pinned design or increment that cannot be read gives one such warning that names it.
 
 ### diagnostics render
 
