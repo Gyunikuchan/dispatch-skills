@@ -127,6 +127,25 @@ describe('toolkit CLI contract', () => {
       assert.equal(f.output().reason, 'invalid-input');
     } finally { f.cleanup(); }
   });
+  test('pins flag is accepted on ask run and review run and rejected on other actions', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const q = f.artifact('q.md', 'why');
+      for (const action of [['ask', 'run', q], ['review', 'run', 'worktree']]) {
+        f.lines.length = 0;
+        let seenPins: unknown;
+        const exit = await main([...action, '--session', f.session, '--host', 'codex', '--pins', '(all)'], {
+          ...f.deps,
+          handler: async (ctx) => { seenPins = ctx.values['pins']; return { ok: true, summary: 'ok', value: {}, exit: 0 }; },
+        });
+        assert.equal(exit, 0, action.join(' '));
+        assert.equal(seenPins, '(all)', action.join(' '));
+      }
+      f.lines.length = 0;
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex', '--pins', '(all)'], f.deps), 1);
+      assert.equal(f.output().reason, 'invalid-input');
+    } finally { f.cleanup(); }
+  });
   test('ledger append accepts bom record', async () => {
     const f = sessionFixture({memory:true});
     try {

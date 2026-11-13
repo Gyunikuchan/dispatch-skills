@@ -111,6 +111,31 @@ test('fan-out native-only roster remains available on its host', async () => {
   }finally{f.cleanup();}
 });
 
+test('resolveSlots applies pins and maps invalid pin errors to invalid-input', async () => {
+  const {resolveSlots, parsePinsFlag} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const {ToolError} = await import('../../../skills/dispatch/scripts/toolkit/output.ts');
+  const f = sessionFixture({memory:true}); try {
+    const skillRoot = path.join(f.root, 'skill'); fs.mkdirSync(skillRoot);
+    fs.writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': {
+        claude: {targets: [{medium: {model: 'c'}}]},
+        codex: {targets: [{medium: {model: 'x'}}]},
+        agy: {targets: [{medium: {model: 'a'}}]},
+      },
+      phases: {'plan-review': {targets: {medium: 1}, rounds: {medium: 2}}},
+    }));
+    f.deps.skillRoot = skillRoot;
+    f.deps.orchestrator = {platform: 'opencode', model: null};
+    f.deps.liveness = {claude: true, codex: true, agy: true};
+    assert.equal(parsePinsFlag(undefined), null);
+    assert.equal(resolveSlots('plan', 'medium', f.deps, parsePinsFlag('(all)')).targets.length, 3);
+    assert.equal(resolveSlots('plan', 'medium', f.deps, parsePinsFlag('(2)')).targets.length, 2);
+    assert.deepEqual(resolveSlots('plan', 'medium', f.deps, parsePinsFlag('(codex,agy)')).targets.map(s => s.provider), ['codex', 'agy']);
+    assert.throws(() => parsePinsFlag('(all,codex)'), (e: unknown) => e instanceof ToolError && e.exit === 1 && e.reason === 'invalid-input');
+    assert.throws(() => resolveSlots('plan', 'medium', f.deps, parsePinsFlag('(unknown)')), (e: unknown) => e instanceof ToolError && e.exit === 1 && e.reason === 'invalid-input');
+  } finally {f.cleanup();}
+});
+
 test('fan-out validates provider text before done and shares one deadline',async()=>{
  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
  const f=sessionFixture({memory:true});try{

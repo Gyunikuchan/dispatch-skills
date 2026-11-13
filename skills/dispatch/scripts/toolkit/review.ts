@@ -5,7 +5,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
+import { fanOutComplete, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
@@ -266,7 +266,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const confirmation = confirmGate(fold, specHashFor(manifest.repositoryRoot, confirmInput));
     if (!confirmation.allowed) throw new ToolError(4, confirmation.reason!, confirmation.reason!);
   }
-  const roster = resolveSlots(kind, level, deps), cap = roster.rounds;
+  const pins = parsePinsFlag(ctx.values['pins']);
+  const roster = resolveSlots(kind, level, deps, pins), cap = roster.rounds;
   const noReviewer = () => cap > 0 ? 'No live or usable reviewer is configured for this review; restore a provider or configure one' + underfillNote(roster) : 'Review at ' + level + ' has no reviewers; raise the level to continue';
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
   const bound = latest(fold, 'bind');
@@ -460,6 +461,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return true;
     }
     function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean; coverage?: 'open' | 'full' } {
+      if (pins) return {targets: roster.targets, narrowed: false};
       const previous = latestSubstantive();
       // A rerun note admits its named round + 1 at whole-target scope with every
       // logical target of the named round on its current route. Earlier findings stay

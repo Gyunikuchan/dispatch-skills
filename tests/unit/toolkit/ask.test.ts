@@ -424,3 +424,34 @@ test('ask diagnostics name the reserve voice on invalid and completed native rep
     assert.deepEqual([completed?.slot, completed?.provider], ['claude[0]', 'codex'], 'the completed reserve reply names the reserve voice: ' + JSON.stringify(events));
   } finally {f.cleanup();}
 });
+
+test('ask run honors pins for all, count, and provider selection and rejects invalid pins', async () => {
+  const f = fixture(); try {
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': {
+        claude: {targets: [{medium: {model: 'c'}}]},
+        codex: {targets: [{medium: {model: 'x'}}]},
+        agy: {targets: [{medium: {model: 'a'}}]},
+      },
+      phases: {ask: {targets: {medium: 1}}},
+    }));
+    f.deps.liveness = {claude: true, codex: true, agy: true};
+    f.script('claude', 'c', 'from-claude');
+    f.script('codex', 'x', 'from-codex');
+    f.script('agy', 'a', 'from-agy');
+    const all = await f.call('--pins', '(all)');
+    assert.equal(all.exit, 0, JSON.stringify(all.output));
+    assert.deepEqual(all.value.answers.map((a: {provider: string}) => a.provider).sort(), ['agy', 'claude', 'codex']);
+    const providers = await f.call('--pins', '(codex,agy)');
+    assert.equal(providers.exit, 0, JSON.stringify(providers.output));
+    assert.deepEqual(providers.value.answers.map((a: {provider: string}) => a.provider), ['codex', 'agy']);
+    const count = await f.call('--pins', '(2)');
+    assert.equal(count.exit, 0, JSON.stringify(count.output));
+    assert.equal(count.value.answers.length, 2);
+    for (const bad of ['(all,codex)', '(0)', '(unknown)']) {
+      const err = await f.call('--pins', bad);
+      assert.equal(err.exit, 1, bad);
+      assert.equal(err.output.reason, 'invalid-input', bad);
+    }
+  } finally {f.cleanup();}
+});

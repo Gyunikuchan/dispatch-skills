@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
-import { fanOutComplete, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type NativeFailure } from './fanout.ts';
+import { fanOutComplete, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type NativeFailure } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { ToolError } from './output.ts';
@@ -22,6 +22,7 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
     throw new ToolError(1, 'invalid-input', 'invalid ask level');
   const decision = levelGate(fold, selected);
   if (!decision.allowed) throw new ToolError(4, 'level-unapproved', 'ask level requires user selection');
+  const pins = parsePinsFlag(values['pins']);
   const digest = crypto.createHash('sha256').update(question).digest('hex').slice(0, 16);
   const directory = path.join(session, '.state', 'asks', digest);
   return withLockFile(path.join(directory, 'claim'), 'ask', deps, 0, async () => {
@@ -32,7 +33,7 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
     const last = Math.max(0, ...attempts);
     const attempt = last && !fs.existsSync(path.join(directory, 'attempt-' + last, 'answers.json')) ? last : last + 1;
     const dir = path.join(directory, 'attempt-' + attempt);
-    const slots = resolveSlots('ask', selected as Level, deps);
+    const slots = resolveSlots('ask', selected as Level, deps, pins);
     if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate' + underfillNote(slots));
     const rawFailed = values['native-failed'];
     const rawHashes = (values as Record<string, unknown>)['native-failed-hash'];

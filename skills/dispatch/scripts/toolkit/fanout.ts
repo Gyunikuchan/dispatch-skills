@@ -6,7 +6,7 @@ import { readManifest } from '../lib/session.ts';
 import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, failureDisposition } from '../policy/cascade.ts';
-import { resolveRoster, nativeFirstRoute, normalizeProvider, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
+import { parsePins, resolveRoster, nativeFirstRoute, normalizeProvider, type Pins, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
 import { currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome, Invocation, LaunchRequest, ProcessResult } from '../providers/types.ts';
@@ -67,13 +67,26 @@ type FanOutInput = {
   onIgnoredReport?: (attempt: string) => void;
 };
 
-export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Level, deps: CliDeps): Roster & {nativeFirstProviders: string[]} {
+export function parsePinsFlag(raw: unknown): Pins | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') throw new ToolError(1, 'invalid-input', '--pins must be a string');
+  try { return parsePins(raw); }
+  catch (error) { throw new ToolError(1, 'invalid-input', error instanceof Error ? error.message : String(error)); }
+}
+
+export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Level, deps: CliDeps, pins?: Pins | null): Roster & {nativeFirstProviders: string[]} {
   const {config} = loadConfig(deps.skillRoot);
   const phases = config['phases'] as Record<string, PhasePolicy>;
   const readDelegates = config['read-delegates'] as Record<string, ReadDelegate>;
-  const roster = resolveRoster({level, readDelegates,
-    orchestrator: deps.orchestrator, liveness: deps.liveness, ...(deps.sandboxSupported ? {sandboxSupported: deps.sandboxSupported} : {}),
-    ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
+  let roster: Roster;
+  try {
+    roster = resolveRoster({level, readDelegates,
+      orchestrator: deps.orchestrator, liveness: deps.liveness, ...(deps.sandboxSupported ? {sandboxSupported: deps.sandboxSupported} : {}),
+      ...(pins ? {pins} : {}),
+      ...(kind === 'ask' ? {} : {policy: phases[kind === 'code' ? 'code-review' : 'plan-review']})});
+  } catch (error) {
+    throw new ToolError(1, 'invalid-input', error instanceof Error ? error.message : String(error));
+  }
   const seen = new Set<string>();
   const nativeFirstProviders: string[] = [];
   for (const key of Object.keys(readDelegates)) {

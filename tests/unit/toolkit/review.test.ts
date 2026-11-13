@@ -1125,3 +1125,83 @@ test('non-code re-review omits the changed segment without changed headings', as
     } finally { f.cleanup(); }
   }
 });
+
+test('review run honors pins for all and provider selection and rejects invalid pins', async () => {
+  const runPinned = async (f: Awaited<ReturnType<typeof fixture>>, pins: string) => {
+    f.lines.length = 0;
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode', '--pins', pins], f.deps);
+    return {exit, output: f.output()};
+  };
+  {
+    const f = await fixture();
+    try {
+      fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+        'read-delegates': {claude: {targets: [{medium: {model: 'fake'}}]}, agy: {targets: [{medium: {model: 'fake'}}]}},
+        phases: {'plan-review': {targets: {medium: 1}, rounds: {medium: 2}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
+      }));
+      f.deps.delegate = async () => reply(CLEAN);
+      const all = await runPinned(f, '(all)');
+      assert.equal(all.exit, 0, JSON.stringify(all));
+      assert.deepEqual(f.read(1, 'round.json').roster.map((r: {provider: string}) => r.provider), ['claude', 'agy']);
+    } finally { f.cleanup(); }
+  }
+  {
+    const f = await fixture();
+    try {
+      f.deps.delegate = async () => reply(CLEAN);
+      const single = await runPinned(f, '(agy)');
+      assert.equal(single.exit, 0, JSON.stringify(single));
+      assert.deepEqual(f.read(1, 'round.json').roster.map((r: {provider: string}) => r.provider), ['agy']);
+      for (const bad of ['(0)', '(unknown)']) {
+        const err = await runPinned(f, bad);
+        assert.equal(err.exit, 1, bad);
+        assert.equal(err.output.reason, 'invalid-input', bad);
+      }
+    } finally { f.cleanup(); }
+  }
+});
+
+test('explicit pins override prior-round narrowing on a non-decisive follow-up round', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = async () => reply(report('§ Work', 'Minor note', 'SHOULD'));
+    const first = await f.call();
+    assert.equal(first.exit, 0, JSON.stringify(first));
+    assert.deepEqual(f.read(1, 'round.json').roster.map((r: {provider: string}) => r.provider), ['claude', 'agy']);
+    f.launches.length = 0;
+    fs.appendFileSync(f.plan, '\n## Update\nRevised.\n');
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      return reply(CLEAN);
+    };
+    f.lines.length = 0;
+    const secondExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode', '--pins', '(agy)'], f.deps);
+    assert.equal(secondExit, 0, JSON.stringify(f.output()));
+    assert.deepEqual(f.read(2, 'round.json').roster.map((r: {provider: string}) => r.provider), ['agy']);
+    assert.deepEqual(f.launches.map(l => l.provider), ['agy']);
+    assert.match(f.read(2, 'round.json').scope as string, /^Re-review round 2 \(full\)/);
+  } finally { f.cleanup(); }
+});
+
+test('explicit pins override saved roster on an admitted repository rerun', async () => {
+  const f = await fixture();
+  try {
+    seedCompletedRound(f, 1, []);
+    rewriteRound(f, 1, metadata => {metadata['roster'] = [{slot: 'claude[0]', provider: 'claude', model: 'fake', index: 0, reserve: false}, {slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false}];});
+    const first = f.read(1, 'round.json');
+    seedConfirmationRound(f, 2, {...first, generation: 1, scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target});
+    const second = f.read(2, 'findings.json');
+    fs.writeFileSync(path.join(f.directory, 'round-2', 'findings.json'), JSON.stringify({...second, asOfSeq: 1, repositoryCheck: {state: 'unavailable', reason: 'fixture'}}));
+    await appendRecord(f.session, {kind: 'note', by: 'user', quote: 'Grant one rerun', key: 'repository-rerun:' + PLAN_REVIEW + ':2:1', data: {text: 'Grant one rerun'}}, f.deps);
+    f.launches.length = 0;
+    f.deps.delegate = async (provider, request, mode) => {
+      f.launches.push({provider, request, mode});
+      return reply(CLEAN);
+    };
+    f.lines.length = 0;
+    const thirdExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode', '--pins', '(agy)'], f.deps);
+    assert.equal(thirdExit, 0, JSON.stringify(f.output()));
+    assert.deepEqual(f.read(3, 'round.json').roster.map((r: {provider: string}) => r.provider), ['agy']);
+    assert.deepEqual(f.launches.map(l => l.provider), ['agy']);
+  } finally { f.cleanup(); }
+});
