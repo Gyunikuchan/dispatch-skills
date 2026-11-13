@@ -84,7 +84,7 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Risks and rollback: when material, explain reversibility, affected consumers and effects that persist after rollback.
 - Box: exact labels in order; `Increments` equals the graph row count; never live status.
 - Increment Details: one high-level H3 per graph ID. Put observable behaviour bullets before `<details>`; the `increment-behaviour` warning reports missing bullets and bullets that contain only a file count or placeholder. Keep required fields in the block and wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.
-- Execution Status and Review Findings & Resolutions: machine-managed; excluded from governed content. The toolkit regenerates the findings section from the ledger after each review round and ruling.
+- Execution Status and Review Findings & Resolutions: machine-managed under [review rules](../review-rules.md); excluded from governed content.
 - Execution Status: rows give each increment's state (completed, active, ready, blocked, invalidated) and next action. The single ledger-derived `Next Action` line below the table gives the overall operation.
 
 - Judge design quality against the selected shared and design criteria in the [quality bar](quality-bar.md). Keep the template section order: At a Glance, then live status, approach, and decisions, then architecture and increment detail. A present section out of order is a `section-order` defect. Group each component under a meaningful heading in Architecture & Boundaries, with its outcome, interface and ownership detail beneath it. Place section visuals here; state shared constraints once and keep exceptions beside affected contracts.

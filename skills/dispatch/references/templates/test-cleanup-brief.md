@@ -1,6 +1,6 @@
 # Test cleanup brief
 
-Work only in `{{integrationPath}}`. Edit only test files (tests, fixtures, helpers). Change no production code, docs or plan artifacts. Run no dispatch toolkit. Follow applicable host rules; a stricter one wins.
+Work only in `{{integrationPath}}`. Edit only test files (tests, fixtures, helpers). Change no production code, docs or plan artifacts. Run no dispatch toolkit.
 
 ## Objective
 
@@ -8,7 +8,7 @@ Reduce test growth from this run. Delete, merge or rewrite lower-value tests so 
 
 ## Scope
 
-1. Run `git diff <base>..HEAD` and `git diff --name-only <base>..HEAD` in `{{integrationPath}}` with base `{{base}}`. Read-only Git only.
+1. Run `git diff <base>..HEAD` and `git diff --name-only <base>..HEAD` in `{{integrationPath}}` with base `{{base}}`.
 2. Clean up tests this run added or changed and overlapping pre-existing tests in those files; leave other tests untouched.
 3. Read the bound plan `{{planPath}}` whole. Map each test you delete or merge to criterion IDs through the `Tests:` and `Check:` fields of the plan criteria.
 

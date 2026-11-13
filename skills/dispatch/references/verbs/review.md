@@ -1,6 +1,6 @@
 # Review
 
-Resolve and read the whole [governing spec](../spec-stage.md). Use [review run](../toolkit.md#review-run) with kinds `plan`, `design` or `code`; artifact extensions infer plan or design, and an explicit kind wins. Supply `--spec <path>` or use the bound spec. Standalone review needs no bound plan and adds no approval gate.
+Resolve and read the [governing spec](../spec-stage.md#readers-and-document-layers). Use [review run](../toolkit.md#review-run) with kinds `plan`, `design` or `code`; artifact extensions infer plan or design, and an explicit kind wins. Supply `--spec <path>` or use the bound spec. Standalone review needs no bound plan and adds no approval gate.
 
 Code targets are `integration`, a bound-plan task ID, `worktree`, `<a>..<b>` or `<rev>`; see [toolkit contract](../toolkit.md#review-run) for target resolution semantics. Integration reviews the accumulated integration candidate; a task reviews its finished launch. Revision ranges resolve exact commits; a single revision compares merge-base with HEAD. Session state is excluded.
 

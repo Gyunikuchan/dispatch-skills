@@ -55,8 +55,8 @@ export type WalkthroughView = {
   coverage?: CoverageState | 'unreadable';
   reviewedCodeBaseline?: string;
   runtimeProof?: { outcome: string; head: string; reason: string; report?: string; artifacts?: string[]; dirty?: boolean; fixes: {commit: string; reason: string; beforeLatest: boolean}[] };
-  /** Criteria whose tests the cleanup commit removed keep evidence verified at `from`. */
-  testCleanup?: { from: string; removed: readonly string[]; deleted: number; merged: number };
+  /** Criteria whose tests the cleanup commit removed keep evidence at their recorded `trees` entry. */
+  testCleanup?: { from: string; trees: Readonly<Record<string, string>>; removed: readonly string[]; deleted: number; merged: number };
 };
 
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
@@ -220,7 +220,10 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   out.push('## Verification', '', `- **Status:** ${exceptionCount ? 'exceptions recorded' : 'complete'}`);
   if (view.testCleanup) {
     const cleanup = view.testCleanup;
-    out.push(`- **Test cleanup:** deleted ${cleanup.deleted} · merged ${cleanup.merged} tests after verification at ${line(cleanup.from).slice(0, 12)}; criteria with tests removed: ${cleanup.removed.length ? cleanup.removed.map(line).join(', ') : 'none'}`);
+    const removed = cleanup.removed.length
+      ? cleanup.removed.map((id) => `${line(id)} at ${line(cleanup.trees[id] ?? '').slice(0, 12)}`).join(', ')
+      : 'none';
+    out.push(`- **Test cleanup:** deleted ${cleanup.deleted} · merged ${cleanup.merged} tests; criteria with tests removed: ${removed}`);
   }
   out.push('');
   out.push(...exceptionSection(statuses, 'manual'), ...exceptionSection(statuses, 'waived'), ...exceptionSection(statuses, 'missing'));

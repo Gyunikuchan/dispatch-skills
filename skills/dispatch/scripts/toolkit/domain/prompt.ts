@@ -27,7 +27,7 @@ export function extractDocumentLayers(specStageMarkdown: string): string {
 
 export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string; severity?: string; rejectionConfirmed?: boolean };
 
-export function settledSection(settled: readonly Settled[], revisions = false): string {
+export function settledSection(settled: readonly Settled[], revisions = false, acceptedNew?: ReadonlySet<string>): string {
   settled=settled.filter(entry=>entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
   if (!settled.length) return '';
   const clip = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
@@ -35,13 +35,12 @@ export function settledSection(settled: readonly Settled[], revisions = false): 
   const row = (entry: Settled) => {
     const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
     const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '';
-    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${suffix}`;
+    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${suffix}`;
     if (entry.ruling === 'duplicate') {
-      const reason = entry.reason || 'no reason recorded', clipped = clip(reason, 120), labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
+      const reason = entry.reason || 'no reason recorded', labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
       const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map(match => match[0]!).filter(id => id !== entry.id);
       const target = labeled && labeled !== entry.id ? labeled : cited[0];
-      const detail = target && !new RegExp(`\\b${target}\\b`).test(clipped) ? `${target}: ${clip(reason, 120 - target.length - 2)}` : clipped;
-      return `- ${entry.id} ${entry.locus}: ${clip(firstLine, 120)} — duplicate: ${detail}${suffix}`;
+      return target ? `- ${entry.id} ${entry.locus} — duplicate of ${target}${suffix}` : `- ${entry.id} ${entry.locus} — duplicate: ${clip(reason, 120)}${suffix}`;
     }
     return `- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${suffix}`;
   };
@@ -51,8 +50,8 @@ export function settledSection(settled: readonly Settled[], revisions = false): 
 export type InterRound = { diff: string; accepted: readonly { id: string; locus: string }[] };
 
 /** The section's text serves both prompt builders; the compact confirmation prompt has no template to carry it. */
-export function interRoundSection(info: InterRound): string {
-  const list = info.accepted.length
+export function interRoundSection(info: InterRound, includeAccepted = true): string {
+  const list = !includeAccepted ? [] : info.accepted.length
     ? ['Check these accepted-finding loci and their interactions first:', ...info.accepted.map(entry => `- ${entry.id} ${entry.locus}`)]
     : ['No accepted findings since the previous round.'];
   return ['### Since the previous round', `Inter-round diff: ${info.diff}`, ...list].join('\n');

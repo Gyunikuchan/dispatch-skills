@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult, CliDeps } from './cli.ts';
 import { withLedger } from './ledger.ts';
-import { git, gitOk, changedPaths, testedTree } from './git.ts';
+import { git, gitOk, gitRaw, gitPaths, splitPaths, changedPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
 import { pending, reason, result, refuse } from './integrate.ts';
@@ -15,14 +15,7 @@ import { loadRejections, applicableReviewIds } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
 import { admission } from './findings.ts';
 
-// SECTION: Git helpers shared by delivery and the commit phase
-// NOTE: gitOk trims output; NUL-separated path lists need their exact bytes.
-async function rawGit(deps: CliDeps, root: string, args: string[], env: NodeJS.ProcessEnv = {}, stdin?: string): Promise<string> {
-  const out=await deps.run(['git',...args],{cwd:root,env:{GIT_OPTIONAL_LOCKS:'0',...env},...(stdin!==undefined?{stdin}:{})});
-  if(out.exit)throw new ToolError(2,'fault',out.stderr||out.stdout||'Git exited '+out.exit);
-  return out.stdout;
-}
-const gitNames=async(deps: CliDeps,root: string,args: string[],env?: NodeJS.ProcessEnv)=>(await rawGit(deps,root,args,env)).split('\0').filter(Boolean);
+const locks=(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv=>({GIT_OPTIONAL_LOCKS:'0',...env});
 function tempIndexFile(session: string, name: string): string {
   const file=path.join(session,'.state',name);fs.mkdirSync(path.dirname(file),{recursive:true});for(const f of [file,file+'.lock'])fs.rmSync(f,{force:true});return file;
 }
@@ -31,8 +24,8 @@ async function pathsEqualTo(deps: CliDeps, session: string, destPath: string, tr
   if(!subset.length)return new Set();
   const index=tempIndexFile(session,'deliver-check-index'),env={GIT_INDEX_FILE:index};
   try{
-    await rawGit(deps,destPath,['read-tree',tree],env);await rawGit(deps,destPath,['update-index','-q','--refresh'],env);
-    const differing=new Set(await gitNames(deps,destPath,['diff-files','--name-only','-z'],env)),others=await gitNames(deps,destPath,['ls-files','--others','-z'],env);
+    await gitRaw(deps,destPath,['read-tree',tree],locks(env));await gitRaw(deps,destPath,['update-index','-q','--refresh'],locks(env));
+    const differing=new Set(await gitPaths(deps,destPath,['diff-files','--name-only','-z'],locks(env))),others=await gitPaths(deps,destPath,['ls-files','--others','-z'],locks(env));
     return new Set(subset.filter(p=>!differing.has(p)&&!others.some(o=>o===p||o.startsWith(p+'/'))));
   }finally{for(const f of [index,index+'.lock'])fs.rmSync(f,{force:true});}
 }
@@ -44,8 +37,8 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const opened=integrationRecord(tx.fold);if(!opened)refuse('no-integration');
     const cwd=path.resolve(ctx.session,opened.data['path']),dest=opened.data['dest'] as {path:string;branch:string};
     const read=(root:string,args:string[])=>gitOk(ctx.deps,root,args,{GIT_OPTIONAL_LOCKS:'0'});
-    const rawOut=(root:string,args:string[],env:NodeJS.ProcessEnv={},stdin?:string)=>rawGit(ctx.deps,root,args,env,stdin);
-    const names=(root:string,args:string[],env?:NodeJS.ProcessEnv)=>gitNames(ctx.deps,root,args,env);
+    const rawOut=(root:string,args:string[],env?:NodeJS.ProcessEnv,stdin?:string)=>gitRaw(ctx.deps,root,args,locks(env),stdin);
+    const names=(root:string,args:string[],env?:NodeJS.ProcessEnv)=>gitPaths(ctx.deps,root,args,locks(env));
     const value=<T>(row:PromiseSettledResult<T>):T=>{if(row.status==='rejected')throw row.reason;return row.value;};
     const from=opened.data['base'] as string;
     // Cleanup may have removed the integration worktree after a completed delivery; the retry then relies on recorded identities.
@@ -56,7 +49,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     const blocked=(message:string):never=>refuse('recovery-blocked',message+'; preserve session refs and worktrees, inspect recovery evidence or start a new run');
     // Recursive raw diff: every delivered path is a leaf entry (blob, symlink or gitlink) or absent.
     const entriesOf=async(root=cwd,target=source!)=>{
-      const tokens=(await rawOut(root,['diff','--raw','-z','--no-renames','--no-abbrev',from,target,'--'])).split('\0').filter(Boolean);
+      const tokens=splitPaths(await rawOut(root,['diff','--raw','-z','--no-renames','--no-abbrev',from,target,'--']));
       const rows:{path:string;modes:string[]}[]=[];
       for(let i=0;i+1<tokens.length;i+=2){const meta=tokens[i]!.slice(1).split(' ');rows.push({path:tokens[i+1]!,modes:[meta[0]!,meta[1]!]});}
       return rows;
@@ -69,7 +62,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     if(source===undefined)refuse('no-integration','Integration worktree is missing and no completed delivery is recorded');
     const checkSource=async()=>{
       if(loadRejections(ctx.session,tx.fold,applicableReviewIds(ctx.manifest,tx.fold)).some(state=>state.state!=='confirmed'))refuse('review-confirmation-required');
-      const [head,dirty,cached]=await Promise.allSettled([read(cwd,['rev-parse','HEAD']),changedPaths(ctx.deps,cwd,'HEAD'),read(cwd,['diff','--cached','--name-only','--no-renames','-z','HEAD','--'])]);
+      const [head,dirty,cached]=await Promise.allSettled([read(cwd,['rev-parse','HEAD']),changedPaths(ctx.deps,cwd,'HEAD'),names(cwd,['diff','--cached','--name-only','--no-renames','-z','HEAD','--'])]);
       if(value(head)!==source)blocked('Integration source changed during delivery');
       if(value(dirty).length||value(cached).length)refuse('integration-dirty');
     };
@@ -133,7 +126,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
         const atSource=[...await equalTo(source,paths)];
         if(atSource.length){
           const wanted=new Set(atSource),found=new Map<string,string>();
-          for(const part of chunks(atSource))for(const row of (await rawOut(cwd,['ls-tree','-z','-r','--full-tree',source,'--',...part])).split('\0').filter(Boolean)){
+          for(const part of chunks(atSource))for(const row of splitPaths(await rawOut(cwd,['ls-tree','-z','-r','--full-tree',source,'--',...part]))){
             const tab=row.indexOf('\t'),[mode,type,oid]=row.slice(0,tab).split(' '),name=row.slice(tab+1);
             if(wanted.has(name)&&type!=='tree')found.set(name,mode+' '+oid);
           }
@@ -180,7 +173,7 @@ export async function commitDelivered(ctx: HandlerContext): Promise<HandlerResul
     if(recorded)return result({commit:recorded.data['commit'],source,from,dest,committed:false,recordOnly:true,...(recorded.data['differing']?{differing:recorded.data['differing']}:{})});
     const run=(args:string[])=>git(ctx.deps,dest.path,args,{GIT_OPTIONAL_LOCKS:'0'});
     const read=(args:string[])=>gitOk(ctx.deps,dest.path,args,{GIT_OPTIONAL_LOCKS:'0'});
-    const names=(args:string[])=>gitNames(ctx.deps,dest.path,args);
+    const names=(args:string[])=>gitPaths(ctx.deps,dest.path,args,{GIT_OPTIONAL_LOCKS:'0'});
     const state=async()=>{const branch=await run(['symbolic-ref','--quiet','--short','HEAD']);return {branch:branch.exit?'':branch.stdout.trim(),head:await read(['rev-parse','HEAD'])};};
     const indexTree=async()=>{const out=await git(ctx.deps,dest.path,['write-tree']);if(out.exit)refuse('staged-changes','Git cannot write the index tree: '+capSummary(out.stderr||out.stdout));return out.stdout.trim();};
     const isAncestor=async(ancestor:string,descendant:string)=>{const out=await run(['merge-base','--is-ancestor',ancestor,descendant]);if(out.exit>1)throw new ToolError(2,'fault',out.stderr||out.stdout||'Git exited '+out.exit);return out.exit===0;};
@@ -435,7 +428,7 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       // Merged work already lives in the integration branch or the caller, so its worktree needs no restoration.
       if(writer ? integrated(writer) : !!delivered && observed[relative]!.head===delivered.data['source']) {ready.push(relative); continue;}
       try {
-        const ignored=(await gitOk(ctx.deps,cwd,['ls-files','--others','--ignored','--exclude-standard','-z'])).split('\0').filter(Boolean);
+        const ignored=await gitPaths(ctx.deps,cwd,['ls-files','--others','--ignored','--exclude-standard','-z']);
         let snapshot=observed[relative]!.head;
         if(writer) {
           const preserved=await git(ctx.deps,root,['rev-parse','--verify','--quiet',abandonedRef(ctx.manifest.safeSessionId,writer.record.data['task'],writer.launch)]);
@@ -445,8 +438,8 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           else throw new ToolError(2,'fault',preserved.stderr||preserved.stdout||'Git exited '+preserved.exit);
         }
         const tree=await testedTree(ctx.deps,ctx.session,cwd),expected=await gitOk(ctx.deps,root,['rev-parse',snapshot+'^{tree}']);
-        if(tree!==expected || ignored.length || (await gitOk(ctx.deps,cwd,['diff','--cached','--name-only','--no-renames','-z','HEAD','--'])).length) {
-          const differing=(await gitOk(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',expected,tree])).split('\0').filter(Boolean);
+        if(tree!==expected || ignored.length || (await gitPaths(ctx.deps,cwd,['diff','--cached','--name-only','--no-renames','-z','HEAD','--'])).length) {
+          const differing=await gitPaths(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',expected,tree]);
           kept.push({path:relative,reason:'unpreserved',paths:[...new Set([...differing,...ignored])]});
         } else ready.push(relative);
       } catch(error) { fail(relative,'preservation-check-failed',error);continue; }

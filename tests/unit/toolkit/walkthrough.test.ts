@@ -160,7 +160,7 @@ test('walkthrough shows copied visuals or the recorded replacement', () => {
 test('walkthrough appendix keeps evidence, user records, deviations, findings, provenance and review fixes', () => {
   const rendered = renderWalkthrough(view({
     statuses: [
-      { criterion: 'SC1', state: 'verified' as const, evidence: 'evidence/first.json', reason: 'verified at 123456abcdef7890; tests removed in cleanup' },
+      { criterion: 'SC1', state: 'verified' as const, evidence: 'evidence/first.json', reason: 'verified at fedcba6543210987; tests removed in cleanup' },
       { criterion: 'SC2', state: 'manual' as const, seq: 3, quote: 'manual | quote<!-- hidden -->', evidence: 'manual/proof.md' },
       { criterion: 'SC3', state: 'waived' as const, seq: 4, quote: 'waiver quote', reason: 'accepted exception' },
       { criterion: 'SC4', state: 'missing' as const },
@@ -178,7 +178,7 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     reviewRounds: [{ review: 'review-alpha', round: 1, findings: 2, path: '.state/reviews/review-alpha/round-1/findings.json' }],
     reviewFixes: [{ commit: 'd'.repeat(40), reason: 'repair accepted SHOULD', metadata: { review: 'review-alpha', round: 1, generation: 1, findings: ['R1-F001'], from: 'c'.repeat(40) }, status: 'verified but not re-reviewed', paths: ['src/report.ts'], verification: { tree: 'e'.repeat(40), criteria: ['SC1'], contract: ['contract'] } }],
     reviewedCodeBaseline: 'c'.repeat(40),
-    testCleanup: { from: '123456abcdef7890', removed: ['SC1'], deleted: 3, merged: 1 },
+    testCleanup: { from: '123456abcdef7890', trees: { SC1: 'fedcba6543210987' }, removed: ['SC1'], deleted: 3, merged: 1 },
   }));
 
   const appendix = section(rendered, '## Appendix');
@@ -187,18 +187,33 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     '### Provenance', `Spec: spec/report.spec.md · sha256:${'a'.repeat(12)}`,
     `Plan: plans/report.plan.md · sha256:${'b'.repeat(12)}`,
     'Integration: source 123456abcdef7890 · branch main · ref refs/dispatch/x/delivered-source',
-    '### Verified Evidence', '[source evidence](evidence/first.json)', 'verified at 123456abcdef7890; tests removed in cleanup',
+    '### Verified Evidence', '[source evidence](evidence/first.json)', 'verified at fedcba6543210987; tests removed in cleanup',
     '### User-Attributed Records', 'the user approved this row \\| &lt;!-- literal --&gt;',
     '</details>',
   ]) assert.ok(appendix.includes(detail), detail);
 
-  assert.ok(section(rendered, '## Verification', '## Deviations & Follow-ups').includes('- **Test cleanup:** deleted 3 · merged 1 tests after verification at 123456abcdef; criteria with tests removed: SC1'));
+  assert.ok(section(rendered, '## Verification', '## Deviations & Follow-ups').includes('- **Test cleanup:** deleted 3 · merged 1 tests; criteria with tests removed: SC1 at fedcba654321'));
   const deviations = section(rendered, '## Deviations & Follow-ups');
   for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010']) assert.ok(deviations.includes(detail), detail);
   const findings = section(rendered, '## Review Findings & Resolutions');
   for (const detail of ['| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |', '[findings](.state/reviews/review-alpha/round-1/findings.json)']) assert.ok(findings.includes(detail), detail);
   assert.ok(!appendix.includes('Review Findings & Resolutions') && !appendix.includes('Deviations & Follow-ups'));
   assert.ok(rendered.indexOf('## Verification') < rendered.indexOf('## Deviations & Follow-ups') && rendered.indexOf('## Review Findings & Resolutions') < rendered.indexOf('## Appendix'));
+});
+
+test('walkthrough names the evidence tree of removed criteria', () => {
+  const rendered = renderWalkthrough(view({
+    testCleanup: {
+      from: '1111111111111111',
+      trees: { SC1: 'aaaa111122223333', SC2: 'bbbb444455556666' },
+      removed: ['SC1', 'SC2'],
+      deleted: 2,
+      merged: 1,
+    },
+  }));
+  const verification = section(rendered, '## Verification', '## Runtime Proof');
+  assert.ok(verification.includes('- **Test cleanup:** deleted 2 · merged 1 tests; criteria with tests removed: SC1 at aaaa11112222, SC2 at bbbb44445555'));
+  assert.ok(!verification.includes('111111111111'));
 });
 
 test('downgraded finding: a downgraded row appears in attention and in the findings table, whatever the ruling', () => {

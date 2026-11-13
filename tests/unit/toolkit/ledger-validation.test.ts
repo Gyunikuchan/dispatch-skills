@@ -302,7 +302,7 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
 
   for (const [kind, phaseSummary] of [
     ['writer', 'launched(task,path,base), finished(task,launch,candidate), abandoned(task,launch,reason)'],
-    ['integrate', 'opened(path,branch,base,dest), verification(cycle,outcome,head,reason,open,report?,artifacts?,dirty?), test-cleanup(from,fromTree,to,removed,deleted,merged), started(task,candidate), conflict(task,paths), done(task,commit), abandoned(task,candidate,reason), fix(commit,reason,reviewFix?), deliver-started(mode,dest,from,source), delivered(mode,dest,from,source,noop?), committed(commit,source,differing?), closed(reason)'],
+    ['integrate', 'opened(path,branch,base,dest), verification(cycle,outcome,head,reason,open,report?,artifacts?,dirty?), test-cleanup(from,fromTree,to,removed,deleted,merged,trees), started(task,candidate), conflict(task,paths), done(task,commit), abandoned(task,candidate,reason), fix(commit,reason,reviewFix?), deliver-started(mode,dest,from,source), delivered(mode,dest,from,source,noop?), committed(commit,source,differing?), closed(reason)'],
   ] as const) {
     const expectedSuffix = `; allowed for ${kind}: an object with phase: ${phaseSummary}`;
     for (const [data, prefix] of [
@@ -333,5 +333,33 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
       assert.ok(Buffer.byteLength(failure.message, 'utf8') <= 1024, String(Buffer.byteLength(failure.message, 'utf8')));
       return true;
     });
+  }
+});
+
+test('test-cleanup records require trees', () => {
+  const git = 'a'.repeat(40);
+  const base = { phase: 'test-cleanup', from: git, fromTree: git, to: git, removed: ['SC1'], deleted: 1, merged: 0 };
+  assert.doesNotThrow(() => validateRecord({ kind: 'integrate', by: 'tool', data: { ...base, trees: { SC1: git } } }));
+  assert.doesNotThrow(() => validateRecord({ kind: 'integrate', by: 'tool', data: { ...base, removed: [], trees: {} } }));
+  for (const patch of [
+    {},
+    { trees: 'bad' },
+    { trees: [git] },
+    { trees: { SC1: 'bad' } },
+    { trees: { SC1: 'A'.repeat(40) } },
+    { trees: { ' ': git } },
+    { trees: {} },
+    { trees: { SC2: git } },
+    { trees: { SC1: git, SC2: git } },
+  ]) {
+    assert.throws(
+      () => validateRecord({ kind: 'integrate', by: 'tool', data: { ...base, ...patch } }),
+      (error) => {
+        const failure = error as Error & { reason: string };
+        assert.equal(failure.reason, 'invalid-record');
+        assert.match(failure.message, /trees/);
+        return true;
+      },
+    );
   }
 });

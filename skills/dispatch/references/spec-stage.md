@@ -8,7 +8,7 @@ Spec authoring follows the [authoring sequence](spec-authoring.md#resolve-and-au
 
 ## Approval
 
-Confirm new-spec intent under [Resolve and author](#resolve-and-author) before planning. At medium and above, implementation needs the user [approval tuple](decision-frame.md#user-gate-boundaries). Design approval precedes increment planning and is recorded with the first plan's tuple. At design approval the user may approve all increments, recorded as one user-quoted `note` in the design session. With it, the orchestrator appends each plan's approval tuple with that quote and no new user decision; without it, the user supplies each plan's tuple. At low, show governing artifacts in the report. Standalone review settlement does not add an approval gate. See [approval records](toolkit.md#approval).
+Confirm new-spec intent under [Resolve and author](#resolve-and-author) before planning. At medium and above, implementation needs the user [approval tuple](decision-frame.md#user-gate-boundaries). Design approval precedes increment planning and is recorded with the first plan's tuple. At design approval the user may approve all increments, recorded as one user-quoted `note` in the design session. With it, the orchestrator appends each plan's approval tuple with that quote and no new user decision; without it, the user supplies each plan's tuple. At low, show governing artifacts in the report. For standalone review gating, see [review](verbs/review.md). See [approval records](toolkit.md#approval).
 
 ## Run level
 

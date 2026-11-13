@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger, type Fold } from './ledger.ts';
 import type { LedgerRecord } from './records.ts';
-import { gitOk, changedPaths, testedTree, headTree } from './git.ts';
+import { gitOk, gitPaths, changedPaths, testedTree, headTree } from './git.ts';
 import { ensureIntegration, integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths, taskSection } from './plan-view.ts';
 import { ToolError } from './output.ts';
@@ -129,8 +129,8 @@ export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
     if(candidate!==base) {
       const parent=await gitOk(ctx.deps,cwd,['rev-parse','HEAD^']);
       if(parent!==base) refuse('submit-pending','Writer HEAD is not one commit beyond its base');
-      const diff=await gitOk(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',base,candidate,'--']);
-      const outside=diff.split('\0').filter(p=>p && !paths.includes(p));
+      const diff=await gitPaths(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',base,candidate,'--']);
+      const outside=diff.filter(p=>!paths.includes(p));
       if(outside.length) { await gitOk(ctx.deps,cwd,['reset','--soft',base]); refuse('out-of-scope',JSON.stringify({paths:outside})); }
     } else {
       const changed=await changedPaths(ctx.deps,cwd,base);

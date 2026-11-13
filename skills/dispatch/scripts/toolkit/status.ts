@@ -146,7 +146,7 @@ export async function statusReport(session: string, repositoryRoot: string, deps
     escalations: [...escalations.values()].filter(record => record['state'] === 'open'),
     reviews, recordCount: fold.records.length, tornTail: fold.torn !== null,
     ...(openRepositoryChanges.length ? {openRepositoryChanges} : {}),
-    testCleanup: (() => { const row = latestCleanup(fold); return row ? {from: row.data['from'], removed: row.data['removed'], deleted: row.data['deleted'], merged: row.data['merged']} : null; })(),
+    testCleanup: (() => { const row = latestCleanup(fold); return row ? {from: row.data['from'], trees: row.data['trees'], removed: row.data['removed'], deleted: row.data['deleted'], merged: row.data['merged']} : null; })(),
     ...sections,
   };
 }

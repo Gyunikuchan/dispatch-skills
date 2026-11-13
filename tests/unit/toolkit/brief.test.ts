@@ -949,3 +949,75 @@ test('verifier brief launch works without a bound plan and refuses blanks; verif
     assert.deepEqual(fs.readdirSync(path.join(f.session, '.state', 'briefs')), before);
   } finally { f.cleanup(); }
 });
+
+test('rendered briefs state the git-write rule once and carry one host-rule precedence rule', async () => {
+  const f = await fixture();
+  try {
+    await f.approve();
+    await f.launch();
+    const writerResult = await f.call();
+    assert.equal(writerResult.exit, 0);
+    const writerBrief = fs.readFileSync(writerResult.value.path, 'utf8');
+
+    const cleanupValues = path.join(f.session, 'cleanup-rules-values.json');
+    fs.writeFileSync(cleanupValues, JSON.stringify({base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    const cleanupBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+
+    const gitRule = 'Run no Git write commands (add, stash, commit, checkout, reset, restore).';
+    assert.equal(writerBrief.split(gitRule).length - 1, 1, 'writer brief states the Git-write rule once');
+    assert.doesNotMatch(writerBrief, /No Git write commands\./);
+    assert.equal(cleanupBrief.split(gitRule).length - 1, 1, 'test-cleanup brief states the Git-write rule once');
+    assert.doesNotMatch(cleanupBrief, /Read-only Git only\./);
+
+    const mapValues = path.join(f.session, 'explorer-prec-map.json');
+    fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/map.md'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+    const mapBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+
+    const researchValues = path.join(f.session, 'explorer-prec-research.json');
+    fs.writeFileSync(researchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'explorer', researchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+    const researchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+
+    const precedenceRule = 'Host rules may tighten, never widen, scope, write boundaries, verification and safety.';
+    for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief], ['map explorer', mapBrief], ['research explorer', researchBrief]] as const) {
+      assert.doesNotMatch(brief, /a stricter one wins/i, `${name}: drops a stricter one wins`);
+      assert.doesNotMatch(brief, /Plan scope, write boundaries, verification and safety stay fixed\./, `${name}: drops old fixed clause`);
+      assert.equal(brief.split(precedenceRule).length - 1, 1, `${name}: single host-rule precedence rule`);
+      assert.equal(brief.split('Applicable host rule files govern first.').length - 1, 1, `${name}: single govern-first sentence`);
+    }
+    for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief]] as const) {
+      assert.equal(brief.split('Report host-rule/brief conflicts under concerns.').length - 1, 1, `${name}: single conflict-reporting rule`);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('explorer brief states its map write scope', async () => {
+  const f = await fixture();
+  try {
+    await f.approve();
+    const mapValues = path.join(f.session, 'explorer-scope-map.json');
+    fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+    const mapBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+    assert.match(mapBrief, /Write only your assigned map .*\.scratch\/session\/work\.spec\.context\.md.*assigned partial maps/i);
+    assert.match(mapBrief, /except host tool caches or indexes/i);
+    assert.ok(mapBrief.includes('lint run'));
+    assert.doesNotMatch(mapBrief, /Apply the shared evidence rule below/);
+
+    const researchValues = path.join(f.session, 'explorer-scope-research.json');
+    fs.writeFileSync(researchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'explorer', researchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+    const researchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+    assert.ok(researchBrief.includes('write no map file'));
+    assert.ok(researchBrief.includes('run no context-map lint'));
+    assert.doesNotMatch(researchBrief, /Apply the shared evidence rule below/);
+    assert.doesNotMatch(researchBrief, /partial map/);
+  } finally { f.cleanup(); }
+});

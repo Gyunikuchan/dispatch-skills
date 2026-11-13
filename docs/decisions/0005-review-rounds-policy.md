@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-09-29
-- **Updated**: 2026-11-12
+- **Updated**: 2026-11-13
 - **Audience**: Maintainers
 
 ## Context
@@ -19,7 +19,7 @@ Require explicit source-slot or configured substitute confirmation for rejected 
 
 The second opinion is required because the orchestrator that rejects a finding can repeat its own blind spot; unilateral closure would remove the only independent check on that ruling. A confirmation-only prompt can keep that check without paying for a redundant full re-review. Reviews use holistic whole-target voices across providers rather than diff-sliced micro-reviewers: each voice keeps cross-file architectural context, and slicing would multiply invocations across every provider without improving that context.
 
-Later rounds receive the inter-round comparison and accepted finding loci alongside the whole target, so reviewers can inspect fixes and interactions first. The comparison can include unrelated changes; fix attribution is incomplete. An optional finding origin identifies original or fix-induced defects, while the tool-derived recurrence signal remains independent. See the [review contract](../../skills/dispatch/references/toolkit.md#review-run).
+Later rounds receive the inter-round comparison and `### Settled in earlier rounds` alongside the whole target, so reviewers can inspect fixes and interactions first without re-reading unchanged history. In standard review prompts, accepted rows keep their defect line (clipped first line for non-MUST, full defect for accepted MUST) so voices can judge finding `origin` (`original`, `fix-induced`, `unknown`); duplicate rows point to the cited original finding ID without repeating the defect line; and an inline `(new)` marker on findings accepted since the previous reviewed round replaces the repeated ID-and-locus list in `### Since the previous round`. The compact confirmation-only prompt omits settled rows and keeps the accepted-since list. Before launching the next review round, whoever applied accepted fixes runs a fix-interaction self-check—re-reading changed sections or paths together with other consumers of each touched contract and resolving conflicts before the round—catching fix-induced regressions without launching a subagent or changing roster, cap or round rules. The comparison can include unrelated changes and fix attribution remains incomplete, while the tool-derived recurrence signal stays independent of prompt text. See the [review contract](../../skills/dispatch/references/toolkit.md#review-run) and [review rules](../../skills/dispatch/references/review-rules.md#rulings-and-fix-scope).
 
 Streaming CLI delegates that emit step events stop after 60 s of silence between steps and 180 s inside a step; streaming providers without step events stop after 120 s, and Claude and Antigravity are never idle-stopped. A line that cannot be classified as a step boundary fails toward the longer limit, so a classifier gap delays a stop instead of causing a false one; the attempt deadline is unchanged. A stopped delegate resumes in the same session with the continue prompt within the existing resume limit. A rerun of the same round resumes an unfinished slot from its saved session state instead of repeating it. See [provider controls](../../skills/dispatch/references/providers.md#shared-provider-controls) and the [review contract](../../skills/dispatch/references/toolkit.md#review-run).
 

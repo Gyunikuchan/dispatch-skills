@@ -65,7 +65,7 @@ For reuse candidates (helpers, utilities and types) and host conventions the cha
 
 ## Map, budget and output
 
-For map tasks, use the embedded context map template below, including its source commit and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref. Apply the shared evidence rule below to every external-format and absence claim: state sample coverage and uncertainty, inspect the search method's exclusions, obtain direct host-appropriate evidence, and otherwise mark the claim unverified.
+For map tasks, use the embedded context map template below, including its source commit and tool fields. Every backticked ref is a repository-relative file path with forward slashes and optional `:line` or `:start-end`; never a bare filename, bare `:line`, directory or non-path token. Cite Map, Flow and Invariant entries with `path:line` or `path:start-end`; quote each Invariant at its ref. Write only your assigned map (`{{outputPath}}` or assigned partial maps in `{{session}}`), except host tool caches or indexes; edit no other file.
 
 Keep this map within {{mapBudget}} UTF-8 bytes. If it exceeds the budget, compress wording while retaining every entry and `Not covered` item.
 

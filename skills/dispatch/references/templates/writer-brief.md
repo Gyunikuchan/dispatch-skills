@@ -1,6 +1,6 @@
 # Writer task {{task}}
 
-Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may create or update only their own cache or index. Follow applicable host rules; a stricter one wins. An assigned review fix writes only in its absolute integration worktree and listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results. Preserve the original `{{reportPath}}` and RED evidence.
+Work inside `{{worktree}}` and the task's listed paths. Outside it, write only `{{reportPath}}` and files under `{{redLogDir}}`; host read tools may create or update only their own cache or index. An assigned review fix writes only in its absolute integration worktree and listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results. Preserve the original `{{reportPath}}` and RED evidence.
 
 Read the governing spec whole: `{{specPath}}` (governed hash {{specHash}}). These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ. Do not run the dispatch toolkit.
 {{explorer}} A utility subagent under a writer is not a second writer.

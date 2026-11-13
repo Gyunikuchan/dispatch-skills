@@ -314,8 +314,9 @@ const roomy = (f: RoundFixture) => fs.writeFileSync(path.join(f.deps.skillRoot, 
 }));
 const blockBody = (lines: string[]) => lines.join('\n');
 const since = (diff: string, accepted: readonly string[]) => blockBody([SINCE, 'Inter-round diff: ' + diff, ...(accepted.length ? ['Check these accepted-finding loci and their interactions first:', ...accepted.map(entry => '- ' + entry)] : [NO_ACCEPTED])]);
+const sinceStandard = (diff: string) => blockBody([SINCE, 'Inter-round diff: ' + diff]);
 
-test('inter-round: a plan round 2 renders the diff path and the accepted loci, and round 1 renders none', async () => {
+test('standard re-review prompt omits the accepted id list, and round 1 renders none', async () => {
   const f = await fixture();
   try {
     diffGit(f, {exit: 1, stdout: DIFF});
@@ -329,14 +330,20 @@ test('inter-round: a plan round 2 renders the diff path and the accepted loci, a
     const diff = '`' + file + '` (unified diff of the governed text)';
     const later = promptsOf(f).slice(before);
     assert.ok(later.length > 0);
-    for (const prompt of later) assert.ok(prompt.includes(since(diff, ['R1-F001 § Work'])), prompt);
+    for (const prompt of later) {
+      assert.ok(prompt.includes(sinceStandard(diff) + '\n'), prompt);
+      assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
+      assert.doesNotMatch(prompt, /No accepted findings since the previous round/);
+      assert.ok(prompt.includes('Rows marked `(new)` were accepted since the previous round; inspect their loci and interactions first.'), prompt);
+      assert.match(prompt, /^- R1-F001 § Work: [^\n]+ — accepted \(new\)$/m);
+    }
     assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
     assert.deepEqual(f.read(2, 'round.json').interRound, {diff, accepted: [{id: 'R1-F001', locus: '§ Work'}]});
     assert.equal(f.read(1, 'round.json').interRound, undefined);
   } finally {f.cleanup();}
 });
 
-test('inter-round: a design round 2 with no accepted finding states the empty list', async () => {
+test('inter-round: a design round 2 with no accepted finding omits the empty list', async () => {
   const f = await fixture(false);
   try {
     const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
@@ -353,7 +360,7 @@ test('inter-round: a design round 2 with no accepted finding states the empty li
     const second = await f.call('design', design);
     assert.equal(second.exit, 0, JSON.stringify(second.output));
     const file = path.join(path.dirname(path.dirname(second.value.path)), 'round-2', 'inter-round.diff');
-    const expected = since('`' + file + '` (unified diff of the governed text)', []);
+    const expected = sinceStandard('`' + file + '` (unified diff of the governed text)') + '\n';
     for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(expected), prompt);
     assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
   } finally {f.cleanup();}
@@ -375,14 +382,14 @@ test('inter-round: a code round 2 names the head range and a round with equal he
     assert.equal(second.exit, 0, JSON.stringify(second.output));
     const roundOf = (round: number) => JSON.parse(fs.readFileSync(path.join(path.dirname(path.dirname(second.value.path)), 'round-' + round, 'round.json'), 'utf8'));
     assert.deepEqual(roundOf(2).interRound, {diff: '`git diff feature-1 feature-2`', accepted: [{id: 'R1-F001', locus: 'src/a.ts:L3'}]});
-    for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(since('`git diff feature-1 feature-2`', ['R1-F001 src/a.ts:L3'])), prompt);
+    for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(sinceStandard('`git diff feature-1 feature-2`') + '\n') && prompt.includes('— accepted (new)'), prompt);
     const third = await f.call('code', 'main..feature', 'low');
     assert.equal(third.exit, 0, JSON.stringify(third.output));
     assert.equal(roundOf(3).interRound.diff, UNCHANGED_TARGET);
   } finally {f.cleanup();}
 });
 
-test('inter-round: a confirmation-only round lists accepted loci without a diff, and the window moves only when a round reviews the target', async () => {
+test('confirmation-only prompt keeps the accepted id list, and the window moves only when a round reviews the target', async () => {
   const f = await fixture();
   try {
     roomy(f);
@@ -408,13 +415,13 @@ test('inter-round: a confirmation-only round lists accepted loci without a diff,
     before = f.launches.length;
     assert.equal((await f.call()).exit, 0);
     assert.deepEqual(f.read(3, 'round.json').interRound?.accepted, [{id: 'R1-F002', locus: '§ Notes'}]);
-    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes('- R1-F002 § Notes')));
+    assert.ok(promptsOf(f).slice(before).every(prompt => /^- R1-F002 § Notes: [^\n]+ — accepted \(new\)$/m.test(prompt)));
     // Round 4: round 3 reviewed the target; only a findings-section refresh changed the plan.
     before = f.launches.length;
     assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
     assert.doesNotMatch(f.read(4, 'round.json').scope, /confirmation-only/);
     assert.deepEqual(f.read(4, 'round.json').interRound, {diff: UNCHANGED_TEXT, accepted: []});
-    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes(since(UNCHANGED_TEXT, []))));
+    assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes(sinceStandard(UNCHANGED_TEXT))));
   } finally {f.cleanup();}
 });
 
@@ -432,7 +439,7 @@ test('inter-round: a rerun round keeps its label and receives the block', async 
     assert.match(round.scope, /^Full review/);
     assert.doesNotMatch(round.scope, /Re-review/);
     assert.deepEqual(round.interRound, {diff: UNCHANGED_TEXT, accepted: []});
-    for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes(round.scope) && prompt.includes(since(UNCHANGED_TEXT, [])), prompt);
+    for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes(round.scope) && prompt.includes(sinceStandard(UNCHANGED_TEXT)), prompt);
   } finally {f.cleanup();}
 });
 

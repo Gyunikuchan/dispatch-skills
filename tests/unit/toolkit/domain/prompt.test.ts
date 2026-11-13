@@ -30,24 +30,27 @@ test('settled accepted rows drop rationale', () => {
   assert.doesNotMatch(mustSection, /…/, 'accepted MUST is not clipped');
 });
 
-test('settled duplicate rows keep original id', () => {
+test('settled duplicate rows show the original finding id', () => {
   const duplicate = {id: 'R4-F002', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'Duplicate of R1-F004.'};
-  assert.deepEqual(settledRows(settledSection([duplicate])), ['- R4-F002 § Tasks: A repeated defect. — duplicate: Duplicate of R1-F004.']);
-  const clipped = {...duplicate, id: 'R4-F003', defect: `${'y'.repeat(130)}\nmore`, reason: 'z'.repeat(140)};
-  assert.deepEqual(settledRows(settledSection([clipped])), [`- R4-F003 § Tasks: ${'y'.repeat(119)}… — duplicate: ${'z'.repeat(119)}…`]);
+  assert.deepEqual(settledRows(settledSection([duplicate])), ['- R4-F002 § Tasks — duplicate of R1-F004']);
   const ownFirst = settledRows(settledSection([{id: 'R4-F004', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `R4-F004 repeats the point. ${'z'.repeat(130)} R1-F004`}]))[0]!;
-  assert.match(ownFirst, /R1-F004/);
+  assert.equal(ownFirst, '- R4-F004 § Tasks — duplicate of R1-F004');
   const labeled = settledRows(settledSection([{id: 'R4-F005', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `${'z'.repeat(130)} Duplicate of R1-F006`}]))[0]!;
-  assert.match(labeled, /R1-F006/);
+  assert.equal(labeled, '- R4-F005 § Tasks — duplicate of R1-F006');
   const visible = settledRows(settledSection([{id: 'R4-F007', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F004. ${'z'.repeat(130)} R2-F005`}]))[0]!;
-  assert.match(visible, /R1-F004/);
+  assert.equal(visible, '- R4-F007 § Tasks — duplicate of R1-F004');
   assert.doesNotMatch(visible, /R2-F005/);
   const labeledOwn = settledRows(settledSection([{id: 'R4-F008', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R4-F008. ${'z'.repeat(130)} R1-F006`}]))[0]!;
-  assert.match(labeledOwn, /R1-F006/);
+  assert.equal(labeledOwn, '- R4-F008 § Tasks — duplicate of R1-F006');
   const nearCutoff = settledRows(settledSection([{id: 'R4-F009', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F001 ${'z'.repeat(110)} R2-F009`}]))[0]!;
-  assert.match(nearCutoff, /R1-F001/);
+  assert.equal(nearCutoff, '- R4-F009 § Tasks — duplicate of R1-F001');
   assert.doesNotMatch(nearCutoff, /R2-F009/);
-  assert.match(settledRows(settledSection([{id: 'R4-F006', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'No original id.'}]))[0]!, /duplicate: No original id\./);
+});
+
+test('settled duplicate rows without an original id keep the reason', () => {
+  assert.deepEqual(settledRows(settledSection([{id: 'R4-F006', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'No original id.'}])), ['- R4-F006 § Tasks — duplicate: No original id.']);
+  assert.deepEqual(settledRows(settledSection([{id: 'R4-F003', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'z'.repeat(140)}])), [`- R4-F003 § Tasks — duplicate: ${'z'.repeat(119)}…`]);
+  assert.deepEqual(settledRows(settledSection([{id: 'R4-F010', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'Duplicate of R4-F010.'}])), ['- R4-F010 § Tasks — duplicate: Duplicate of R4-F010.']);
 });
 
 test('settled rejected rows keep full rationale', () => {
@@ -161,7 +164,7 @@ const linePositions = (prompt: string, marker: string): number[] => prompt.split
 test('review voices receive identical guidance in rotated axis order', () => {
   const sharedFixedLines = [
     'Precedence: Applicable host rule files govern first.',
-    'Host rules override only this bar.',
+    '- Exclude host-rule/brief conflicts from findings.',
   ];
   for (const kind of reviewKinds) {
     const base = reviewPrompt(kind, reviewContext(kind));
@@ -319,7 +322,7 @@ test('audience tags select bullets per consumer and hide tags and author text', 
   }
   const writer = qualityCriteria(bar, 'writer', 0, specStage);
   assert.ok(writer.includes('Report host-rule/brief conflicts under concerns.'), 'writer report clause');
-  assert.ok(writer.includes('No Git write commands.'), 'writer git rule');
+  assert.ok(writer.includes('Run no Git write commands'), 'writer git rule');
   assert.ok(writer.includes('Writer focus'), 'writer focus');
   assert.doesNotMatch(writer, /Exclude host-rule\/brief conflicts from findings\./, 'writer no reviewer clause');
   assert.doesNotMatch(writer, /^- Prune:/m, 'writer no prune');
@@ -343,7 +346,7 @@ test('audience tags select bullets per consumer and hide tags and author text', 
   for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'explorer'] as const) {
     assert.doesNotMatch(qualityCriteria(realBar, consumer, 0, specStage), /<!--/, `${consumer}: real bar hides tags`);
   }
-  assert.ok(qualityCriteria(realBar, 'writer', 0, specStage).includes('No Git write commands.'), 'real writer git');
+  assert.ok(qualityCriteria(realBar, 'writer', 0, specStage).includes('Run no Git write commands'), 'real writer git');
   assert.ok(qualityCriteria(realBar, 'cleanup', 0, specStage).includes('Run no Git write commands'), 'real cleanup git');
 });
 
@@ -357,7 +360,7 @@ test('audience selection fails closed on unknown consumers tags counts layers an
   assert.throws(() => qualityCriteria('## shared\n- shared without layers link\n## code\n- Code.\n## testing\n- Testing.', 'code', 0, specStage), /document layers|Tagged bullet count/);
   const noLayers = bar.replace('[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.', 'document layers missing.');
   assert.throws(() => qualityCriteria(noLayers, 'code', 0, specStage), /document layers/);
-  const dangling = bar.replace('<!-- for: writer -->\n- No Git write commands.', '<!-- for: writer -->');
+  const dangling = bar.replace('<!-- for: writer,cleanup -->\n- Report host-rule/brief conflicts under concerns.', '<!-- for: writer,cleanup -->');
   assert.throws(() => qualityCriteria(dangling, 'writer', 0, specStage), /Audience tag|Tagged bullet count|Empty quality section/);
   assert.throws(() => qualityCriteria(bar.replace('<!-- for: code,plan,design,cleanup -->\n- Prune: prune.', '- Prune: prune.'), 'code', 0, specStage), /Tagged bullet count/);
   assert.throws(() => qualityCriteria(bar.replace('<!-- for: all -->\n- Evidence: evidence.', '- Evidence: evidence.'), 'explorer', 0, specStage), /Tagged bullet count/);
@@ -373,12 +376,10 @@ function compliantBar(): string {
     '<!-- for: all -->',
     '- Evidence: evidence.',
     '<!-- for: writer,cleanup -->',
-    '- Host rules override only this bar. Report host-rule/brief conflicts under concerns.',
+    '- Report host-rule/brief conflicts under concerns.',
     '<!-- for: code,plan,design -->',
-    '- Host rules override only this bar. Exclude host-rule/brief conflicts from findings.',
-    '<!-- for: writer -->',
-    '- No Git write commands.',
-    '<!-- for: cleanup -->',
+    '- Exclude host-rule/brief conflicts from findings.',
+    '<!-- for: writer,cleanup -->',
     '- Run no Git write commands (add, stash, commit, checkout, reset, restore).',
     '- Untagged shared. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. tail.',
     '<!-- for: author -->',
@@ -439,12 +440,10 @@ function fencedBar(): string {
     '<!-- for: all -->',
     '- Evidence: evidence.',
     '<!-- for: writer,cleanup -->',
-    '- Host rules override only this bar. Report host-rule/brief conflicts under concerns.',
+    '- Report host-rule/brief conflicts under concerns.',
     '<!-- for: code,plan,design -->',
-    '- Host rules override only this bar. Exclude host-rule/brief conflicts from findings.',
-    '<!-- for: writer -->',
-    '- No Git write commands.',
-    '<!-- for: cleanup -->',
+    '- Exclude host-rule/brief conflicts from findings.',
+    '<!-- for: writer,cleanup -->',
     '- Run no Git write commands (add, stash, commit, checkout, reset, restore).',
     '- Untagged shared. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. tail.',
     '## code',
@@ -609,4 +608,28 @@ test('reviewPrompt omits re-review block on round 1 and includes it once on late
     const withSettled = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review', settled: [{id: 'R1-F001', locus: '§ Work', defect: 'Defect text', ruling: 'accepted', reason: 'Fixed'}]});
     assert.equal(withSettled.split('On re-review,').length - 1, 1, `${kind} round 1 with settled: single re-review block`);
   }
+});
+
+test('settled accepted rows since the previous round are marked new', () => {
+  const older: Settled = {id: 'R1-F001', locus: '§ Scope', defect: 'Older accepted defect.', ruling: 'accepted', reason: 'Fixed earlier'};
+  const fresh: Settled = {id: 'R2-F001', locus: '§ Tasks', defect: 'Step order skips lint', ruling: 'accepted', reason: 'Fixed now'};
+  const freshMust: Settled = {id: 'R2-F002', locus: '§ Guard', severity: 'MUST', defect: `${'m'.repeat(130)}\nKeep full MUST detail.`, ruling: 'accepted', reason: 'Fixed guard'};
+  const rendered = (settledSection as (s: readonly Settled[], r?: boolean, n?: ReadonlySet<string>) => string)(
+    [older, fresh, freshMust],
+    false,
+    new Set(['R2-F001', 'R2-F002']),
+  );
+  assert.ok(rendered.includes('- R1-F001 § Scope: Older accepted defect. — accepted\n'), 'older accepted row omits (new)');
+  assert.ok(rendered.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new)\n'), 'accepted-since row marked (new)');
+  assert.ok(rendered.includes(`- R2-F002 § Guard: ${'m'.repeat(130)}\nKeep full MUST detail. — accepted (new)\n`), 'accepted MUST keeps full defect and (new)');
+  const prompt = reviewPrompt('plan', {
+    ...reviewContext('plan'),
+    round: 2,
+    settled: [older, fresh],
+    interRound: {diff: 'inter-round.diff', accepted: [{id: 'R2-F001', locus: '§ Tasks'}]},
+  });
+  assert.ok(prompt.includes('- R1-F001 § Scope: Older accepted defect. — accepted\n'));
+  assert.ok(prompt.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new)\n'));
+  assert.ok(prompt.includes('### Since the previous round\nInter-round diff: inter-round.diff\n'));
+  assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
 });

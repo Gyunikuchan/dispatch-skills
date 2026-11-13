@@ -16,7 +16,7 @@ import { taskMarkdown } from './brief.ts';
 import type { InterRound } from './domain/prompt.ts';
 import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
 import { admission, finalizeRound, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
-import { git, gitOk, splitPaths } from './git.ts';
+import { git, gitOk, gitPaths } from './git.ts';
 import { captureCheckouts, compareCheckouts, type CheckoutBaselineFile } from './review-checkout.ts';
 import { launches } from './writers.ts';
 import { integrationRecord } from './integration.ts';
@@ -368,7 +368,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       }
       summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
     }
-    const changed = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]));
+    const changed = await gitPaths(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]);
     if (!changed.length) throw new ToolError(4, 'nothing-to-review', `No changes between ${base.slice(0, 12)}..${head.slice(0, 12)}`);
     return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
   }
@@ -527,7 +527,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const comparison = typeof captured.target === 'string' ? captured.target : (captured.target as {base: string}).base + '..' + label(captured.target); scope += kind === 'code' ? ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison : (changed => changed.length ? ' — changed: ' + changed.join(', ') + '; comparison: ' + comparison : ' — comparison: ' + comparison)(changedHeadingsSince(n - 1));
       } else if (coverage) scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as {base: string}).base}..${label(captured.target)}`;
       else if (n > 1) {
-        changedPaths = kind === 'code' ? splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(priorTargets[n - 1]!), label(captured.target)])) : [];
+        changedPaths = kind === 'code' ? await gitPaths(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(priorTargets[n - 1]!), label(captured.target)]) : [];
         const changed = kind === 'code' ? 'changed paths: ' + changedPaths.join(', ') : (headings => headings.length ? 'changed: ' + headings.join(', ') : '')(changedHeadingsSince(n - 1)); scope = `Re-review round ${n} (full) — ${changed ? changed + '; ' : ''}comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
       } else if (kind === 'code') {
         const target = captured.target as {base: string; head: string};
@@ -739,7 +739,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       }
       const changedSince: Record<number, string[]> = {}, owners: Record<string, string[]> = {};
       if (kind === 'code' && requested === 'integration') {
-        for (const [number, target] of Object.entries(priorTargets)) changedSince[Number(number)] = splitPaths(await gitOk(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(target), label(round.target)]));
+        for (const [number, target] of Object.entries(priorTargets)) changedSince[Number(number)] = await gitPaths(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', label(target), label(round.target)]);
         const plan = loadPlan(session, manifest);
         for (const task of plan.tasks) owners[task.id] = ownedPaths(plan, task.id);
       }

@@ -37,6 +37,13 @@ const reviewFindings: Rule = shaped('a non-empty array of unique finding IDs', (
   (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
   if (new Set(value as string[]).size !== (value as unknown[]).length) invalid(field, shapeOf(reviewFindings));
 });
+const treeMap: Rule = shaped('an object mapping criterion IDs to 40- or 64-hex Git object ids', (value, field) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(field, shapeOf(treeMap));
+  for (const [criterion, id] of Object.entries(value as Record<string, unknown>)) {
+    text(criterion, field + '.' + criterion);
+    git(id, field + '.' + criterion);
+  }
+});
 
 const describe = (fields: Record<string, Rule>, optional: string[] = []) => 'an object with ' + Object.keys(fields).map((key) => optional.includes(key) ? key + '?' : key).join(', ');
 function object(value: unknown, fields: Record<string, Rule>, optional: string[] = [], prefix = 'data'): void {
@@ -97,7 +104,7 @@ const writers: Record<string, Record<string, Rule>> = {
 const integrations: Record<string, Record<string, Rule>> = {
   opened: { path: text, branch: text, base: git, dest },
   verification: { cycle: positive, outcome: choice('proved', 'partial', 'no-op'), head: git, reason: text, open: array, report: focusEvidence, artifacts: shaped('an array of evidence paths', (value, field) => { if (!Array.isArray(value)) invalid(field, 'an array of evidence paths'); value.forEach((item, index) => focusEvidence(item, field + '.' + index)); }), dirty: bool },
-  'test-cleanup': { from: git, fromTree: git, to: git, removed: array, deleted: seq, merged: seq },
+  'test-cleanup': { from: git, fromTree: git, to: git, removed: array, deleted: seq, merged: seq, trees: treeMap },
   started: { task: text, candidate: git },
   conflict: { task: text, paths: array },
   done: { task: text, commit: git },
@@ -162,6 +169,13 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
       if (data['open'].some((item: string) => !new RegExp('^' + data['cycle'] + ':V[0-9]+$').test(item))) invalid('data.open', 'issue IDs for the verification cycle');
       if (data['outcome'] !== 'partial' && data['open'].length) invalid('data.open', 'empty for proved or no-op');
       if (data['outcome'] !== 'no-op' && !data['report']) invalid('data.report', 'required for proved or partial');
+    }
+    if (value.kind === 'integrate' && value.data['phase'] === 'test-cleanup') {
+      const removed = value.data['removed'] as string[];
+      const trees = value.data['trees'] as Record<string, string>;
+      if (new Set(removed).size !== removed.length || Object.keys(trees).length !== removed.length || removed.some((id) => !Object.hasOwn(trees, id))) {
+        invalid('data.trees', 'one entry per removed criterion ID');
+      }
     }
     if (value.kind === 'ruling' && (value.data['subject'].startsWith('review:') || value.data['subject'].startsWith('verification:'))) {
       choice('accepted', 'rejected', 'duplicate', 'deferred')(value.data['ruling'], 'data.ruling');

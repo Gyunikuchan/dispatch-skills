@@ -20,7 +20,7 @@ Most agent workflows ask one model to make the assumptions, do the work, and jud
 
 ## How it works
 
-Every workflow except a quick question starts by agreeing on one **spec**: the outcome, constraints, and decisions that everything else is checked against. At level `medium` and above you approve the spec before any design or plan is written; at `low` Dispatch proceeds and shows you the spec at the end.
+Every workflow except a quick question starts by confirming one **spec**: the outcome, constraints, and decisions that everything else is checked against. You confirm the spec before any design or plan is written at every level; at level `medium` and above you also approve the resulting plan or design before implementation, while at `low` Dispatch proceeds after spec confirmation and shows the artifacts at handoff.
 
 A large change is split into increments, each planned, reviewed, implemented, and verified before the next begins. Smaller changes skip the design and go straight to a single plan. See [document layers and approvals](skills/dispatch/references/readme/concepts.md#spec-design-and-plan).
 
@@ -28,7 +28,7 @@ A large change is split into increments, each planned, reviewed, implemented, an
 flowchart TD
     User(["👤 Requirement"]) --> Ground["🔍 Explore the codebase<br/>(explorer subagents)"]
     Ground --> Spec["📄 Spec: goals, constraints, decisions"]
-    Spec --> SpecGate{"You approve the spec"}
+    Spec --> SpecGate{"You confirm the spec"}
     SpecGate --> ScopeGround["🔍 Ground confirmed scope"]
     ScopeGround --> Design["🗺️ Design + review"]
     Design --> DesignGate{"You approve the design"}

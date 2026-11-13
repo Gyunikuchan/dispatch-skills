@@ -155,7 +155,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     risk,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
     integrated: integrated.size,rejectionConfirmations,confirmationError,coverage,reviewedCodeBaseline,reviewFixes,
-    testCleanup: cleanupRecord ? {from:cleanupRecord.data['from'],removed:cleanupRecord.data['removed'],deleted:cleanupRecord.data['deleted'],merged:cleanupRecord.data['merged']} : undefined,
+    testCleanup: cleanupRecord ? {from:cleanupRecord.data['from'],trees:cleanupRecord.data['trees'],removed:cleanupRecord.data['removed'],deleted:cleanupRecord.data['deleted'],merged:cleanupRecord.data['merged']} : undefined,
   };
 }
 

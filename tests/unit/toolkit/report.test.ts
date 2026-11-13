@@ -389,7 +389,7 @@ test('report render shows runtime proof', async () => {
   assert.ok(first.includes('- [verification/report.md](verification/report.md)'));
   assert.ok(first.includes('- [verification/proof.png](verification/proof.png)'));
   const cleanupCommit='f'.repeat(40);
-  await add({phase:'test-cleanup',from:HEAD,fromTree:TREE,to:cleanupCommit,removed:['SC1'],deleted:1,merged:0});
+  await add({phase:'test-cleanup',from:HEAD,fromTree:TREE,to:cleanupCommit,removed:['SC1'],deleted:1,merged:0,trees:{SC1:TREE}});
   await add({phase:'fix',commit:TREE,reason:'repair'});
   await add({phase:'verification',cycle:2,outcome:'partial',head:TREE,reason:'limited',open:[],report:'verification/report.md'});
   assert.equal((await invoke(f,'report','render')).exit,0);
@@ -401,5 +401,22 @@ test('report render shows runtime proof', async () => {
   assert.ok(text.includes('- [verification/report.md](verification/report.md)'));
   assert.ok(text.includes(`- Fix \`${TREE}\`: repair (before latest re-check; see report)`));
   assert.ok(!text.includes(cleanupCommit));
+ }finally{f.cleanup();}
+});
+
+test('report carries cleanup evidence trees into the walkthrough view', async () => {
+ const f=await fixture();try{
+  await completeFixture(f);
+  const cleanupFrom='d'.repeat(40);
+  const earlyTree='c'.repeat(40);
+  const cleanupCommit='f'.repeat(40);
+  const check=checks(loadPlan(f.session,readManifest(f.session))).find(row=>row.criterion==='SC1')!;
+  await appendRecord(f.session,{kind:'evidence',by:'tool',key:'early-sc1',data:{criterion:'SC1',commandDigest:check.commandDigest,tree:earlyTree,clean:true,before:earlyTree,after:earlyTree,exit:0,path:'.state/evidence/early-sc1.json'}},f.deps);
+  await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'test-cleanup',from:cleanupFrom,fromTree:TREE,to:cleanupCommit,removed:['SC1'],deleted:1,merged:0,trees:{SC1:earlyTree}}},f.deps);
+  assert.equal((await invoke(f,'report','render')).exit,0);
+  const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+  assert.ok(text.includes(`- **Test cleanup:** deleted 1 · merged 0 tests; criteria with tests removed: SC1 at ${earlyTree.slice(0,12)}`));
+  assert.ok(text.includes(`verified at ${earlyTree}; tests removed in cleanup`));
+  assert.ok(!text.includes(cleanupFrom.slice(0,12)));
  }finally{f.cleanup();}
 });

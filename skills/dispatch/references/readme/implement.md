@@ -2,13 +2,13 @@
 
 Use `implement` to deliver a requirement or continue from a settled plan or approved design.
 
-An objective first settles the spec, then authors a plan. At `medium` and above, approve the spec's exact contents before plan authoring; at `low`, it is shown at handoff. A supplied plan or design reuses its governing spec directly or through the design's Parent pin. Existing approvals are reused only for the versions they cover. See [document layers](concepts.md#spec-design-and-plan).
+An objective first settles the spec, and you confirm its exact contents before plan authoring at every level. At `medium` and above, you also approve the plan or design before implementation; at `low`, Dispatch proceeds after spec confirmation and shows the plan at handoff. A supplied plan or design reuses its governing spec directly or through the design's Parent pin. Existing approvals are reused only for the versions they cover. See [document layers](concepts.md#spec-design-and-plan).
 
 ## What happens
 
 After spec settlement, a plain-language requirement starts with a plan and its review and fix rounds enabled by the selected level's policy. The plan breaks the work into tasks with outcomes, criteria, owned paths, and prerequisites. Each task runs in an isolated worktree with a writer native to your host platform. Tasks with unmet prerequisites wait; independent tasks can overlap up to `write-concurrency` (default `1`).
 
-For each task, the writer inspects the relevant code, adds discriminating tests for the task criteria, and captures the expected failing result (RED) before production edits. The host checks the actual delta and evidence. Missing RED is a review finding. Scope checks and current integrated verification are tool gates. The writer then implements the behavior and runs the task checks. Your host agent checks and integrates each result, then Dispatch exercises runtime behaviour before test cleanup, and runs final plan-declared verification and the configured code-review policy, when enabled. Accepted safe findings can be fixed and rechecked within the configured review rounds before Dispatch reports the handoff.
+For each task, the writer inspects the relevant code, adds discriminating tests for the task criteria, and captures the expected failing result (RED) before production edits. The host checks the actual delta and evidence. Missing RED is a review finding. Scope checks and current integrated verification are tool gates. The writer then implements the behavior and runs the task checks. Your host agent checks and integrates each result, then Dispatch exercises runtime behaviour before test cleanup. Test cleanup starts without a full check run unless the verifier commit changed an undeclared path (it checks only automated criteria whose declared paths changed), and Dispatch runs final plan-declared verification together with the configured code-review policy, when enabled. Accepted safe findings can be fixed and rechecked within the configured review rounds before Dispatch reports the handoff.
 
 Final delivery restores the verified result into your caller working tree as unstaged changes. By default it makes no commit and stages nothing; new files show as untracked. Review with `git diff`, then stage and commit yourself unless you opted in to design increment commits. Your index must be empty, and no edited, untracked or ignored file of yours may overlap a delivered path; other changes of yours stay. A refusal preserves your work: inspect the result and reconcile the reported overlap before retrying. The verified source stays at `refs/dispatch/<id>/delivered-source`; restore a file with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. If a crash interrupts a file write, retry can refuse and name that file; restore it with the same command. An already-delivered run returns the recorded result, while further changes need a new run. See [delivery and recovery](../toolkit.md#worktree-deliver).
 
@@ -17,7 +17,7 @@ Final delivery restores the verified result into your caller working tree as uns
 ```mermaid
 flowchart TD
     User(["👤 Requirement"]) --> Spec["📄 Settle spec"]
-    Spec --> SpecGate{"Approve spec at medium+<br/>before authoring"}
+    Spec --> SpecGate{"Confirm spec before<br/>authoring"}
     SpecGate --> Plan["📝 Plan + plan review"]
     Plan --> Baseline
     Artifact(["📄 Settled plan<br/>or tech design"]) --> Resolve["Resolve governing spec<br/>and artifact approvals"]

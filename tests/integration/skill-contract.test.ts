@@ -35,7 +35,8 @@ test('skill contract keeps router entries and resolving reference links', () => 
   const readPhase = skill.indexOf('Read the phase first');
   assert.ok(readPhase >= 0 && readPhase < skill.indexOf('## Tool loop'));
   assert.match(skill, /Ask needs no spec, plan or approval/);
-  assert.match(skill, /Standalone review adds no approval gate/);
+  assert.ok(links(skill).includes('references/verbs/review.md'));
+  assert.match(read(root + 'references/verbs/review.md'), /Standalone review needs no bound plan and adds no approval gate/);
   for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
   for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
     const local = target.split('#')[0]!;
@@ -106,7 +107,7 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.match(plan, /parallel implementations[^.]*`Invariants:`/);
   assert.match(design, /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/);
   assert.match(rules, /launches the full configured roster when the previous completed round has an accepted MUST/);
-  assert.match(rules, /or an accepted SHOULD from a round below the cap/);
+  assert.match(rules, /or an accepted SHOULD from a round below the saved round-1 cap/);
   assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
   assert.match(rules, /pending MUST rejection requests stay assigned/);
   assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
@@ -132,7 +133,7 @@ test('phase prose places each workflow rule in its canonical home', () => {
     assert.ok(links(text).includes(link), file);
     assert.doesNotMatch(text, /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i, file);
   }
-  assert.match(implementText, /brief names the governing spec path for a whole read/i);
+  assert.ok(links(implementText).includes('../spec-stage.md#readers-and-document-layers'));
 
   // Severity rubric reference and no table restatement
   assert.ok(links(rules).includes('templates/review-severity.md'));
@@ -382,7 +383,7 @@ test('root skill routes work and guards orchestrator context', () => {
   const rows = workTable.split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Work')).map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
   const route = (work: string) => rows.find(([cell]) => cell!.includes(work))?.[1];
   for (const [work, target] of [
-    ['log and verify triage', 'Explorer subagent (read-only)'], ['grounding maps', 'Explorer subagent (read-only)'],
+    ['log and verify triage', 'Explorer subagent'], ['grounding maps', 'Explorer subagent'],
     ['Test cleanup', 'Utility subagent'], ['mechanical fixes', 'Utility subagent'],
     ['Plan tasks', 'Writer at run level'], ['Differentiated review or ask voices', 'Delegate or native slot'],
     ['Decisions, rulings, ledger, user gates', 'Orchestrator'], ['submitted-change inspection', 'Orchestrator'],
@@ -439,12 +440,14 @@ test('native voice launch order failure reports and change rules are documented'
     '--native-failed', 'cliWave', 'repositoryChanges', 'openRepositoryChanges', 'checkout-report.json',
   ]) assert.ok(toolkit.includes(term), term);
   const ask = read(root + 'references/verbs/ask.md');
-  for (const term of ['`cliWave: "pending"`', '--native-failed']) assert.ok(ask.includes(term), term);
+  assert.ok(ask.includes('--native-failed'));
+  assert.ok(links(ask).includes('../providers.md#native-slots'));
   const nativeSlotReplies = toolkit.split('## Native-slot replies')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(links(nativeSlotReplies).includes('providers.md#native-slots'));
   const reviewRun = section(toolkit, 'review run');
   const askRun = section(toolkit, 'ask run');
   const nativeSlots = providers.split('## Native slots')[1]?.split('\n## ')[0] ?? '';
-  for (const [name, text] of [['toolkit native-slot replies', nativeSlotReplies], ['toolkit review run', reviewRun], ['toolkit ask run', askRun], ['providers native slots', nativeSlots], ['verbs/ask', ask]] as const) {
+  for (const [name, text] of [['toolkit review run', reviewRun], ['toolkit ask run', askRun], ['providers native slots', nativeSlots]] as const) {
     assert.ok(text.toLowerCase().includes('cliwave'), name + ': mentions cliWave');
     const sentences = text.split(/(?<=[.!?])\s+/);
     const pendings = sentences.filter(sentence => {
@@ -597,7 +600,8 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   for (const [name, text] of [['quality-bar.md', quality], ['review-prompt.md', prompt]] as const) {
     assert.match(text, /accepted or rejected rulings/i, name + ': settled rulings');
   }
-  assert.match(quality, /Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited\./);
+  assert.ok(links(quality).includes('review-prompt.md#prompt-template'));
+  assert.ok(links(quality).includes('review-prompt.md#re-review-template'));
   const promptFlat = prompt.replace(/\s+/g, ' ');
   assert.match(promptFlat, /earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed/);
   assert.match(promptFlat, /do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers/);
@@ -670,7 +674,7 @@ test('subagent role table, shared rules and delegation contract', () => {
   }
   assert.match(skill, /Explorer[^\n]*map[^\n]*research/i);
   assert.match(skill, /Child orchestrator[^\n]*(?:inheritance|parent)/i);
-  assert.match(skill, /writes nothing except an assigned map/i);
+  assert.match(skill, /writes only an assigned map/i);
   assert.match(skill, /test cleanup/i);
   assert.match(skill, /ask voice/i);
   assert.match(skill, /fresh context without parent history/i);
@@ -721,7 +725,7 @@ test('implement runs verification before test cleanup and verify states the appr
   assert.ok(!implementGuide.includes('full contract and remaining criterion verification'));
   for (const term of [
     'check run --task',
-    'criterion and contract checks must pass on the new HEAD',
+    'check run --criteria',
     'Any verifier-added test launches cleanup',
     'all review rounds settle',
     'accepted review fixes changed proved behaviour',
@@ -731,8 +735,8 @@ test('implement runs verification before test cleanup and verify states the appr
     'Never re-check between rounds',
     'add tests in a re-check',
     'another code review round',
-    'three fix rounds per issue',
   ]) assert.ok(implementGuide.includes(term), term);
+  assert.ok(links(implementGuide).includes('verify.md'));
   assert.match(implementGuide, /check run`[^\n]*before the verifier launches/i);
   const verifyGuide = read(root + 'references/verbs/verify.md');
   for (const step of ['1. ', '2. ', '3. ', '4. ', '5. ', '6. ']) {
@@ -855,12 +859,15 @@ test('accepted review fixes route by artifact and change', () => {
 
 test('writer review fix handoff preserves the integration boundary', () => {
   const guide = read(root + 'references/verbs/implement.md');
+  const fixes = read(root + 'references/review-fixes.md');
   const skill = read(root + 'SKILL.md');
   const brief = read(root + 'references/templates/writer-brief.md');
-  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /validated correction paths/i, /single-file locus/i, /worktree commit --review-fix/i]) assert.match(guide, pattern);
-  assert.match(guide, /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i);
-  assert.match(guide, /reserve Git writes and toolkit actions for the orchestrator/i);
-  assert.match(guide, /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i);
+  assert.ok(links(guide).includes('../review-fixes.md'));
+  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /validated correction paths/i, /single-file locus/i, /worktree commit --review-fix/i]) assert.match(fixes, pattern);
+  assert.match(fixes, /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i);
+  assert.ok(links(fixes).includes('templates/quality-bar.md#shared'));
+  assert.match(fixes, /reserve toolkit actions for the orchestrator/i);
+  assert.match(fixes, /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i);
   assert.match(skill, /assigned review fix, a follow-up answer returns inline and writes no file; an assigned review fix also replies inline/i);
   const routing = skill.split('## Routing\n')[1]!.split('\n## ')[0]!;
   assert.match(routing, /implementation integration mechanical fixes that a deterministic check confirms \| Utility subagent/i);
@@ -962,4 +969,177 @@ test('glossary defines verification stage terms with no banned synonyms', () => 
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(glossary, new RegExp(`^\\| ${escaped} \\|[^|\\n]+\\|\\s*\\|$`, 'm'), term);
   }
+});
+
+test('each preserved rule has one canonical home', () => {
+  const ref = (file: string) => read(root + 'references/' + file);
+  const skill = read(root + 'SKILL.md');
+
+  // Map correction: canonical home in grounding.md#check-and-recover; SKILL.md routing names only threshold-exceeding corrections.
+  const grounding = ref('grounding.md');
+  assert.match(grounding, /verifies and rules in every case[\s\S]*small corrections[\s\S]*utility subagent[\s\S]*context guard/i);
+  assert.match(skill, /\|[^|\n]*map corrections? (?:over|exceeding) the context-guard threshold[^|\n]*\| Utility subagent \|/i);
+  assert.doesNotMatch(skill, /\|[^|\n]*,\s*map correction,\s*/i);
+
+  // Explorer write scope: canonical home in grounding.md#publish; other sites drop "read-only" on explorers.
+  assert.match(grounding, /writes only its assigned map file[^.]*nested partial maps/i);
+  assert.doesNotMatch(ref('glossary.md'), /explorer subagent \|[^|\n]*read-only/i);
+  assert.doesNotMatch(skill, /Explorer subagent \(read-only\)/i);
+
+  // Retained explorer follow-up: canonical home in SKILL.md#context-guard; grounding.md links it.
+  assert.match(skill, /ask a retained explorer a follow-up at any time, not subject to the limit/i);
+  assert.ok(links(grounding).includes('../SKILL.md#context-guard'));
+  assert.doesNotMatch(grounding, /ask a retained explorer a follow-up at any time, not subject to the limit/i);
+
+  // Cap, continuation, confirmation-only: saved round-1 cap in review-rules.md; coverage and toolkit link it.
+  const rules = ref('review-rules.md');
+  assert.match(rules, /at or above the saved round-1 cap/);
+  assert.doesNotMatch(rules, /configured cap/);
+  assert.ok(links(ref('review-coverage.md')).includes('review-rules.md#review-provenance-and-applicability'));
+  assert.doesNotMatch(ref('review-coverage.md'), /when no accepted MUST or pending MUST rejection admits a round/);
+  const toolkit = ref('toolkit.md');
+  assert.ok(links(toolkit).includes('review-rules.md#review-provenance-and-applicability'));
+  assert.doesNotMatch(toolkit, /no accepted `MUST` and no accepted `SHOULD` below `cap1`/);
+  assert.doesNotMatch(toolkit, /report qualifying corrections as verified but not re-reviewed/);
+
+  // MUST-rejection delivery gate: canonical home in review-rules.md#rulings-and-fix-scope; toolkit and implement link it.
+  assert.ok(rules.includes('Delivery and report completion require confirmed applicable MUST rejections.'));
+  assert.ok(links(toolkit).includes('review-rules.md#rulings-and-fix-scope'));
+  assert.doesNotMatch(toolkit, /The same closure query gates report completion/);
+  const implement = ref('verbs/implement.md');
+  assert.ok(links(implement).includes('../review-rules.md#rulings-and-fix-scope'));
+  assert.doesNotMatch(implement, /pending or escalated confirmations block delivery and report completion/);
+
+  // Fix-interaction self-check and moved review-fix procedure.
+  assert.match(rules, /Before the next review round, whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/i);
+  assert.match(rules, /launches no subagent and changes no roster, cap or round rule/i);
+  const reviewFixes = ref('review-fixes.md');
+  assert.ok(links(reviewFixes).includes('review-rules.md#rulings-and-fix-scope'));
+  assert.ok(links(reviewFixes).includes('templates/quality-bar.md#shared'));
+  assert.ok(links(implement).includes('../review-fixes.md'));
+  assert.doesNotMatch(implement, /worktree commit --review-fix/);
+
+  // Cleanup order: canonical home in worktree-cleanup.md; implement links it.
+  assert.ok(links(implement).includes('../worktree-cleanup.md'));
+
+  // Discard-work gate: canonical home in decision-frame.md#user-gate-boundaries; toolkit links it.
+  assert.ok(links(toolkit).includes('decision-frame.md#user-gate-boundaries'));
+  assert.doesNotMatch(toolkit, /Obtain user authority before discarded accepted work|obtain user authority when discarding work|authorize discarded work/);
+
+  // Standalone review adds no gate: canonical home in verbs/review.md; SKILL.md and spec-stage link it.
+  assert.ok(links(skill).includes('references/verbs/review.md'));
+  assert.doesNotMatch(skill, /Standalone review adds no approval gate/);
+  assert.ok(links(ref('spec-stage.md')).includes('verbs/review.md'));
+  assert.doesNotMatch(ref('spec-stage.md'), /Standalone review settlement does not add an approval gate/);
+
+  // Read the whole spec: canonical home in spec-stage.md#readers-and-document-layers; verb guides link it.
+  for (const verb of ['plan', 'design', 'review', 'implement']) {
+    const text = ref(`verbs/${verb}.md`);
+    assert.ok(links(text).includes('../spec-stage.md#readers-and-document-layers'), verb);
+    assert.doesNotMatch(text, /read the whole|whole read/i, verb);
+  }
+
+  // Never poll: canonical home in SKILL.md#launch-and-continue; toolkit links it.
+  assert.ok(links(toolkit).includes('../SKILL.md#launch-and-continue'));
+  assert.doesNotMatch(toolkit, /never poll, sleep-loop, or reread output while it runs/);
+
+  // Native-slot procedure: canonical home in providers.md#native-slots; toolkit and verbs/ask link it.
+  assert.ok(links(toolkit).includes('providers.md#native-slots'));
+  const nativeReplies = toolkit.split('## Native-slot replies')[1]?.split('\n## ')[0] ?? '';
+  assert.doesNotMatch(nativeReplies, /Stop a timed-out handle before reporting it/);
+  assert.ok(links(ref('verbs/ask.md')).includes('../providers.md#native-slots'));
+  assert.doesNotMatch(ref('verbs/ask.md'), /the first call returns descriptors before any CLI launch/);
+
+  // Writer plan read, affected checks and reply schema: canonical home in writer-brief.md.
+  const planTemplate = ref('templates/plan.md');
+  assert.match(planTemplate, /reading the whole plan only when/i);
+  assert.doesNotMatch(planTemplate, /from its start through `## Task Map`, then only its own task/);
+  assert.doesNotMatch(planTemplate, /full checks of modified logical test files or known impacted consumers before aggregate/);
+  assert.ok(links(implement).includes('../templates/writer-brief.md'));
+  assert.doesNotMatch(implement, /Their reply gives status, `reportPath`, a one-line summary and `concerns: <n>`/);
+
+  // checks passed focus: canonical home in toolkit.md#brief-verifier; implement and verify link it.
+  assert.ok(links(implement).includes('../toolkit.md#brief-verifier'));
+  assert.doesNotMatch(implement, /executed > 0/);
+  const verify = ref('verbs/verify.md');
+  assert.ok(links(verify).includes('../toolkit.md#brief-verifier'));
+  assert.ok(verify.includes('or no bound integration is targeted'));
+
+  // Three fix rounds: canonical home in verbs/verify.md; implement links it.
+  assert.ok(links(implement).includes('verify.md'));
+  assert.doesNotMatch(implement, /count three fix rounds per issue/);
+
+  // Settled-section regeneration: canonical home in review-rules.md; templates/plan and templates/design link it.
+  assert.ok(links(planTemplate).includes('../review-rules.md'));
+  assert.doesNotMatch(planTemplate, /renders current findings and round links from the ledger after each review round and ruling/);
+  const designTemplate = ref('templates/design.md');
+  assert.ok(links(designTemplate).includes('../review-rules.md'));
+  assert.doesNotMatch(designTemplate, /regenerates the findings section from the ledger after each review round and ruling/);
+
+  // Read-command allowlist: Claude and Copilot apply read-commands.
+  const config = ref('readme/configuration.md');
+  assert.match(config, /Claude and Copilot[^\n]*allowlist/i);
+  assert.doesNotMatch(config, /Only Claude has a command allowlist/);
+
+  // Diagnostics explorer use: readme/concepts.md matches diagnostics.md.
+  const concepts = ref('readme/concepts.md');
+  assert.match(concepts, /research explorer/i);
+  assert.doesNotMatch(concepts, /launches no subagent for it/);
+
+  // No Git writes: providers.md links quality-bar.md#shared.
+  assert.ok(links(ref('providers.md')).includes('templates/quality-bar.md#shared'));
+  assert.doesNotMatch(ref('providers.md'), /task writers edit only assigned paths and run no Git write commands/);
+});
+
+test('implement runs the pre-cleanup check by changed-path class', () => {
+  const implement = read(root + 'references/verbs/implement.md');
+  assert.match(implement, /when no path changed[^.]*run no check/i);
+  assert.match(implement, /matches no criterion's declared `Changes:` or `Tests:`[^.]*all-criteria `check run`/i);
+  assert.match(implement, /check run --criteria[^.]*automated criteria whose declared paths match/i);
+  assert.match(implement, /review-only criteria keep their user-evidence path/i);
+  assert.match(implement, /start all-criteria and contract \[checks\]\([^)]+\) \(`check run`\) as a background call[^.]*start code review on the same integration HEAD together/i);
+
+  const toolkit = read(root + 'references/toolkit.md');
+  assert.match(toolkit, /`?trees`? maps each `?removed`? ID to the accepted evidence tree/i);
+  assert.match(toolkit, /diff between that evidence tree and the pre-cleanup tree/i);
+  assert.match(toolkit, /verified at <tree>; tests removed in cleanup/);
+
+  const readmeImplement = read(root + 'references/readme/implement.md');
+  assert.match(readmeImplement, /cleanup starts without a full check run unless the verifier commit changed an undeclared path/i);
+});
+
+test('readmes state the spec confirm gate at every level', () => {
+  const files = [
+    'README.md',
+    root + 'README.md',
+    root + 'references/readme/concepts.md',
+    root + 'references/readme/plan.md',
+    root + 'references/readme/design.md',
+    root + 'references/readme/implement.md',
+  ];
+  for (const file of files) {
+    const text = read(file);
+    assert.doesNotMatch(text, /Approve spec at medium\+/i, file);
+    assert.doesNotMatch(text, /at (?:level )?`?medium`? and above[^.\n]*(?:approve|confirm) the spec/i, file);
+    assert.doesNotMatch(text, /at `?low`?[^.\n]*(?:shows you the spec|links the spec|shows the spec) at (?:the end|handoff)/i, file);
+    assert.match(text, /confirm(?:s|ed|ing)?[^\n]*every level|at every level[^\n]*confirm(?:s|ed|ing)?/i, file);
+  }
+  for (const flow of ['plan', 'design', 'implement']) {
+    const text = read(root + `references/readme/${flow}.md`);
+    assert.match(text, /SpecGate\{"Confirm spec before/, flow);
+  }
+});
+
+test('only a subagent assigned a map may lint it', () => {
+  const toolkit = read(root + 'references/toolkit.md');
+  const callTable = section(toolkit, 'call table');
+  assert.match(callTable, /subagent assigned a map[^\n]*`lint run` on that (?:assigned )?map only/i);
+
+  const skill = read(root + 'SKILL.md');
+  const utilityRow = skill.split('\n').find(line => line.startsWith('| Utility subagent')) ?? '';
+  assert.match(utilityRow, /except `lint run` on an assigned map/i);
+
+  const concepts = read(root + 'references/readme/concepts.md');
+  assert.match(concepts, /Explorer subagents[\s\S]*write only an assigned map file[\s\S]*`lint run` on its assigned map only/i);
+  assert.match(concepts, /Utility subagents[\s\S]*except `lint run` on an assigned map/i);
 });

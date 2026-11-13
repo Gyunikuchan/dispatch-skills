@@ -126,12 +126,12 @@ test('cleanup keeps pre-cleanup evidence only for removed criteria',async()=>{
  const checks: Check[]=[{criterion:'SC1',commands:['step'],commandDigest:'one',evidenceClass:'check'},{criterion:'SC2',commands:['kept'],commandDigest:'two',evidenceClass:'check'}];
  const row=(criterion:string,commandDigest:string,tree:string,patch={})=>({criterion,commandDigest,tree,before:tree,after:tree,clean:true,exit:0,path:criterion+'.json',...patch});
  const fold=(data:Record<string,unknown>[])=>({lastSeq:data.length,torn:null,records:data.map((data,i)=>({seq:i+1,key:String(i),at:'',kind:'evidence',by:'tool',data}))});
- const cleanup={from:'source-commit',fromTree:'source',removed:['SC1']};
+ const cleanup={from:'source-commit',fromTree:'source',removed:['SC1'],trees:{SC1:'source'}};
  const current={headTree:'target',testedTree:'target'};
  const state=(rows:Record<string,unknown>[],binding:typeof cleanup|null=cleanup,tree=current)=>criterionStatuses(fold(rows),checks,tree,binding).map(s=>s.state).join();
  const rows=[row('SC1','one','source'),row('SC2','two','target')];
  const [removed,kept]=criterionStatuses(fold(rows),checks,current,cleanup);
- assert.equal(removed!.state,'verified');assert.equal(removed!.evidence,'SC1.json');assert.match(removed!.reason!,/verified at source-commit; tests removed in cleanup/);
+ assert.equal(removed!.state,'verified');assert.equal(removed!.evidence,'SC1.json');assert.match(removed!.reason!,/verified at source; tests removed in cleanup/);
  assert.equal(kept!.state,'verified');assert.equal(kept!.reason,undefined);
  assert.equal(state(rows,null),'missing,verified');
  assert.equal(state([row('SC1','one','source'),row('SC2','two','source')]),'verified,missing');
@@ -149,7 +149,7 @@ test('review evidence never qualifies on the current or cleanup tree', async () 
   const row = (criterion: string, commandDigest: string, tree: string) => ({ criterion, commandDigest, tree, before: tree, after: tree, clean: true, exit: 0, path: criterion + '.json' });
   const records = [row('SC1', 'one', 'source'), row('SC2', 'two', 'source'), row('contract', 'contract-digest', 'target')];
   const fold = { lastSeq: records.length, torn: null, records: records.map((data, index) => ({ seq: index + 1, key: String(index), at: '', kind: 'evidence', by: 'tool', data })) };
-  const cleanup = { from: 'source-commit', fromTree: 'source', removed: ['SC1', 'SC2'] };
+  const cleanup = { from: 'source-commit', fromTree: 'source', removed: ['SC1', 'SC2'], trees: { SC1: 'source', SC2: 'source' } };
   const current = { headTree: 'target', testedTree: 'target' };
 
   assert.deepEqual(eligibility(fold, [checks[1]!], current, true), [{ criterion: 'SC2', state: 'missing' }]);
@@ -158,4 +158,134 @@ test('review evidence never qualifies on the current or cleanup tree', async () 
   ]);
   assert.equal(verifiedStage(fold, checks, current, cleanup), true);
   assert.equal(eligibility(fold, [checks[2]!], { headTree: 'target', testedTree: 'dirty' })[0]?.state, 'missing');
+});
+
+describe('cleanup evidence rule', () => {
+  const mkCheck = (criterion: string, commandDigest = `digest-${criterion}`): Check => ({
+    criterion, commands: ['node test.ts'], commandDigest, evidenceClass: 'check',
+  });
+  const mkRow = (criterion: string, tree: string, patch: Record<string, unknown> = {}) => ({
+    criterion, commandDigest: `digest-${criterion}`, tree, before: tree, after: tree, clean: true, exit: 0, path: `${criterion}.json`, ...patch,
+  });
+  const mkFold = (records: Record<string, unknown>[]) => ({
+    lastSeq: records.length,
+    torn: null,
+    records: records.map((data, index) => ({ seq: index + 1, key: `k-${index}`, at: '', kind: 'evidence', by: 'tool', data })),
+  });
+  const criteria = [
+    { id: 'SC1', changes: ['src/one.ts'], tests: ['tests/one.test.ts'] },
+    { id: 'SC2', changes: ['src/two.ts'], tests: ['tests/two.test.ts'] },
+  ];
+  const checkRows = [mkCheck('SC1'), mkCheck('SC2')];
+
+  test('cleanup evidence accepts an earlier tree when declared paths are unchanged', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree')]);
+    const diffs = new Map([['early-tree', ['src/two.ts', 'tests/two.test.ts']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
+      ok: true,
+      trees: { SC1: 'early-tree' },
+    });
+  });
+
+  test('cleanup evidence is stale when a changes path changed', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree')]);
+    const diffs = new Map([['early-tree', ['src/one.ts']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
+
+  test('cleanup evidence is stale when a tests path changed', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree')]);
+    const diffs = new Map([['early-tree', ['tests/one.test.ts']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
+
+  test('cleanup evidence is stale when a path under a declared directory changed', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const dirCriteria = [
+      { id: 'SC1', changes: ['skills/dispatch/references/'], tests: ['tests/one.test.ts'] },
+      { id: 'SC2', changes: ['skills/dispatch/references-other/'], tests: [] },
+    ];
+    const fold = mkFold([mkRow('SC1', 'early-tree')]);
+    const siblingOnly = new Map([['early-tree', ['skills/dispatch/references-other/note.md']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, dirCriteria, ['SC1'], 'pre-cleanup-tree', siblingOnly), {
+      ok: true,
+      trees: { SC1: 'early-tree' },
+    });
+    const underDir = new Map([['early-tree', ['skills/dispatch/references/toolkit.md']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, dirCriteria, ['SC1'], 'pre-cleanup-tree', underDir), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
+
+  test('cleanup evidence is stale when an undeclared path changed', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree')]);
+    const diffs = new Map([['early-tree', ['tests/helpers/shared.ts']]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
+
+  test('cleanup evidence is stale when later evidence failed', async () => {
+    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree'), mkRow('SC1', 'mid-tree', { exit: 1 })]);
+    const diffs = new Map<string, string[]>([['early-tree', []]]);
+    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
+
+  test('cleanup evidence status names the evidence tree', async () => {
+    const { criterionStatuses, verifiedStage } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const fold = mkFold([mkRow('SC1', 'early-tree'), mkRow('SC2', 'target-tree')]);
+    const binding = { from: 'cleanup-base-commit', fromTree: 'pre-cleanup-tree', removed: ['SC1'], trees: { SC1: 'early-tree' } };
+    const current = { headTree: 'target-tree', testedTree: 'target-tree' };
+    const statuses = criterionStatuses(fold, checkRows, current, binding);
+    assert.equal(statuses[0]!.state, 'verified');
+    assert.equal(statuses[0]!.reason, 'verified at early-tree; tests removed in cleanup');
+    assert.equal(verifiedStage(fold, checkRows, current, binding), true);
+    const missingTree = { from: 'cleanup-base-commit', fromTree: 'early-tree', removed: ['SC1'], trees: {} };
+    assert.equal(criterionStatuses(fold, checkRows, current, missingTree)[0]!.state, 'missing');
+    assert.equal(verifiedStage(fold, checkRows, current, missingTree), false);
+  });
+
+  test('gitPaths preserves leading whitespace on NUL-delimited filenames', async () => {
+    const { gitPaths, gitOk, gitRaw } = await import('../../../skills/dispatch/scripts/toolkit/git.ts');
+    const { cleanupEvidence, matchesDeclared } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+    const calls: Array<{ stdin?: string }> = [];
+    const deps = {
+      run: async (_argv: string[], opts: { stdin?: string }) => {
+        calls.push(opts);
+        return { exit: 0, stdout: ' foo.ts\0src/two.ts\0', stderr: '' };
+      },
+    } as unknown as Parameters<typeof gitPaths>[0];
+    const paths = await gitPaths(deps, '.', ['diff', '--name-only', '--no-renames', '-z']);
+    assert.deepEqual(paths, [' foo.ts', 'src/two.ts']);
+    assert.equal('stdin' in calls[0]!, false);
+    assert.equal(await gitRaw(deps, '.', ['update-index', '-z', '--index-info'], undefined, 'payload\0'), ' foo.ts\0src/two.ts\0');
+    assert.equal(calls[1]!.stdin, 'payload\0');
+    assert.equal(await gitOk(deps, '.', ['diff', '--name-only', '-z']), 'foo.ts\0src/two.ts\0');
+    const spaceCriteria = [
+      { id: 'SC1', changes: ['src/one.ts'], tests: ['tests/one.test.ts'] },
+      { id: 'SC2', changes: ['foo.ts', 'src/two.ts'], tests: [] },
+    ];
+    assert.equal(matchesDeclared(' foo.ts', ['foo.ts']), false);
+    assert.equal(matchesDeclared('tests/sub/step.test.ts', ['tests/']), true);
+    assert.deepEqual(cleanupEvidence(mkFold([mkRow('SC1', 'early-tree')]), checkRows, spaceCriteria, ['SC1'], 'pre-cleanup-tree', new Map([['early-tree', paths]])), {
+      ok: false,
+      stale: ['SC1'],
+    });
+  });
 });

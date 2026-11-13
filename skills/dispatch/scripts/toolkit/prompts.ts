@@ -41,7 +41,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
   const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
   const frameMarkdown = read('review-prompt.md');
   const specStage = fs.readFileSync(path.join(context.skillRoot, 'references/spec-stage.md'), 'utf8');
-  const settled = settledSection(context.settled ?? []);
+  const settled = settledSection(context.settled ?? [], false, new Set(context.interRound?.accepted.map(entry => entry.id)));
   const isRereview = context.round > 1 || settled.length > 0;
   const rereviewBody = extractTemplate(frameMarkdown, 'Re-review template').template;
   const template = assembleTemplate(frameMarkdown, rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0, specStage), read('review-severity.md'), `## rereview\n\n${isRereview ? rereviewBody : ''}`]);
@@ -56,7 +56,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
   };
   const requests=context.requests ?? [];
   const confirmation=requests.length?'\n\n### Pending MUST rejection confirmation\nReview each original claim and the host evidence. Add `confirmations` to the JSON report with exactly `requestId`, `decision` (`agree|disagree`), and a nonblank evidence-backed `rationale`: [{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]. Answer every assigned request exactly once. Keep ordinary `status` and `findings`. A pending MUST rejection is open until explicit agreement; omission is not confirmation.\n'+requests.map(request=>`\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nRequired change: ${request.claim.requiredChange}\nHost rejection: ${request.rationale}\n`).join(''):'';
-  const interRound = context.interRound ? '\n\n' + interRoundSection(context.interRound) + '\n' : '';
+  const interRound = context.interRound ? '\n\n' + interRoundSection(context.interRound, false) + '\n' : '';
   return fillTemplate(template.template, template.variables, values) + settled+interRound+confirmation;
 }
 

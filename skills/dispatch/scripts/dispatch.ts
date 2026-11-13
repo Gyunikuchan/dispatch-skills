@@ -23,10 +23,10 @@ function printHelp(heading: string, deps: EntryDeps): number {
   let lines: string[];
   try { lines = fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8').split(/\r?\n/); }
   catch (error) { return fail(error instanceof Error ? error.message : String(error), 'fault', 2); }
-  const start = heading ? lines.indexOf('### ' + heading) : -1;
-  if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => line.startsWith('### ')).map((line) => line.slice(4)).join(', '), 'usage', 1);
-  let end = start + 1;
-  while (end < lines.length && !/^#{1,3} /.test(lines[end]!)) end++;
+  const start = heading ? lines.findIndex((line) => line === '## ' + heading || line === '### ' + heading) : -1;
+  if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => /^#{2,3} /.test(line)).map((line) => line.replace(/^#{2,3} /, '')).join(', '), 'usage', 1);
+  const stop = lines[start]!.startsWith('## ') ? /^#{1,2} / : /^#{1,3} /;
+  let end = start; while (++end < lines.length && !stop.test(lines[end]!)) {}
   deps.stdout(lines.slice(start, end).join('\n').trimEnd() + '\n');
   return 0;
 }

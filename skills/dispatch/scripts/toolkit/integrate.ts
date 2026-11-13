@@ -4,11 +4,11 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger, gate, currentHashes, latest, type Fold, type LedgerTransaction } from './ledger.ts';
 import { validateReviewFix, type LedgerRecord, type ReviewFix } from './records.ts';
-import { git, gitOk, changedPaths } from './git.ts';
+import { git, gitOk, gitPaths, changedPaths } from './git.ts';
 import { ensureIntegration } from './integration.ts';
 import { launches, isStale, abandonedRef } from './writers.ts';
 import { checks, loadPlan, taskSection } from './plan-view.ts';
-import { eligibility } from './evidence.ts';
+import { cleanupEvidence, matchesDeclared, strictEvidence } from './evidence.ts';
 import { ToolError } from './output.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { stripBom } from '../lib/fs-ext.ts';
@@ -108,7 +108,7 @@ async function done(tx: LedgerTransaction,id: string,commit: string) {
   return result({task:id,commit});
 }
 async function conflicts(ctx: HandlerContext,tx: LedgerTransaction,cwd: string,id: string): Promise<HandlerResult> {
-  const paths=(await gitOk(ctx.deps,cwd,['diff','--name-only','--diff-filter=U','-z'])).split('\0').filter(Boolean);
+  const paths=await gitPaths(ctx.deps,cwd,['diff','--name-only','--diff-filter=U','-z']);
   await tx.append({kind:'integrate',by:'tool',data:{phase:'conflict',task:id,paths}});
   return {ok:false,exit:0,reason:'conflict',summary:JSON.stringify({task:id,paths}),value:{task:id,paths,reason:'conflict'}};
 }
@@ -182,18 +182,28 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
       const from=dirty?hash:await gitOk(ctx.deps,cwd,['rev-parse','HEAD^']);
       const fromTree=await gitOk(ctx.deps,cwd,['rev-parse',from+'^{tree}']);
       const plan=loadPlan(ctx.session,ctx.manifest);
-      const known=cleanup.removed.filter(id=>plan.criteria.some(c=>c.id===id));
-      const verified=eligibility(tx.fold,checks(plan).filter(c=>known.includes(c.criterion)),{headTree:fromTree,testedTree:fromTree},true);
-      if(known.length!==cleanup.removed.length || verified.some(row=>row.state!=='verified'))refuse('test-cleanup-evidence-required','Every removed criterion needs a plan criterion with successful current evidence on the pre-cleanup tree');
-      const changed=new Set((await gitOk(ctx.deps,cwd,dirty?['diff','-z','--name-only','--no-renames','HEAD','--']:['diff','-z','--name-only','--no-renames',from,'HEAD','--'])).split('\0').filter(Boolean));
-      const untouched=cleanup.removed.filter(id=>!plan.criteria.find(c=>c.id===id)!.tests.some(file=>changed.has(file)));
+      const planChecks=checks(plan);
+      const checkById=new Map(planChecks.map(c=>[c.criterion,c]));
+      const diffs=new Map<string,string[]>();
+      for(const id of cleanup.removed) {
+        if(!plan.criteria.some(c=>c.id===id))continue;
+        const check=checkById.get(id); if(!check)continue;
+        const row=strictEvidence(tx.fold,check); if(!row)continue;
+        const tree=String(row.data['tree']);
+        if(tree===fromTree||diffs.has(tree))continue;
+        diffs.set(tree,await gitPaths(ctx.deps,cwd,['diff','--name-only','--no-renames','-z',tree,fromTree,'--']));
+      }
+      const evidence=cleanupEvidence(tx.fold,planChecks,plan.criteria,cleanup.removed,fromTree,diffs);
+      if(!evidence.ok)refuse('test-cleanup-evidence-required','Stale or missing evidence on pre-cleanup tree for: '+evidence.stale.join(', '));
+      const changed=await gitPaths(ctx.deps,cwd,dirty?['diff','-z','--name-only','--no-renames','HEAD','--']:['diff','-z','--name-only','--no-renames',from,'HEAD','--']);
+      const untouched=cleanup.removed.filter(id=>!changed.some(file=>matchesDeclared(file,plan.criteria.find(c=>c.id===id)!.tests)));
       if(untouched.length)refuse('test-cleanup-paths-unchanged','No declared Tests path changed for '+untouched.join(', '));
       if(dirty) {
         await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,'-m',trailer]);
         await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
       }
-      await tx.append({kind:'integrate',by:'tool',data:{phase:'test-cleanup',from,fromTree,to:hash,...cleanup}});
-      return result({commit:hash,reason:why,from,...cleanup});
+      await tx.append({kind:'integrate',by:'tool',data:{phase:'test-cleanup',from,fromTree,to:hash,...cleanup,trees:evidence.trees}});
+      return result({commit:hash,reason:why,from,...cleanup,trees:evidence.trees});
     }
     if(dirty) {
       const metadata=reviewFix?reviewFixIdentity(reviewFix):undefined;

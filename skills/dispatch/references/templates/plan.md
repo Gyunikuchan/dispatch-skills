@@ -141,7 +141,7 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Task Map titles must match the task headings. Put task-specific Constraints and Overlap under the matching task. Put mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
 
-- Shared range: At a Glance, Background, optional Key Interfaces & Data, decisions, shared Constraints and Task Map precede task detail. Every task writer reads the plan from its start through `## Task Map`, then only its own task, criteria and Verification Plan rows. The authored map is part of the governed plan hash and shared writer context. Put context that all tasks need in the shared range and task-specific detail under the task. For document-writing tasks, name actionable authoring-reference paths in shared context or the assigned task, relative to the repository/worktree or explicitly to the governing plan; check each path before launch.
+- Shared range: At a Glance, Background, optional Key Interfaces & Data, decisions, shared Constraints and Task Map precede task detail. Writers use the embedded Shared plan context, Task scope, Criteria, Contract commands and RED capture commands from their [writer brief](writer-brief.md), reading the whole plan only when `Constraints:`, `Overlap:` or `Invariants:` references another task or a shared producer/consumer interface outside these sections. Put context that all tasks need in the shared range and task-specific detail under the task. For document-writing tasks, name actionable authoring-reference paths in shared context or the assigned task, relative to the repository/worktree or explicitly to the governing plan; check each path before launch.
 
 - Visual placement: put common orientation in the shared range, data shapes in Key Interfaces & Data, and task-local views after behaviour bullets. A task diagram's text summary is a `Text summary:` line and not a bullet. A depicted unchanged component is context, not a writer-owned path. A plan may include diagrams with or without a parent design; judge each visual with the [visual-aid bar](quality-bar.md#visual-aid-bar).
 
@@ -153,7 +153,7 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Task Map: author one table with columns ID, Title, Outcome, Prerequisites, Criteria. Use `none` when a task has no prerequisites. Separate multiple task or criterion IDs with commas. Escape literal pipes as `\|`, including inside inline code. Rows join task sections by ID, not position. Keep Paths in task details and shared Constraints in the shared section. Toolkit lint and brief tools read the table as authored and never rewrite it. Map edits change the governed plan hash; only Review Findings & Resolutions are excluded.
 
-- Review Findings & Resolutions: follow [review rules](../review-rules.md); the toolkit renders current findings and round links from the ledger after each review round and ruling.
+- Review Findings & Resolutions: generated under [review rules](../review-rules.md); do not edit manually.
 
 - Optional: Pre-existing `yes` identifies a baseline red failure; RED exception (red only) records a no-failing-state rationale; Review is required for review; missing Enforcement infeasibility for critical review is a warning.
 
@@ -165,7 +165,7 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Reuse: on `[NEW]` entries and on `[MODIFY]` entries that add an exported or shared symbol, helper, module, or type, apply the [quality bar's shared reuse criterion](quality-bar.md#shared). Record the names searched and why none was reused, or write `none found`. Writer briefs omit `Reuse:`; put a reuse decision that binds the writer in `Changes:` or `Purpose:`.
 
-- Affected checks: criterion RED/Check selectors give fast feedback; they do not replace full checks of modified logical test files or known impacted consumers before aggregate. A whole-file criterion Check satisfies that file's check. List other affected-file checks under Automated Tests; lint rejects an exact repeat. Writers follow the [writer brief](writer-brief.md).
+- Affected checks: criterion RED/Check selectors give fast feedback; list other fast affected-file checks under Automated Tests (lint rejects an exact repeat). Writers run affected checks per the [writer brief](writer-brief.md).
 
 - Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, and `check run` records it against the integrated tree. Put broad or slow gates in a criterion Check.
 

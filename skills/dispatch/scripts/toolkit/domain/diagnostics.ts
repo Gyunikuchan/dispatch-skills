@@ -110,7 +110,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('references/readme', 'ask concepts configuration design implement plan review troubleshooting verify', '.md'),
   ...files('references/templates', 'context-map design explorer-brief increment-orchestrator-brief plan plan-field-notes quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan review-severity spec test-cleanup-brief verifier-brief walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review verify', '.md'),
-  ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
+  ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-fixes review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext platform quota-store session', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),

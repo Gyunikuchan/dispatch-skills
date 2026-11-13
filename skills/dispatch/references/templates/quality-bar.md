@@ -8,16 +8,16 @@ Authors read the same sections through their author frame. Keep judging criteria
 <!-- for: all -->
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
 <!-- for: all -->
-- Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent.
+- Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent. Host rules may tighten, never widen, scope, write boundaries, verification and safety.
 <!-- for: writer,cleanup -->
-- Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Report host-rule/brief conflicts under concerns.
+- Report host-rule/brief conflicts under concerns.
 <!-- for: code,plan,design -->
-- Host rules override only this bar. Plan scope, write boundaries, verification and safety stay fixed. Exclude host-rule/brief conflicts from findings.
+- Exclude host-rule/brief conflicts from findings.
 <!-- for: all -->
 - Evidence: a claim about an external format states the sample inspected against the population and its uncertainty; never generalize beyond that sample. An absence claim (no caller, no consumer, not present) checks the search method's exclusions (ignored paths, file types, generated output, dynamic dispatch) and rests on direct evidence the host supports, such as an index query, reference lookup or exhaustive listing; otherwise mark it unverified.
 - **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Map requirements to changes and goals to requirements; state non-goals. Check the result serves the requested users. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, XY problem, conflicting constraints, and missing prerequisites; add nothing beyond the ask. Keep the existing format of rendered output unless a recorded user decision changes it. Route a design or plan that changes intent through the user gate.
 <!-- for: author -->
-- Treat settled DECs, non-goals, and prior accepted or rejected rulings in `### Settled in earlier rounds` as closed unless new unweighed code or requirement evidence is cited. An accepted `MUST` is never closed by that rule: re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present.
+- Settled DECs, non-goals, and earlier accepted or rejected rulings follow [settled decisions](review-prompt.md#prompt-template) and [re-review closure](review-prompt.md#re-review-template).
 - **maintainability** — Delete › reuse › stdlib or platform › installed dependency › new; never add a dependency for a few lines. DRY: one source of truth; search the repository by name and behaviour for an existing equivalent before adding any exported/shared symbol, helper, module or type. Rule of three: extract on third use; duplication beats wrong abstraction. YAGNI, KISS; deep modules, low coupling, high cohesion. Remove needless branches; fix root causes. Split by responsibility, never by length; add no helper that only shortens a function. A fix or remedy is the smallest change that removes the defect: prefer deletion; add no layer, config or dependency the defect does not need. Simplicity floor: simplification never removes trust-boundary validation, data-loss guards, security or accessibility controls, or requested behaviour; moved or merged code keeps its error handling and validation. Preserve Chesterton's fence; names/docs/comments explain why and track behaviour. Check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers. Flag structural coupling or cohesion defects (shotgun surgery, divergent change, leaky abstractions, or CQS violations) only when the remedy removes concrete concepts, files, or code paths; never `blocks` or `critical` alone.
 - **correctness** — State system-wide invariants that hold within and across increments, and check domain-valid formulas and algorithms, preconditions, postconditions, and invariants; type-valid but domain-invalid states; valid transitions and reachable states; off-by-one errors; units, signs, and scales; runtime behavior; and type validity.
 - **reliability** — Cover edge, boundary, empty, and zero inputs; unhandled branches; partial failures and updates; atomicity and crash consistency; idempotency; races and TOCTOU; floating promises; fail-closed behavior; data loss; and destructive-operation guards.
@@ -26,9 +26,7 @@ Authors read the same sections through their author frame. Keep judging criteria
 - **compatibility** — Check breaking changes, Hyrum's law, semver, expand/contract migrations, rollback, version skew with graceful degradation, affected callers, persisted schemas and serialized formats, and portability across OS, shell, path, and encoding.
 - **operability** — Check deployment and runtime operation, observability through logs, metrics, and traces, actionable diagnostics, configuration, and a kill switch.
 - **usability** — Check WCAG accessibility, POLA (least astonishment), accessible UI, CLI/API ergonomics, and actionable errors.
-<!-- for: writer -->
-- No Git write commands.
-<!-- for: cleanup -->
+<!-- for: writer,cleanup -->
 - Run no Git write commands (add, stash, commit, checkout, reset, restore).
 
 ## spec

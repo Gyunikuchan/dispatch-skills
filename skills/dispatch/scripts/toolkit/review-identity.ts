@@ -11,7 +11,7 @@ import { effectiveSeverity } from './domain/severity.ts';
 import { reviewFixFromCommit } from './integrate.ts';
 import { coverageState } from './coverage.ts';
 import type { ReviewFix } from './records.ts';
-import { gitOk } from './git.ts';
+import { gitOk, gitPaths } from './git.ts';
 import { ToolError } from './output.ts';
 function refuse(reason:string):never {throw new ToolError(4,reason,reason);}
 function rejections(ctx:HandlerContext,fold:Fold) {
@@ -30,7 +30,6 @@ function reviewRead<T>(read:()=>T):T {
 }
 const digest = (value:unknown)=>'sha256:'+crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 const equal=(a:unknown,b:unknown)=>stableValue(a)===stableValue(b);
-const split=(s:string)=>s.split('\0').filter(Boolean);
 export type ReviewCorrection = { commit:string; seq:number; reason:string; reviewFix:ReviewFix; paths:string[] };
 export type ReviewIdentity = { identity:string; baseline:string; round:number; generation:number; startSeq:number; corrections:ReviewCorrection[] };
 function safeCorrectionPath(value:unknown):string|null {
@@ -175,7 +174,7 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
         if(!paths?.length)refuse('review-required');
         for(const file of paths)allowed.add(file);
       }
-      const changes=split(await gitOk(ctx.deps,cwd,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]));
+      const changes=await gitPaths(ctx.deps,cwd,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]);
       if(!changes.length||changes.some(file=>!allowed.has(file.replaceAll('\\','/'))))refuse('review-required');
       const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B',commit]);
       if(message.split(/\r?\n/)[0]!=='fix(dispatch): '+record.data['reason']||!message.split(/\r?\n/).includes('Dispatch-Fix: '+ctx.manifest.safeSessionId))refuse('review-required');

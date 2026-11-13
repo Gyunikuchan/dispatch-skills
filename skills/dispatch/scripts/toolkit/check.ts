@@ -25,7 +25,7 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
   const unknown=ids.filter(id=>!all.some(c=>c.criterion===id));
   if(unknown.length) throw new ToolError(1,'invalid-input','Unknown criterion: '+unknown.join(', ')+'; valid: '+all.map(c=>c.criterion).join(', '));
   const gone=ids.filter(id=>removed.includes(id));
-  if(gone.length) throw new ToolError(4,'test-cleanup-removed','Test cleanup removed the tests for '+gone.join(', ')+'; their evidence stays bound to the pre-cleanup tree');
+  if(gone.length) throw new ToolError(4,'test-cleanup-removed','Test cleanup removed the tests for '+gone.join(', ')+'; their evidence stays bound to their recorded evidence tree');
   const selected=all.filter(c=>ids.includes(c.criterion));
   const review=selected.filter(c=>c.evidenceClass==='review').map(c=>c.criterion);
   if(review.length) throw new ToolError(1,'invalid-input','Review-only criteria need user evidence and cannot be checked by tool evidence: '+review.join(', '));

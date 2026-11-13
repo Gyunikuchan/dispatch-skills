@@ -171,8 +171,16 @@ test('disabled diagnostics add neither lifecycle collection requests nor capture
 });
 
 // SECTION: help command and session refusal pointer
-const toolkitText = fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8');
-const sectionOf = (heading: string) => toolkitText.split('\n### ' + heading + '\n')[1]!.split(/\n#{1,3} /)[0]!;
+const toolkitText = fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8').replace(/\r\n/g, '\n');
+const sectionOf = (heading: string) => {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^(#{2,3}) ${escaped}$`, 'm').exec(toolkitText);
+  if (!match) throw new Error(`Missing toolkit heading: ${heading}`);
+  return toolkitText.slice(match.index).split(new RegExp(`\\n#{1,${match[1]!.length}} `))[0]!.trimEnd() + '\n';
+};
+const slugOf = (heading: string) => heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const markdownFiles = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+  entry.isDirectory() ? markdownFiles(path.join(dir, entry.name)) : entry.name.endsWith('.md') ? [path.join(dir, entry.name)] : []);
 
 test('help prints exactly one section for each action, record kind, session command and the call table', async () => {
   const f = sessionFixture();
@@ -183,7 +191,33 @@ test('help prints exactly one section for each action, record kind, session comm
       f.lines.length = 0;
       assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, heading);
       assert.equal(f.lines.length, 1);
-      assert.equal(f.lines[0], ('### ' + heading + '\n' + sectionOf(heading)).trimEnd() + '\n', heading);
+      assert.equal(f.lines[0], sectionOf(heading), heading);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('help prints each toolkit section linked from skill prose and nested subsections of a level-2 section', async () => {
+  const headingsByAnchor = new Map([...toolkitText.matchAll(/^(#{2,3}) (.+)$/gm)].map((m) => [slugOf(m[2]!), m[2]!]));
+  const anchors = new Set<string>();
+  for (const file of [path.resolve('skills/dispatch/SKILL.md'), ...markdownFiles(path.resolve('skills/dispatch/references'))]) {
+    for (const match of fs.readFileSync(file, 'utf8').matchAll(/toolkit\.md#([a-z0-9-]+)/gi)) anchors.add(match[1]!);
+  }
+  assert.ok(anchors.size > 0);
+  assert.ok(anchors.has('session-commands'));
+  const f = sessionFixture();
+  try {
+    for (const anchor of anchors) {
+      const heading = headingsByAnchor.get(anchor);
+      assert.ok(heading, anchor);
+      f.lines.length = 0;
+      assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, anchor);
+      assert.equal(f.lines.length, 1);
+      assert.equal(f.lines[0], sectionOf(heading), anchor);
+      if (anchor === 'session-commands') {
+        for (const sub of ['### session init', '### session reactivate', '### session quota-reprobe']) {
+          assert.ok(f.lines[0]!.includes(sub), sub);
+        }
+      }
     }
   } finally { f.cleanup(); }
 });
@@ -191,7 +225,7 @@ test('help prints exactly one section for each action, record kind, session comm
 test('help refuses an unknown or empty heading with the valid headings inside the summary cap', async () => {
   const f = sessionFixture();
   try {
-    for (const args of [['help'], ['help', 'no', 'such', 'heading'], ['help', 'Tool', 'actions']]) {
+    for (const args of [['help'], ['help', 'no', 'such', 'heading'], ['help', 'Toolkit', 'CLI', 'contract']]) {
       f.lines.length = 0;
       assert.equal(await entry.main(args, f.deps), 1);
       const out = f.output();
@@ -199,7 +233,7 @@ test('help refuses an unknown or empty heading with the valid headings inside th
       assert.equal(out.reason, 'usage');
       assert.equal(out.path, null);
       assert.ok(Buffer.byteLength(out.summary) <= 1024);
-      assert.match(out.summary, /call table.*session quota-reprobe/);
+      assert.match(out.summary, /Index, call table, Tool actions.*Native-slot replies, Session commands.*session quota-reprobe/);
     }
   } finally { f.cleanup(); }
 });

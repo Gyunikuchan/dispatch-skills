@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 16500 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, explorer brief kind selection, utility subagent resolution, Antigravity model/effort normalization, gen_metadata protobuf decoding, and native Antigravity host-usage adapter (16421 lines); cutting and consolidation were tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
+  // NOTE: 16591 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, explorer brief kind selection, utility subagent resolution, Antigravity model/effort normalization, gen_metadata protobuf decoding, native Antigravity host-usage adapter, and cleanup evidence rule (16591 lines); cutting and consolidation were tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
-    lines <= 16500,
-    `driver TS LOC ${lines} exceeds 16500 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 16591,
+    `driver TS LOC ${lines} exceeds 16591 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,
@@ -147,7 +147,7 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
       { phase: 'done', task: 'task', commit },
       { phase: 'abandoned', task: 'task', candidate: commit, reason: 'Retry' },
       { phase: 'fix', commit, reason: 'Review repair' },
-      { phase: 'test-cleanup', from: commit, fromTree: commit, to: commit, removed: ['SC1'], deleted: 1, merged: 0 },
+      { phase: 'test-cleanup', from: commit, fromTree: commit, to: commit, removed: ['SC1'], deleted: 1, merged: 0, trees: { SC1: commit } },
       { phase: 'deliver-started', mode: 'uncommitted', dest, from: commit, source: commit },
       { phase: 'delivered', mode: 'uncommitted', dest, from: commit, source: commit },
       { phase: 'closed', reason: 'Session complete' },
