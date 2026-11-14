@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { claudeCode } from '../../../../skills/dispatch/scripts/toolkit/host-usage/claude-code.ts';
+import { claudeCode, claudeUsage } from '../../../../skills/dispatch/scripts/lib/usage/claude.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
-test('claude counts the last in-window message once by stage and excludes synthetic usage', () => {
+test('claude counts the last in-window message usage row fields once by stage and excludes synthetic usage', () => {
   const message = (id: string, at: number, input: number, model = 'opus') => ({
     type: 'assistant', timestamp: new Date(at).toISOString(), effort: 'high',
     message: { id, model, usage: { input_tokens: input, output_tokens: 2, cache_read_input_tokens: 3 }, text: 'secret transcript' },
@@ -13,8 +13,8 @@ test('claude counts the last in-window message once by stage and excludes synthe
     '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(message('b', 2500, 7)),
   }));
   assert.deepEqual(result.rows, [
-    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', input: 5, output: 2, cacheRead: 3 },
-    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', input: 7, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2500, reasoningInOutput: true, input: 7, output: 2, cacheRead: 3 },
   ]);
   assert.ok(!JSON.stringify(result).includes('secret transcript'));
 });
@@ -129,4 +129,14 @@ test('claude reports selected host and child files that vanish before read', () 
   const discoveryFs = memoryFs({ [host]: lines(msg), [vanished]: lines(msg), [child]: lines(msg) });
   const discoveryResult = claudeCode.read({ ...query, budget: { remaining: 10000 } }, { ...discoveryFs, stat: file => file.endsWith('agent-vanished.jsonl') ? null : discoveryFs.stat(file) });
   assert.equal(discoveryResult.notes?.subagent?.['unreadable files'], 1); assert.deepEqual(discoveryResult.rows.map(row => row.role), ['host', 'subagent']);
+});
+
+test('claude usage keeps per-model counters and aggregate totals', () => {
+  const usage = claudeUsage(JSON.stringify({ type: 'result', modelUsage: {
+    'claude-sonnet-4-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 300, cacheCreationInputTokens: 40 },
+    'claude-haiku-4-5': { inputTokens: 5, outputTokens: 1 },
+  } }));
+  assert.deepEqual(usage?.models, { 'claude-sonnet-4-5': { input: 100, output: 20, cacheRead: 300, cacheWrite: 40 }, 'claude-haiku-4-5': { input: 5, output: 1 } });
+  assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite], [105, 21, 300, 40]);
+  assert.deepEqual(usage?.actualModels, ['claude-sonnet-4-5', 'claude-haiku-4-5']);
 });

@@ -5,11 +5,11 @@
 
 import { classifyFailure, failOutcome } from './runner.ts';
 import { opencodeModelValue } from '../lib/platform.ts';
-import { opencodeDbUsage, opencodeUsage } from '../lib/diagnostic-usage.ts';
+import { opencodeDbUsage, opencodeUsage } from '../lib/usage/opencode.ts';
 import { opencodeDbPath } from '../lib/opencode-db.ts';
 import type { DiagnosticUsage } from '../toolkit/types.ts';
 import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, ProviderUsageContext, RunOutcome } from './types.ts';
-import { validSessionId } from './types.ts';
+import { validSessionId } from '../lib/session.ts';
 
 export const PROXY_TRAP = 'http://127.0.0.1:0';
 const PROXY_KEYS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];

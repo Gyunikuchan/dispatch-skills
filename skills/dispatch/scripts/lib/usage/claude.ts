@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { counter, note, readErrorReason, readTranscript, stageAt } from './read.ts';
-import type { HostUsageAdapter, HostUsageQuery, HostUsageFs, HostUsageResult, HostRole, HostUsageRow } from './types.ts';
+import type { DiagnosticUsage } from '../../toolkit/types.ts';
+import { counter, counters, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
+import { addCounters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 export const claudeCode: HostUsageAdapter = { sessionEnv: ['CLAUDE_CODE_SESSION_ID'], read(query, fs) { return collect(query, fs); } };
 function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
@@ -28,7 +29,7 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
         messages.set(message.id, { at, model: message.model, effort: typeof entry.effort === 'string' ? entry.effort : null, usage });
       }
       let count = 0;
-      for (const entry of messages.values()) { if (entry.model === '<synthetic>' || !(entry.at >= query.startMs && entry.at <= query.endMs)) continue; const u = entry.usage; if (typeof u['input_tokens'] !== 'number' || typeof u['output_tokens'] !== 'number') continue; count++; const row: HostUsageRow = { stage: stageAt(query.stages, entry.at), role, model: entry.model, effort: entry.effort, input: u['input_tokens'], output: u['output_tokens'] }; if (typeof u['cache_read_input_tokens'] === 'number') row.cacheRead = u['cache_read_input_tokens']; if (typeof u['cache_creation_input_tokens'] === 'number') row.cacheWrite = u['cache_creation_input_tokens']; result.rows.push(row); }
+      for (const entry of messages.values()) { if (entry.model === '<synthetic>' || !(entry.at >= query.startMs && entry.at <= query.endMs)) continue; const u = entry.usage; if (typeof u['input_tokens'] !== 'number' || typeof u['output_tokens'] !== 'number') continue; count++; const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, entry.at), role, model: entry.model, effort: entry.effort, depth: role === 'host' ? 0 : 1, atMs: entry.at, reasoningInOutput: true, input: u['input_tokens'], output: u['output_tokens'] }; if (typeof u['cache_read_input_tokens'] === 'number') hostRow.cacheRead = u['cache_read_input_tokens']; if (typeof u['cache_creation_input_tokens'] === 'number') hostRow.cacheWrite = u['cache_creation_input_tokens']; result.rows.push(hostRow); }
       if (role === 'host' && !count && !result.unavailable) result.unavailable = 'no usage records';
     } catch (error) { if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); }
   }
@@ -45,3 +46,26 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
   }
   return result;
 }
+
+export function claudeUsage(raw: string): DiagnosticUsage | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  const event = row(Array.isArray(parsed) ? parsed.findLast((v: unknown) => row(v)?.['type'] === 'result') : parsed);
+  if (event?.['type'] !== 'result') return undefined;
+  const models = row(event['modelUsage']);
+  if (models && Object.keys(models).length > 0 && Object.keys(models).length <= 8) {
+    const parts = Object.values(models).map((v) => counters(v, { input: 'inputTokens', output: 'outputTokens', cacheRead: 'cacheReadInputTokens', cacheWrite: 'cacheCreationInputTokens', reasoning: 'thinkingTokens' }, 'claude.result.modelUsage', 'uncached'));
+    if (parts.some((v) => !v)) return undefined;
+    const out: DiagnosticUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, scope: 'invocation', provenance: 'claude.result.modelUsage', inputSemantics: 'uncached', actualModels: Object.keys(models) };
+    for (const part of parts) addCounters(out, part!);
+    // Per-model counters let the report split a cascade's cost by the model that actually ran.
+    out.models = Object.fromEntries(Object.keys(models).map((name, index) => {
+      const part = parts[index]!;
+      return [name, { input: part.input, output: part.output, ...(part.cacheRead === undefined ? {} : { cacheRead: part.cacheRead }), ...(part.cacheWrite === undefined ? {} : { cacheWrite: part.cacheWrite }), ...(part.reasoning === undefined ? {} : { reasoning: part.reasoning }) }];
+    }));
+    return Object.values(out).some((v) => typeof v === 'number' && !countNumber(v)) ? undefined : out;
+  }
+  return counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, 'claude.result.usage', 'uncached');
+}
+
+const countNumber = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;

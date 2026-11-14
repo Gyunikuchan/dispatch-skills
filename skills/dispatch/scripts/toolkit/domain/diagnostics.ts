@@ -1,4 +1,4 @@
-import { HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, STAGE_ORDER, type HostUsageFacts, type HostUsageRow } from '../host-usage/types.ts';
+import { addCounters, HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, tokenTotal, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, FailureClass } from '../types.ts';
 
@@ -112,10 +112,10 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('references/templates', 'context-map design explorer-brief increment-orchestrator-brief plan plan-field-notes quality-bar review-prompt review-prompt-code review-prompt-design review-prompt-plan review-severity spec test-cleanup-brief verifier-brief walkthrough writer-brief', '.md'),
   ...files('references/verbs', 'ask design implement plan review verify', '.md'),
   ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-fixes review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
-  ...files('scripts/lib', 'canonical-markdown cli config diagnostic-usage fs-ext integrity node-fs-ext opencode-db platform quota-store session', '.ts'),
+  ...files('scripts/lib', 'canonical-markdown cli config fs-ext integrity node-fs-ext opencode-db platform quota-store session', '.ts'),
+  ...files('scripts/lib/usage', 'agy claude codex index opencode read rows', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
-  ...files('scripts/toolkit/host-usage', 'agy claude-code codex index opencode read types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize severity spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief check cli confirmations coverage deliver diagnostics doctor evidence fanout findings git integrate integration ledger lint lock output plan-view prompts records red report review review-checkout review-findings review-identity status types walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
@@ -147,7 +147,7 @@ const commandText = (v: unknown): string => typeof v === 'string' && v.length <=
 const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === 'string' && re.test(v) && locatorFree(v) ? v : undefined;
 const token = match(/^[a-z][a-z0-9-]{0,39}$/);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/);
-const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,95}$/);
+const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/@\[\]-]{0,95}$/);
 const modelName = (v: unknown): string | undefined => { const name = modelAlias(v); return name && !/^[A-Za-z]:|\/\//.test(name) ? name : undefined; };
 const count = (v: unknown): number | undefined => Number.isSafeInteger(v) && Number(v) >= 0 ? Number(v) : undefined;
 const millis = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
@@ -190,24 +190,19 @@ function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
   const base = counters(v);
   if (!base || !record(v)) return undefined;
   const canonical = (u: ModelUsage): ModelUsage => subtractCache ? { ...u, input: Math.max(0, u.input - (u.cacheRead ?? 0)) } : u;
-  const add = (a: ModelUsage, b: ModelUsage): ModelUsage => {
-    const sum: ModelUsage = { input: a.input + b.input, output: a.output + b.output };
-    for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) if (a[key] !== undefined || b[key] !== undefined) sum[key] = (a[key] ?? 0) + (b[key] ?? 0);
-    return sum;
-  };
   const out: Usage = canonical(base);
   const models = record(v['models']) ? Object.entries(v['models']) : [];
   // A `<model>#<effort>` key keeps its own effort; an empty or gate-failing part renders `—` but keeps its counters.
   const parts = models.map(([key, part]) => {
-    const at = key.indexOf('#');
-    const name = modelName(at < 0 ? key : key.slice(0, at)), effort = at < 0 ? undefined : token(key.slice(at + 1)) ?? '';
-    return { key: at < 0 ? name : `${name ?? ''}#${effort}`, part: counters(part), keyed: at >= 0 };
+    const split = splitUsageKey(key);
+    const name = modelName(split.model), effort = split.effort === undefined ? undefined : token(split.effort) ?? '';
+    return { key: effort === undefined ? name : `${name ?? ''}#${effort}`, part: counters(part), keyed: effort !== undefined };
   });
   if (parts.length && parts.length <= 8 && parts.every(({ key, part, keyed }) => part && (keyed || key))) {
     const grouped = new Map<string, ModelUsage>();
     for (const { key, part } of parts) {
       const current = grouped.get(key!);
-      grouped.set(key!, current ? add(current, canonical(part!)) : canonical(part!));
+      grouped.set(key!, current ? addCounters(current, canonical(part!)) : canonical(part!));
     }
     out.models = Object.fromEntries(grouped);
   }
@@ -220,7 +215,7 @@ export function normalizeUsage(raw: unknown, inputSemantics: 'includes-cache' | 
   return usageOf(raw, inputSemantics === 'includes-cache');
 }
 
-const total = (u: ModelUsage) => u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + u.output;
+const total = (u: ModelUsage) => tokenTotal(u);
 const uncached = (u: ModelUsage) => u.input + (u.cacheWrite ?? 0) + u.output;
 const measured = (i: InvocationFacts): Usage | undefined => i.estimated || i.surface !== 'cli' || !i.launched ? undefined : i.usage;
 const estimate = (i: InvocationFacts): number | undefined => !i.estimated ? undefined : i.tokens ?? (i.usage ? total(i.usage) : undefined);
@@ -229,7 +224,13 @@ type Totals = { input: number; output: number; cacheRead?: number; cacheWrite?: 
 
 function totals(usages: readonly ModelUsage[]): Totals | undefined {
   if (!usages.length) return undefined;
-  return { input: sum(usages.map((u) => u.input))!, output: sum(usages.map((u) => u.output))!, ...opt('cacheRead', sum(usages.map((u) => u.cacheRead))), ...opt('cacheWrite', sum(usages.map((u) => u.cacheWrite))), ...opt('reasoning', sum(usages.map((u) => u.reasoning))), all: sum(usages.map(total))! };
+  const acc: ModelUsage = { input: 0, output: 0 };
+  let all = 0;
+  for (const u of usages) {
+    addCounters(acc, u);
+    all += tokenTotal(u);
+  }
+  return { ...acc, all };
 }
 
 // SECTION: Gates

@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { readHostUsage, nodeHostUsageFs } from './host-usage/index.ts';
-import { readErrorReason } from './host-usage/read.ts';
-import type { Milestone, HostStage } from './host-usage/types.ts';
+import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
+import { readErrorReason } from '../lib/usage/read.ts';
+import { tokenTotal, type Milestone, type HostStage } from '../lib/usage/rows.ts';
 import { addYield, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
@@ -191,7 +191,7 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
       let tokens: number | undefined, fixInduced = 0;
       for (const row of recent) {
         if (row.surface !== 'cli' || !row.launched || row.estimated || !row.usage) continue;
-        tokens = (tokens ?? 0) + row.usage.input + (row.usage.cacheRead ?? 0) + (row.usage.cacheWrite ?? 0) + row.usage.output;
+        tokens = (tokens ?? 0) + tokenTotal(row.usage);
       }
       if (tokens !== undefined) value.tokens = tokens;
       for (const item of round.findings?.findings ?? []) {

@@ -5,10 +5,9 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
-import { ADAPTERS, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
+import { ADAPTERS, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { readOpencodeMessages } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
-import { readTranscript, stageAt } from '../../../../skills/dispatch/scripts/toolkit/host-usage/read.ts';
-import { MAX_FILE_BYTES, MAX_TOTAL_BYTES } from '../../../../skills/dispatch/scripts/toolkit/host-usage/types.ts';
+import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, readTranscript, stageAt } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
 
 const input = { ...query, env: (_: string): string | undefined => undefined };
@@ -22,7 +21,7 @@ test('registry requires a registered host and its declared safe session id', () 
   assert.equal(invalidStart.unavailable, 'invalid session start');
   assert.deepEqual(fs.reads, []);
   const result = readHostUsage('codex', { ...input, env: () => 'host' }, fs, {
-    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: q => ({ rows: [{ stage: 'spec', role: 'host', model: 'm', effort: null, input: q.budget.remaining, output: 0 }] }) },
+    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: q => ({ rows: [{ stage: 'spec', role: 'host', model: 'm', effort: null, depth: 0, atMs: 0, reasoningInOutput: true, input: q.budget.remaining, output: 0 }] }) },
   });
   assert.equal(result.rows[0]?.input, MAX_TOTAL_BYTES);
 });
@@ -199,4 +198,17 @@ test('agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageF
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('index usage row fields project to the persisted HostUsageRow shape', () => {
+  const row = { stage: 'spec' as const, role: 'host' as const, model: 'm', effort: 'high', input: 10, output: 2, cacheRead: 1, atMs: 3000, depth: 0, reasoningInOutput: true };
+  const result = readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
+    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows: [row] }) },
+  });
+  assert.deepEqual(result.rows, [
+    { stage: 'spec', role: 'host', model: 'm', effort: 'high', input: 10, output: 2, cacheRead: 1 },
+  ]);
+  assert.equal('atMs' in result.rows[0]!, false);
+  assert.equal('depth' in result.rows[0]!, false);
+  assert.equal('reasoningInOutput' in result.rows[0]!, false);
 });

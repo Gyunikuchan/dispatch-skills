@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { agy } from '../../../../skills/dispatch/scripts/toolkit/host-usage/agy.ts';
-import { MAX_FILE_BYTES, type HostUsageFs } from '../../../../skills/dispatch/scripts/toolkit/host-usage/types.ts';
+import { agy } from '../../../../skills/dispatch/scripts/lib/usage/agy.ts';
+import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
+import type { HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
 function encodeVarint(val: number | bigint): number[] {
@@ -70,7 +71,7 @@ function createAgyFs(
   };
 }
 
-test('agy collects host and recursive subagent usage with gen_metadata model effort and reasoning', () => {
+test('agy collects host and recursive subagent usage row fields with gen_metadata model effort and reasoning', () => {
   const hostId = 'host-session';
   const child1Id = 'child-1';
   const child2Id = 'child-2';
@@ -244,6 +245,9 @@ test('agy collects host and recursive subagent usage with gen_metadata model eff
       role: 'host',
       model: 'gemini-4-argon',
       effort: 'medium',
+      depth: 0,
+      atMs: 1500,
+      reasoningInOutput: false,
       input: 100,
       output: 10,
       cacheRead: 20,
@@ -254,6 +258,9 @@ test('agy collects host and recursive subagent usage with gen_metadata model eff
       role: 'host',
       model: 'gemini-3.8-flash',
       effort: 'high',
+      depth: 0,
+      atMs: 3500,
+      reasoningInOutput: false,
       input: 200,
       output: 25,
       cacheRead: 40,
@@ -264,6 +271,9 @@ test('agy collects host and recursive subagent usage with gen_metadata model eff
       role: 'subagent',
       model: 'gemini-3.8-flash',
       effort: 'low',
+      depth: 1,
+      atMs: 2500,
+      reasoningInOutput: false,
       input: 50,
       output: 5,
       cacheRead: 10,
@@ -274,6 +284,9 @@ test('agy collects host and recursive subagent usage with gen_metadata model eff
       role: 'subagent',
       model: 'gemini-3.8-flash',
       effort: null,
+      depth: 1,
+      atMs: 2800,
+      reasoningInOutput: false,
       input: 60,
       output: 6,
       reasoning: 4,
@@ -283,6 +296,9 @@ test('agy collects host and recursive subagent usage with gen_metadata model eff
       role: 'subagent',
       model: 'gemini-3.8-flash',
       effort: 'max',
+      depth: 2,
+      atMs: 3200,
+      reasoningInOutput: false,
       input: 30,
       output: 3,
       cacheRead: 5,
@@ -341,6 +357,9 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
       role: 'host',
       model: 'gemini-2.5-flash',
       effort: null,
+      depth: 0,
+      atMs: 1500,
+      reasoningInOutput: false,
       input: 150,
       output: 20,
     },
@@ -349,6 +368,9 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
       role: 'subagent',
       model: 'pro',
       effort: null,
+      depth: 1,
+      atMs: 2500,
+      reasoningInOutput: false,
       input: 80,
       output: 10,
     },

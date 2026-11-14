@@ -1,123 +1,379 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import type { OpencodeMessage } from './opencode-db.ts';
-import type { DiagnosticModelUsage, DiagnosticUsage } from '../toolkit/types.ts';
-type Row = Record<string, unknown>;
-const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
-const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
-function counters(value: unknown, names: Record<string, string>, provenance: string, inputSemantics: DiagnosticUsage['inputSemantics']): DiagnosticUsage | undefined {
-  const r = row(value);
-  if (!r || !count(r[names['input']!]) || !count(r[names['output']!])) return undefined;
-  const out: DiagnosticUsage = { input: r[names['input']!] as number, output: r[names['output']!] as number, scope: 'invocation', provenance, inputSemantics };
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
-    const field = names[key];
-    if (field && r[field] !== undefined) { if (!count(r[field])) return undefined; out[key] = r[field]; }
+import type { DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
+import { MAX_FILE_BYTES, count, counter, counters, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
+import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
+
+const ID_REGEX = /^[A-Za-z0-9-]+$/;
+
+type ParsedStep = {
+  step_index: number;
+  atMs: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens?: number;
+};
+
+export const agy: HostUsageAdapter = {
+  sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
+  read(query, fsPort) {
+    return collect(query, fsPort);
+  },
+};
+
+function collect(query: HostUsageQuery, fsPort: HostUsageFs): HostUsageResult {
+  const result: HostUsageResult = { rows: [], notes: {} };
+  const notes = result.notes!;
+
+  if (!ID_REGEX.test(query.sessionId)) {
+    return { ...result, unavailable: 'invalid host id' };
   }
-  return out;
-}
-function addUsage(total: DiagnosticUsage, usage: DiagnosticUsage): void {
-  for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const) {
-    if (usage[key] !== undefined) total[key] = (total[key] ?? 0) + usage[key];
+
+  const root = query.env('ANTIGRAVITY_APP_DATA_DIR') || path.join(query.home, '.gemini', 'antigravity');
+  const hostTranscriptFile = path.join(root, 'brain', query.sessionId, '.system_generated', 'logs', 'transcript.jsonl');
+
+  let hostStat: { size: number; mtimeMs: number } | null = null;
+  try {
+    hostStat = fsPort.stat(hostTranscriptFile);
+  } catch (error) {
+    result.unavailable = readErrorReason(error);
   }
-}
-export function codexUsage(raw: string): DiagnosticUsage | undefined {
-  let total: DiagnosticUsage | undefined;
-  let completed = false;
-  let started = false;
-  for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
-    let event: Row | null;
-    try { event = row(JSON.parse(line)); } catch { return undefined; }
-    if (event?.['type'] === 'turn.started') { started = true; continue; }
-    if (event?.['type'] !== 'turn.completed') continue;
-    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'includes-cache');
-    if (!usage) return undefined;
-    // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.
-    if (!completed || started) {
-      if (!total) total = { ...usage };
-      else addUsage(total, usage);
-      completed = true;
+  if (!hostStat) {
+    return { ...result, unavailable: result.unavailable ?? 'host id file missing' };
+  }
+
+  const subagentFallbackModels = new Map<string, string>();
+  const visited = new Set<string>();
+  visited.add(query.sessionId);
+
+  function getDescriptorChildren(parentId: string): string[] {
+    const subDir = path.join(root, 'brain', parentId, '.system_generated', 'subagents');
+    let names: string[] = [];
+    try {
+      names = fsPort.list(subDir);
+    } catch {
+      note(notes, 'subagent', 'unreadable files');
+      return [];
     }
-    started = false;
-  }
-  return total;
-}
-/** OpenCode `run --format json`: one `step_finish` per turn carries usage; `tokens.input` already excludes cache reads. */
-export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
-  let total: DiagnosticUsage | undefined;
-  for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
-    let event: Row | null;
-    try { event = row(JSON.parse(line)); } catch { return undefined; }
-    if (event?.['type'] !== 'step_finish') continue;
-    const tokens = row(row(event['part'])?.['tokens']);
-    const rawInput = tokens?.['input'], rawOutput = tokens?.['output'];
-    if (!tokens || !count(rawInput) || !count(rawOutput)) return undefined;
-    const cache = row(tokens['cache']);
-    const usage: DiagnosticUsage = { input: rawInput, output: rawOutput, scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached' };
-    for (const [key, value] of [['reasoning', tokens['reasoning']], ['cacheRead', cache?.['read']], ['cacheWrite', cache?.['write']]] as const) {
-      if (value === undefined) continue;
-      if (!count(value)) return undefined;
-      usage[key] = value;
+    const children: string[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      if (query.budget.remaining <= 0) {
+        note(notes, 'subagent', 'read budget reached');
+        break;
+      }
+      const descFile = path.join(subDir, name);
+      let cid: string | null = null;
+      try {
+        const stat = fsPort.stat(descFile);
+        if (stat) {
+          const capped = Math.min(stat.size, 65536);
+          if (query.budget.remaining < capped) {
+            query.budget.remaining = 0;
+            note(notes, 'subagent', 'read budget reached');
+            break;
+          }
+          const buf = fsPort.read(descFile, capped);
+          query.budget.remaining = Math.max(0, query.budget.remaining - buf.length);
+          const obj = JSON.parse(buf.toString('utf8'));
+          if (typeof obj?.conversationId === 'string') {
+            cid = obj.conversationId;
+          }
+        }
+      } catch {}
+      if (!cid) {
+        cid = path.basename(name, '.json');
+      }
+      if (ID_REGEX.test(cid)) {
+        children.push(cid);
+      }
     }
-    if (!total) total = usage;
-    else addUsage(total, usage);
+    return children;
   }
-  return total;
-}
-/**
- * Fold DB messages for one delegate session tree into one usage record.
- * Keys carry their own effort (`<model>#<effort>`) so a child running another model or variant keeps its counters.
- */
-export function opencodeDbUsage(messages: readonly OpencodeMessage[]): DiagnosticUsage | undefined {
-  if (messages.length === 0) return undefined;
-  const out: DiagnosticUsage = { input: 0, output: 0, scope: 'invocation', provenance: 'opencode.db.messages', inputSemantics: 'uncached' };
-  const models: Record<string, DiagnosticModelUsage> = Object.create(null) as Record<string, DiagnosticModelUsage>;
-  const modelList: string[] = [];
-  const efforts: (string | null)[] = [];
-  for (const message of messages) {
-    out.input += message.input;
-    out.output += message.output;
-    if (message.cacheRead !== undefined) out.cacheRead = (out.cacheRead ?? 0) + message.cacheRead;
-    if (message.cacheWrite !== undefined) out.cacheWrite = (out.cacheWrite ?? 0) + message.cacheWrite;
-    if (message.reasoning !== undefined) out.reasoning = (out.reasoning ?? 0) + message.reasoning;
-    // A null model or effort keeps its part empty, never inherited from another message.
-    const key = `${message.model ?? ''}#${message.effort ?? ''}`;
-    const part = models[key] ?? (models[key] = { input: 0, output: 0 });
-    part.input += message.input;
-    part.output += message.output;
-    if (message.cacheRead !== undefined) part.cacheRead = (part.cacheRead ?? 0) + message.cacheRead;
-    if (message.cacheWrite !== undefined) part.cacheWrite = (part.cacheWrite ?? 0) + message.cacheWrite;
-    if (message.reasoning !== undefined) part.reasoning = (part.reasoning ?? 0) + message.reasoning;
-    if (message.model !== null && !modelList.includes(message.model)) modelList.push(message.model);
-    efforts.push(message.effort);
+
+  function processConversation(
+    id: string,
+    role: HostRole,
+    fallbackModel: string,
+    depth: number,
+  ): { steps: ParsedStep[]; discoveredChildren: string[] } {
+    const discoveredChildren: string[] = [];
+    const transcriptFile = path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+    let data: { text?: string; stop?: 'file cap' | 'budget' | 'zstd' };
+    try {
+      data = readTranscript(fsPort, transcriptFile, query.budget);
+    } catch (error) {
+      if (role === 'host') result.unavailable = readErrorReason(error);
+      else note(notes, role, 'unreadable files');
+      return { steps: [], discoveredChildren };
+    }
+
+    if (data.stop) {
+      if (data.stop === 'budget') note(notes, role, 'read budget reached');
+      else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap';
+      else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'subagents over size cap');
+      return { steps: [], discoveredChildren };
+    }
+
+    if (data.text === undefined) {
+      if (role === 'host') result.unavailable = 'read-error:ENOENT';
+      else note(notes, role, 'unreadable files');
+      return { steps: [], discoveredChildren };
+    }
+
+    const steps: ParsedStep[] = [];
+    const pendingInvokeModels: string[] = [];
+
+    for (const line of data.text.split('\n')) {
+      if (!line.trim()) continue;
+      let entry: any;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        note(notes, role, 'unparsed lines');
+        continue;
+      }
+      if (!entry || typeof entry !== 'object') continue;
+
+      if (entry.type === 'PLANNER_RESPONSE') {
+        const at = typeof entry.created_at === 'string' ? Date.parse(entry.created_at) : NaN;
+        if (
+          !counter(entry.step_index) ||
+          !Number.isFinite(at) ||
+          !counter(entry.input_tokens) ||
+          !counter(entry.output_tokens) ||
+          (entry.cache_read_tokens !== undefined && !counter(entry.cache_read_tokens))
+        ) {
+          note(notes, role, 'unparsed lines');
+          continue;
+        }
+
+        const parsed: ParsedStep = {
+          step_index: entry.step_index,
+          atMs: at,
+          input_tokens: entry.input_tokens,
+          output_tokens: entry.output_tokens,
+        };
+        if (counter(entry.cache_read_tokens)) {
+          parsed.cache_read_tokens = entry.cache_read_tokens;
+        }
+        steps.push(parsed);
+
+        if (Array.isArray(entry.tool_calls)) {
+          for (const call of entry.tool_calls) {
+            if (call?.name === 'invoke_subagent') {
+              let m = typeof call.args?.Model === 'string' ? call.args.Model.replace(/^"|"$/g, '').trim() : null;
+              if (m) {
+                const norm = normalizeAgyModelEffort(m);
+                m = norm.model ?? m;
+              }
+              pendingInvokeModels.push(m || 'unknown');
+            }
+          }
+        }
+      } else if (entry.type === 'GENERIC') {
+        if (typeof entry.content === 'string' && entry.content.includes('Created the following subagent:')) {
+          const matches = entry.content.matchAll(/"conversationId"\s*:\s*"([A-Za-z0-9-]+)"/g);
+          for (const match of matches) {
+            const childId = match[1]!;
+            const m = pendingInvokeModels.shift() ?? 'unknown';
+            if (!subagentFallbackModels.has(childId)) {
+              subagentFallbackModels.set(childId, m);
+            }
+            discoveredChildren.push(childId);
+          }
+        }
+      }
+    }
+
+    const dbFile = path.join(root, 'conversations', `${id}.db`);
+    let blobs: readonly Uint8Array[] | null = null;
+    try {
+      if (fsPort.sqliteGenMetadata) {
+        const statDb = fsPort.stat(dbFile);
+        if (statDb) {
+          let dbSize = statDb.size;
+          const statWal = fsPort.stat(dbFile + '-wal');
+          if (statWal) dbSize += statWal.size;
+          const limit = Math.min(MAX_FILE_BYTES, query.budget.remaining);
+          if (dbSize > limit) {
+            if (dbSize > MAX_FILE_BYTES) {
+              note(notes, role, 'unreadable files');
+            } else {
+              query.budget.remaining = 0;
+              note(notes, role, 'read budget reached');
+            }
+          } else if (limit > 0) {
+            const rawBlobs = fsPort.sqliteGenMetadata(dbFile);
+            if (rawBlobs && rawBlobs.length > 0) {
+              const blobBytes = rawBlobs.reduce((sum, b) => sum + b.byteLength, 0);
+              query.budget.remaining = Math.max(0, query.budget.remaining - blobBytes);
+              blobs = rawBlobs;
+            }
+          }
+        }
+      }
+    } catch {
+      note(notes, role, 'unreadable files');
+    }
+
+    let k = 0;
+    let rows: ReturnType<typeof decodeAgyGenMetadata>[] = [];
+    if (blobs && blobs.length > 0) {
+      rows = blobs.map(decodeAgyGenMetadata);
+      while (k < Math.min(steps.length, rows.length)) {
+        const r = rows[k]!;
+        const s = steps[k]!;
+        const intervalMatch =
+          k === 0
+            ? r.lastStepIndex !== undefined && r.lastStepIndex < s.step_index
+            : r.lastStepIndex !== undefined &&
+              r.lastStepIndex >= steps[k - 1]!.step_index &&
+              r.lastStepIndex < s.step_index;
+        if (
+          r.input === s.input_tokens &&
+          r.output === s.output_tokens &&
+          intervalMatch &&
+          r.model !== null
+        ) {
+          k++;
+        } else {
+          break;
+        }
+      }
+      if (k < steps.length || rows.length !== steps.length) {
+        note(notes, role, 'unparsed lines');
+      }
+    }
+
+    let inWindowCount = 0;
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]!;
+      if (!(s.atMs >= query.startMs && s.atMs <= query.endMs)) continue;
+      inWindowCount++;
+      let model: string;
+      let effort: string | null = null;
+      let reasoning: number | undefined;
+
+      if (i < k) {
+        const r = rows[i]!;
+        model = r.model!;
+        effort = r.effort;
+        reasoning = r.reasoning;
+      } else {
+        model = fallbackModel;
+        effort = null;
+        reasoning = undefined;
+      }
+
+      const hostRow: UsageRow & { stage: HostStage } = {
+        stage: stageAt(query.stages, s.atMs),
+        role,
+        model,
+        effort,
+        depth,
+        atMs: s.atMs,
+        reasoningInOutput: false,
+        input: s.input_tokens,
+        output: s.output_tokens,
+      };
+      if (s.cache_read_tokens !== undefined) hostRow.cacheRead = s.cache_read_tokens;
+      if (reasoning !== undefined && counter(reasoning)) hostRow.reasoning = reasoning;
+      result.rows.push(hostRow);
+    }
+
+    if (role === 'host' && !inWindowCount && !result.unavailable) {
+      result.unavailable = 'no usage records';
+    }
+
+    return { steps, discoveredChildren };
   }
-  out.models = models;
-  if (modelList.length > 0) out.actualModels = modelList.slice(0, 8);
-  const firstEffort = efforts[0]!;
-  out.actualEffort = efforts.every((effort) => effort === firstEffort) ? firstEffort : null;
-  return out;
+
+  const hostEnvModel = query.env('ANTIGRAVITY_MODEL') || query.env('GEMINI_MODEL');
+  const hostFallbackModel = (hostEnvModel ? normalizeAgyModelEffort(hostEnvModel).model ?? hostEnvModel : null) || 'unknown';
+
+  const hostResult = processConversation(query.sessionId, 'host', hostFallbackModel, 0);
+  if (notes.host?.['read budget reached']) {
+    return result;
+  }
+
+  let currentQueue: string[] = [];
+  {
+    const hostDescChildren = getDescriptorChildren(query.sessionId);
+    const level1Set = new Set<string>();
+    for (const cid of hostDescChildren) {
+      if (!visited.has(cid)) level1Set.add(cid);
+    }
+    for (const cid of hostResult.discoveredChildren) {
+      if (!visited.has(cid)) level1Set.add(cid);
+    }
+    const sorted = [...level1Set].sort((a, b) => a.localeCompare(b));
+    for (const id of sorted) visited.add(id);
+    currentQueue = sorted;
+  }
+
+  let liveCount = 0;
+  let excess = 0;
+  let depth = 1;
+
+  while (currentQueue.length > 0) {
+    if (notes.subagent?.['read budget reached']) break;
+
+    const eligibleThisLevel: string[] = [];
+    for (const childId of currentQueue) {
+      const transcriptFile = path.join(root, 'brain', childId, '.system_generated', 'logs', 'transcript.jsonl');
+      let stat: { size: number; mtimeMs: number } | null = null;
+      try {
+        stat = fsPort.stat(transcriptFile);
+      } catch {
+        note(notes, 'subagent', 'unreadable files');
+        continue;
+      }
+      if (!stat) {
+        note(notes, 'subagent', 'unreadable files');
+        continue;
+      }
+      if (stat.mtimeMs < query.startMs) {
+        continue;
+      }
+      if (liveCount < 256) {
+        liveCount++;
+        eligibleThisLevel.push(childId);
+      } else {
+        excess++;
+      }
+    }
+
+    const nextLevelSet = new Set<string>();
+    for (const childId of eligibleThisLevel) {
+      if (notes.subagent?.['read budget reached']) break;
+      const fallback = subagentFallbackModels.get(childId) ?? 'unknown';
+      const childRes = processConversation(childId, 'subagent', fallback, depth);
+      if (notes.subagent?.['read budget reached']) break;
+
+      const descChildren = getDescriptorChildren(childId);
+      for (const cid of descChildren) {
+        if (!visited.has(cid)) nextLevelSet.add(cid);
+      }
+      for (const cid of childRes.discoveredChildren) {
+        if (!visited.has(cid)) nextLevelSet.add(cid);
+      }
+    }
+
+    const nextSorted = [...nextLevelSet].sort((a, b) => a.localeCompare(b));
+    for (const id of nextSorted) visited.add(id);
+    currentQueue = nextSorted;
+    depth++;
+  }
+
+  if (excess > 0) {
+    note(notes, 'subagent', 'too many candidates', excess);
+  }
+
+  return result;
 }
 
-export function claudeUsage(raw: string): DiagnosticUsage | undefined {
-  let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return undefined; }
-  const event = row(Array.isArray(parsed) ? parsed.findLast((v: unknown) => row(v)?.['type'] === 'result') : parsed);
-  if (event?.['type'] !== 'result') return undefined;
-  const models = row(event['modelUsage']);
-  if (models && Object.keys(models).length > 0 && Object.keys(models).length <= 8) {
-    const parts = Object.values(models).map((v) => counters(v, { input: 'inputTokens', output: 'outputTokens', cacheRead: 'cacheReadInputTokens', cacheWrite: 'cacheCreationInputTokens', reasoning: 'thinkingTokens' }, 'claude.result.modelUsage', 'uncached'));
-    if (parts.some((v) => !v)) return undefined;
-    const out: DiagnosticUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, scope: 'invocation', provenance: 'claude.result.modelUsage', inputSemantics: 'uncached', actualModels: Object.keys(models) };
-    for (const part of parts) for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const) if (part?.[key] !== undefined) out[key] = (out[key] ?? 0) + part[key];
-    // Per-model counters let the report split a cascade's cost by the model that actually ran.
-    out.models = Object.fromEntries(Object.keys(models).map((name, index) => {
-      const part = parts[index]!;
-      return [name, { input: part.input, output: part.output, ...(part.cacheRead === undefined ? {} : { cacheRead: part.cacheRead }), ...(part.cacheWrite === undefined ? {} : { cacheWrite: part.cacheWrite }), ...(part.reasoning === undefined ? {} : { reasoning: part.reasoning }) }];
-    }));
-    return Object.values(out).some((v) => typeof v === 'number' && !count(v)) ? undefined : out;
-  }
-  return counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, 'claude.result.usage', 'uncached');
-}
 export type AgyTurnMetadata = {
   model: string | null;
   effort: string | null;
@@ -133,7 +389,6 @@ const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const BACKEND_SUFFIXES = /-(trial|tiered|control|n)$/i;
 const EFFORT_SUFFIX = /-(low|medium|high|xhigh|max)$/i;
 const DISPLAY_EFFORT = /^(.*?)\s*\((low|medium|high|xhigh|max)\)\s*$/i;
-export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
 
 function deriveBaseSlug(text: string): string | null {
   const trimmed = text.trim();
@@ -440,12 +695,8 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
         let canSum = true;
         for (const r of rows) {
           if (!r.model || r.input === undefined || r.output === undefined) { canSum = false; break; }
-          perModel[r.model] ??= { input: 0, output: 0 };
-          const target = perModel[r.model]!;
-          target.input += r.input;
-          target.output += r.output;
-          if (r.cacheRead !== undefined) target.cacheRead = (target.cacheRead ?? 0) + r.cacheRead;
-          if (r.reasoning !== undefined) target.reasoning = (target.reasoning ?? 0) + r.reasoning;
+          const target = perModel[r.model] ??= { input: 0, output: 0 };
+          addCounters(target, r as Counters);
         }
         if (canSum) out.models = perModel;
       }
@@ -469,12 +720,8 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
       const mCounters = counters(mRow, { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_tokens', reasoning: 'thinking_tokens' }, 'agy.usage', 'uncached');
       if (mCounters) {
         if (parsed.effort !== null && !keyEfforts.includes(parsed.effort)) keyEfforts.push(parsed.effort);
-        perModel[normalizedName] ??= { input: 0, output: 0 };
-        const entry = perModel[normalizedName]!;
-        entry.input += mCounters.input;
-        entry.output += mCounters.output;
-        if (mCounters.cacheRead !== undefined) entry.cacheRead = (entry.cacheRead ?? 0) + mCounters.cacheRead;
-        if (mCounters.reasoning !== undefined) entry.reasoning = (entry.reasoning ?? 0) + mCounters.reasoning;
+        const entry = perModel[normalizedName] ??= { input: 0, output: 0 };
+        addCounters(entry, mCounters);
         if (!activeModels.includes(normalizedName)) activeModels.push(normalizedName);
       }
     }

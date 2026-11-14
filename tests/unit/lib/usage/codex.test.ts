@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import { zstdCompressSync } from 'node:zlib';
 import assert from 'node:assert/strict';
-import { nodeHostUsageFs } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
-import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/toolkit/host-usage/types.ts';
-import { codex } from '../../../../skills/dispatch/scripts/toolkit/host-usage/codex.ts';
+import { nodeHostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
+import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
+import { codex } from '../../../../skills/dispatch/scripts/lib/usage/codex.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
 const rollout = (time: string, id: string, compressed = false) => `/home/.codex/sessions/1970/01/01/rollout-1970-01-01T00-${time}-${id}.jsonl${compressed ? '.zst' : ''}`;
@@ -14,7 +14,7 @@ const event = (total: number, at = 3000, counters: { input_tokens: number; cache
   payload: { type: 'token_count', info: { total_token_usage: { total_tokens: total }, last_token_usage: counters } },
 });
 
-test('codex counts resumed host and direct child usage once by model', () => {
+test('codex counts resumed host and direct child usage row fields once by model', () => {
   const host = rollout('00-01', 'host'); const resumedHost = rollout('00-02', 'host');
   const child = rollout('00-03', 'child'); const resumedChild = rollout('00-04', 'child');
   const otherModel = { type: 'turn_context', payload: { model: 'other', effort: 'low' } };
@@ -29,12 +29,12 @@ test('codex counts resumed host and direct child usage once by model', () => {
     [rollout('00-07', 'guardian')]: lines(meta('host', 'guardian_review'), context, event(23)),
   };
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, memoryFs(files));
-  assert.deepEqual(result.rows.map(row => [row.role, row.model, row.effort, row.input, row.output, row.cacheRead, row.reasoning]), [
-    ['host', 'm', 'high', 6, 5, 4, 2],
-    ['host', 'm', 'high', 3, 2, 1, undefined],
-    ['host', 'other', 'low', 6, 3, 0, undefined],
-    ['subagent', 'm', 'high', 6, 5, 4, 2],
-    ['subagent', 'm', 'high', 3, 2, 1, undefined],
+  assert.deepEqual(result.rows.map(row => [row.role, row.model, row.effort, row.depth, row.atMs, row.reasoningInOutput, row.input, row.output, row.cacheRead, row.reasoning]), [
+    ['host', 'm', 'high', 0, 3000, true, 6, 5, 4, 2],
+    ['host', 'm', 'high', 0, 4000, true, 3, 2, 1, undefined],
+    ['host', 'other', 'low', 0, 5000, true, 6, 3, 0, undefined],
+    ['subagent', 'm', 'high', 1, 3000, true, 6, 5, 4, 2],
+    ['subagent', 'm', 'high', 1, 4000, true, 3, 2, 1, undefined],
   ]);
 });
 

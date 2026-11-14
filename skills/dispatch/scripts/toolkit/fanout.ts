@@ -10,7 +10,7 @@ import { parsePins, resolveRoster, nativeFirstRoute, normalizeProvider, type Pin
 import { currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome, Invocation, LaunchRequest, ProcessResult } from '../providers/types.ts';
-import { validSessionId } from '../providers/types.ts';
+import { validSessionId } from '../lib/session.ts';
 import { sessionScope, formatSafetyPrompt, sumSessionUsage, CONTINUE_PROMPT } from '../providers/runner.ts';
 import { nodeRunnerFs } from '../providers/node-process.ts';
 import { sanitizeText } from './domain/sanitize.ts';

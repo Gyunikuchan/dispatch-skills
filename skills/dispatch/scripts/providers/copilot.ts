@@ -4,7 +4,7 @@
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
 import type { FailureClass } from '../toolkit/types.ts';
 import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
-import { validSessionId } from './types.ts';
+import { validSessionId } from '../lib/session.ts';
 
 const AUTH = /(no authentication|can be authenticated|oauth token|personal access token|gh auth login|subscription required|not subscribed|active github copilot subscription)/i;
 

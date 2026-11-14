@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
+import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { opencodeDbPath, type OpencodeMessage, type OpencodeRead, type OpencodeReadOptions } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
-import type { HostUsageFs } from '../../../../skills/dispatch/scripts/toolkit/host-usage/types.ts';
+import type { HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
 
 const session = (name: string): string | undefined => name === 'OPENCODE_SESSION_ID' ? 'ses_host-1' : undefined;
@@ -100,4 +100,23 @@ test('opencode host usage reports no records only when no valid message remains'
   })));
   assert.equal(childOnly.unavailable, undefined);
   assert.deepEqual(childOnly.rows, [{ stage: 'plan', role: 'subagent', model: 'm', effort: 'high', input: 4, output: 2 }]);
+});
+
+test('opencode usage row fields carry time, depth and reasoning semantics', async () => {
+  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
+  const result = opencode.read({ ...input, sessionId: 'ses_host-1', budget: { remaining: 10000 } }, port(() => ({
+    messages: [
+      message(0, 2500, 'm0', null, 10, 5),
+      message(2, 4000, 'm2', 'high', 3, 1),
+    ],
+    skipped: 0,
+    truncated: null,
+  })));
+  assert.deepEqual(
+    result.rows.map(r => ({ role: r.role, atMs: r.atMs, depth: r.depth, reasoningInOutput: r.reasoningInOutput })),
+    [
+      { role: 'host', atMs: 2500, depth: 0, reasoningInOutput: false },
+      { role: 'subagent', atMs: 4000, depth: 2, reasoningInOutput: false },
+    ],
+  );
 });

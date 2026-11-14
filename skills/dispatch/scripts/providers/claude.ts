@@ -3,8 +3,8 @@
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
 import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
-import { validSessionId } from './types.ts';
-import { claudeUsage } from '../lib/diagnostic-usage.ts';
+import { validSessionId } from '../lib/session.ts';
+import { claudeUsage } from '../lib/usage/claude.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 export const READ_ONLY_ALLOWED_TOOLS = [

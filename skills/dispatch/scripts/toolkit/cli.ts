@@ -1,4 +1,4 @@
-import type { HostUsageFs } from './host-usage/types.ts';
+import type { HostUsageFs } from '../lib/usage/rows.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';

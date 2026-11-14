@@ -8,7 +8,8 @@ import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import { normalizeAgyModelEffort, decodeAgyGenMetadata, opencodeDbUsage, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/diagnostic-usage.ts';
+import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
+import { opencodeDbUsage } from '../../../skills/dispatch/scripts/lib/usage/opencode.ts';
 import type { OpencodeMessage } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 

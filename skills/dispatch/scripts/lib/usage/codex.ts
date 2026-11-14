@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { counter, note, readErrorReason, readTranscript, stageAt } from './read.ts';
-import type { HostUsageAdapter, HostUsageQuery, HostUsageFs, HostUsageResult, HostRole, HostUsageRow } from './types.ts';
+import type { DiagnosticUsage } from '../../toolkit/types.ts';
+import { counter, counters, note, readErrorReason, readTranscript, row, stageAt, type Row } from './read.ts';
+import { addCounters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 const pattern = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl(?:\.zst)?$/;
 type File = { file: string; id: string; mtime: number; date: string; failed?: boolean };
@@ -33,7 +34,7 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
         const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
         if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
         if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
-        const row: HostUsageRow = { stage: stageAt(query.stages, at), role, model, effort, input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens }; if (typeof u.cached_input_tokens === 'number') row.cacheRead = u.cached_input_tokens; if (typeof u.reasoning_output_tokens === 'number') row.reasoning = u.reasoning_output_tokens; result.rows.push(row); if (role === 'host') hostCount++;
+        const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role, model, effort, depth: role === 'host' ? 0 : 1, atMs: at, reasoningInOutput: true, input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens }; if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens; if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens; result.rows.push(hostRow); if (role === 'host') hostCount++;
       } return valid;
     } catch (error) { if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); return false; }
   }
@@ -58,4 +59,26 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
   // Failed history blocks later files of the same thread.
   for (const f of selected.reverse()) { if (incomplete.has(f.id)) continue; const totals = childSeen.get(f.id) ?? new Set<number>(); if (!f.failed && read(f, 'subagent', totals, true)) childSeen.set(f.id, totals); else incomplete.add(f.id); if (notes.subagent?.['read budget reached']) break; }
   return result;
+}
+
+export function codexUsage(raw: string): DiagnosticUsage | undefined {
+  let total: DiagnosticUsage | undefined;
+  let completed = false;
+  let started = false;
+  for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
+    let event: Row | null;
+    try { event = row(JSON.parse(line)); } catch { return undefined; }
+    if (event?.['type'] === 'turn.started') { started = true; continue; }
+    if (event?.['type'] !== 'turn.completed') continue;
+    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'includes-cache');
+    if (!usage) return undefined;
+    // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.
+    if (!completed || started) {
+      if (!total) total = { ...usage };
+      else addCounters(total, usage);
+      completed = true;
+    }
+    started = false;
+  }
+  return total;
 }

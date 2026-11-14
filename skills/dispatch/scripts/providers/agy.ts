@@ -2,10 +2,10 @@
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
 import path from 'node:path';
-import { agyUsage } from '../lib/diagnostic-usage.ts';
+import { agyUsage } from '../lib/usage/agy.ts';
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
-import { validSessionId } from './types.ts';
+import { validSessionId } from '../lib/session.ts';
 
 export const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
 

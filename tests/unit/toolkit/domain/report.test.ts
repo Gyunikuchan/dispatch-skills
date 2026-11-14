@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { readHostUsage } from '../../../../skills/dispatch/scripts/toolkit/host-usage/index.ts';
+import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
 
@@ -1062,7 +1062,7 @@ test('host platform edges render adapter coverage or explicit unavailability', (
   const missing = render([facts({hostUsage:{platform:null,rows:[],unavailable:'no adapter'},invocations:[]})]);
   assert.ok(missing.includes('| — | — | — | — | — | — | host unavailable: no adapter |'));
   const onlyFs = {list:()=>[],stat:()=>null,read:()=>Buffer.alloc(0),decompress:null};
-  const hostUsage = readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},onlyFs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,input:17,output:4,cacheRead:2}]})}});
+  const hostUsage = readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},onlyFs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,depth:0,atMs:0,reasoningInOutput:false,input:17,output:4,cacheRead:2}]})}});
   const covered = render([facts({hostUsage,invocations:[]})]);
   assert.ok(covered.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
   assert.ok(covered.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
@@ -1136,4 +1136,15 @@ test('origin: duplicate findings merge to fix-induced within one reply and acros
   assert.equal(merged[0]?.origin, 'fix-induced');
   assert.equal(merged[1]?.dupOf, merged[0]?.id);
   assert.equal(collectFindings(2, [...parse('codex[0]'), ...parse('claude[0]', 'original')])[0]?.origin, 'original');
+});
+
+test('bracketed model id renders its name in Tokens by stage', () => {
+  const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5[1m]', usage: {
+    input: 100, output: 10,
+    models: { 'claude-opus-5-5[1m]#high': { input: 100, output: 10 } },
+  } })] })]);
+  const rows = stageRows(text).filter((line) => line.includes('| claude | delegate |'));
+  assert.deepEqual(rows, [
+    '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 |',
+  ]);
 });

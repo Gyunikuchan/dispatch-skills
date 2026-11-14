@@ -16,6 +16,10 @@ export type Location = 'workspace' | 'published' | 'moving-to-workspace' | 'movi
 
 export const FOLDER_NAME = /^\d{8}T\d{4}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/;
+/** Shell-safe session ids only: ids ride on argv and the win32 batch launcher. */
+const VALID_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const validSessionId = (id: string | null | undefined): string | null =>
+  (typeof id === 'string' && VALID_SESSION_ID.test(id) ? id : null);
 const WIN = process.platform === 'win32';
 
 export type Manifest = {

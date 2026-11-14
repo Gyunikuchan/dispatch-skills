@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 16847 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, explorer brief kind selection, utility subagent resolution, Antigravity model/effort normalization, gen_metadata protobuf decoding, native Antigravity host-usage adapter, cleanup evidence rule, and OpenCode session-DB usage reader with host adapter, delegate DB attribution and per-model/effort rendering, the half-open delegate window comment, the explorer split-threshold slot, tolerant help lookup, the grounding Overview table and the criterion-check-tests lint (16877 lines); cutting and consolidation were tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
+  // NOTE: 16847 ceiling covers phase-aware silence limits, resumed usage, per-attempt records, slot resume, explorer brief kind selection, utility subagent resolution, Antigravity model/effort normalization, gen_metadata protobuf decoding, native Antigravity host-usage adapter, cleanup evidence rule, and OpenCode session-DB usage reader with host adapter, delegate DB attribution and per-model/effort rendering, the half-open delegate window comment, the explorer split-threshold slot, tolerant help lookup, the grounding Overview table, the criterion-check-tests lint (16877 lines), and UsageRow fields, readHostUsage projection, usageKey/splitUsageKey, and agy BFS depth (+30 net lines after duplicate counter-sum cuts, 16907 lines); cutting and consolidation were tried first. It is a hint: cut or consolidate first; a genuine new behaviour or rule may raise it with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.
   assert.ok(
-    lines <= 16877,
-    `driver TS LOC ${lines} exceeds 16877 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 16907,
+    `driver TS LOC ${lines} exceeds 16907 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,

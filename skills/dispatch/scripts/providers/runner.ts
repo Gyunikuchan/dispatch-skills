@@ -4,7 +4,8 @@
 
 import path from 'node:path';
 import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
-import { normalizeAgyModelEffort } from '../lib/diagnostic-usage.ts';
+import { normalizeAgyModelEffort } from '../lib/usage/agy.ts';
+import { addCounters } from '../lib/usage/rows.ts';
 import { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
@@ -303,7 +304,7 @@ export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]):
       delete total.actualEffort;
     }
     if (!row.models) completeModels = false;
-    for (const key of USAGE_KEYS) if (row[key] !== undefined) total[key] = (total[key] ?? 0) + row[key];
+    addCounters(total, row);
     if (row.actualModels) {
       for (const m of row.actualModels) {
         if (!modelList.includes(m)) modelList.push(m);
@@ -316,7 +317,7 @@ export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]):
       total.models ??= Object.create(null) as NonNullable<DiagnosticUsage['models']>;
       for (const [model, part] of Object.entries(row.models)) {
         const target = Object.hasOwn(total.models, model) ? total.models[model]! : (total.models[model] = { input: 0, output: 0 });
-        for (const key of USAGE_KEYS) if (part[key] !== undefined) target[key] = (target[key] ?? 0) + part[key];
+        addCounters(target, part);
       }
     }
   }

@@ -66,11 +66,6 @@ export type LaunchRequest = DelegateRequest & {
 
 export type Launch = { argv: readonly string[]; stdin: string | null; env: Readonly<Record<string, string>>; cwd: string; promptFile?: string };
 
-/** Shell-safe session ids only: ids ride on argv and the win32 batch launcher. */
-const VALID_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-export const validSessionId = (id: string | null | undefined): string | null =>
-  (typeof id === 'string' && VALID_SESSION_ID.test(id) ? id : null);
-
 export type ProcessResult = {
   exit: number | null;
   signal: string | null;

@@ -3,8 +3,8 @@
 
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
-import { validSessionId } from './types.ts';
-import { codexUsage } from '../lib/diagnostic-usage.ts';
+import { validSessionId } from '../lib/session.ts';
+import { codexUsage } from '../lib/usage/codex.ts';
 
 const REJECTED = [
   /(?:unrecognized|unknown|unexpected|invalid) (?:option|argument|value)[^\n]*--sandbox/i,
