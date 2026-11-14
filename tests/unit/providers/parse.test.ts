@@ -75,12 +75,12 @@ test('mode-cascade classes are declared per provider: agy token/subscription/exe
   assert.deepEqual([SPECS.claude.modeCascadeOn, SPECS.codex.modeCascadeOn, SPECS.opencode.modeCascadeOn], [[], [], []]);
 });
 
-test('copilot usage unavailable coverage', async () => {
+test('coverage list: copilot usage unavailable coverage', async () => {
   const run = await runDelegate(SPECS.copilot, { ...req, collectUsage: true }, 'cli', runnerPorts(out('A response')));
   assert.equal(run.outcome.status, 'ok');
   assert.equal(run.invocations.length, 1);
   assert.equal(run.invocations[0]?.usage, undefined);
-  assert.equal(run.invocations[0]?.coverage, 'no usage output');
+  assert.deepEqual(run.invocations[0]?.coverage, ['no usage']);
 });
 
 test('copilot unsupported sandbox host startup warning fails closed in the runner', async () => {

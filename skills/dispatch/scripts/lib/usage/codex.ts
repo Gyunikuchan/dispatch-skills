@@ -5,9 +5,10 @@ import { addCounters, type HostRole, type HostStage, type HostUsageAdapter, type
 
 const pattern = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl(?:\.zst)?$/;
 type File = { file: string; id: string; mtime: number; date: string; failed?: boolean };
-export const codex: HostUsageAdapter = { sessionEnv: ['CODEX_THREAD_ID'], read(query, fs) { return collect(query, fs); } };
-function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
+export const codex: HostUsageAdapter = { sessionEnv: ['CODEX_THREAD_ID'], read(query, fs) { return collectCodexUsage(query, fs); } };
+export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} }; const notes = result.notes!;
+  const rootRole = options?.rootRole ?? 'host';
   const root = path.join(query.env('CODEX_HOME') || path.join(query.home, '.codex'), 'sessions');
   const dirs: { dir: string; date: string }[] = []; const failedLists = new Set<string>();
   function list(dir: string, role: HostRole): string[] { try { return fs.list(dir); } catch (error) { failedLists.add(dir); if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); return []; } }
@@ -18,24 +19,55 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
   if (failedLists.size) return result;
   hosts.sort((a, b) => a.file.localeCompare(b.file)); if (!hosts.length) return { ...result, unavailable: result.unavailable ?? 'host id file missing' };
   const seen = new Set<number>(); let hostCount = 0;
-  function read(f: File, role: HostRole, totals: Set<number>, verify: boolean): boolean {
+  const acceptedDepths = new Map<string, number>([[query.sessionId, 0]]);
+  type Deferred = { f: File; parentId: string };
+  const deferred: Deferred[] = [];
+  const deferredIds = new Set<string>();
+
+  function parseLines(lines: string[], startIndex: number, role: HostRole, depth: number, totals: Set<number>, model = '', effort: string | null = null) {
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i]!; if (!line.trim()) continue;
+      let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
+      if (!entry || typeof entry !== 'object') continue;
+      if (entry.type === 'turn_context') { model = typeof entry.payload?.model === 'string' ? entry.payload.model : ''; effort = typeof entry.payload?.effort === 'string' ? entry.payload.effort : null; }
+      if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
+      const info = entry.payload.info; const total = info?.total_token_usage?.total_tokens; const u = info?.last_token_usage;
+      const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+      if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
+      if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
+      const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at, reasoningInOutput: true, input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens };
+      if (!/\.\d+/.test(entry.timestamp)) hostRow.wholeSecond = true;
+      if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens;
+      if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens;
+      result.rows.push(hostRow); if (role === 'host') hostCount++;
+    }
+  }
+
+  function read(f: File, role: HostRole, totals: Set<number>, verify: boolean, forcedDepth?: number): boolean {
     try {
       const data = readTranscript(fs, f.file, query.budget);
       if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'unverified candidates'); return false; }
       if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return false; }
-      const lines = data.text.split('\n'); let model = ''; let effort: string | null = null; let valid = !verify;
-      let header = verify;
-      for (let i = 0; i < lines.length; i++) { const line = lines[i]!; if (!line.trim()) continue; let entry: any; try { entry = JSON.parse(line); } catch { if (!verify || header) note(notes, role, 'unparsed lines'); if (header) break; continue; }
-        if (!entry || typeof entry !== 'object') { if (header) break; continue; }
-        if (header) { header = false; valid = entry.type === 'session_meta' && entry.payload?.parent_thread_id === query.sessionId && entry.payload?.thread_source === 'subagent'; if (!valid) break; }
-        if (entry.type === 'turn_context') { model = typeof entry.payload?.model === 'string' ? entry.payload.model : ''; effort = typeof entry.payload?.effort === 'string' ? entry.payload.effort : null; }
-        if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
-        const info = entry.payload.info; const total = info?.total_token_usage?.total_tokens; const u = info?.last_token_usage;
-        const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
-        if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
-        if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
-        const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role, model, effort, depth: role === 'host' ? 0 : 1, atMs: at, reasoningInOutput: true, input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens }; if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens; if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens; result.rows.push(hostRow); if (role === 'host') hostCount++;
-      } return valid;
+      const lines = data.text.split('\n');
+      if (!verify) { parseLines(lines, 0, role, forcedDepth ?? 0, totals); return true; }
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!; if (!line.trim()) continue;
+        let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); return false; }
+        if (!entry || typeof entry !== 'object') return false;
+        const parentId = entry.payload?.parent_thread_id;
+        if (entry.type !== 'session_meta' || entry.payload?.thread_source !== 'subagent' || typeof parentId !== 'string' || !parentId) return false;
+        const parentDepth = acceptedDepths.get(parentId);
+        if (parentDepth === undefined || deferredIds.has(f.id)) {
+          deferredIds.add(f.id);
+          deferred.push({ f, parentId });
+          return true;
+        }
+        const depth = parentDepth + 1;
+        acceptedDepths.set(f.id, depth);
+        parseLines(lines, i + 1, role, depth, totals);
+        return true;
+      }
+      return false;
     } catch (error) { if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); return false; }
   }
   for (const host of hosts) { if (host.failed || !read(host, 'host', seen, false)) break; if (notes.host?.['read budget reached']) return result; }
@@ -58,6 +90,28 @@ function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
   const childSeen = new Map<string, Set<number>>();
   // Failed history blocks later files of the same thread.
   for (const f of selected.reverse()) { if (incomplete.has(f.id)) continue; const totals = childSeen.get(f.id) ?? new Set<number>(); if (!f.failed && read(f, 'subagent', totals, true)) childSeen.set(f.id, totals); else incomplete.add(f.id); if (notes.subagent?.['read budget reached']) break; }
+  let pending = deferred;
+  const deferredIncomplete = new Set<string>();
+  while (pending.length && !notes.subagent?.['read budget reached']) {
+    const next: Deferred[] = []; let added = false;
+    for (const item of pending) {
+      if (deferredIncomplete.has(item.f.id)) continue;
+      const parentDepth = acceptedDepths.get(item.parentId);
+      if (parentDepth === undefined) { next.push(item); continue; }
+      const depth = parentDepth + 1;
+      const totals = childSeen.get(item.f.id) ?? new Set<number>();
+      if (read(item.f, 'subagent', totals, false, depth)) {
+        acceptedDepths.set(item.f.id, depth);
+        childSeen.set(item.f.id, totals);
+        added = true;
+      } else {
+        deferredIncomplete.add(item.f.id);
+      }
+      if (notes.subagent?.['read budget reached']) break;
+    }
+    if (!added) break;
+    pending = next;
+  }
   return result;
 }
 
@@ -70,8 +124,9 @@ export function codexUsage(raw: string): DiagnosticUsage | undefined {
     try { event = row(JSON.parse(line)); } catch { return undefined; }
     if (event?.['type'] === 'turn.started') { started = true; continue; }
     if (event?.['type'] !== 'turn.completed') continue;
-    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'includes-cache');
+    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'uncached');
     if (!usage) return undefined;
+    if (usage.cacheRead !== undefined) usage.input = Math.max(0, usage.input - usage.cacheRead);
     // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.
     if (!completed || started) {
       if (!total) total = { ...usage };

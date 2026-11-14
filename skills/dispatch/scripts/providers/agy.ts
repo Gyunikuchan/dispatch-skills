@@ -3,6 +3,7 @@
 
 import path from 'node:path';
 import { agyUsage } from '../lib/usage/agy.ts';
+import { readDelegateSession } from '../lib/usage/delegate.ts';
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
@@ -49,6 +50,27 @@ export const agy: ProviderSpec = {
     return agyUsage(raw, {
       ...(appDataDir ? { appDataDir } : {}),
       ...(context?.readSqliteGenMetadata ? { readSqliteGenMetadata: context.readSqliteGenMetadata } : {}),
+      ...(context?.transcripts?.budget ? { budget: context.transcripts.budget } : {}),
+    });
+  },
+  sessionUsage(raw, context, stdoutHasUsage) {
+    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
+    const sessionId = parseEnvelope(raw)?.conversationId ?? null;
+    if (!sessionId) return { complete: false };
+    const appDataDir = context.appDataDir
+      ?? (context.platform?.home && context.mode ? path.join(context.platform.home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
+    return readDelegateSession({
+      platform: 'agy',
+      sessionId,
+      startMs: context.launchStartMs,
+      endMs: context.launchEndMs,
+      resumed: context.resumed ?? false,
+      stdoutHasUsage,
+      home: context.platform.home,
+      env: (name) => context.env[name],
+      ...(appDataDir ? { appDataDir } : {}),
+      fs: context.transcripts.fs,
+      budget: context.transcripts.budget,
     });
   },
   resumeUsage: 'cumulative',

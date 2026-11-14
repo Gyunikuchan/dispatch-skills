@@ -206,9 +206,32 @@ test('index usage row fields project to the persisted HostUsageRow shape', () =>
     codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows: [row] }) },
   });
   assert.deepEqual(result.rows, [
-    { stage: 'spec', role: 'host', model: 'm', effort: 'high', input: 10, output: 2, cacheRead: 1 },
+    { stage: 'spec', role: 'host', model: 'm', effort: 'high', input: 10, output: 2, cacheRead: 1, bands: { le100k: { input: 10, output: 2, cacheRead: 1 } }, reasoningInOutput: true },
   ]);
   assert.equal('atMs' in result.rows[0]!, false);
   assert.equal('depth' in result.rows[0]!, false);
-  assert.equal('reasoningInOutput' in result.rows[0]!, false);
+  assert.equal(result.rows[0]?.reasoningInOutput, true);
+});
+
+test('host phase: folds rows per stage, phase, role and key with bands and bounds each group', () => {
+  const rows = [
+    { stage: 'plan' as const, role: 'host' as const, model: 'm', effort: 'high', input: 10, output: 1, atMs: 500, depth: 0, reasoningInOutput: true },
+    { stage: 'plan' as const, role: 'host' as const, model: 'm', effort: 'high', input: 20, output: 2, atMs: 1500, depth: 0, reasoningInOutput: true },
+    { stage: 'plan' as const, role: 'host' as const, model: 'm', effort: 'high', input: 30, output: 3, atMs: 2500, depth: 0, reasoningInOutput: true },
+    { stage: 'plan' as const, role: 'host' as const, model: 'm', effort: 'high', input: 40, output: 4, atMs: 3500, depth: 0, reasoningInOutput: true },
+  ];
+  const result = readHostUsage('codex', {
+    ...input,
+    env: () => 'host',
+    phases: [{ phase: 'phase-a', atMs: 1000 }, { phase: 'phase-b', atMs: 2000 }, { phase: 'phase-a', atMs: 3000 }],
+  } as never, memoryFs({}), {
+    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows }) },
+  });
+  assert.equal(result.rows.length, 3);
+  assert.equal((result.rows[0] as { phase?: string }).phase, undefined);
+  assert.equal((result.rows[1] as { phase?: string }).phase, 'phase-a');
+  assert.equal(result.rows[1]?.input, 60);
+  assert.equal((result.rows[2] as { phase?: string }).phase, 'phase-b');
+  assert.equal(result.rows[2]?.input, 30);
+  assert.ok((result.rows[1] as { bands?: unknown }).bands);
 });

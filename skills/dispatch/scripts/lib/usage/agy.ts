@@ -3,13 +3,14 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
 import { MAX_FILE_BYTES, count, counter, counters, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
-import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
+import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type ReadBudget, type UsageRow } from './rows.ts';
 
 const ID_REGEX = /^[A-Za-z0-9-]+$/;
 
 type ParsedStep = {
   step_index: number;
   atMs: number;
+  wholeSecond?: true;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;
@@ -18,19 +19,20 @@ type ParsedStep = {
 export const agy: HostUsageAdapter = {
   sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
   read(query, fsPort) {
-    return collect(query, fsPort);
+    return collectAgyUsage(query, fsPort);
   },
 };
 
-function collect(query: HostUsageQuery, fsPort: HostUsageFs): HostUsageResult {
+export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, options?: { appDataDir?: string; rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
+  const rootRole = options?.rootRole ?? 'host';
 
   if (!ID_REGEX.test(query.sessionId)) {
     return { ...result, unavailable: 'invalid host id' };
   }
 
-  const root = query.env('ANTIGRAVITY_APP_DATA_DIR') || path.join(query.home, '.gemini', 'antigravity');
+  const root = options?.appDataDir || query.env('ANTIGRAVITY_APP_DATA_DIR') || path.join(query.home, '.gemini', 'antigravity');
   const hostTranscriptFile = path.join(root, 'brain', query.sessionId, '.system_generated', 'logs', 'transcript.jsonl');
 
   let hostStat: { size: number; mtimeMs: number } | null = null;
@@ -152,6 +154,7 @@ function collect(query: HostUsageQuery, fsPort: HostUsageFs): HostUsageResult {
         const parsed: ParsedStep = {
           step_index: entry.step_index,
           atMs: at,
+          ...(typeof entry.created_at === 'string' && !/\.\d+/.test(entry.created_at) ? { wholeSecond: true as const } : {}),
           input_tokens: entry.input_tokens,
           output_tokens: entry.output_tokens,
         };
@@ -245,6 +248,8 @@ function collect(query: HostUsageQuery, fsPort: HostUsageFs): HostUsageResult {
       if (k < steps.length || rows.length !== steps.length) {
         note(notes, role, 'unparsed lines');
       }
+    } else if (rootRole === 'delegate' && steps.length > 0 && !notes[role]?.['read budget reached'] && !notes[role]?.['unreadable files']) {
+      note(notes, role, 'unreadable files');
     }
 
     let inWindowCount = 0;
@@ -269,11 +274,12 @@ function collect(query: HostUsageQuery, fsPort: HostUsageFs): HostUsageResult {
 
       const hostRow: UsageRow & { stage: HostStage } = {
         stage: stageAt(query.stages, s.atMs),
-        role,
+        role: role === 'host' ? rootRole : role,
         model,
         effort,
         depth,
         atMs: s.atMs,
+        ...(s.wholeSecond ? { wholeSecond: true as const } : {}),
         reasoningInOutput: false,
         input: s.input_tokens,
         output: s.output_tokens,
@@ -645,6 +651,7 @@ export function readAgySqliteGenMetadata(
 export type UsageContext = {
   appDataDir?: string;
   readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null;
+  budget?: ReadBudget;
 };
 
 export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage | undefined {
@@ -663,13 +670,19 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
   const convId = typeof convIdRaw === 'string' && /^[A-Za-z0-9-]+$/.test(convIdRaw) ? convIdRaw : null;
 
   let sqliteBlobs: readonly Uint8Array[] | null = null;
-  if (convId && (context?.appDataDir || context?.readSqliteGenMetadata)) {
+  const budget = context?.budget;
+  const maxBytes = budget ? Math.min(MAX_FILE_BYTES, budget.remaining) : MAX_FILE_BYTES;
+  if (convId && maxBytes > 0 && (context?.appDataDir || context?.readSqliteGenMetadata)) {
     const dbPath = context.appDataDir ? path.join(context.appDataDir, 'conversations', `${convId}.db`) : '';
     try {
       sqliteBlobs = context.readSqliteGenMetadata
         ? context.readSqliteGenMetadata(dbPath || convId)
-        : dbPath ? readAgySqliteGenMetadata(dbPath, { maxBytes: MAX_FILE_BYTES }) : null;
+        : dbPath ? readAgySqliteGenMetadata(dbPath, { maxBytes }) : null;
     } catch {}
+    if (budget && sqliteBlobs) {
+      const blobBytes = sqliteBlobs.reduce((sum, b) => sum + b.byteLength, 0);
+      budget.remaining = Math.max(0, budget.remaining - blobBytes);
+    }
   }
 
   if (sqliteBlobs && sqliteBlobs.length > 0) {
@@ -680,25 +693,34 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
     }
     if (modelsList.length > 0) {
       out.actualModels = modelsList.slice(0, 8);
-      if (modelsList.length === 1) {
-        const m = modelsList[0]!;
-        out.models = {
-          [m]: {
-            input: out.input,
-            output: out.output,
-            ...(out.cacheRead !== undefined ? { cacheRead: out.cacheRead } : {}),
-            ...(out.reasoning !== undefined ? { reasoning: out.reasoning } : {}),
-          },
-        };
-      } else {
-        const perModel: Record<string, DiagnosticModelUsage> = Object.create(null);
-        let canSum = true;
-        for (const r of rows) {
-          if (!r.model || r.input === undefined || r.output === undefined) { canSum = false; break; }
-          const target = perModel[r.model] ??= { input: 0, output: 0 };
-          addCounters(target, r as Counters);
+      if (rows.every((r) => r.model !== null)) {
+        if (modelsList.length === 1) {
+          const m = modelsList[0]!;
+          out.models = {
+            [m]: {
+              input: out.input,
+              output: out.output,
+              ...(out.cacheRead !== undefined ? { cacheRead: out.cacheRead } : {}),
+              ...(out.reasoning !== undefined ? { reasoning: out.reasoning } : {}),
+            },
+          };
+        } else {
+          const perModel: Record<string, DiagnosticModelUsage> = Object.create(null);
+          const sum: Counters = { input: 0, output: 0 };
+          let canSum = true;
+          for (const r of rows) {
+            if (!r.model || r.input === undefined || r.output === undefined) { canSum = false; break; }
+            const target = perModel[r.model] ??= { input: 0, output: 0 };
+            addCounters(target, r as Counters);
+            addCounters(sum, r as Counters);
+          }
+          const matchesEnvelope = canSum
+            && sum.input === out.input
+            && sum.output === out.output
+            && (sum.cacheRead ?? 0) === (out.cacheRead ?? 0)
+            && (sum.reasoning ?? 0) === (out.reasoning ?? 0);
+          if (matchesEnvelope) out.models = perModel;
         }
-        if (canSum) out.models = perModel;
       }
     }
     const lastRow = rows.at(-1)!;

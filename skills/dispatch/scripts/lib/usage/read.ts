@@ -1,5 +1,5 @@
 import type { DiagnosticUsage } from '../../toolkit/types.ts';
-import type { HostNote, HostNotes, HostRole, HostUnavailable, HostUsageFs, Milestone, ReadBudget } from './rows.ts';
+import type { HostNote, HostNotes, HostRole, HostUnavailable, HostUsageFs, Milestone, PhaseMilestone, ReadBudget } from './rows.ts';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
@@ -22,6 +22,11 @@ export function readTranscript(fs: HostUsageFs, file: string, budget: ReadBudget
   budget.remaining -= decoded.length; return { text: decoded.toString('utf8') };
 }
 export function stageAt(stages: readonly Milestone[], ms: number) { let selected = stages[0]; for (const stage of stages) if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) selected = stage; return selected?.stage ?? 'spec'; }
+export function phaseAt(phases: readonly PhaseMilestone[], ms: number): string | undefined {
+  let selected: PhaseMilestone | undefined;
+  for (const phase of phases) if (phase.atMs <= ms && (!selected || phase.atMs >= selected.atMs)) selected = phase;
+  return selected?.phase;
+}
 export function readErrorReason(error: unknown): HostUnavailable { const code = (error as NodeJS.ErrnoException)?.code; return (['ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'EMFILE'].includes(code ?? '') ? `read-error:${code}` : 'read-error:EUNKNOWN') as HostUnavailable; }
 export function note(notes: HostNotes, role: HostRole, name: HostNote, count = 1) { const target = notes[role] ??= {}; target[name] = (target[name] ?? 0) + count; }
 export const counter = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;

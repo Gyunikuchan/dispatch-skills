@@ -5,6 +5,7 @@ import { classifyFailure, failOutcome } from './runner.ts';
 import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 import { codexUsage } from '../lib/usage/codex.ts';
+import { readDelegateSession } from '../lib/usage/delegate.ts';
 
 const REJECTED = [
   /(?:unrecognized|unknown|unexpected|invalid) (?:option|argument|value)[^\n]*--sandbox/i,
@@ -35,6 +36,23 @@ export function parseCodexEvents(raw: string): { answer: string; threadId: strin
 
 export const codex: ProviderSpec = {
   usage: codexUsage,
+  sessionUsage(raw, context, stdoutHasUsage) {
+    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
+    const sessionId = parseCodexEvents(raw).threadId;
+    if (!sessionId) return { complete: false };
+    return readDelegateSession({
+      platform: 'codex',
+      sessionId,
+      startMs: context.launchStartMs,
+      endMs: context.launchEndMs,
+      resumed: context.resumed ?? false,
+      stdoutHasUsage,
+      home: context.platform.home,
+      env: (name) => context.env[name],
+      fs: context.transcripts.fs,
+      budget: context.transcripts.budget,
+    });
+  },
   resumeUsage: 'cumulative',
   id: 'codex',
   modes: [

@@ -21,7 +21,7 @@ function classify(text: string): FailureClass | null {
 
 export const copilot: ProviderSpec = {
   id: 'copilot',
-  usageUnavailable: 'no usage output',
+  usageUnavailable: 'no usage',
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'copilot.cmd' : 'copilot', env.os === 'win32' ? 'copilot.exe' : join(env, env.home, '.local', 'bin', 'copilot')] },
     { id: 'desktop', candidates: (env) => env.os === 'darwin'

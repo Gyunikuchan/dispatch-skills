@@ -3,7 +3,7 @@ import { zstdCompressSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { nodeHostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
-import { codex } from '../../../../skills/dispatch/scripts/lib/usage/codex.ts';
+import { codex, codexUsage } from '../../../../skills/dispatch/scripts/lib/usage/codex.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
 const rollout = (time: string, id: string, compressed = false) => `/home/.codex/sessions/1970/01/01/rollout-1970-01-01T00-${time}-${id}.jsonl${compressed ? '.zst' : ''}`;
@@ -35,6 +35,7 @@ test('codex counts resumed host and direct child usage row fields once by model'
     ['host', 'other', 'low', 0, 5000, true, 6, 3, 0, undefined],
     ['subagent', 'm', 'high', 1, 3000, true, 6, 5, 4, 2],
     ['subagent', 'm', 'high', 1, 4000, true, 3, 2, 1, undefined],
+    ['subagent', 'm', 'high', 2, 3000, true, 6, 5, 4, 2],
   ]);
 });
 
@@ -315,4 +316,40 @@ test('codex reports and blocks listed host and child files that vanish before di
   const singleHost = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });
   const vanishRead = codex.read({ ...query, budget: { remaining: 10000 } }, { ...singleHost, stat: file => file.endsWith('host.jsonl') && ++calls === 2 ? null : singleHost.stat(file) });
   assert.equal(vanishRead.unavailable, 'read-error:ENOENT'); assert.deepEqual(vanishRead.rows, []);
+});
+
+test('codex nested subagents count depth-3 and out-of-order headers without noting unrelated sessions', () => {
+  const host = rollout('00-00', 'host');
+  const depth3 = rollout('00-01', 'd3');
+  const depth2 = rollout('00-02', 'd2');
+  const depth1 = rollout('00-03', 'd1');
+  const unrelated = rollout('00-04', 'unrelated');
+  const result = codex.read({ ...query, budget: { remaining: 100000 } }, memoryFs({
+    [host]: lines(meta('', ''), context, event(1)),
+    [depth3]: lines(meta('d2'), context, event(4)),
+    [depth2]: lines(meta('d1'), context, event(3)),
+    [depth1]: lines(meta('host'), context, event(2)),
+    [unrelated]: lines(meta('unknown-parent'), context, event(5)),
+  }));
+  assert.deepEqual(
+    result.rows.map(r => [r.role, r.depth]),
+    [['host', 0], ['subagent', 1], ['subagent', 2], ['subagent', 3]],
+  );
+  assert.equal(result.notes?.subagent, undefined);
+});
+
+test('codex stdout usage subtracts cached tokens into uncached input', () => {
+  const raw = [
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 3 } }),
+  ].join('\n');
+  assert.deepEqual(codexUsage(raw), {
+    input: 60,
+    output: 10,
+    cacheRead: 40,
+    reasoning: 3,
+    scope: 'invocation',
+    provenance: 'codex.turn.completed',
+    inputSemantics: 'uncached',
+  });
 });

@@ -9,9 +9,8 @@ import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
-import { opencodeDbUsage } from '../../../skills/dispatch/scripts/lib/usage/opencode.ts';
-import type { OpencodeMessage } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
+import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 
 const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
   codex: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8')),
@@ -22,14 +21,14 @@ const fixture = (provider: string): { cliVersion: string; stdout: string } => {
   return { cliVersion: base.cliVersion, stdout: base.stdout };
 };
 
-test('Codex completed turn maps token usage and retains cache overlap semantics', () => {
+test('Codex completed turn maps token usage to uncached input', () => {
   const f = fixture('codex'), result = codex.usage!(f.stdout);
   assert.deepEqual(result, {
-    input: 275615,
+    input: 54559,
     output: 1468,
     scope: 'invocation',
     provenance: 'codex.turn.completed',
-    inputSemantics: 'includes-cache',
+    inputSemantics: 'uncached',
     cacheRead: 221056,
     cacheWrite: 0,
     reasoning: 70,
@@ -93,65 +92,17 @@ test('opencode json usage parses probe fixture', () => {
   });
 });
 
-test('OpenCode DB usage folds messages into per-model and effort keys', () => {
-  const usage = opencodeDbUsage([
-    { depth: 0, createdMs: 1, model: 'p/a', effort: 'high', input: 10, output: 2, cacheRead: 3, cacheWrite: 0, reasoning: 1 },
-    { depth: 1, createdMs: 2, model: 'p/a', effort: 'high', input: 5, output: 1 },
-    { depth: 2, createdMs: 3, model: 'p/b', effort: 'low', input: 7, output: 4, reasoning: 2 },
-  ]);
-  assert.equal(usage?.provenance, 'opencode.db.messages');
-  assert.equal(usage?.inputSemantics, 'uncached');
-  assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite, usage?.reasoning], [22, 7, 3, 0, 3]);
-  assert.deepEqual(usage?.actualModels, ['p/a', 'p/b']);
-  assert.equal(usage?.actualEffort, null);
-  assert.deepEqual({ ...usage?.models }, {
-    'p/a#high': { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 },
-    'p/b#low': { input: 7, output: 4, reasoning: 2 },
-  });
-});
-
-test('OpenCode DB usage shares one effort and leaves an empty part for a missing model or effort', () => {
-  const shared = opencodeDbUsage([
-    { depth: 0, createdMs: 1, model: 'p/a', effort: 'max', input: 1, output: 1 },
-    { depth: 1, createdMs: 2, model: 'p/a', effort: 'max', input: 2, output: 3 },
-  ]);
-  assert.equal(shared?.actualEffort, 'max');
-  const missing = opencodeDbUsage([
-    { depth: 0, createdMs: 1, model: null, effort: 'max', input: 1, output: 1 },
-    { depth: 0, createdMs: 2, model: 'p/a', effort: null, input: 2, output: 2 },
-    { depth: 0, createdMs: 3, model: null, effort: null, input: 3, output: 3 },
-  ]);
-  assert.deepEqual({ ...missing?.models }, {
-    '#max': { input: 1, output: 1 },
-    'p/a#': { input: 2, output: 2 },
-    '#': { input: 3, output: 3 },
-  });
-  assert.deepEqual(missing?.actualModels, ['p/a']);
-  assert.equal(missing?.actualEffort, null);
-});
-
-test('OpenCode DB usage caps measured models at eight while keeping every model and effort key', () => {
-  const messages: OpencodeMessage[] = Array.from({ length: 10 }, (_, index) => ({
-    depth: 0, createdMs: index, model: `p/m${index}`, effort: 'low', input: 1, output: 1,
-  }));
-  const usage = opencodeDbUsage(messages);
-  assert.equal(usage?.actualModels?.length, 8);
-  assert.deepEqual(usage?.actualModels, Array.from({ length: 8 }, (_, index) => `p/m${index}`));
-  assert.equal(Object.keys(usage?.models ?? {}).length, 10);
-  assert.deepEqual([usage?.input, usage?.output, usage?.actualEffort], [10, 10, 'low']);
-});
-
 const codexStarted = () => JSON.stringify({ type: 'turn.started' });
 const codexCompleted = (input: number, output: number) => JSON.stringify({
   type: 'turn.completed',
   usage: { input_tokens: input, output_tokens: output, cached_input_tokens: 0, cache_write_input_tokens: 0, reasoning_output_tokens: 0 },
 });
 
-test('codex sums distinct turns', () => {
+test('codex sums distinct turns with uncached input', () => {
   const usage = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(200, 20)].join('\n'));
   assert.deepEqual(usage, {
     input: 300, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 0,
-    scope: 'invocation', provenance: 'codex.turn.completed', inputSemantics: 'includes-cache',
+    scope: 'invocation', provenance: 'codex.turn.completed', inputSemantics: 'uncached',
   });
   const equalTurns = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'));
   assert.equal(equalTurns?.input, 200);
@@ -443,4 +394,161 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('delegate session id extraction across providers and agy budget skip', () => {
+  const platform: PlatformEnv = {
+    os: process.platform as PlatformEnv['os'],
+    arch: 'x64',
+    wsl: false,
+    bubblewrap: false,
+    argvLimit: 100000,
+    home: '/home',
+    path: [],
+    pathExt: [],
+  };
+  const startMs = Date.parse('2026-11-14T08:00:10.500Z');
+  const endMs = Date.parse('2026-11-14T08:00:20.000Z');
+
+  // Claude session_id
+  const claudeFile = '/home/.claude/projects/-repo/c-sess-1.jsonl';
+  const claudeFs = memoryFs({
+    [claudeFile]: lines({
+      type: 'assistant',
+      timestamp: '2026-11-14T08:00:12.100Z',
+      message: { id: 'm1', model: 'claude-haiku-5-5', usage: { input_tokens: 15, output_tokens: 3 } },
+    }),
+  });
+  const claudeRes = claude.sessionUsage?.(
+    JSON.stringify({ type: 'result', session_id: 'c-sess-1', result: 'ok' }),
+    { mode: 'cli', platform, env: {}, cwd: '/repo', launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: claudeFs, budget: { remaining: 100_000 } } },
+    true,
+  );
+  assert.equal(claudeRes?.complete, true);
+  assert.equal(claudeRes?.usage?.input, 15);
+
+  // Codex thread.started.thread_id
+  const codexFile = '/home/.codex/sessions/2026/11/14/rollout-2026-11-14T08-00-00-x-sess-1.jsonl';
+  const codexFs = memoryFs({
+    [codexFile]: lines(
+      { type: 'turn_context', payload: { model: 'gpt-6.1-terra', effort: 'high' } },
+      {
+        type: 'event_msg',
+        timestamp: '2026-11-14T08:00:12.100Z',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { total_tokens: 25 }, last_token_usage: { input_tokens: 20, output_tokens: 5 } },
+        },
+      },
+    ),
+  }, { [codexFile]: startMs });
+  const codexRes = codex.sessionUsage?.(
+    lines({ type: 'thread.started', thread_id: 'x-sess-1' }),
+    { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: codexFs, budget: { remaining: 100_000 } } },
+    true,
+  );
+  assert.equal(codexRes?.complete, true);
+  assert.equal(codexRes?.usage?.input, 20);
+
+  // OpenCode sessionID
+  const opencodeFs = {
+    ...memoryFs({}),
+    opencodeMessages: () => ({
+      messages: [{ depth: 0, createdMs: startMs + 1000, model: 'opencode-go/m1', effort: 'low', input: 30, output: 6 }],
+      skipped: 0,
+      truncated: null,
+    }),
+  };
+  const opencodeRes = opencode.sessionUsage?.(
+    lines({ type: 'step_finish', sessionID: 'o-sess-1', part: { tokens: { input: 30, output: 6 } } }),
+    { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: opencodeFs, budget: { remaining: 100_000 } } },
+    true,
+  );
+  assert.equal(opencodeRes?.complete, true);
+  assert.equal(opencodeRes?.usage?.input, 30);
+
+  // agy conversationId, conversation_id, conversation.id
+  const agyTranscript = '/home/.gemini/antigravity-cli/brain/a-sess-1/.system_generated/logs/transcript.jsonl';
+  const agyDb = '/home/.gemini/antigravity-cli/conversations/a-sess-1.db';
+  const agyBlob = buildGenMetadataBlob({
+    input: 40,
+    output: 8,
+    modelSlug: 'gemini-4-argon',
+    displayName: 'Gemini 4 Argon (High)',
+    lastStepIndex: 0,
+  });
+  const agyFs = {
+    ...memoryFs({
+      [agyTranscript]: lines({
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-14T08:00:12.100Z',
+        input_tokens: 40,
+        output_tokens: 8,
+      }),
+      [agyDb]: Buffer.from('sqlite'),
+    }),
+    sqliteGenMetadata: () => [agyBlob],
+  };
+  for (const payload of [
+    { conversationId: 'a-sess-1', response: 'ok' },
+    { conversation_id: 'a-sess-1', response: 'ok' },
+    { conversation: { id: 'a-sess-1' }, response: 'ok' },
+  ]) {
+    const agyRes = agy.sessionUsage?.(
+      JSON.stringify(payload),
+      { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: agyFs, budget: { remaining: 100_000 } } },
+      true,
+    );
+    assert.equal(agyRes?.complete, true);
+    assert.equal(agyRes?.usage?.input, 40);
+  }
+
+  // agy usage skips SQLite read when budget is spent
+  let sqliteCalls = 0;
+  const spentAgy = agy.usage?.(
+    JSON.stringify({ conversation_id: 'a-sess-1', usage: { input_tokens: 10, output_tokens: 2 } }),
+    {
+      mode: 'cli',
+      platform,
+      env: {},
+      readSqliteGenMetadata: () => { sqliteCalls++; return []; },
+      transcripts: { fs: agyFs, budget: { remaining: 0 } },
+    },
+  );
+  assert.equal(sqliteCalls, 0);
+  assert.equal(spentAgy?.input, 10);
+});
+
+test('agy fallback models omits models map on mismatched sums or undecodable model row', () => {
+  const platform: PlatformEnv = {
+    os: process.platform as PlatformEnv['os'],
+    arch: 'x64',
+    wsl: false,
+    bubblewrap: false,
+    argvLimit: 100000,
+    home: '/home',
+    path: [],
+    pathExt: [],
+  };
+
+  const blobA = buildGenMetadataBlob({ input: 100, output: 10, modelSlug: 'gemini-4-argon', displayName: 'Gemini 4 Argon (High)' });
+  const blobB = buildGenMetadataBlob({ input: 50, output: 5, modelSlug: 'gemini-3.8-flash', displayName: 'Gemini 3.8 Flash (Low)' });
+  const blobNoModel = buildGenMetadataBlob({ input: 50, output: 5 });
+
+  // Multi-model sums differ from envelope totals (150 != 200)
+  const mismatched = agy.usage?.(
+    JSON.stringify({ conversation_id: 'c-mismatch', usage: { input_tokens: 200, output_tokens: 15 } }),
+    { mode: 'cli', platform, env: {}, readSqliteGenMetadata: () => [blobA, blobB] },
+  );
+  assert.deepEqual(mismatched?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
+  assert.equal(mismatched?.models, undefined);
+
+  // One known model + one undecodable model row
+  const undecodable = agy.usage?.(
+    JSON.stringify({ conversation_id: 'c-undecodable', usage: { input_tokens: 150, output_tokens: 15 } }),
+    { mode: 'cli', platform, env: {}, readSqliteGenMetadata: () => [blobA, blobNoModel] },
+  );
+  assert.deepEqual(undecodable?.actualModels, ['gemini-4-argon']);
+  assert.equal(undecodable?.models, undefined);
 });

@@ -3,12 +3,14 @@
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
 import path from 'node:path';
-import type { FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
+import type { CoverageReason, FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import { normalizeAgyModelEffort } from '../lib/usage/agy.ts';
-import { addCounters } from '../lib/usage/rows.ts';
+import { nodeHostUsageFs } from '../lib/usage/index.ts';
+import { MAX_TOTAL_BYTES } from '../lib/usage/read.ts';
+import { addCounters, type HostUsageFs } from '../lib/usage/rows.ts';
 import { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { OsId } from '../lib/platform.ts';
-import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome, UsageBaseline } from './types.ts';
 
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
@@ -285,7 +287,7 @@ export const failOutcome = (cls: FailureClass, detail: string): Extract<RunOutco
 
 export const tail = (text: string, max = 2000): string => (text.length > max ? text.slice(-max) : text);
 
-const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const;
+const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;
 /** Combine invocation deltas for a provider session, including per-model attribution. */
 export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
@@ -299,6 +301,8 @@ export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]):
       delete total.models;
       delete total.cacheRead;
       delete total.cacheWrite;
+      delete total.cacheWrite5m;
+      delete total.cacheWrite1h;
       delete total.reasoning;
       delete total.actualModels;
       delete total.actualEffort;
@@ -394,12 +398,13 @@ function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefine
 }
 // SECTION: runDelegate
 
-export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void };
+export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void; elapsed?(): number };
 
 export type RunnerPorts = {
   process: ProcessPort;
   clock: RunnerClock;
   fs: RunnerFs;
+  usageFs?: HostUsageFs;
   env: Readonly<Record<string, string | undefined>>;
   platform: PlatformEnv;
   /** Resolved executable for the mode (discovery). */
@@ -589,7 +594,8 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     let stop: (() => void) | null = null;
     stop = ports.clock.every(ms, () => { stop?.(); resolve(); });
   });
-  let previousEndMs: number | null = null;
+  let previousEndMs: number | null = typeof req.usageWindowEndMs === 'number' && Number.isFinite(req.usageWindowEndMs) ? req.usageWindowEndMs : null;
+  let baseline: UsageBaseline = req.usageBaseline ?? 'cumulative';
   for (;;) {
     const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
     const isResume = current.resume !== null;
@@ -606,6 +612,16 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       return unlaunched(pre.outcome, attempts, briefFile, steps);
     }
+    let clockBehind = false;
+    if (isResume && previousEndMs !== null) {
+      const elapsed = ports.clock.elapsed ?? (() => performance.now());
+      const waitStart = elapsed();
+      // Wait past previousEndMs (capped at 5 ms) so resumed requests never share a boundary millisecond.
+      while (ports.clock.now() <= previousEndMs && elapsed() - waitStart < 5 && ports.clock.now() < deadline) {
+        // Spin until the clock advances or the 5 ms / deadline cap is reached.
+      }
+      clockBehind = ports.clock.now() <= previousEndMs;
+    }
     const remaining = deadline - ports.clock.now();
     if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
@@ -616,7 +632,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
-      // A resumed launch counts only its own window; it starts after the previous end so a shared boundary millisecond stays with the earlier launch.
+      // A resumed launch starts after previousEndMs so a shared boundary millisecond stays with the earlier launch.
       launchStartMs = previousEndMs === null ? ports.clock.now() : Math.max(ports.clock.now(), previousEndMs + 1);
       result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps);
       launchEndMs = previousEndMs = ports.clock.now();
@@ -628,20 +644,55 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     }
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
+    let transcriptUnavailable = false;
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try {
-      usage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || spec.resumeUsage) ? spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages }) : undefined;
-      const perLaunchClaudeUsage = spec.id === 'claude' && usage?.provenance === 'claude.result.usage';
-      if (usage && current.resume && spec.resumeUsage === 'cumulative' && !perLaunchClaudeUsage) {
-        const lastFresh = invocations.findLastIndex(row => !row.nudge);
-        usage = usageDelta(usage, sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]));
+      const wantUsage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || Boolean(spec.resumeUsage));
+      if (wantUsage) {
+        const transcripts = { fs: ports.usageFs ?? nodeHostUsageFs, budget: { remaining: MAX_TOTAL_BYTES } };
+        const stdoutUsage = spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages, transcripts });
+        const sessionRead = req.collectUsage === true && spec.sessionUsage
+          ? (clockBehind ? { complete: false } : spec.sessionUsage(result.stdout, {
+            mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages,
+            cwd: current.cwd, resumed: isResume, transcripts,
+          }, stdoutUsage !== undefined))
+          : undefined;
+        if (sessionRead?.complete) {
+          usage = sessionRead.usage ? { ...sessionRead.usage, provenance: 'session' } : undefined;
+          baseline = 'none';
+        } else {
+          if (sessionRead !== undefined) transcriptUnavailable = true;
+          const perLaunchClaude = spec.id === 'claude' && stdoutUsage?.provenance === 'claude.result.usage';
+          const isCumulativeStdout = spec.resumeUsage === 'cumulative' && !perLaunchClaude;
+          if (!isCumulativeStdout) {
+            usage = stdoutUsage ? { ...stdoutUsage, provenance: 'stdout' } : undefined;
+            baseline = 'none';
+          } else if (baseline === 'cumulative' && stdoutUsage !== undefined) {
+            let resolved = stdoutUsage;
+            if (current.resume) {
+              const lastFresh = invocations.findLastIndex(row => !row.nudge);
+              resolved = usageDelta(stdoutUsage, sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]));
+            }
+            usage = { ...resolved, provenance: 'stdout' };
+          } else {
+            usage = undefined;
+            baseline = 'none';
+          }
+        }
+      } else {
+        baseline = 'none';
       }
-    } catch { usage = undefined; /* A usage parse failure cannot change provider results. */ }
+    } catch { usage = undefined; baseline = 'none'; /* A usage parse failure cannot change provider results. */ }
+    const coverage: CoverageReason[] = [];
+    if (req.collectUsage === true) {
+      if (transcriptUnavailable) coverage.push('transcript unavailable');
+      if (!usage && spec.usageUnavailable) coverage.push(spec.usageUnavailable);
+    }
     const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
     const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
     const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
     const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : req.collectUsage === true && spec.usageUnavailable ? { coverage: spec.usageUnavailable } : {}) });
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;

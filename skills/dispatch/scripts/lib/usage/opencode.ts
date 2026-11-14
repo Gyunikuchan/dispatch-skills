@@ -1,27 +1,37 @@
-import type { DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
-import { opencodeDbPath, type OpencodeMessage } from '../opencode-db.ts';
-import { count, note, row, stageAt, type Row } from './read.ts';
-import { addCounters, usageKey, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
+import type { DiagnosticUsage } from '../../toolkit/types.ts';
+import { opencodeDbPath } from '../opencode-db.ts';
+import { count, note, readErrorReason, row, stageAt, type Row } from './read.ts';
+import { addCounters, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 export const opencode: HostUsageAdapter = {
   sessionEnv: ['OPENCODE_SESSION_ID'],
   read(query, fs) {
-    return collect(query, fs);
+    return collectOpencodeUsage(query, fs);
   },
 };
 
-function collect(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult {
+export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
+  if (query.budget.remaining <= 0) {
+    note(notes, 'host', 'read budget reached');
+    return result;
+  }
   if (!fs.opencodeMessages) return { rows: [], unavailable: 'read-error:EUNKNOWN' };
 
+  const rootRole = options?.rootRole ?? 'host';
   const dbPath = opencodeDbPath(query.home, query.env);
-  const read = fs.opencodeMessages(dbPath, query.sessionId, { fromMs: query.startMs, toMs: query.endMs });
+  let read: ReturnType<NonNullable<HostUsageFs['opencodeMessages']>>;
+  try {
+    read = fs.opencodeMessages(dbPath, query.sessionId, { fromMs: query.startMs, toMs: query.endMs });
+  } catch (error) {
+    return { rows: [], unavailable: readErrorReason(error) };
+  }
 
   for (const message of read.messages) {
     const hostRow: UsageRow & { stage: HostStage } = {
       stage: stageAt(query.stages, message.createdMs),
-      role: message.depth === 0 ? 'host' : 'subagent',
+      role: message.depth === 0 ? rootRole : 'subagent',
       // Empty parts fail the report gates and render as `—` without another label.
       model: message.model ?? '',
       effort: message.effort,
@@ -66,30 +76,4 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
     else addCounters(total, usage);
   }
   return total;
-}
-
-/**
- * Fold DB messages for one delegate session tree into one usage record.
- * Keys carry their own effort (`<model>#<effort>`) so a child running another model or variant keeps its counters.
- */
-export function opencodeDbUsage(messages: readonly OpencodeMessage[]): DiagnosticUsage | undefined {
-  if (messages.length === 0) return undefined;
-  const out: DiagnosticUsage = { input: 0, output: 0, scope: 'invocation', provenance: 'opencode.db.messages', inputSemantics: 'uncached' };
-  const models: Record<string, DiagnosticModelUsage> = Object.create(null) as Record<string, DiagnosticModelUsage>;
-  const modelList: string[] = [];
-  const efforts: (string | null)[] = [];
-  for (const message of messages) {
-    addCounters(out, message);
-    // A null model or effort keeps its part empty, never inherited from another message.
-    const key = usageKey(message.model, message.effort);
-    const part = models[key] ?? (models[key] = { input: 0, output: 0 });
-    addCounters(part, message);
-    if (message.model !== null && !modelList.includes(message.model)) modelList.push(message.model);
-    efforts.push(message.effort);
-  }
-  out.models = models;
-  if (modelList.length > 0) out.actualModels = modelList.slice(0, 8);
-  const firstEffort = efforts[0]!;
-  out.actualEffort = efforts.every((effort) => effort === firstEffort) ? firstEffort : null;
-  return out;
 }

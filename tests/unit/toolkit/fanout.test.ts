@@ -2288,16 +2288,18 @@ test('rerun starts fresh after a failed usage checkpoint', async t => {
   } finally {f.cleanup();}
 });
 
-test('rerun resumes without counting saved session usage twice', async () => {
+test('saved session usage: new-layer record resumes without counting saved session usage twice', async () => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
-    const dir=path.join(f.session,'usage-resume'), logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
-    const usage={input:10,output:2,scope:'invocation' as const,provenance:'test',inputSemantics:'uncached' as const};
-    fs.writeFileSync(path.join(logs,'codex[0].state.json'),JSON.stringify({physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_abc',sessionUsage:usage}));
-    const row1={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{...usage,input:3}};
-    const row2={...row1,usage:{...usage,input:5}};
-    let calls=0;f.deps.delegate=async (_p,req)=>{calls++;if(calls===1){assert.equal(req.priorUsage?.input,10);req.onInvocation?.(row2);return {outcome:{status:'ok',text:'invalid',sessionId:'thread_abc',resume:null},invocations:[row1,row2]};}assert.equal(req.priorUsage?.input,18);return {outcome:{status:'ok',text:'answer',sessionId:'thread_abc',resume:null},invocations:[]};};
-    const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
-    await fanOut({dir,slots:[slot('codex')],prompt:'question',validate:check,quota},f.deps);assert.equal(calls,2);
+    for (const provenance of ['session', 'stdout'] as const) {
+      const dir=path.join(f.session,`usage-resume-${provenance}`), logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
+      const usage={input:10,output:2,scope:'invocation' as const,provenance,inputSemantics:'uncached' as const};
+      fs.writeFileSync(path.join(logs,'codex[0].state.json'),JSON.stringify({physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_abc',usageBaseline:'cumulative',usageWindowEndMs:1234,sessionUsage:usage}));
+      const row1={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{...usage,input:3},usageBaseline:'cumulative' as const,usageWindowEndMs:2000};
+      const row2={...row1,usage:{...usage,input:5},usageWindowEndMs:2500};
+      let calls=0;f.deps.delegate=async (_p,req)=>{calls++;if(calls===1){assert.equal(req.priorUsage?.input,10);assert.equal(req.usageBaseline,'cumulative');assert.equal(req.usageWindowEndMs,1234);req.onInvocation?.(row1);req.onInvocation?.(row2);return {outcome:{status:'ok',text:'invalid',sessionId:'thread_abc',resume:null},invocations:[row1,row2]};}assert.equal(req.priorUsage?.input,18);assert.equal(req.usageWindowEndMs,2500);return {outcome:{status:'ok',text:'answer',sessionId:'thread_abc',resume:null},invocations:[]};};
+      const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
+      await fanOut({dir,slots:[slot('codex')],prompt:'question',validate:check,quota},f.deps);assert.equal(calls,2);
+    }
   } finally {f.cleanup();}
 });
 
@@ -2328,4 +2330,68 @@ test('rerun resumes with the resumes spent before the stop', async () => {
     f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,3);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
     await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
   }finally{f.cleanup();}
+});
+
+test('saved session usage: pre-change, includes-cache, and missing-baseline slots take stale restart', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const cases: Array<{ name: string; state: Record<string, unknown> }> = [
+      {
+        name: 'pre-change-provenance',
+        state: { physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_old',usageBaseline:'cumulative',sessionUsage:{input:10,output:2,scope:'invocation',provenance:'test',inputSemantics:'uncached'} },
+      },
+      {
+        name: 'codex-includes-cache',
+        state: { physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_ic',usageBaseline:'cumulative',sessionUsage:{input:10,output:2,scope:'invocation',provenance:'stdout',inputSemantics:'includes-cache'} },
+      },
+      {
+        name: 'missing-baseline-with-counters',
+        state: { physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_nb1',sessionUsage:{input:10,output:2,scope:'invocation',provenance:'stdout',inputSemantics:'uncached'} },
+      },
+      {
+        name: 'missing-baseline-without-counters',
+        state: { physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_nb2' },
+      },
+    ];
+    for (const c of cases) {
+      const dir=path.join(f.session,`stale-${c.name}`), logs=path.join(dir,'logs'), statePath=path.join(logs,'codex[0].state.json');
+      fs.mkdirSync(logs,{recursive:true});
+      fs.writeFileSync(statePath, JSON.stringify(c.state));
+      f.deps.delegate=async (_p,req)=>{
+        assert.equal(req.resume, null, c.name);
+        assert.equal(req.priorUsage, undefined, c.name);
+        assert.equal((req as {usageBaseline?:string}).usageBaseline, 'cumulative', c.name);
+        return {outcome:{status:'ok',text:'answer',sessionId:'new_thread',resume:null},invocations:[]};
+      };
+      await fanOut({dir,slots:[slot('codex')],prompt:'question',validate,quota},f.deps);
+      assert.equal(JSON.parse(fs.readFileSync(statePath,'utf8')).restart, 'stale: invalid session usage', c.name);
+    }
+  } finally {f.cleanup();}
+});
+
+test('saved session usage: usageBaseline none resumes without restart and passes usageWindowEndMs to report resume', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
+    const dir=path.join(f.session,'baseline-none'), logs=path.join(dir,'logs'), statePath=path.join(logs,'codex[0].state.json');
+    fs.mkdirSync(logs,{recursive:true});
+    fs.writeFileSync(statePath, JSON.stringify({physicalSlot:'codex[0]',provider:'codex',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'thread_none',usageBaseline:'none',usageWindowEndMs:5000}));
+    let calls=0;
+    f.deps.delegate=async (_p,req)=>{
+      calls++;
+      assert.equal(req.resume, 'thread_none');
+      assert.equal(req.priorUsage, undefined);
+      assert.equal((req as {usageBaseline?:string}).usageBaseline, 'none');
+      if (calls===1) {
+        assert.equal((req as {usageWindowEndMs?:number}).usageWindowEndMs, 5000);
+        return {outcome:{status:'ok',text:'invalid',sessionId:'thread_none',resume:null},invocations:[{provider:'codex',model:'good',mode:'cli',effort:null,launched:true,outcome:'ok',usageBaseline:'none',usageWindowEndMs:7777} as never]};
+      }
+      assert.equal((req as {usageWindowEndMs?:number}).usageWindowEndMs, 7777);
+      return {outcome:{status:'ok',text:'answer',sessionId:'thread_none',resume:null},invocations:[]};
+    };
+    const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
+    await fanOut({dir,slots:[slot('codex')],prompt:'question',validate:check,quota},f.deps);
+    assert.equal(calls, 2);
+    const saved = JSON.parse(fs.readFileSync(statePath,'utf8'));
+    assert.equal(saved.restart, undefined);
+    assert.equal(saved.usageBaseline, 'none');
+    assert.equal(saved.usageWindowEndMs, 7777);
+  } finally {f.cleanup();}
 });

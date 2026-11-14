@@ -5,6 +5,7 @@ import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, i
 import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 import { claudeUsage } from '../lib/usage/claude.ts';
+import { readDelegateSession } from '../lib/usage/delegate.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 export const READ_ONLY_ALLOWED_TOOLS = [
@@ -49,6 +50,24 @@ function parseEnvelope(stdout: string): Envelope | null {
 
 export const claude: ProviderSpec = {
   usage: claudeUsage,
+  sessionUsage(raw, context, stdoutHasUsage) {
+    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
+    const sessionId = parseEnvelope(raw)?.sessionId ?? null;
+    if (!sessionId) return { complete: false };
+    return readDelegateSession({
+      platform: 'claude',
+      sessionId,
+      startMs: context.launchStartMs,
+      endMs: context.launchEndMs,
+      resumed: context.resumed ?? false,
+      stdoutHasUsage,
+      home: context.platform.home,
+      env: (name) => context.env[name],
+      ...(context.cwd === undefined ? {} : { cwd: context.cwd }),
+      fs: context.transcripts.fs,
+      budget: context.transcripts.budget,
+    });
+  },
   resumeUsage: 'cumulative',
   id: 'claude',
   modes: [

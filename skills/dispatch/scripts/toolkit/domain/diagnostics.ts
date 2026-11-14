@@ -1,4 +1,5 @@
-import { addCounters, HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, tokenTotal, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
+import { BANDS, boundModels, type Bands } from '../../lib/usage/bands.ts';
+import { addCounters, HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, tokenTotal, type Counters, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, FailureClass } from '../types.ts';
 
@@ -26,10 +27,10 @@ export const CATEGORIES = {
 } as const;
 export type Category = keyof typeof CATEGORIES;
 
-export type ModelUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number };
+export type ModelUsage = Counters & { bands?: Bands };
 
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
-export type Usage = ModelUsage & { models?: Record<string, ModelUsage> };
+export type Usage = ModelUsage & { models?: Record<string, ModelUsage>; reasoningInOutput?: boolean };
 
 /** Tool-call durations can overlap; they do not measure session elapsed time. */
 export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
@@ -45,7 +46,7 @@ export type DiagnosticEvent = {
 );
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
-  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason;
+  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason[];
   estimated?: boolean; tokens?: number; slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
@@ -113,7 +114,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('references/verbs', 'ask design implement plan review verify', '.md'),
   ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-fixes review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config fs-ext integrity node-fs-ext opencode-db platform quota-store session', '.ts'),
-  ...files('scripts/lib/usage', 'agy claude codex index opencode read rows', '.ts'),
+  ...files('scripts/lib/usage', 'agy bands claude codex delegate index opencode read rows', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
   ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics plan prompt report sanitize severity spec stable-value types', '.ts'),
@@ -172,25 +173,77 @@ function categoryOf(v: unknown): Category | undefined {
 
 // SECTION: Usage
 
-function counters(v: unknown): ModelUsage | undefined {
+function baseCounters(v: unknown): Counters | undefined {
   if (!record(v)) return undefined;
   const input = count(v['input']), output = count(v['output']);
   if (input === undefined || output === undefined) return undefined;
-  const out: ModelUsage = { input, output };
+  const out: Counters = { input, output };
   for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
     if (v[key] === undefined) continue;
     const n = count(v[key]);
     if (n === undefined) return undefined;
     out[key] = n;
   }
+  const has5m = v['cacheWrite5m'] !== undefined, has1h = v['cacheWrite1h'] !== undefined;
+  if (has5m || has1h) {
+    const n5m = has5m ? count(v['cacheWrite5m']) : 0;
+    const n1h = has1h ? count(v['cacheWrite1h']) : 0;
+    if (n5m !== undefined && n1h !== undefined && n5m + n1h <= (out.cacheWrite ?? 0)) {
+      if (has5m) out.cacheWrite5m = n5m;
+      if (has1h) out.cacheWrite1h = n1h;
+    }
+  }
   return out;
+}
+
+function bandsOf(v: unknown, expected: Counters): Bands | undefined {
+  if (!record(v)) return undefined;
+  const entries = Object.entries(v);
+  if (!entries.length) return undefined;
+  const out: Bands = {};
+  const summed: Counters = { input: 0, output: 0 };
+  for (const [key, raw] of entries) {
+    if (!(BANDS as readonly string[]).includes(key)) return undefined;
+    const c = baseCounters(raw);
+    if (!c) return undefined;
+    out[key as keyof Bands] = c;
+    addCounters(summed, c);
+  }
+  if (summed.input !== expected.input || summed.output !== expected.output) return undefined;
+  if ((['cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const).some((k) => summed[k] !== expected[k])) return undefined;
+  return out;
+}
+
+function counters(v: unknown): ModelUsage | undefined {
+  const out = baseCounters(v);
+  if (!out || !record(v)) return undefined;
+  const bands = v['bands'] !== undefined ? bandsOf(v['bands'], out) : undefined;
+  return bands ? { ...out, bands } : out;
+}
+
+function mergeModelUsage(a: ModelUsage, b: ModelUsage): ModelUsage {
+  const merged: ModelUsage = addCounters({ ...a }, b);
+  if (a.bands && b.bands) {
+    const bands: Bands = { ...a.bands };
+    for (const [band, bv] of Object.entries(b.bands) as [keyof Bands, Counters][]) {
+      bands[band] = bands[band] ? addCounters({ ...bands[band]! }, bv) : { ...bv };
+    }
+    merged.bands = bands;
+  } else {
+    delete merged.bands;
+  }
+  return merged;
 }
 
 function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
   const base = counters(v);
   if (!base || !record(v)) return undefined;
-  const canonical = (u: ModelUsage): ModelUsage => subtractCache ? { ...u, input: Math.max(0, u.input - (u.cacheRead ?? 0)) } : u;
-  const out: Usage = canonical(base);
+  const canonicalCounters = (u: Counters): Counters => subtractCache ? { ...u, input: Math.max(0, u.input - (u.cacheRead ?? 0)) } : u;
+  const canonical = (u: ModelUsage): ModelUsage => {
+    const c = canonicalCounters(u);
+    return u.bands ? { ...c, bands: Object.fromEntries(Object.entries(u.bands).map(([b, bv]) => [b, canonicalCounters(bv!)])) } : c;
+  };
+  const out: Usage = { ...canonical(base), ...(typeof v['reasoningInOutput'] === 'boolean' ? { reasoningInOutput: v['reasoningInOutput'] } : {}) };
   const models = record(v['models']) ? Object.entries(v['models']) : [];
   // A `<model>#<effort>` key keeps its own effort; an empty or gate-failing part renders `—` but keeps its counters.
   const parts = models.map(([key, part]) => {
@@ -198,13 +251,13 @@ function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
     const name = modelName(split.model), effort = split.effort === undefined ? undefined : token(split.effort) ?? '';
     return { key: effort === undefined ? name : `${name ?? ''}#${effort}`, part: counters(part), keyed: effort !== undefined };
   });
-  if (parts.length && parts.length <= 8 && parts.every(({ key, part, keyed }) => part && (keyed || key))) {
+  if (parts.length && parts.every(({ key, part, keyed }) => part && (keyed || key))) {
     const grouped = new Map<string, ModelUsage>();
     for (const { key, part } of parts) {
       const current = grouped.get(key!);
-      grouped.set(key!, current ? addCounters(current, canonical(part!)) : canonical(part!));
+      grouped.set(key!, current ? mergeModelUsage(current, canonical(part!)) : canonical(part!));
     }
-    out.models = Object.fromEntries(grouped);
+    out.models = boundModels(Object.fromEntries(grouped));
   }
   return out;
 }
@@ -274,6 +327,16 @@ function lifecycleOf(v: unknown): LifecycleStep[] | undefined {
   return rows.length ? rows : undefined;
 }
 
+const COVERAGE_REASONS: readonly CoverageReason[] = ['no usage', 'transcript unavailable'];
+function coverageOf(v: unknown): CoverageReason[] | undefined {
+  const raw = typeof v === 'string' ? [v] : Array.isArray(v) ? v : [];
+  const reasons = [...new Set(raw.flatMap((x): CoverageReason[] => {
+    const mapped = x === 'no usage output' ? 'no usage' : x;
+    return (COVERAGE_REASONS as readonly string[]).includes(String(mapped)) ? [mapped as CoverageReason] : [];
+  }))];
+  return reasons.length ? reasons : undefined;
+}
+
 function invocationOf(v: unknown): InvocationFacts[] {
   if (!record(v)) return [];
   const reported = list(v['reportedModels']).map(modelName).filter((m): m is string => !!m).slice(0, 8);
@@ -288,7 +351,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('subject',match(/^[a-f0-9]{16}$/)(v['subject'])), ...opt('attempt',count(v['attempt'])),
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
-    ...opt('coverage', (['no usage output'] as const).find(x => x === v['coverage'])),
+    ...opt('coverage', coverageOf(v['coverage'])),
     ...(v['estimated'] === true ? { estimated: true } : {}), ...opt('tokens', count(v['tokens'])), ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
     ...(v['nudge'] === true ? { nudge: true as const } : {}),
   }];
@@ -300,7 +363,7 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
     if (!record(v)) return [];
     const stage=STAGE_ORDER.find(x=>x===v['stage']), role=HOST_ROLES.find(x=>x===v['role']), usage=counters(v);
     if(!stage || !role || !usage) return [];
-    return [{stage,role,model:modelName(v['model']) ?? DASH,effort:token(v['effort']) ?? null,...usage}];
+    return [{stage,...opt('phase',phaseKey(v['phase'])),role,model:modelName(v['model']) ?? DASH,effort:token(v['effort']) ?? null,...usage,...(typeof v['reasoningInOutput']==='boolean'?{reasoningInOutput:v['reasoningInOutput']}:{}) }];
   });
   const notes: NonNullable<HostUsageFacts['notes']> = {};
   if(record(value['notes'])) for(const role of HOST_ROLES) {
@@ -581,10 +644,10 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
   lines.push('');
   type TokenRow = {stage:string; platform:string; role:string; model:string; effort:string; configured:boolean; usages:ModelUsage[]; measured:number; launched:number; reasons:Set<CoverageReason>};
   const rows = new Map<string,TokenRow>();
-  const add = (stage:string,platform:string,role:string,model:string,effort:string,usage?:ModelUsage,reason?:CoverageReason,configured=false) => {
+  const add = (stage:string,platform:string,role:string,model:string,effort:string,usage?:ModelUsage,reasons?:readonly CoverageReason[],configured=false) => {
     const key=[stage,platform,role,model,effort].join('\0');
     const entry=rows.get(key) ?? {stage,platform,role,model,effort,configured,usages:[],measured:0,launched:0,reasons:new Set<CoverageReason>()};
-    entry.configured ||= configured; entry.launched++; if(usage){entry.measured++;entry.usages.push(usage);} else if(reason) entry.reasons.add(reason); rows.set(key,entry);
+    entry.configured ||= configured; entry.launched++; if(usage){entry.measured++;entry.usages.push(usage);} if(reasons) for(const reason of reasons) entry.reasons.add(reason); rows.set(key,entry);
   };
   for(const run of runs) {
     for(const h of run.hostUsage?.rows ?? []) add(h.stage,run.hostUsage?.platform ?? DASH,h.role,h.model,h.effort ?? DASH,h);
@@ -594,7 +657,7 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
       const usage=measured(i), effort=i.effort??DASH;
       if(usage?.models) for(const [key,part] of Object.entries(usage.models)) {
         // A `#` key renders its own effort; a plain key keeps the invocation effort.
-        const at=key.indexOf('#'); add(stage,i.provider,'delegate',at<0?key:(key.slice(0,at)||DASH),at<0?effort:(key.slice(at+1)||DASH),part);
+        const at=key.indexOf('#'); add(stage,i.provider,'delegate',at<0?key:(key.slice(0,at)||DASH),at<0?effort:(key.slice(at+1)||DASH),part,i.coverage);
       }
       else add(stage,i.provider,'delegate',(i.reportedModels?.length??0)>1?DASH:i.model,effort,usage,i.coverage,(i.reportedModels?.length??0)<=1);
     }
@@ -614,7 +677,7 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
       if(role==='host' && hosts.length) {const reasons=[...new Set(hosts.flatMap(h=>h.unavailable?[h.unavailable]:[]))];if(roleRows.length) segments.push('host measured'+noteText); if(reasons.length) segments.push(`host unavailable: ${reasons.join(', ')}`+(roleRows.length?'':noteText)); else if(!roleRows.length) segments.push('host unavailable: no usage records'+noteText);}
       if(role==='subagent' && (roleRows.length || aggregated.size)) segments.push((roleRows.length?'subagents measured':'subagents not measured')+noteText);
     }
-    const delegates=runs.flatMap(r=>r.invocations).filter(i=>i.provider===platform && i.surface==='cli' && i.launched); if(delegates.length){const reasons=[...new Set(delegates.flatMap(i=>!measured(i)&&i.coverage?[i.coverage]:[]))];segments.push(`delegates ${delegates.filter(i=>measured(i)).length}/${delegates.length}${reasons.length?' '+reasons.join(', '):''}`);}
+    const delegates=runs.flatMap(r=>r.invocations).filter(i=>i.provider===platform && i.surface==='cli' && i.launched); if(delegates.length){const reasons=[...new Set(delegates.flatMap(i=>i.coverage ?? []))];segments.push(`delegates ${delegates.filter(i=>measured(i)).length}/${delegates.length}${reasons.length?' '+reasons.join(', '):''}`);}
     lines.push(row([platform,...cells(selected.flatMap(r=>r.usages)),segments.join(' · ')||DASH]));
   }
   if(!platforms.size) lines.push(row(Array<string>(7).fill(DASH)));

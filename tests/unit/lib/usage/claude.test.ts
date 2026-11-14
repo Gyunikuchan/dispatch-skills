@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
 import { claudeCode, claudeUsage } from '../../../../skills/dispatch/scripts/lib/usage/claude.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
@@ -139,4 +140,110 @@ test('claude usage keeps per-model counters and aggregate totals', () => {
   assert.deepEqual(usage?.models, { 'claude-sonnet-4-5': { input: 100, output: 20, cacheRead: 300, cacheWrite: 40 }, 'claude-haiku-4-5': { input: 5, output: 1 } });
   assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite], [105, 21, 300, 40]);
   assert.deepEqual(usage?.actualModels, ['claude-sonnet-4-5', 'claude-haiku-4-5']);
+});
+
+test('key bound: claude usage keeps 9 models and bounds 40 models to 32 plus other', () => {
+  const nineModels = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`m${i}`, { inputTokens: (i + 1) * 10, outputTokens: 1 }]));
+  const nine = claudeUsage(JSON.stringify({ type: 'result', modelUsage: nineModels }));
+  assert.equal(nine?.provenance, 'claude.result.modelUsage');
+  assert.equal(Object.keys(nine?.models ?? {}).length, 9);
+
+  const fortyModels = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`m${String(i).padStart(2, '0')}`, { inputTokens: (i + 1) * 100, outputTokens: 1 }]));
+  const forty = claudeUsage(JSON.stringify({ type: 'result', modelUsage: fortyModels }));
+  assert.equal(forty?.provenance, 'claude.result.modelUsage');
+  const keys = Object.keys(forty?.models ?? {});
+  assert.equal(keys.length, 33);
+  assert.ok(keys.includes('other'));
+  assert.equal('m00' in (forty?.models ?? {}), false);
+  assert.equal('m07' in (forty?.models ?? {}), false);
+  assert.equal('m08' in (forty?.models ?? {}), true);
+});
+
+test('claude nested subagents count depth-2 transcripts', () => {
+  const msg = (id: string, input: number) => ({
+    type: 'assistant',
+    timestamp: new Date(3000).toISOString(),
+    message: { id, model: 'claude-sonnet-4-5', usage: { input_tokens: input, output_tokens: 1 } },
+  });
+  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, memoryFs({
+    '/home/.claude/projects/p/host.jsonl': lines(msg('h', 1)),
+    '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(msg('s1', 2)),
+    '/home/.claude/projects/p/host/subagents/agent-1/subagents/agent-2.jsonl': lines(msg('s2', 3)),
+  }));
+  assert.deepEqual(
+    result.rows.map(r => [r.role, r.depth, r.input]),
+    [['host', 0, 1], ['subagent', 1, 2], ['subagent', 2, 3]],
+  );
+});
+
+test('claude cache split carries 5m and 1h counters in host transcripts, stdout, and banded folds', () => {
+  const splitMsg = {
+    type: 'assistant',
+    timestamp: new Date(3000).toISOString(),
+    message: {
+      id: 'split',
+      model: 'claude-haiku-5-5',
+      usage: {
+        input_tokens: 10,
+        output_tokens: 2,
+        cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 15,
+        cache_creation: { ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 10 },
+      },
+    },
+  };
+  const unsplitMsg = {
+    type: 'assistant',
+    timestamp: new Date(3100).toISOString(),
+    message: {
+      id: 'unsplit',
+      model: 'claude-haiku-5-5',
+      usage: {
+        input_tokens: 20,
+        output_tokens: 4,
+        cache_creation_input_tokens: 8,
+      },
+    },
+  };
+  const hostResult = claudeCode.read({ ...query, budget: { remaining: 100000 } }, memoryFs({
+    '/home/.claude/projects/p/host.jsonl': lines(splitMsg, unsplitMsg),
+  }));
+  assert.equal(hostResult.rows[0]?.cacheWrite, 15);
+  assert.equal(hostResult.rows[0]?.cacheWrite5m, 5);
+  assert.equal(hostResult.rows[0]?.cacheWrite1h, 10);
+  assert.equal(hostResult.rows[1]?.cacheWrite, 8);
+  assert.equal(hostResult.rows[1]?.cacheWrite5m, undefined);
+  assert.equal(hostResult.rows[1]?.cacheWrite1h, undefined);
+
+  const folded = foldRows(hostResult.rows);
+  assert.deepEqual(folded.models['claude-haiku-5-5#']?.bands?.le100k, {
+    input: 30,
+    output: 6,
+    cacheRead: 3,
+    cacheWrite: 23,
+    cacheWrite5m: 5,
+    cacheWrite1h: 10,
+  });
+
+  const stdoutUsage = claudeUsage(JSON.stringify({
+    type: 'result',
+    usage: {
+      input_tokens: 12,
+      output_tokens: 3,
+      cache_read_input_tokens: 4,
+      cache_creation_input_tokens: 25,
+      cache_creation: { ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 20 },
+    },
+  }));
+  assert.deepEqual(stdoutUsage, {
+    input: 12,
+    output: 3,
+    cacheRead: 4,
+    cacheWrite: 25,
+    cacheWrite5m: 5,
+    cacheWrite1h: 20,
+    scope: 'invocation',
+    provenance: 'claude.result.usage',
+    inputSemantics: 'uncached',
+  });
 });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
-import { tokenTotal, type Milestone, type HostStage } from '../lib/usage/rows.ts';
+import { tokenTotal, type Milestone, type HostStage, type PhaseMilestone } from '../lib/usage/rows.ts';
 import { addYield, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
@@ -307,13 +307,21 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     const name=round.review.startsWith('plan-')?'plan review':round.review.startsWith('design-')?'design review':'code review';
     if(!phases.has(key))phases.set(key,{key,name});
   }
-  for(const capture of measured) for(const original of capture.phases) {
-    const subjects=[...new Set(capture.invocations.filter(row=>row.phase===original.key).flatMap(row=>row.subject&&phaseBySubject.has(row.subject)?[phaseBySubject.get(row.subject)!]:[]))];
-    const phase={...original,key:subjects.length===1?subjects[0]!:original.key};
-    const previous=phases.get(phase.key);
-    const result=aggregateOutcome([previous?.outcome,phase.outcome]);
-    phases.set(phase.key,{...phase,...(result?{outcome:result}:{}),...(previous?.wallMs===undefined&&phase.wallMs===undefined?{}:{wallMs:(previous?.wallMs??0)+(phase.wallMs??0)})});
+  const phaseMilestones: PhaseMilestone[]=[];
+  for(const capture of measured) {
+    let lastKey:string|undefined;
+    for(const original of capture.phases) {
+      const subjects=[...new Set(capture.invocations.filter(row=>row.phase===original.key).flatMap(row=>row.subject&&phaseBySubject.has(row.subject)?[phaseBySubject.get(row.subject)!]:[]))];
+      const key=subjects.length===1?subjects[0]!:original.key;
+      lastKey=key;
+      const phase={...original,key};
+      const previous=phases.get(phase.key);
+      const result=aggregateOutcome([previous?.outcome,phase.outcome]);
+      phases.set(phase.key,{...phase,...(result?{outcome:result}:{}),...(previous?.wallMs===undefined&&phase.wallMs===undefined?{}:{wallMs:(previous?.wallMs??0)+(phase.wallMs??0)})});
+    }
+    if(lastKey!==undefined&&capture.capture?.start!==undefined) phaseMilestones.push({phase:lastKey,atMs:capture.capture.start});
   }
+  phaseMilestones.sort((a,b)=>a.atMs-b.atMs);
   const invocations:InvocationFacts[]=[];
   const native=new Map<string,InvocationFacts>();
   const add=(row:InvocationFacts)=>{
@@ -356,7 +364,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
     const startMs=Date.parse(manifest.createdAt);
     try {
-      hostUsage = !Number.isFinite(startMs) ? {platform,rows:[],unavailable:'invalid session start'} : readHostUsage(platform,{startMs,endMs:deps.clock(),home:(process.platform==='win32' ? deps.env['USERPROFILE'] ?? deps.env['HOME'] : deps.env['HOME'] ?? deps.env['USERPROFILE']) ?? os.homedir(),env:name=>deps.env[name],stages:stageMilestones(fold,measured,startMs)},deps.hostUsageFs ?? nodeHostUsageFs);
+      hostUsage = !Number.isFinite(startMs) ? {platform,rows:[],unavailable:'invalid session start'} : readHostUsage(platform,{startMs,endMs:deps.clock(),home:(process.platform==='win32' ? deps.env['USERPROFILE'] ?? deps.env['HOME'] : deps.env['HOME'] ?? deps.env['USERPROFILE']) ?? os.homedir(),env:name=>deps.env[name],stages:stageMilestones(fold,measured,startMs),phases:phaseMilestones},deps.hostUsageFs ?? nodeHostUsageFs);
     } catch(error) { hostUsage={platform,rows:[],unavailable:readErrorReason(error)}; }
   }
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.

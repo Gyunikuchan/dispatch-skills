@@ -244,9 +244,21 @@ test('opencode large tool events keep usage', () => {
 
 type UsageReader = (dbPath: string, sessionId: string, options: OpencodeReadOptions) => OpencodeRead;
 const readResult = (messages: OpencodeMessage[], truncated: OpencodeRead['truncated'] = null): OpencodeRead => ({ messages, skipped: 0, truncated });
-const usageContext = (read: UsageReader) => ({ mode: 'cli' as const, platform, env: {}, launchStartMs: 100, launchEndMs: 200, readOpencodeMessages: read });
+const sessionContext = (read: UsageReader) => ({
+  mode: 'cli' as const,
+  platform,
+  env: {},
+  launchStartMs: 100,
+  launchEndMs: 200,
+  resumed: true,
+  readOpencodeMessages: read,
+  transcripts: {
+    fs: { list: () => [], stat: () => null, read: () => Buffer.alloc(0), decompress: null },
+    budget: { remaining: 1024 * 1024 },
+  },
+});
 
-test('opencode delegate usage sums DB rows for the session and descendants with per-model effort keys', () => {
+test('opencode sessionUsage sums DB rows for the session and descendants with per-model effort keys', () => {
   const calls: { dbPath: string; sessionId: string; options: OpencodeReadOptions }[] = [];
   const read: UsageReader = (dbPath, sessionId, options) => {
     calls.push({ dbPath, sessionId, options });
@@ -256,48 +268,58 @@ test('opencode delegate usage sums DB rows for the session and descendants with 
       { depth: 2, createdMs: 170, model: 'lmstudio/qwen3.8-27b', effort: 'low', input: 7, output: 3, reasoning: 2 },
     ]);
   };
-  const usage = opencode.usage?.(jsonStep({ input: 1, output: 1 }), {
-    ...usageContext(read), env: { XDG_DATA_HOME: '/data' },
-  });
+  const session = opencode.sessionUsage?.(jsonStep({ input: 1, output: 1 }), {
+    ...sessionContext(read), env: { XDG_DATA_HOME: '/data' },
+  }, true);
   assert.deepEqual(calls, [{ dbPath: path.join('/data', 'opencode', 'opencode.db'), sessionId: 'ses', options: { fromMs: 100, toMs: 200 } }]);
-  assert.equal(usage?.provenance, 'opencode.db.messages');
+  assert.equal(session?.complete, true);
+  const usage = session?.usage;
+  assert.equal(usage?.provenance, 'session');
   assert.deepEqual([usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite, usage?.reasoning], [22, 6, 3, 0, 3]);
   assert.deepEqual(usage?.actualModels, ['opencode-go/deepseek-v4.1-flash', 'lmstudio/qwen3.8-27b']);
   assert.equal(usage?.actualEffort, null);
   assert.deepEqual({ ...usage?.models }, {
-    'opencode-go/deepseek-v4.1-flash#high': { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 },
-    'lmstudio/qwen3.8-27b#low': { input: 7, output: 3, reasoning: 2 },
+    'opencode-go/deepseek-v4.1-flash#high': {
+      input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1,
+      bands: { le100k: { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 } },
+    },
+    'lmstudio/qwen3.8-27b#low': {
+      input: 7, output: 3, reasoning: 2,
+      bands: { le100k: { input: 7, output: 3, reasoning: 2 } },
+    },
   });
 });
 
-test('opencode delegate usage limits a resumed session read to the launch window', () => {
+test('opencode sessionUsage limits a resumed session read to the launch window', () => {
   let seen: OpencodeReadOptions | undefined;
   const read: UsageReader = (_dbPath, _sessionId, options) => {
     seen = options;
     return readResult([{ depth: 0, createdMs: 1500, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
   };
-  const usage = opencode.usage?.(jsonStep(), {
-    ...usageContext(read), launchStartMs: 1500, launchEndMs: 2500,
-  });
+  const session = opencode.sessionUsage?.(jsonStep(), {
+    ...sessionContext(read), launchStartMs: 1500, launchEndMs: 2500, resumed: true,
+  }, true);
   assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 });
-  assert.equal(usage?.input, 8);
-  assert.equal(usage?.actualEffort, 'max');
+  assert.equal(session?.complete, true);
+  assert.equal(session?.usage?.input, 8);
+  assert.equal(session?.usage?.actualEffort, 'max');
 });
 
-test('opencode delegate usage reads a message at the final launch end', () => {
+test('opencode sessionUsage reads a message at the final launch end', () => {
   let seen: OpencodeReadOptions | undefined;
   const read: UsageReader = (_dbPath, _sessionId, options) => {
     seen = options;
     return readResult([{ depth: 0, createdMs: 2500, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
   };
-  const usage = opencode.usage?.(jsonStep(), {
-    ...usageContext(read), launchStartMs: 1500, launchEndMs: 2500,
-  });
+  const session = opencode.sessionUsage?.(jsonStep(), {
+    ...sessionContext(read), launchStartMs: 1500, launchEndMs: 2500, resumed: true,
+  }, true);
   assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 });
-  assert.equal(usage?.input, 8);
+  assert.equal(session?.complete, true);
+  assert.equal(session?.usage?.input, 8);
 });
 
-test('opencode delegate usage keeps stdout totals when DB attribution is unavailable', () => {
+test('opencode sessionUsage reports incomplete when DB attribution is unavailable and usage stays stdout-only', () => {
   const stdout = jsonStep({ input: 4, output: 2, reasoning: 0, cache: { read: 1, write: 0 } });
   const stdoutUsage = { input: 4, output: 2, reasoning: 0, cacheRead: 1, cacheWrite: 0, scope: 'invocation' as const, provenance: 'opencode.step.finish', inputSemantics: 'uncached' as const };
   const partial: OpencodeMessage[] = [{ depth: 0, createdMs: 150, model: 'p/m', effort: 'max', input: 99, output: 99 }];
@@ -307,11 +329,14 @@ test('opencode delegate usage keeps stdout totals when DB attribution is unavail
     ['truncated sessions', () => readResult(partial, 'sessions')],
     ['truncated rows', () => readResult(partial, 'rows')],
   ];
-  for (const [label, read] of cases) assert.deepEqual(opencode.usage?.(stdout, usageContext(read)), stdoutUsage, label);
+  for (const [label, read] of cases) {
+    assert.equal(opencode.sessionUsage?.(stdout, sessionContext(read), true)?.complete, false, label);
+    assert.deepEqual(opencode.usage?.(stdout, sessionContext(read)), stdoutUsage, label);
+  }
 
   let calls = 0;
   const noSession = JSON.stringify({ type: 'step_finish', part: { tokens: { input: 4, output: 2, reasoning: 0, cache: { read: 1, write: 0 } } } });
-  assert.deepEqual(opencode.usage?.(noSession, usageContext(() => { calls++; return readResult(partial); })), stdoutUsage);
+  assert.equal(opencode.sessionUsage?.(noSession, sessionContext(() => { calls++; return readResult(partial); }), true)?.complete, false);
   assert.equal(calls, 0);
   assert.deepEqual(opencode.usage?.(stdout), stdoutUsage);
 });

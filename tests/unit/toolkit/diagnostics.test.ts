@@ -666,16 +666,16 @@ test('token table groups by effort', () => {
     captureRuns(f.session, [
       { phase: 'plan-review', attempt: 1, provider: 'codex', model: 'gpt', effort: 'low', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 100, output: 10 } },
       { phase: 'plan-review', attempt: 2, provider: 'codex', model: 'gpt', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 200, output: 20 } },
-      { phase: 'plan-review', attempt: 3, provider: 'copilot', model: 'auto', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', coverage: 'no usage output' },
+      { phase: 'plan-review', attempt: 3, provider: 'copilot', model: 'auto', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', coverage: ['no usage'] },
     ]);
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
-    assert.equal(facts.invocations.find(i => i.provider === 'copilot')?.coverage, 'no usage output');
+    assert.deepEqual(facts.invocations.find(i => i.provider === 'copilot')?.coverage, ['no usage']);
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(table, /### Tokens by stage/);
     assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \|$/m);
     assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \|$/m);
     assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \|$/m);
-    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage output \|$/m);
+    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage \|$/m);
     assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
   } finally { f.cleanup(); }
 });
@@ -1241,6 +1241,86 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
 
     // Appendix should render reportedModels
     assert.match(report, /gemini-4-argon \(reported: gemini-4-argon\)/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('host phase: sessionFacts builds phase milestones including interleaved A, B, A review subjects', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const reviewA = path.join(f.session, '.state', 'reviews', 'code-a', 'round-1');
+    const reviewB = path.join(f.session, '.state', 'reviews', 'code-b', 'round-1');
+    fs.mkdirSync(path.join(reviewA, 'gen-1', 'slots'), { recursive: true });
+    fs.mkdirSync(path.join(reviewB, 'gen-1', 'slots'), { recursive: true });
+    fs.writeFileSync(path.join(reviewA, 'round.json'), JSON.stringify({ round: 1, generation: 1, cap: 2, roster: [{ slot: 'claude[0]', provider: 'claude', model: 'm', native: false }] }));
+    fs.writeFileSync(path.join(reviewB, 'round.json'), JSON.stringify({ round: 1, generation: 1, cap: 2, roster: [{ slot: 'claude[0]', provider: 'claude', model: 'm', native: false }] }));
+    const subjA = crypto.createHash('sha256').update(path.join(reviewA, 'gen-1')).digest('hex').slice(0, 16);
+    const subjB = crypto.createHash('sha256').update(path.join(reviewB, 'gen-1')).digest('hex').slice(0, 16);
+
+    const diagDir = path.join(f.session, '.state', 'diagnostics');
+    fs.mkdirSync(diagDir, { recursive: true });
+    const writeCap = (name: string, subject: string, attempt: number, start: number) => writeJson(path.join(diagDir, `${name}.json`), {
+      os: 'linux',
+      capture: { state: 'completed', start, end: start + 500 },
+      phases: [{ key: 'review-run-code', name: 'code review' }],
+      invocations: [{ phase: 'review-run-code', subject, attempt, provider: 'claude', model: 'm', surface: 'cli', launched: true, outcome: 'ok' }],
+      reviews: [],
+    });
+    writeCap('c1', subjA, 1, 1000);
+    writeCap('c2', subjB, 1, 2000);
+    writeCap('c3', subjA, 2, 3000);
+
+    const expectedPhaseA = 'review-' + crypto.createHash('sha256').update(path.join(f.session, '.state', 'reviews', 'code-a')).digest('hex').slice(0, 16);
+    const expectedPhaseB = 'review-' + crypto.createHash('sha256').update(path.join(f.session, '.state', 'reviews', 'code-b')).digest('hex').slice(0, 16);
+
+    const msg = (id: string, at: number) => JSON.stringify({ type: 'assistant', timestamp: new Date(at).toISOString(), message: { id, model: 'm', usage: { input_tokens: 10, output_tokens: 1 } } });
+    const content = Buffer.from([msg('m0', 500), msg('m1', 1200), msg('m2', 2200), msg('m3', 3200)].join('\n'));
+    const customDeps = {
+      ...f.deps,
+      clock: () => 4000,
+      orchestrator: { platform: 'claude' as const, model: 'm' },
+      env: { CLAUDE_CODE_SESSION_ID: 'host-1' },
+      hostUsageFs: {
+        list: (dir: string) => dir.endsWith('projects') ? ['p'] : [],
+        stat: (file: string) => file.endsWith('host-1.jsonl') ? { size: content.length, mtimeMs: 4000 } : null,
+        read: () => content,
+        decompress: null,
+      },
+    };
+    const manifest = { createdAt: new Date(100).toISOString() } as never;
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete', { manifest, deps: customDeps });
+    const rows = facts.hostUsage?.rows ?? [];
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.phase, undefined);
+    assert.equal(rows[0]?.input, 10);
+    const rowA = rows.find(r => r.phase === expectedPhaseA);
+    const rowB = rows.find(r => r.phase === expectedPhaseB);
+    assert.equal(rowA?.input, 20);
+    assert.equal(rowB?.input, 10);
+    assert.ok(facts.invocations.some(i => i.phase === expectedPhaseA));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('coverage list: observeTool preserves coverage list for copilot', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    f.deps.delegate = async (_provider, request) => {
+      const row = { provider: 'copilot' as const, model: 'auto', mode: 'cli' as const, effort: null, launched: true, outcome: 'ok', coverage: ['no usage' as const] };
+      request.onInvocation?.(row);
+      return { outcome: { status: 'ok', text: 'ok', resume: null, sessionId: null }, invocations: [row] };
+    };
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    await observer.deps.delegate('copilot', { promptPath: '/p.md', model: 'auto', effort: null, sandbox: false, schemaPath: null, resume: null, cwd: f.root, timeoutMs: 5000, outputCapBytes: 100, attachments: [], logPath: path.join(f.session, 'work', 'logs', 'copilot[0].log'), briefPath: '/b.md' } as never, 'cli');
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    assert.deepEqual(facts.invocations[0]?.coverage, ['no usage']);
   } finally {
     f.cleanup();
   }

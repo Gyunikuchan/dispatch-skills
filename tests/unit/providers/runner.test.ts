@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
+import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import {
   CONTINUE_PROMPT,
@@ -68,7 +70,7 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
       },
       signal: (pid, sig) => { signals.push(`${pid}:${sig}`); },
     },
-    clock, fs, platform, binary: 'claude', nonce: () => 'N0NCE',
+    clock, fs, usageFs: memUsageFs({}), platform, binary: 'claude', nonce: () => 'N0NCE',
     env: { PATH: '/bin', HOME: '/h', ANTHROPIC_API_KEY: 'sk-1', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'x', HTTPS_PROXY: 'http://p' },
   };
   return { ports, launches, signals, clock, fs, finish: (r: ProcessResult) => finish(r), activity: () => activity(), line: (value: string, fragment?: boolean) => { activity(); line(value, fragment); } };
@@ -392,8 +394,8 @@ test('runDelegate records one invocation per launch attempt, including the effor
   const done = await run;
   assert.equal(done.outcome.status, 'ok');
   assert.deepEqual(done.invocations.map(({ usage: _usage, ...rest }) => rest), [
-    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, outcome: 'config' },
-    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, outcome: 'ok' },
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, outcome: 'config', usageBaseline: 'none', usageWindowEndMs: 0 },
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, outcome: 'ok', usageBaseline: 'none', usageWindowEndMs: 0 },
   ]);
 
   const throwingHarness = harness(posix);
@@ -1061,7 +1063,7 @@ test('resumed launch records usage for a per-launch provider', async () => {
   const spec = { ...claude, resumeUsage: 'per-launch' as const, usage: () => usage };
   const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'session' }, 'cli', h.ports);
   await flush(); h.finish(ok());
-  assert.deepEqual((await pending).invocations[0]?.usage, usage);
+  assert.deepEqual((await pending).invocations[0]?.usage, { ...usage, provenance: 'stdout' });
 });
 
 test('resumed launch records no usage without proven semantics', async () => {
@@ -1168,7 +1170,7 @@ test('Claude resume records per-launch fallback usage alongside cumulative model
   await flush();
   h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'answer', session_id: 'session', usage: { input_tokens: 2, output_tokens: 3 } }) }));
   const usage = (await pending).invocations[0]?.usage;
-  assert.deepEqual(usage, { input: 2, output: 3, scope: 'invocation', provenance: 'claude.result.usage', inputSemantics: 'uncached' });
+  assert.deepEqual(usage, { input: 2, output: 3, scope: 'invocation', provenance: 'stdout', inputSemantics: 'uncached' });
 });
 
 test('resumed launch subtracts usage already recorded for its session', async () => {
@@ -1478,4 +1480,332 @@ test('agy runner normalizes model and effort and unions multi-model session usag
     assert.equal(done.invocations[0]?.usage?.models, undefined);
     assert.deepEqual(done.invocations[0]?.usage?.actualModels, ['model-x', 'model-y']);
   }
+});
+
+function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<HostUsageFs> = {}): HostUsageFs {
+  const find = (file: string): Buffer | undefined => {
+    const norm = file.replaceAll('\\', '/');
+    const val = files[norm] ?? files[file];
+    return val === undefined ? undefined : typeof val === 'string' ? Buffer.from(val, 'utf8') : val;
+  };
+  return {
+    list: (dir) => {
+      const prefix = dir.replaceAll('\\', '/').replace(/\/$/, '') + '/';
+      const names = new Set<string>();
+      for (const rawKey of Object.keys(files)) {
+        const k = rawKey.replaceAll('\\', '/');
+        if (k.startsWith(prefix)) {
+          const rest = k.slice(prefix.length);
+          const seg = rest.split('/')[0];
+          if (seg) names.add(seg);
+        }
+      }
+      return [...names];
+    },
+    stat: (file) => {
+      const buf = find(file);
+      return buf ? { size: buf.length, mtimeMs: 0 } : null;
+    },
+    read: (file, maxBytes) => {
+      const buf = find(file);
+      if (!buf) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return buf.subarray(0, maxBytes);
+    },
+    decompress: null,
+    ...extra,
+  };
+}
+
+const claudeEntry = (atMs: number, input: number, output: number, model = 'claude-haiku-5-5') =>
+  JSON.stringify({ type: 'assistant', timestamp: new Date(atMs).toISOString(), effort: 'low', message: { id: `m_${atMs}`, model, usage: { input_tokens: input, output_tokens: output } } });
+
+test('session window: complete session read records session provenance, bands, and skips cumulative delta', async () => {
+  const h = harness(posix);
+  const sessionPath = '/h/.claude/projects/-repo/sess-win-1.jsonl';
+  const files: Record<string, string> = {};
+  h.ports.usageFs = memUsageFs(files);
+  h.ports.clock.elapsed = () => { h.clock.advance(1); return 1; };
+  const claudeStdout = (input: number, output: number, result = '') => JSON.stringify({
+    type: 'result', result, session_id: 'sess-win-1',
+    modelUsage: { 'claude-haiku-5-5': { inputTokens: input, outputTokens: output } },
+  });
+  const pending = runDelegate(claude, { ...req, collectUsage: true, model: 'haiku' }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(10);
+  files[sessionPath] = [claudeEntry(5, 90_000, 10), claudeEntry(8, 110_000, 20)].join('\n');
+  h.finish(ok({ exit: 1, stdout: claudeStdout(200_000, 30) }));
+  await flush(); await flush();
+  h.clock.advance(10);
+  files[sessionPath] += '\n' + claudeEntry(15, 500, 5);
+  h.finish(ok({ stdout: claudeStdout(200_500, 35, 'FINAL') }));
+  const done = await pending;
+  assert.equal(done.invocations.length, 2);
+  assert.equal(done.invocations[0]?.usage?.provenance, 'session');
+  assert.equal(done.invocations[0]?.usage?.input, 200_000);
+  assert.equal(done.invocations[0]?.usage?.models?.['claude-haiku-5-5#low']?.bands?.le100k?.input, 90_000);
+  assert.equal(done.invocations[0]?.usage?.models?.['claude-haiku-5-5#low']?.bands?.le200k?.input, 110_000);
+  assert.equal(done.invocations[0]?.usageBaseline, 'none');
+  assert.equal(done.invocations[0]?.usageWindowEndMs, 10);
+  assert.equal(done.invocations[0]?.coverage, undefined);
+
+  assert.equal(done.invocations[1]?.usage?.provenance, 'session');
+  assert.equal(done.invocations[1]?.usage?.input, 500);
+  assert.equal(done.invocations[1]?.usageBaseline, 'none');
+  assert.equal(done.invocations[1]?.usageWindowEndMs, 21);
+});
+
+test('session window: incomplete read falls back to stdout with transcript unavailable', async () => {
+  {
+    const h = harness(posix);
+    (h.ports as RunnerPorts & { usageFs?: HostUsageFs }).usageFs = memUsageFs({});
+    const stdout = [
+      JSON.stringify({ type: 'text', sessionID: 'ses_oc_1', part: { text: 'FINAL' } }),
+      JSON.stringify({ type: 'step_finish', sessionID: 'ses_oc_1', part: { tokens: { input: 12, output: 4 } } }),
+    ].join('\n');
+    const pending = runDelegate(opencode, { ...req, collectUsage: true }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.usage?.provenance, 'stdout');
+    assert.equal(done.invocations[0]?.usage?.input, 12);
+    assert.deepEqual(done.invocations[0]?.coverage, ['transcript unavailable']);
+    assert.equal((done.invocations[0] as { usageBaseline?: string }).usageBaseline, 'none');
+  }
+  {
+    const h = harness(posix);
+    let fsReadCalled = false;
+    (h.ports as RunnerPorts & { usageFs?: HostUsageFs }).usageFs = memUsageFs({}, {
+      stat: () => { fsReadCalled = true; return null; },
+    });
+    const stdout = JSON.stringify({ result: 'FINAL', session_id: 'sess-no-diag', modelUsage: { m: { inputTokens: 10, outputTokens: 2 } } });
+    const pending = runDelegate(claude, { ...req, collectUsage: false, onInvocation: () => {} }, 'cli', h.ports);
+    await flush(); h.finish(ok({ stdout }));
+    const done = await pending;
+    assert.equal(fsReadCalled, false);
+    assert.equal(done.invocations[0]?.coverage, undefined);
+  }
+});
+
+test('usage baseline: Claude three-launch chain (session, result.usage, modelUsage) leaves third launch unmeasured', async () => {
+  const h = harness(posix);
+  const sessionPath = '/h/.claude/projects/-repo/sess-chain.jsonl';
+  const files: Record<string, string> = {};
+  h.ports.usageFs = memUsageFs(files);
+  const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(10);
+  files[sessionPath] = claudeEntry(5, 100, 10);
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-chain', modelUsage: { m: { inputTokens: 100, outputTokens: 10 } } }) }));
+  await flush(); await flush();
+  h.clock.advance(10);
+  files[sessionPath] = ''; // missing/empty transcript -> incomplete read
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-chain', usage: { input_tokens: 20, output_tokens: 3 } }) }));
+  await flush(); await flush();
+  h.clock.advance(10);
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-chain', modelUsage: { m: { inputTokens: 999, outputTokens: 99 } } }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage?.provenance, 'session');
+  assert.equal(done.invocations[0]?.usageBaseline, 'none');
+  assert.equal(done.invocations[1]?.usage?.provenance, 'stdout');
+  assert.equal(done.invocations[1]?.usage?.input, 20);
+  assert.deepEqual(done.invocations[1]?.coverage, ['transcript unavailable']);
+  assert.equal(done.invocations[1]?.usageBaseline, 'none');
+  assert.equal(done.invocations[2]?.usage, undefined);
+  assert.deepEqual(done.invocations[2]?.coverage, ['transcript unavailable']);
+  assert.equal(done.invocations[2]?.usageBaseline, 'none');
+});
+
+test('usage baseline: unmeasured middle or first launch leaves later cumulative launch unmeasured', async () => {
+  {
+    const h = harness(posix);
+    h.ports.usageFs = memUsageFs({});
+    const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+    await flush(); h.clock.advance(10);
+    h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-mid', modelUsage: { m: { inputTokens: 50, outputTokens: 5 } } }) }));
+    await flush(); await flush(); h.clock.advance(10);
+    h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-mid' }) })); // unmeasured middle
+    await flush(); await flush(); h.clock.advance(10);
+    h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-mid', modelUsage: { m: { inputTokens: 120, outputTokens: 12 } } }) }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.usage?.provenance, 'stdout');
+    assert.equal(done.invocations[0]?.usageBaseline, 'cumulative');
+    assert.equal(done.invocations[1]?.usage, undefined);
+    assert.equal(done.invocations[1]?.usageBaseline, 'none');
+    assert.equal(done.invocations[2]?.usage, undefined);
+    assert.equal(done.invocations[2]?.usageBaseline, 'none');
+  }
+  {
+    const h = harness(posix);
+    h.ports.usageFs = memUsageFs({});
+    const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+    await flush(); h.clock.advance(10);
+    h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-first' }) })); // unmeasured first
+    await flush(); await flush(); h.clock.advance(10);
+    h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-first', modelUsage: { m: { inputTokens: 80, outputTokens: 8 } } }) }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.usage, undefined);
+    assert.equal(done.invocations[0]?.usageBaseline, 'none');
+    assert.equal(done.invocations[1]?.usage, undefined);
+    assert.equal(done.invocations[1]?.usageBaseline, 'none');
+  }
+});
+
+test('usage baseline: Claude result.usage fallback chain on resume stays per-launch', async () => {
+  const h = harness(posix);
+  h.ports.usageFs = memUsageFs({});
+  const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush(); h.clock.advance(10);
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-res', usage: { input_tokens: 15, output_tokens: 3 } }) }));
+  await flush(); await flush(); h.clock.advance(10);
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-res', usage: { input_tokens: 25, output_tokens: 4 } }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage?.provenance, 'stdout');
+  assert.equal(done.invocations[0]?.usage?.input, 15);
+  assert.equal(done.invocations[1]?.usage?.provenance, 'stdout');
+  assert.equal(done.invocations[1]?.usage?.input, 25);
+});
+
+test('session window: boundary millisecond counted once and resumed launch waits until clock passes previousEndMs', async () => {
+  const h = harness(posix);
+  const sessionPath = '/h/.claude/projects/-repo/sess-wait.jsonl';
+  const files: Record<string, string> = {};
+  h.ports.usageFs = memUsageFs(files);
+  let clockTime = 1000;
+  let waitChecks = 0;
+  h.ports.clock.now = () => clockTime;
+  let elapsed = 0;
+  h.ports.clock.elapsed = () => {
+    waitChecks++;
+    if (waitChecks >= 3) clockTime = 1001;
+    return (elapsed += 0.5);
+  };
+  const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush();
+  files[sessionPath] = claudeEntry(1000, 100, 10);
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-wait', modelUsage: { m: { inputTokens: 100, outputTokens: 10 } } }) }));
+  await flush(); await flush();
+  files[sessionPath] += '\n' + claudeEntry(1001, 200, 20);
+  clockTime = 1005;
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-wait', modelUsage: { m: { inputTokens: 300, outputTokens: 30 } } }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage?.input, 100);
+  assert.equal(done.invocations[1]?.usage?.input, 200);
+  assert.equal(done.invocations[1]?.usage?.provenance, 'session');
+
+  // Saved usageWindowEndMs across a new runner call
+  const h2 = harness(posix);
+  h2.ports.usageFs = memUsageFs({
+    '/h/.claude/projects/-repo/sess-wait2.jsonl': [claudeEntry(2000, 100, 10), claudeEntry(2001, 300, 30)].join('\n'),
+  });
+  let c2 = 2000;
+  h2.ports.clock.now = () => c2;
+  let e2 = 0;
+  h2.ports.clock.elapsed = () => {
+    e2 += 0.5;
+    if (e2 >= 1 && c2 < 2001) c2 = 2001;
+    return e2;
+  };
+  const p2 = runDelegate(claude, { ...req, collectUsage: true, resume: 'sess-wait2', usageWindowEndMs: 2000, usageBaseline: 'none' }, 'cli', h2.ports);
+  c2 = 2005;
+  await flush(); h2.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-wait2' }) }));
+  const d2 = await p2;
+  assert.equal(d2.invocations[0]?.usage?.input, 300);
+  assert.equal(d2.invocations[0]?.usage?.provenance, 'session');
+});
+
+test('session window: clock behind past 5 ms launches before deadline with incomplete read', async () => {
+  const h = harness(posix);
+  const sessionPath = '/h/.claude/projects/-repo/sess-behind.jsonl';
+  h.ports.usageFs = memUsageFs({
+    [sessionPath]: claudeEntry(1001, 50, 5),
+  });
+  h.ports.clock.now = () => 1000;
+  let elapsed = 0;
+  h.ports.clock.elapsed = () => (elapsed += 2);
+  const pending = runDelegate(claude, { ...req, collectUsage: true, resume: 'sess-behind', usageWindowEndMs: 1000, usageBaseline: 'cumulative' }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-behind', modelUsage: { m: { inputTokens: 70, outputTokens: 7 } } }) }));
+  const done = await pending;
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.invocations[0]?.usage?.provenance, 'stdout');
+  assert.deepEqual(done.invocations[0]?.coverage, ['transcript unavailable']);
+});
+
+test('session window: second-resolution row counts on fresh launch and makes resumed read incomplete', async () => {
+  const h = harness(posix);
+  const sessionPath = '/h/.claude/projects/-repo/sess-sec.jsonl';
+  const files: Record<string, string> = {};
+  h.ports.usageFs = memUsageFs(files);
+  const wholeSecSpec = {
+    ...claude,
+    sessionUsage: (raw: string, ctx: ProviderUsageContext, stdoutHasUsage: boolean) => {
+      const base = claude.sessionUsage!(raw, ctx, stdoutHasUsage);
+      if (ctx.resumed && base?.complete) return { complete: false };
+      return base;
+    },
+  };
+  const pending = runDelegate(wholeSecSpec, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush(); h.clock.advance(10);
+  files[sessionPath] = claudeEntry(5, 40, 4);
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-sec', modelUsage: { m: { inputTokens: 40, outputTokens: 4 } } }) }));
+  await flush(); await flush(); h.clock.advance(10);
+  files[sessionPath] += '\n' + claudeEntry(15, 60, 6);
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-sec', modelUsage: { m: { inputTokens: 100, outputTokens: 10 } } }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage?.provenance, 'session');
+  assert.equal(done.invocations[1]?.usage, undefined);
+  assert.deepEqual(done.invocations[1]?.coverage, ['transcript unavailable']);
+});
+
+test('session window: agy stdout usage shares per-launch ReadBudget with sessionUsage and skips SQLite when spent', async () => {
+  const h = harness(posix);
+  let usageBudget: { remaining: number } | undefined;
+  let sessionBudget: { remaining: number } | undefined;
+  let initialRemaining = 0;
+  let sqliteCalls = 0;
+  const spec = {
+    ...agy,
+    usage(raw: string, context?: ProviderUsageContext) {
+      usageBudget = context?.transcripts?.budget;
+      initialRemaining = usageBudget?.remaining ?? 0;
+      return agy.usage!(raw, {
+        ...context!,
+        readSqliteGenMetadata: () => { sqliteCalls++; return [new Uint8Array(64)]; },
+      });
+    },
+    sessionUsage(raw: string, context: ProviderUsageContext, stdoutHasUsage: boolean) {
+      sessionBudget = context.transcripts?.budget;
+      return agy.sessionUsage!(raw, context, stdoutHasUsage);
+    },
+  };
+  const stdout = JSON.stringify({
+    conversation_id: 'conv-budget-1',
+    response: 'FINAL',
+    usage: { input_tokens: 10, output_tokens: 2 },
+  });
+  const pending = runDelegate(spec, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush(); h.finish(ok({ stdout }));
+  const done = await pending;
+  assert.equal(done.outcome.status, 'ok');
+  assert.ok(usageBudget !== undefined);
+  assert.equal(usageBudget, sessionBudget);
+  assert.equal(sqliteCalls, 1);
+  assert.equal(usageBudget.remaining, initialRemaining - 64);
+
+  // When budget is exhausted before agy.usage runs, SQLite is skipped.
+  let sqliteCallsSpent = 0;
+  const spentSpec = {
+    ...agy,
+    usage(raw: string, context?: ProviderUsageContext) {
+      if (context?.transcripts?.budget) context.transcripts.budget.remaining = 0;
+      return agy.usage!(raw, {
+        ...context!,
+        readSqliteGenMetadata: () => { sqliteCallsSpent++; return [new Uint8Array(64)]; },
+      });
+    },
+  };
+  const h2 = harness(posix);
+  const p2 = runDelegate(spentSpec, { ...req, collectUsage: true }, 'cli', h2.ports);
+  await flush(); h2.finish(ok({ stdout }));
+  await p2;
+  assert.equal(sqliteCallsSpent, 0);
 });

@@ -7,23 +7,67 @@ import { agy, readAgySqliteGenMetadata } from './agy.ts';
 import { claudeCode } from './claude.ts';
 import { codex } from './codex.ts';
 import { opencode } from './opencode.ts';
-import { MAX_TOTAL_BYTES, readErrorReason } from './read.ts';
-import type { HostRole, HostStage, HostUsageAdapter, HostUsageFacts, HostUsageFs, HostUsageRow, Milestone, UsageRow } from './rows.ts';
+import { boundModels, foldRows, type BandedCounters } from './bands.ts';
+import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
+import { HOST_ROLES, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
 
-const toHostUsageRow = (r: UsageRow & { stage: HostStage }): HostUsageRow => ({
-  stage: r.stage,
-  role: r.role as HostRole,
-  model: r.model,
-  effort: r.effort,
-  input: r.input,
-  output: r.output,
-  ...(r.cacheRead !== undefined ? { cacheRead: r.cacheRead } : {}),
-  ...(r.cacheWrite !== undefined ? { cacheWrite: r.cacheWrite } : {}),
-  ...(r.reasoning !== undefined ? { reasoning: r.reasoning } : {}),
-});
+function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases: readonly PhaseMilestone[]): HostUsageRow[] {
+  const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[] }>();
+  for (const r of rows) {
+    const phase = phaseAt(phases, r.atMs);
+    const role = r.role as HostRole;
+    const gKey = `${r.stage}\0${phase ?? ''}\0${role}`;
+    const group = groups.get(gKey) ?? { stage: r.stage, phase, role, rows: [] };
+    group.rows.push(r);
+    groups.set(gKey, group);
+  }
+  const out: HostUsageRow[] = [];
+  for (const group of groups.values()) {
+    const byKey = new Map<string, UsageRow[]>();
+    for (const r of group.rows) {
+      const k = usageKey(r.model, r.effort);
+      const list = byKey.get(k) ?? [];
+      list.push(r);
+      byKey.set(k, list);
+    }
+    const perKey: Record<string, BandedCounters & { reasoningInOutput?: boolean }> = {};
+    for (const [k, list] of byKey) {
+      const folded = foldRows(list);
+      const entry = folded.models[k]!;
+      perKey[k] = { ...entry, ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }) };
+    }
+    const bounded = boundModels(perKey);
+    for (const [k, value] of Object.entries(bounded)) {
+      const { model, effort } = splitUsageKey(k);
+      const typed = value as BandedCounters & { reasoningInOutput?: boolean };
+      const row: HostUsageRow = {
+        stage: group.stage,
+        ...(group.phase === undefined ? {} : { phase: group.phase }),
+        role: group.role,
+        model,
+        effort: effort ? effort : null,
+        input: typed.input,
+        output: typed.output,
+        ...(typed.cacheRead !== undefined ? { cacheRead: typed.cacheRead } : {}),
+        ...(typed.cacheWrite !== undefined ? { cacheWrite: typed.cacheWrite } : {}),
+        ...(typed.cacheWrite5m !== undefined ? { cacheWrite5m: typed.cacheWrite5m } : {}),
+        ...(typed.cacheWrite1h !== undefined ? { cacheWrite1h: typed.cacheWrite1h } : {}),
+        ...(typed.reasoning !== undefined ? { reasoning: typed.reasoning } : {}),
+        ...(typed.bands !== undefined ? { bands: typed.bands } : {}),
+        ...(typed.reasoningInOutput !== undefined ? { reasoningInOutput: typed.reasoningInOutput } : {}),
+      };
+      out.push(row);
+    }
+  }
+  return out.sort((a, b) =>
+    STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage)
+    || (a.phase ?? '').localeCompare(b.phase ?? '')
+    || HOST_ROLES.indexOf(a.role) - HOST_ROLES.indexOf(b.role)
+    || usageKey(a.model, a.effort).localeCompare(usageKey(b.model, b.effort)));
+}
 
 export const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
-export type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[] };
+export type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
 export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = ADAPTERS): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
   if (!adapter) return { platform, rows: [], unavailable: 'no adapter' };
@@ -33,7 +77,7 @@ export function readHostUsage(platform: ProviderKey | null, input: HostUsageInpu
   if (!Number.isFinite(input.startMs)) return { platform, rows: [], unavailable: 'invalid session start' };
   try {
     const res = adapter.read({ ...input, sessionId, budget: { remaining: MAX_TOTAL_BYTES } }, fsPort);
-    return { platform, ...res, rows: res.rows.map(toHostUsageRow) };
+    return { platform, ...res, rows: foldHostRows(res.rows, input.phases ?? []) };
   } catch (error) { return { platform, rows: [], unavailable: readErrorReason(error) }; }
 }
 export const nodeHostUsageFs: HostUsageFs = {

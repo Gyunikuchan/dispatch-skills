@@ -1148,3 +1148,76 @@ test('bracketed model id renders its name in Tokens by stage', () => {
     '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 |',
   ]);
 });
+
+test('key bound: sanitize bounds 40 model keys to 32 largest plus other', () => {
+  const models: Record<string, { input: number; output: number }> = {};
+  for (let i = 0; i < 40; i++) {
+    models[`m${String(i).padStart(2, '0')}#high`] = { input: (i + 1) * 10, output: 1 };
+  }
+  const clean = sanitizeFacts(facts({ invocations: [invocation({ usage: { input: 8200, output: 40, models } })] }));
+  const kept = Object.keys(clean.invocations[0]?.usage?.models ?? {});
+  assert.equal(kept.length, 33);
+  assert.ok(kept.includes('other'));
+  assert.equal('m00#high' in (clean.invocations[0]?.usage?.models ?? {}), false);
+  assert.equal('m08#high' in (clean.invocations[0]?.usage?.models ?? {}), true);
+});
+
+test('banded facts: round-trips valid bands, split, reasoningInOutput and phase, and drops invalid bands or over-total split', () => {
+  const valid = sanitizeFacts(facts({
+    hostUsage: {
+      platform: 'claude',
+      rows: [{
+        stage: 'plan', phase: 'plan', role: 'host', model: 'm', effort: 'high',
+        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: true,
+        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
+      } as never],
+    },
+    invocations: [invocation({
+      usage: {
+        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: false,
+        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
+      } as never,
+    })],
+  }));
+  const hRow = valid.hostUsage?.rows[0] as Record<string, unknown>;
+  assert.equal(hRow['phase'], 'plan');
+  assert.equal(hRow['cacheWrite5m'], 12);
+  assert.equal(hRow['cacheWrite1h'], 8);
+  assert.equal(hRow['reasoningInOutput'], true);
+  assert.ok(hRow['bands']);
+  const uRow = valid.invocations[0]?.usage as Record<string, unknown>;
+  assert.equal(uRow['cacheWrite5m'], 12);
+  assert.equal(uRow['cacheWrite1h'], 8);
+  assert.equal(uRow['reasoningInOutput'], false);
+  assert.ok(uRow['bands']);
+
+  const invalid = sanitizeFacts(facts({
+    invocations: [invocation({
+      usage: {
+        input: 100, output: 10, cacheWrite: 10, cacheWrite5m: 8, cacheWrite1h: 5,
+        bands: { le100k: { input: 99, output: 10 }, bogus: { input: 1, output: 0 } },
+      } as never,
+    })],
+  }));
+  const badU = invalid.invocations[0]?.usage as Record<string, unknown>;
+  assert.equal('bands' in badU, false);
+  assert.equal('cacheWrite5m' in badU, false);
+  assert.equal('cacheWrite1h' in badU, false);
+});
+
+test('coverage list: sanitizes legacy string and renders reasons on measured and unmeasured invocations', () => {
+  const { usage: _u, ...unmeasuredCopilot } = invocation({ provider: 'copilot', coverage: 'no usage output' } as unknown as Partial<InvocationFacts>);
+  const legacy = sanitizeFacts(facts({ invocations: [unmeasuredCopilot] }));
+  assert.deepEqual(legacy.invocations[0]?.coverage, ['no usage']);
+
+  const text = render([facts({
+    invocations: [
+      unmeasuredCopilot,
+      invocation({ provider: 'claude', usage: { input: 50, output: 5 }, coverage: ['transcript unavailable'] }),
+    ],
+  })]);
+  assert.match(text, /\| claude \| 50 \| — \| — \| 5 \| — \| delegates 1\/1 transcript unavailable \|/);
+  assert.match(text, /\| copilot \| — \| — \| — \| — \| — \| delegates 0\/1 no usage \|/);
+  assert.match(text, /\| code review \| claude \| delegate \| .* \| 50 \| — \| — \| 5 \| — \| 1\/1 transcript unavailable \|/);
+  assert.match(text, /\| code review \| copilot \| delegate \| .* \| — \| — \| — \| — \| — \| 0\/1 no usage \|/);
+});
