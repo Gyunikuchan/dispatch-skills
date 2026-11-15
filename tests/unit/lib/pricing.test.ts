@@ -215,23 +215,32 @@ const rates = (input: number, output: number, cacheRead: number, cacheWrite5m?: 
   ({ input, output, cacheRead, ...(cacheWrite5m === undefined ? {} : { cacheWrite5m, cacheWrite1h }) });
 const tier = (abovePromptTokens: number, r: object) => ({ tiers: [{ abovePromptTokens, rates: r }] });
 const EXPECTED = {
+  'claude-fable-5-2': { reasoning: 'output', rates: rates(8, 40, 0.20, 10, 16) },
+  'claude-mythos-5-2': { reasoning: 'output', rates: rates(8, 40, 0.20, 10, 16) },
   'claude-opus-5-5': { reasoning: 'output', rates: rates(4, 20, 0.20, 5, 8) },
   'claude-sonnet-5-5': { reasoning: 'output', rates: rates(2, 10, 0.10, 2.50, 4) },
   'claude-haiku-5-5': { reasoning: 'output', rates: rates(0.10, 0.50, 0.01, 0.125, 0.20), ...tier(100_000, rates(0.50, 2.50, 0.05, 0.625, 1)) },
+  'gpt-6-astra': { reasoning: 'output', rates: rates(10, 50, 1), ...tier(272_000, rates(20, 75, 2)) },
   'gpt-6.1-sol': { reasoning: 'output', rates: rates(2, 10, 0.10), ...tier(272_000, rates(4, 15, 0.20)) },
   'gpt-6.1-terra': { reasoning: 'output', rates: rates(1, 5, 0.05), ...tier(272_000, rates(2, 7.50, 0.10)) },
   'gpt-6-luna': { reasoning: 'output', rates: rates(0.10, 0.50, 0.01), ...tier(272_000, rates(0.20, 0.75, 0.02)) },
   'gemini-3.8-flash': { reasoning: 'output', rates: rates(0.75, 3.75, 0.075) },
   'gemini-4-hydrogen': { reasoning: 'output', rates: rates(1.50, 7.50, 0.075) },
+  'gemini-4-carbon': { reasoning: 'output', rates: rates(2, 10, 0.10) },
+  'gemini-4-argon': { reasoning: 'output', rates: rates(2, 10, 0.10) },
+  'muse-spark-1.3-contributor': { reasoning: 'output', rates: rates(0.10, 0.20, 0.002) },
+  'deepseek-v4.1-flash': { reasoning: 'output', rates: rates(0.0507, 0.2028, 0.001014) },
+  'glm-5.3-flash': { reasoning: 'output', rates: rates(0.0399, 0.0784, 0.03) },
+  'minimax-m3.1-flash': { reasoning: 'output', rates: rates(0.15, 0.60, 0.015) },
 };
 
 test('shipped rate table holds the recorded official rates per model and no unconfirmed model', () => {
   const file = JSON.parse(tableText) as Record<string, unknown>;
-  assert.equal(file['asOf'], '2026-11-14');
+  assert.equal(file['asOf'], '2026-11-15');
   assert.ok(Array.isArray(file['source']) && file['source'].length > 0 && file['source'].every((url) => typeof url === 'string' && url.startsWith('https://')));
   assert.deepEqual(table.models, EXPECTED);
   const pricer = shipped();
-  assert.equal(pricer.meta.asOf, '2026-11-14');
+  assert.equal(pricer.meta.asOf, '2026-11-15');
   assert.deepEqual(pricer.meta.source, file['source']);
 });
 
@@ -255,7 +264,7 @@ test('shipped rate table prices every confirmed model in the sample config', () 
   walk(sample);
   assert.ok(models.size >= 8, [...models].join());
   // No official rate exists for these: they stay unpriced until a maintainer confirms them or a user overrides them.
-  const unconfirmed = new Set(['gpt-6-terra', 'opencode-go/muse-spark-1.3-contributor', 'lmstudio/qwen3.8-27b-ridge']);
+  const unconfirmed = new Set(['gpt-6-terra', 'lmstudio/qwen3.8-27b-ridge']);
   for (const model of models) {
     assert.equal(pricer.price(model, { input: 1000, output: 1000 }).priced, !unconfirmed.has(model), model);
   }
