@@ -44,6 +44,7 @@ Tag each finding with one family; the quality bar's bold family bullets define e
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
+CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` time is listed (~5m earlier), stop tool calls when prompted and answer from work done so far.
 <<slot:budget>>
 
 ### Severity

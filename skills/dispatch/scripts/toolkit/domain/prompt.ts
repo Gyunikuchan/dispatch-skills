@@ -62,7 +62,7 @@ export function askPrompt(question: string, context: string): string {
     '# Ask', '', '### Objective', question.trim() || '(empty question)', '',
     ...(context.trim() ? ['### Context', context.trim(), ''] : []),
     '### Evidence', 'Read the workspace read-only. Cite each claim with `<file>:L<line>` or a command you ran.', '',
-    '### Stop condition', 'Stop once the objective is answered or evidence is exhausted; say what remains unknown.', '',
+    '### Stop condition', 'Stop once the objective is answered or evidence is exhausted; say what remains unknown. CLI delegates receive a `[DEADLINE]` header: return your final answer before it, and if a wrap-up prompt arrives (~5m before the run deadline), stop tool calls and answer from work completed so far.', '',
     '### Output', 'Plain text: a short answer first, then the supporting claims, one per line.', '',
   ].join('\n');
 }

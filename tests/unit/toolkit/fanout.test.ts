@@ -146,7 +146,7 @@ test('fan-out validates provider text before done and shares one deadline',async
   };
   const outcomes=await fanOut({dir:path.join(f.session,'validate'),slots:[slot('claude',['bad','good'])],prompt:'question',validate,quota},f.deps);
   assert.deepEqual(outcomes,[{slot:'claude[0]',state:'done',text:'accepted',responder:{slot:'claude[0]',provider:'claude',model:'good',native:false}}]);
-  assert.deepEqual(budgets,[1800000,1799900]);
+  assert.deepEqual(budgets,[2100000,2099900]);
  }finally{f.cleanup();}
 });
 
@@ -262,7 +262,7 @@ test('no-report resume starts no launch after the voice deadline', async () => {
     const check = (): Validation => ({ok:false, cls:'no-report', reason});
     f.deps.delegate = async (provider, request, mode) => {
       f.launches.push({provider, request, mode});
-      now = 30 * 60 * 1000;
+      now = 35 * 60 * 1000;
       return {outcome:{status:'ok', text:'draft', resume:null, sessionId:'session-one'}, invocations: []};
     };
     const outcomes = await fanOut({dir:path.join(f.session, 'deadline'), slots:[slot('claude',['first','second'])], prompt:'question', validate:check, quota}, f.deps);
@@ -272,7 +272,7 @@ test('no-report resume starts no launch after the voice deadline', async () => {
   } finally { f.cleanup(); }
 });
 
-test('reserve deadline gives a CLI reserve its own 30 minutes after the wave deadline', async () => {
+test('reserve deadline gives a CLI reserve its own 35 minutes after the wave deadline', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     let now = 0; f.deps.clock = () => now;
@@ -281,7 +281,7 @@ test('reserve deadline gives a CLI reserve its own 30 minutes after the wave dea
       f.launches.push({provider, request, mode});
       budgets.push(request.timeoutMs);
       if (provider === 'claude') {
-        now += 31 * 60 * 1000;
+        now += 36 * 60 * 1000;
         return {outcome:{status:'fail', cls:'auth', detail:'unavailable'}, invocations: []};
       }
       return {outcome:{status:'ok', text:'reserve answer', resume:null, sessionId:null}, invocations: []};
@@ -290,7 +290,7 @@ test('reserve deadline gives a CLI reserve its own 30 minutes after the wave dea
     const served = outcomes.find(outcome => outcome.slot === 'claude[0]');
     assert.equal(served?.state, 'done');
     assert.deepEqual(f.launches.map(launch => launch.provider), ['claude', 'copilot']);
-    assert.deepEqual(budgets, [1800000, 1800000], 'the reserve starts after the wave deadline with a fresh 30-minute budget');
+    assert.deepEqual(budgets, [2100000, 2100000], 'the reserve starts after the wave deadline with a fresh 35-minute budget');
 
     f.launches.length = 0;
     f.deps.delegate = async (provider, request, mode) => {
@@ -305,7 +305,7 @@ test('reserve deadline gives a CLI reserve its own 30 minutes after the wave dea
     budgets.length = 0;
     const targeted = await fanOut({dir:path.join(f.session, 'targets'), slots:[slot('claude',['slow','good'])], prompt:'question', validate, quota}, f.deps);
     assert.equal(targeted[0]?.state, 'done');
-    assert.deepEqual(budgets, [1800000, 1740000], 'targets keep the shared wave deadline');
+    assert.deepEqual(budgets, [2100000, 2040000], 'targets keep the shared wave deadline');
   } finally { f.cleanup(); }
 });
 

@@ -99,9 +99,10 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   // NOTE: pack budgets from factory.plan.md SC5. The explorer/map/shared component
   // estimates (5418/1824/5396) predate the T1 audience tags and the T6 map-budget
   // sentence; the test enforces the pack totals plus the components that still hold.
-  assert.ok(promptBytes('code') <= 14648, `code reviewer prompt exceeds 14648 budget`);
-  assert.ok(promptBytes('plan') <= 16653, `plan reviewer prompt exceeds 16653 budget`);
-  assert.ok(promptBytes('design') <= 12439, `design reviewer prompt exceeds 12439 budget`);
+  // NOTE: +171 bytes on review-prompt.md for static [DEADLINE] and wrap-up guidance moved from runner.ts; ceilings set to measured rendered pack sizes.
+  assert.ok(promptBytes('code') <= 14722, `code reviewer prompt exceeds 14722 budget`);
+  assert.ok(promptBytes('plan') <= 16721, `plan reviewer prompt exceeds 16721 budget`);
+  assert.ok(promptBytes('design') <= 12508, `design reviewer prompt exceeds 12508 budget`);
   const writer = templateBytes('writer-brief.md') + qualityBytes('writer');
   // NOTE: 10784 retains the original writer contract and states separate task and assigned-fix reply forms; consolidation was tried first.
   assert.ok(writer <= 10784, `writer brief pack ${writer} exceeds 10784 budget`);

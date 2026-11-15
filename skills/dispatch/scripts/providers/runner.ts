@@ -24,10 +24,10 @@ export const WRAP_UP_LEAD_MS = 5 * 60_000;
 /** Runs shorter than this never stop for wrap-up. */
 export const WRAP_UP_FLOOR_MS = 10 * 60_000;
 /** Prompt for the one-time wrap-up resume; the run deadline line is prepended by the runner. */
-export const WRAP_UP_PROMPT = 'The delegate run is about to reach its deadline. Wrap up now and return your final answer in the format the original prompt requires, based on the work done so far.';
+export const WRAP_UP_PROMPT = 'The delegate run is about to reach its deadline. Make no further tool calls. Wrap up now and return your final answer in the format the original prompt requires, based on the work done so far.';
 /** One-line deadline notice inside every guarded prompt. */
-export const deadlineNotice = (deadlineMs: number): string =>
-  `[DEADLINE]: ${new Date(deadlineMs).toISOString()}. Return your final answer before it; a wrap-up request may arrive 5 minutes earlier.`;
+export const deadlineNotice = (deadlineMs: number, remainingMs: number, wrapUpAtMs?: number): string =>
+  `[DEADLINE]: ${new Date(deadlineMs).toISOString()} (${Math.max(0, Math.round(remainingMs / 60_000))}m remaining${wrapUpAtMs === undefined ? '' : `; wrap-up at ${new Date(wrapUpAtMs).toISOString()}`})`;
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
@@ -595,9 +595,8 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     recordInvocation(invocations, req, { provider: spec.id, model: normalized.model, mode, effort: normalized.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
     return { outcome, result: null, attempts, briefFile, invocations };
   };
-  const deadline = ports.clock.now() + req.timeoutMs;
-  const runBudget = req.timeoutMs;
-  const deadlineLine = deadlineNotice(deadline);
+  const deadline = ports.clock.now() + req.timeoutMs, runBudget = req.timeoutMs, wrapUpPossible = runBudget >= WRAP_UP_FLOOR_MS;
+  const deadlineLine = deadlineNotice(deadline, runBudget, wrapUpPossible ? deadline - WRAP_UP_LEAD_MS : undefined);
   const sandbox = req.sandbox && spec.sandbox !== undefined;
   if (sandboxBlocked(spec, req.sandbox, ports.platform)) {
     return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
@@ -802,7 +801,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
         if (remainingWrapUp <= 0) return { outcome, result, attempts, briefFile, invocations };
         try {
           const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-          const wrapGuarded = formatSafetyPrompt(`${deadlineLine}\n\n${WRAP_UP_PROMPT}`, resumeScope);
+          const wrapGuarded = formatSafetyPrompt(`${deadlineNotice(deadline, remainingWrapUp)}\n\n${WRAP_UP_PROMPT}`, resumeScope);
           const wrapReserved = bytes(spec.argv({ ...current, prompt: '', resume: sessionId, timeoutMs: remainingWrapUp }, mode).argv.join(' '));
           let resumeBriefFile: string | null = null;
           let resumePrompt = wrapGuarded;
@@ -864,7 +863,8 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             stalledResult = result;
             try {
               const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-              const resumeGuarded = formatSafetyPrompt(`${deadlineLine}\n\n${CONTINUE_PROMPT}`, resumeScope);
+              const wrapUpAt = !wrapUpUsed && wrapUpPossible && deadline - WRAP_UP_LEAD_MS > ports.clock.now() ? deadline - WRAP_UP_LEAD_MS : undefined;
+              const resumeGuarded = formatSafetyPrompt(`${deadlineNotice(deadline, remainingNudge, wrapUpAt)}\n\n${CONTINUE_PROMPT}`, resumeScope);
               const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: lastSessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
               let resumeBriefFile: string | null = null;
               let resumePrompt = resumeGuarded;

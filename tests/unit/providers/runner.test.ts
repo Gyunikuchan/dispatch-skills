@@ -1811,14 +1811,14 @@ test('session window: agy stdout usage shares per-launch ReadBudget with session
 });
 
 // T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
-test('deadline notice: fresh launch prompt states the run deadline', async () => {
+test('deadline notice: fresh launch prompt states the run deadline with relative minutes and wrap-up time', async () => {
   const h = harness(posix);
   const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
   await flush();
   const prompt = String(h.launches[0]?.argv[2] ?? '');
   const deadlineIso = new Date(1_800_000).toISOString();
-  assert.ok(prompt.includes('[DEADLINE]:'), 'missing deadline marker');
-  assert.ok(prompt.includes(deadlineIso), `missing deadline ${deadlineIso}`);
+  const wrapUpIso = new Date(1_500_000).toISOString();
+  assert.ok(prompt.includes(`[DEADLINE]: ${deadlineIso} (30m remaining; wrap-up at ${wrapUpIso})`), `unexpected deadline notice in: ${prompt}`);
   h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'R', session_id: 'sess-1' }) }));
   await run;
 });
@@ -1853,11 +1853,34 @@ test('wrap-up stop: Claude preset launch stops at deadline minus five and resume
   const resumeArgv = h.launches[1]?.argv ?? [];
   assert.ok(resumeArgv.includes('--resume'));
   assert.ok(!resumeArgv.includes('--session-id'));
-  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  const wrapPrompt = (h.launches[1]?.argv ?? []).join('\n');
+  const deadlineIso = new Date(1_800_000).toISOString();
+  assert.ok(wrapPrompt.includes('Make no further tool calls'), 'wrap-up prompt must forbid further tool calls');
+  assert.ok(wrapPrompt.includes(`[DEADLINE]: ${deadlineIso} (5m remaining)`), 'wrap-up launch must show 5m remaining');
+  assert.ok(!wrapPrompt.includes('wrap-up at'), 'wrap-up launch must omit wrap-up timestamp');
   h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-1' }) }));
   const done = await run;
   assert.equal(done.outcome.status, 'ok');
   assert.equal(done.outcome.status === 'ok' && done.outcome.text, 'FINAL');
+});
+
+test('deadline notice: continue-resume omits wrap-up time once wrap-up instant has passed', async () => {
+  const h = harness(posix);
+  const spec = { ...makeNudgeSpec('sess-late'), attemptSession: (out: any) => String(typeof out === 'string' ? out : out?.stdout ?? '').includes('partial') ? 'sess-late' : null };
+  const run = runDelegate(spec, { ...req, timeoutMs: 2_100_000 }, 'cli', h.ports);
+  await flush();
+  for (let t = 0; t < 1_920_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  h.finish(ok({ exit: 1, stdout: 'partial' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  const resumePrompt = String(h.launches[1]?.argv[2] ?? '');
+  assert.ok(resumePrompt.includes(CONTINUE_PROMPT), 'second launch must use CONTINUE_PROMPT');
+  assert.ok(!resumePrompt.includes('Make no further tool calls'), 'second launch must not use WRAP_UP_PROMPT');
+  assert.ok(resumePrompt.includes('(3m remaining)'), 'continue-resume must show 3m remaining');
+  assert.ok(!resumePrompt.includes('wrap-up at'), 'continue-resume must omit past wrap-up timestamp');
+  h.finish(ok({ stdout: 'FINAL' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
 });
 
 test('wrap-up stop: Codex thread event stops and resumes with wrap-up inside five minutes', async () => {
@@ -1900,7 +1923,9 @@ test('wrap-up stop: run under ten minutes never stops early', async () => {
   h.fs.writeText('/r/log', '{"type":"thread.started","thread_id":"thread-abc123"}');
   for (let t = 0; t < 4 * 60_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
   assert.deepEqual(h.signals, []);
-  assert.ok((h.launches[0]?.argv ?? []).join('\n').includes('[DEADLINE]:'));
+  const shortPrompt = (h.launches[0]?.argv ?? []).join('\n');
+  assert.ok(shortPrompt.includes(`[DEADLINE]: ${new Date(9 * 60_000).toISOString()} (9m remaining)`));
+  assert.ok(!shortPrompt.includes('wrap-up at'), 'short run under floor must omit wrap-up timestamp');
   h.clock.advance(5 * 60_000);
   await flush();
   h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
@@ -2039,7 +2064,11 @@ test('wrap-up stop: Copilot with streamed output stops and resumes with wrap-up'
   const resumeArgv = h.launches[1]?.argv ?? [];
   assert.ok(resumeArgv.includes('--resume'));
   assert.ok(!resumeArgv.includes('--session-id'));
-  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  const wrapPrompt = (h.launches[1]?.argv ?? []).join('\n');
+  const deadlineIso = new Date(1_800_000).toISOString();
+  assert.ok(wrapPrompt.includes('Make no further tool calls'), 'wrap-up prompt must forbid further tool calls');
+  assert.ok(wrapPrompt.includes(`[DEADLINE]: ${deadlineIso} (5m remaining)`), 'wrap-up launch must show 5m remaining');
+  assert.ok(!wrapPrompt.includes('wrap-up at'), 'wrap-up launch must omit wrap-up timestamp');
   h.finish(ok({ exit: 0, stdout: 'FINAL answer', stderrTail: '' }));
   const finished = await run;
   assert.equal(finished.outcome.status, 'ok');

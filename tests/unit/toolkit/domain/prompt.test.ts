@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { assembleTemplate, extractDocumentLayers, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { askPrompt, assembleTemplate, extractDocumentLayers, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection, type Settled} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
@@ -632,4 +632,10 @@ test('settled accepted rows since the previous round are marked new', () => {
   assert.ok(prompt.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new)\n'));
   assert.ok(prompt.includes('### Since the previous round\nInter-round diff: inter-round.diff\n'));
   assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
+});
+
+test('askPrompt includes deadline and wrap-up stop-tool-calls guidance', () => {
+  const prompt = askPrompt('Why?', 'Context');
+  assert.ok(prompt.includes('[DEADLINE]'), 'askPrompt must reference [DEADLINE]');
+  assert.ok(prompt.includes('stop tool calls'), 'askPrompt must instruct stopping tool calls on wrap-up');
 });

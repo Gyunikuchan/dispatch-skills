@@ -250,7 +250,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const session = sessionOf(input.dir), manifest = readManifest(session);
   const cwd = input.cwd ?? manifest.repositoryRoot;
   const store = {sessionDir: session, repositoryRoot: manifest.repositoryRoot, bucketWidth: H};
-  const deadline = deps.clock() + 30 * 60 * 1000;
+  const deadline = deps.clock() + 35 * 60 * 1000;
   const readCommands = loadReadCommands(deps.skillRoot);
   // Reused outcomes need no quota reads; each launched key keeps one frozen decision.
   const decisions = new Map<string, ReturnType<typeof quotaSnapshot>['decisions'][number]>();
@@ -416,8 +416,8 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     const config = {slot: physical.slot, platform: provider, models, modes, modeCascadeOn:SPECS[provider].modeCascadeOn};
     let position = {model:0,mode:0};
     const targetForEmit: RosterSlot = {...physical, slot: logicalSlot};
-    // A reserve runs on its own 30-minute budget from its start; targets share the wave deadline.
-    const voiceDeadline = physical.reserve ? deps.clock() + 30 * 60 * 1000 : deadline;
+    // A reserve runs on its own 35-minute budget from its start; targets share the wave deadline.
+    const voiceDeadline = physical.reserve ? deps.clock() + 35 * 60 * 1000 : deadline;
     let resumesUsed = 0, reportResumes = 0, resumeSessionId: string | null = null;
     let sessionUsage: DiagnosticUsage | undefined;
     let usageBaseline: UsageBaseline = 'cumulative';
