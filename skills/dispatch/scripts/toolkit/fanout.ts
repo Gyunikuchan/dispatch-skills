@@ -517,8 +517,8 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
             continue;
           }
           for (const row of result.invocations) if (!observed.has(row)) recordUsage(row);
-          // Fakes may return rows without invoking the callback.
-          if (!resumeCallback) resumesUsed += result.invocations.slice(1).filter(invocation => invocation.nudge === true).length;
+          // Fakes may return rows without invoking the callback. Wrap-up resumes ride outside the stall count.
+          if (!resumeCallback) resumesUsed += result.invocations.slice(1).filter(invocation => invocation.nudge === true && invocation.wrapUp !== true).length;
           if (result.outcome.status === 'ok') resumeSessionId = validSessionId(result.outcome.sessionId) ?? resumeSessionId;
           checkpoint(model);
           if (crossRun && result.outcome.status === 'fail') {

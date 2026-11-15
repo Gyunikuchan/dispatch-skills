@@ -1809,3 +1809,472 @@ test('session window: agy stdout usage shares per-launch ReadBudget with session
   await p2;
   assert.equal(sqliteCallsSpent, 0);
 });
+
+// T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
+test('deadline notice: fresh launch prompt states the run deadline', async () => {
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  const prompt = String(h.launches[0]?.argv[2] ?? '');
+  const deadlineIso = new Date(1_800_000).toISOString();
+  assert.ok(prompt.includes('[DEADLINE]:'), 'missing deadline marker');
+  assert.ok(prompt.includes(deadlineIso), `missing deadline ${deadlineIso}`);
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'R', session_id: 'sess-1' }) }));
+  await run;
+});
+
+test('deadline notice: resumed launch prompt states the same run deadline', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty' }));
+  await flush(); await flush();
+  const iso = new Date(1_800_000).toISOString();
+  assert.ok(String(h.launches[0]?.argv[2] ?? '').includes('[DEADLINE]:'));
+  assert.ok(String(h.launches[0]?.argv[2] ?? '').includes(iso));
+  assert.ok(String(h.launches[1]?.argv[2] ?? '').includes('[DEADLINE]:'));
+  assert.ok(String(h.launches[1]?.argv[2] ?? '').includes(iso));
+  h.finish(ok({ stdout: 'FINAL' }));
+  await run;
+});
+
+test('wrap-up stop: Claude preset launch stops at deadline minus five and resumes with wrap-up', async () => {
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  assert.ok((h.launches[0]?.argv ?? []).includes('--session-id'));
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  const resumeArgv = h.launches[1]?.argv ?? [];
+  assert.ok(resumeArgv.includes('--resume'));
+  assert.ok(!resumeArgv.includes('--session-id'));
+  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-1' }) }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.outcome.status === 'ok' && done.outcome.text, 'FINAL');
+});
+
+test('wrap-up stop: Codex thread event stops and resumes with wrap-up inside five minutes', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '{"type":"thread.started","thread_id":"thread-abc123"}\npartial');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.ok(h.signals.length > 0, 'expected wrap-up stop signal');
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '{"type":"thread.started","thread_id":"thread-abc123"}\npartial' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  h.finish(ok({ exit: 0, stdout: '{"type":"thread.started","thread_id":"thread-abc123"}\n{"type":"item.completed","item":{"type":"agent_message","text":"FINAL"}}' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+});
+
+test('wrap-up stop: launch without a nameable session runs to the deadline kill', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, []);
+  assert.ok((h.launches[0]?.argv ?? []).join('\n').includes('[DEADLINE]:'));
+  h.clock.advance(300_000);
+  await flush();
+  assert.ok(h.signals.length > 0);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: run under ten minutes never stops early', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 9 * 60_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '{"type":"thread.started","thread_id":"thread-abc123"}');
+  for (let t = 0; t < 4 * 60_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, []);
+  assert.ok((h.launches[0]?.argv ?? []).join('\n').includes('[DEADLINE]:'));
+  h.clock.advance(5 * 60_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: stall-resumed Claude uses resume id when partial log names no session', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec: any = {
+    ...claude,
+    attemptSession: () => (calls++ === 0 ? 'sess-stall-1' : null),
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  assert.match(String(h.launches[1]?.argv[1] ?? ''), /resume:sess-stall-1/);
+  h.fs.writeText('/r/log', '');
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 3);
+  assert.match(String(h.launches[2]?.argv[1] ?? ''), /resume:sess-stall-1/);
+  assert.ok(String(h.launches[2]?.argv[2] ?? '').includes('Wrap up'));
+  h.finish(ok({ stdout: 'FINAL' }));
+  assert.equal((await run).outcome.status, 'ok');
+});
+
+test('wrap-up budget: wrap-up happens at most once per run', async () => {
+  const h = harness(posix);
+  const spec = makeNudgeSpec('sess1');
+  (spec as any).attemptSession = () => 'sess1';
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  assert.ok(String(h.launches[1]?.argv[2] ?? '').includes('Wrap up'));
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up budget: wrap-up after three stall resumes records nudge and wrapUp without consuming stall budget', async () => {
+  const h = harness(posix);
+  let resumes: string[] = [];
+  const spec = makeNudgeSpec('sess1');
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000, onResume: (id: string) => { resumes.push(id); } }, 'cli', h.ports);
+  await flush();
+  for (let i = 0; i < 3; i++) {
+    h.finish(ok({ exit: 1, stdout: `empty ${i}` }));
+    await flush(); await flush();
+  }
+  assert.equal(h.launches.length, 4);
+  assert.deepEqual(resumes, ['sess1', 'sess1', 'sess1']);
+  h.fs.writeText('/r/log', 'partial');
+  for (let t = h.clock.now(); t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 5);
+  assert.deepEqual(resumes, ['sess1', 'sess1', 'sess1']);
+  h.finish(ok({ stdout: 'FINAL' }));
+  const done = await run;
+  assert.equal(done.outcome.status, 'ok');
+  assert.equal((done.invocations[4] as any)?.nudge, true);
+  assert.equal((done.invocations[4] as any)?.wrapUp, true);
+});
+
+test('wrap-up fallback: Antigravity fresh launch never stops early', async () => {
+  const h = harness(posix);
+  const run = runDelegate(agy, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '');
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.deepEqual(h.signals, []);
+  assert.ok(String(h.launches[0]?.argv[2] ?? h.launches[0]?.argv.join(' ') ?? '').includes('[DEADLINE]:'));
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up fallback: failed wrap-up resume launch returns timeout with partial path', async () => {
+  const h = harness(posix);
+  const spec: any = {
+    ...claude,
+    parse: (out: ProcessResult, r: any) => r.resume
+      ? { status: 'fail' as const, cls: 'empty-output' as const, detail: 'resume empty' }
+      : { status: 'fail' as const, cls: 'config' as const, detail: 'first config' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+    attemptSession: () => 'sess1',
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(1_500_000);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'first config' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  h.finish(ok({ exit: 1, stdout: 'resume empty' }));
+  const done = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at/);
+});
+
+test('wrap-up stop: Copilot with streamed output stops and resumes with wrap-up', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const h = harness(posix);
+  (h.ports as any).nonce = () => 'preset123';
+  const run = runDelegate(copilot, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  assert.ok((h.launches[0]?.argv ?? []).includes('--session-id'));
+  h.fs.writeText('/r/log', 'streamed partial output');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'streamed partial output' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  const resumeArgv = h.launches[1]?.argv ?? [];
+  assert.ok(resumeArgv.includes('--resume'));
+  assert.ok(!resumeArgv.includes('--session-id'));
+  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  h.finish(ok({ exit: 0, stdout: 'FINAL answer', stderrTail: '' }));
+  const finished = await run;
+  assert.equal(finished.outcome.status, 'ok');
+});
+
+test('wrap-up stop: Copilot without streamed output runs to the deadline kill', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const h = harness(posix);
+  const run = runDelegate(copilot, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '', timedOut: true }));
+  const finished = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: OpenCode session event stops and resumes with wrap-up', async () => {
+  const h = harness(posix);
+  const run = runDelegate(opencode, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '{"sessionID":"sess-op-123","type":"text","part":{"text":"hi"}}\n');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.ok(h.signals.length > 0, 'expected wrap-up stop signal');
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '{"sessionID":"sess-op-123"}' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  assert.ok((h.launches[1]?.argv ?? []).join('\n').includes('Wrap up'));
+  h.finish(ok({ exit: 0, stdout: '{"sessionID":"sess-op-123","type":"text","part":{"text":"FINAL"}}' }));
+  const finished = await run;
+  assert.equal(finished.outcome.status, 'ok');
+});
+
+test('wrap-up stop: stall-resumed Codex uses resume id when partial log names no session', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec: any = {
+    ...codex,
+    attemptSession: (out: ProcessResult) => (calls++ === 0 ? 'thread-resume-1' : null),
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 't', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  assert.match(String(h.launches[1]?.argv[1] ?? ''), /resume:thread-resume-1/);
+  h.fs.writeText('/r/log', '');
+  for (let t = h.clock.now(); t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 3);
+  assert.match(String(h.launches[2]?.argv[1] ?? ''), /resume:thread-resume-1/);
+  h.finish(ok({ stdout: 'FINAL' }));
+  assert.equal((await run).outcome.status, 'ok');
+});
+
+test('wrap-up stop: stall-resumed OpenCode uses resume id when partial log names no session', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec: any = {
+    ...opencode,
+    attemptSession: () => (calls++ === 0 ? 'sess-op-resume-1' : null),
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  h.fs.writeText('/r/log', '');
+  for (let t = h.clock.now(); t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 3);
+  h.finish(ok({ stdout: 'FINAL' }));
+  assert.equal((await run).outcome.status, 'ok');
+});
+
+test('wrap-up stop: stall-resumed Antigravity is never stopped for wrap-up', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec: any = {
+    ...agy,
+    attemptSession: () => (calls++ === 0 ? 'conv-stall-1' : null),
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'c', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  h.fs.writeText('/r/log', '');
+  h.clock.advance(1_500_000 - h.clock.now());
+  await flush();
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const finished = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
+});
+
+test('wrap-up fallback: wrap-up resume setup failure returns timeout with partial path', async () => {
+  const h = harness(posix);
+  const spec: any = {
+    ...claude,
+    parse: () => ({ status: 'fail' as const, cls: 'config' as const, detail: 'first config' }),
+    argv: (r: any) => { if (r.resume) throw new Error('argv boom'); return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }; },
+    attemptSession: () => 'sess1',
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(1_500_000);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'first config' }));
+  const finished = await run;
+  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
+  assert.match(finished.outcome.status === 'fail' ? finished.outcome.detail : '', /partial output at/);
+});
+
+test('wrap-up fallback: wrap-up resume that reaches the deadline returns timeout', async () => {
+  const h = harness(posix);
+  const spec: any = {
+    ...claude,
+    parse: (out: ProcessResult, r: any) => r.resume
+      ? { status: 'fail' as const, cls: 'empty-output' as const, detail: 'resume empty' }
+      : { status: 'fail' as const, cls: 'config' as const, detail: 'first config' },
+    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+    attemptSession: () => 'sess1',
+  };
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(1_500_000);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'first config' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const finished = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
+  assert.match(finished.outcome.status === 'fail' ? finished.outcome.detail : '', /partial output at/);
+});
+
+test('wrap-up stop: failed tree kill keeps the deadline kill and returns timeout with no resume', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const signal = h.ports.process.signal;
+  h.ports.process.signal = (pid: number, sig: 'SIGTERM' | 'SIGKILL') => {
+    calls++;
+    if (calls === 1) throw new Error('kill ESRCH');
+    signal(pid, sig);
+  };
+  const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.equal(h.launches.length, 1);
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(300_000);
+  await flush();
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at/);
+});
+
+test('wrap-up stop: teardown failure returns timeout with no resume', async () => {
+  const h = harness(posix);
+  h.ports.process.settleGroup = async () => false;
+  const run = runDelegate(opencode, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '{"sessionID":"sess-op-123","type":"text","part":{"text":"hi"}}\n');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.activity(); h.clock.advance(60_000); await flush(); }
+  assert.ok(h.signals.length > 0, 'expected wrap-up stop signal');
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: '{"sessionID":"sess-op-123"}' }));
+  const done = await run;
+  assert.equal(done.result?.wrapUpStop, true);
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at/);
+  assert.ok(done.result?.lifecycleError);
+});
+
+test('wrap-up stop: sandbox-inactive result returns sandbox-unsupported with no resume', async () => {
+  const h = harness(posix);
+  const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000, sandbox: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', stderrTail: 'Sandbox disabled, sandbox not active' }));
+  await flush(); await flush();
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'sandbox-unsupported');
+});
+
+test('deadline notice: effort retry draws a fresh preset id and resumes send none', async () => {
+  const h = harness(posix);
+  let n = 0;
+  (h.ports as any).nonce = () => `preset-${++n}`;
+  const spec: any = {
+    ...claude,
+    parse: (out: ProcessResult, launch: any) => launch.effort
+      ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true }
+      : claude.parse(out, launch),
+  };
+  const run = runDelegate(spec, { ...req, model: 'm', effort: 'high' }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ durationMs: 7 }));
+  await flush(); await flush();
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'R', session_id: 'sess-1' }) }));
+  await run;
+  const first = (h.launches[0]?.argv ?? []).join(' ');
+  const second = (h.launches[1]?.argv ?? []).join(' ');
+  assert.match(first, /--session-id preset-1/);
+  assert.match(second, /--session-id preset-2/);
+  assert.ok(!first.includes('--resume'));
+  assert.ok(!second.includes('--resume'));
+});

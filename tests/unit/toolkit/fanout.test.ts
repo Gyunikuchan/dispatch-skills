@@ -2395,3 +2395,27 @@ test('saved session usage: usageBaseline none resumes without restart and passes
     assert.equal(saved.usageWindowEndMs, 7777);
   } finally {f.cleanup();}
 });
+
+test('wrap-up resume leaves the stall resume count unchanged', async () => {
+  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f=sessionFixture({memory:true}); try {
+    const reason='uncovered-scope: no JSON report object found';
+    const check=(text:string):Validation=>text==='FINAL'?{ok:true,text}:{ok:false,cls:'no-report',reason};
+    f.deps.delegate=async (provider,request,mode)=>{
+      f.launches.push({provider,request,mode});
+      if (f.launches.length===1) {
+        return {
+          outcome:{status:'ok',text:'draft',resume:null,sessionId:'session-one'},
+          invocations:[
+            {provider,model:request.model,mode,effort:null,launched:true,outcome:'ok'},
+            {provider,model:request.model,mode,effort:null,launched:true,outcome:'ok',nudge:true,wrapUp:true},
+          ],
+        };
+      }
+      return {outcome:{status:'ok',text:'FINAL',resume:null,sessionId:null},invocations:[]};
+    };
+    const outcomes=await fanOut({dir:path.join(f.session,'wrap-up'),slots:[slot('claude')],prompt:'question',validate:check,quota},f.deps);
+    assert.equal(outcomes[0]?.state,'done');
+    assert.deepEqual(f.launches.map(launch=>launch.request.resumesUsed),[0,0]);
+  } finally {f.cleanup();}
+});

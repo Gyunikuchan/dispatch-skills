@@ -162,6 +162,48 @@ test('attempt session: copilot prefers resume, extracts id, presets only after i
   assert.ok(preset.includes('--session-id') && preset.includes('preset-id-4'));
 });
 
+test('session preset: claude argv presets its session on a fresh launch only', () => {
+  assert.equal(SPECS.claude.presetsSession, true);
+  const fresh = SPECS.claude.argv({ ...req, sessionPreset: 'preset-id-4' }, 'cli').argv;
+  assert.ok(fresh.includes('--session-id') && fresh.includes('preset-id-4'));
+  const freshNone = SPECS.claude.argv(req, 'cli').argv;
+  assert.ok(!freshNone.includes('--session-id'));
+  const resumed = SPECS.claude.argv({ ...req, resume: 'abc123', sessionPreset: 'preset-id-4', prompt: 'C' }, 'cli').argv;
+  assert.ok(resumed.includes('--resume') && resumed.includes('abc123'));
+  assert.ok(!resumed.includes('--session-id'));
+});
+
+test('wrap-up: claude names the preset on a wrap-up stop', () => {
+  assert.equal(
+    attempt('claude', { ...out('{"type":"result","result":"R","session_id":"abc123"}'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-9' }),
+    'abc123',
+  );
+  assert.equal(
+    attempt('claude', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-9' }),
+    'preset-id-9',
+  );
+  assert.equal(attempt('claude', { ...out('partial'), wrapUpStop: true as const }), null);
+  assert.equal(attempt('claude', out('partial'), { sessionPreset: 'preset-id-9' }), null);
+  assert.equal(
+    attempt('claude', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: '../evil' }),
+    null,
+  );
+});
+
+test('wrap-up: copilot names the preset on a wrap-up stop after streamed output', () => {
+  assert.equal(
+    attempt('copilot', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-2' }),
+    'preset-id-2',
+  );
+  assert.equal(attempt('copilot', { ...out(''), wrapUpStop: true as const }, { sessionPreset: 'preset-id-2' }), null);
+  assert.equal(attempt('copilot', { ...out('partial'), wrapUpStop: true as const }), null);
+  assert.equal(attempt('copilot', out('partial'), { sessionPreset: 'preset-id-2' }), null);
+  assert.equal(
+    attempt('copilot', { ...out('R\n\nTo resume: copilot --resume 0123456789abcdef'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-2' }),
+    '0123456789abcdef',
+  );
+});
+
 test('attempt session: claude returns envelope session id', () => {
   assert.equal(attempt('claude', out('{"type":"result","result":"R","session_id":"abc123"}')), 'abc123');
   assert.equal(attempt('claude', out('')), null);

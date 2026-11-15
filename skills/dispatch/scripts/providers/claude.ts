@@ -2,7 +2,7 @@
 // denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
-import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 import { claudeUsage } from '../lib/usage/claude.ts';
 import { readDelegateSession } from '../lib/usage/delegate.ts';
@@ -91,11 +91,14 @@ export const claude: ProviderSpec = {
   resumeCommand: (id) => `claude --resume ${id}`,
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
-  // NOTE: claude never idle-stops, so only an exit envelope carries a session to resume.
-  attemptSession: (out: ProcessResult): string | null => validSessionId(parseEnvelope(out.stdout)?.sessionId ?? null),
+  // NOTE: claude never idle-stops, so a stopped launch resumes the preset session id.
+  presetsSession: true,
+  attemptSession: (out: ProcessResult, req: LaunchRequest): string | null =>
+    validSessionId(parseEnvelope(out.stdout)?.sessionId ?? null) ?? (out.wrapUpStop ? validSessionId(req.sessionPreset) : null),
   argv(req) {
     const argv = [req.binary, '-p', req.prompt, '--output-format', 'json', '--permission-mode', 'plan'];
     if (req.resume) argv.push('--resume', req.resume);
+    else if (req.sessionPreset) argv.push('--session-id', req.sessionPreset);
     if (req.model) argv.push('--model', req.model);
     if (req.effort) argv.push('--effort', req.effort);
     if (req.schemaText) argv.push('--json-schema', req.schemaText);

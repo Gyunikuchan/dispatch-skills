@@ -84,6 +84,8 @@ export type ProcessResult = {
   truncated: boolean;
   /** Silence length when the runner stopped the process for idleness. */
   idleMs?: number;
+  /** Set when the wrap-up timer stopped the launch; the session may still be resumable. */
+  wrapUpStop?: true;
   /** OpenCode-owned teardown failure; callers must retain the path and report the unconfirmed exit. */
   lifecycleError?: string;
 };
@@ -96,7 +98,7 @@ export type RunOutcome =
 export type LifecycleStep = { step: 'debug-config' | 'debug-agents' | 'prepare' | 'response' | 'teardown'; elapsedMs: number; budgetMs: number; outcome: 'ok' | 'failed' | 'timeout' | 'unconfirmed' };
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason[]; usageBaseline?: UsageBaseline; usageWindowEndMs?: number; lifecycleSteps?: LifecycleStep[]; /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true };
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason[]; usageBaseline?: UsageBaseline; usageWindowEndMs?: number; lifecycleSteps?: LifecycleStep[]; /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true; /** Set on the wrap-up resume launch. */ wrapUp?: true };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
 export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
@@ -158,7 +160,7 @@ export type ProviderSpec = {
   /** Classes that advance to the next mode (spec §6.4). */
   modeCascadeOn: readonly FailureClass[];
   resumeCommand(id: string): string;
-  /** True when argv sets `--session-id <sessionPreset>` on a fresh launch (copilot only). */
+  /** True when argv sets `--session-id <sessionPreset>` on a fresh launch. */
   presetsSession?: true;
   /** Session id of a finished or killed attempt when the attempt shows the session exists; null otherwise. */
   attemptSession?(out: ProcessResult, req: LaunchRequest): string | null;

@@ -19,6 +19,15 @@ export const KILL_ESCALATION_MS = 1000;
 export const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const BETWEEN_STEPS_MS = 60_000, IN_STEP_MS = 180_000, IDLE_CHECK_MS = 10_000;
 export const CONTINUE_PROMPT = 'Your previous turn stopped before a final answer. Continue the task from where you stopped and return your final answer in the format the original prompt requires.';
+/** Lead time before the run deadline when a nameable launch is stopped for wrap-up. */
+export const WRAP_UP_LEAD_MS = 5 * 60_000;
+/** Runs shorter than this never stop for wrap-up. */
+export const WRAP_UP_FLOOR_MS = 10 * 60_000;
+/** Prompt for the one-time wrap-up resume; the run deadline line is prepended by the runner. */
+export const WRAP_UP_PROMPT = 'The delegate run is about to reach its deadline. Wrap up now and return your final answer in the format the original prompt requires, based on the work done so far.';
+/** One-line deadline notice inside every guarded prompt. */
+export const deadlineNotice = (deadlineMs: number): string =>
+  `[DEADLINE]: ${new Date(deadlineMs).toISOString()}. Return your final answer before it; a wrap-up request may arrive 5 minutes earlier.`;
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
@@ -417,24 +426,22 @@ export type RunnerPorts = {
 /** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
 export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
+export type WrapUpPort = { runDeadline: number; enabled: boolean; nameSession: () => string | null };
 /** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[]): Promise<ProcessResult> {
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[], wrapUp?: WrapUpPort): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
   let betweenSteps = false;
   const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); }, ...(stepEvent ? { onLine: (line: string, fragment?: boolean) => { betweenSteps = !fragment && stepEvent(line) === 'step-end'; } } : {}) });
   let timedOut = false;
   let idleMs: number | undefined;
+  let wrapUpStopped = false;
   let escalate: (() => void) | null = null;
   let taskkillDone: Promise<ProcessResult> | null = null;
   let taskkillStartFailed = false;
   let markKilled!: () => void;
   const killed = new Promise<void>((resolve) => { markKilled = resolve; });
   const kill = (): void => {
-    stopTimeout();
-    stopIdle();
-    if (timedOut || pid <= 1) return;
-    timedOut = true;
-    markKilled();
+    if (timedOut || pid <= 1) { stopTimeout(); stopIdle(); return; }
     if (ports.platform.os === 'win32') {
       try {
         const killer = ports.process.start({ argv: killArgv('win32', pid), stdin: null, env: launch.env, cwd: launch.cwd }, { logPath: `${req.logPath}.kill`, capBytes: 4096 });
@@ -443,10 +450,19 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
         if (!confirmTreeExit) throw error;
         taskkillStartFailed = true;
       }
+      stopTimeout();
+      stopIdle();
+      timedOut = true;
+      markKilled();
       return;
     }
     // NOTE: a negative pid signals the whole group so launcher grandchildren die too.
+    // NOTE: the stop attempt runs before the timers cancel so a failed stop keeps the deadline kill.
     ports.process.signal(-pid, 'SIGTERM');
+    stopTimeout();
+    stopIdle();
+    timedOut = true;
+    markKilled();
     escalate = ports.clock.every(KILL_ESCALATION_MS, () => {
       escalate?.();
       ports.process.signal(-pid, 'SIGKILL');
@@ -461,10 +477,30 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     idleMs = silent;
     kill();
   });
+  // Run-level wrap-up: at run deadline - lead, stop a nameable launch once so it can resume with WRAP_UP_PROMPT.
+  let stopWrapUp: () => void = () => {};
+  if (wrapUp?.enabled) {
+    const fireIn = wrapUp.runDeadline - WRAP_UP_LEAD_MS - ports.clock.now();
+    if (fireIn > 0) {
+      let fired = false;
+      stopWrapUp = ports.clock.every(fireIn, () => {
+        if (fired) return;
+        fired = true;
+        stopWrapUp();
+        if (timedOut) return;
+        let id: string | null = null;
+        try { id = wrapUp.nameSession(); } catch { id = null; }
+        if (!id) return;
+        try { kill(); } catch { /* a failed stop leaves today's deadline kill */ return; }
+        wrapUpStopped = true;
+      });
+    }
+  }
   try {
     if (!confirmTreeExit) {
       const result = await done;
       if (!timedOut) return result;
+      if (wrapUpStopped) return { ...result, timedOut: true, wrapUpStop: true as const };
       return idleMs === undefined ? { ...result, timedOut: true } : { ...result, timedOut: true, idleMs };
     }
     const first = await Promise.race([
@@ -512,11 +548,13 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     };
     return {
       ...(idleMs === undefined ? { ...settled, timedOut: true } : { ...settled, timedOut: true, idleMs }),
+      ...(wrapUpStopped ? { wrapUpStop: true as const } : {}),
       ...(lifecycleError ? { lifecycleError } : {}),
     };
   } finally {
     stopTimeout();
     stopIdle();
+    stopWrapUp();
     // Stop on exit: a process that died from SIGTERM needs no SIGKILL.
     (escalate as (() => void) | null)?.();
   }
@@ -558,6 +596,8 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     return { outcome, result: null, attempts, briefFile, invocations };
   };
   const deadline = ports.clock.now() + req.timeoutMs;
+  const runBudget = req.timeoutMs;
+  const deadlineLine = deadlineNotice(deadline);
   const sandbox = req.sandbox && spec.sandbox !== undefined;
   if (sandboxBlocked(spec, req.sandbox, ports.platform)) {
     return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
@@ -566,10 +606,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   const attachments = buildAttachmentBlock(req.attachments, ports.fs, ports.nonce, undefined, session);
   const body = ports.fs.readText(req.promptPath);
   const scope = { attachedFiles: attachments.attachedFiles, ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-  const guarded = formatSafetyPrompt(attachments.text ? `${attachments.text}\n\n${body}` : body, scope);
+  const guarded = formatSafetyPrompt(attachments.text ? `${deadlineLine}\n\n${attachments.text}\n\n${body}` : `${deadlineLine}\n\n${body}`, scope);
   const schemaText = req.schemaPath && spec.schema ? ports.fs.readText(req.schemaPath) : null;
-  const sessionPreset = spec.presetsSession ? ports.nonce() : null;
-  const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform, ...(sessionPreset ? { sessionPreset } : {}) };
+  const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform };
   // The batch ceiling covers the whole command line, so fixed arguments spend budget too.
   const reserved = bytes(spec.argv({ ...base, prompt: '' }, mode).argv.join(' '));
   let briefFile: string | null = null;
@@ -589,6 +628,14 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   const CAPACITY_WAIT_CAP_MS = 120_000;
   const VALID_NUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
   let lastSessionId = typeof req.resume === 'string' && VALID_NUDGE_ID.test(req.resume) ? req.resume : null;
+  let wrapUpUsed = false;
+  let pendingWrapUp = false;
+  let wrapUpPrev: ProcessResult | null = null;
+  let wrapUpSessionForResume: string | null = null;
+  const wrapUpTimeout = (prev: ProcessResult | null): DelegateRun => {
+    const path = prev?.stdoutPath ?? req.logPath;
+    return { outcome: failOutcome('timeout', `wrap-up resume did not complete; partial output at ${path}`), result: prev, attempts, briefFile, invocations };
+  };
   // The capacity wait reuses the runner clock so every test harness keeps its existing ports.
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
     let stop: (() => void) | null = null;
@@ -596,19 +643,35 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   });
   let previousEndMs: number | null = typeof req.usageWindowEndMs === 'number' && Number.isFinite(req.usageWindowEndMs) ? req.usageWindowEndMs : null;
   let baseline: UsageBaseline = req.usageBaseline ?? 'cumulative';
+  const resolveWrapUpSession = (partial: ProcessResult, launchReq: LaunchRequest): string | null => {
+    let id: string | null = null;
+    try { id = spec.attemptSession ? spec.attemptSession(partial, launchReq) : null; } catch { id = null; }
+    if (typeof id === 'string' && VALID_NUDGE_ID.test(id)) return id;
+    if (launchReq.resume && (spec.presetsSession || !spec.silentUntilExit) && VALID_NUDGE_ID.test(launchReq.resume)) return launchReq.resume;
+    return null;
+  };
   for (;;) {
     const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
     const isResume = current.resume !== null;
+    const isWrapUpLaunch = pendingWrapUp;
+    pendingWrapUp = false;
+    if (!isResume && spec.presetsSession) {
+      current = { ...current, sessionPreset: ports.nonce() };
+    } else if (isResume && current.sessionPreset) {
+      current = { ...current, sessionPreset: null };
+    }
     const prepareStart = ports.clock.now();
     let pre: Prelaunch | null = null;
     try {
       pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
       if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
     } catch (error) {
+      if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
     }
     if (pre?.kind === 'fail') {
+      if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       return unlaunched(pre.outcome, attempts, briefFile, steps);
     }
@@ -623,20 +686,32 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       clockBehind = ports.clock.now() <= previousEndMs;
     }
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     let launchStartMs = 0;
     let launchEndMs = 0;
+    // Wrap-up nameability: read the attempt log at deadline - lead, name the session, fall back to the resume id.
+    wrapUpSessionForResume = null;
+    const wrapUpEnabled = !wrapUpUsed && !isWrapUpLaunch && runBudget >= WRAP_UP_FLOOR_MS;
+    const nameSession = (): string | null => {
+      let log = '';
+      try { log = ports.fs.readText(current.logPath); } catch { return null; }
+      const partial: ProcessResult = { exit: null, signal: null, stdout: log, stdoutPath: current.logPath, stderrTail: '', durationMs: 0, timedOut: true, truncated: false, wrapUpStop: true };
+      const id = resolveWrapUpSession(partial, current);
+      if (id) wrapUpSessionForResume = id;
+      return id;
+    };
     try {
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
       // A resumed launch starts after previousEndMs so a shared boundary millisecond stays with the earlier launch.
       launchStartMs = previousEndMs === null ? ports.clock.now() : Math.max(ports.clock.now(), previousEndMs + 1);
-      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps);
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps, { runDeadline: deadline, enabled: wrapUpEnabled, nameSession });
       launchEndMs = previousEndMs = ports.clock.now();
     } catch (error) {
+      if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
       if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
       throw error;
     } finally {
@@ -692,13 +767,61 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
     const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
     const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
+    if (isWrapUpLaunch) {
+      if (outcome.status === 'ok') return { outcome, result, attempts, briefFile, invocations };
+      return wrapUpTimeout(result);
+    }
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       track.effort = null;
       continue;
     }
     if (outcome.status === 'fail') {
+      if (result.wrapUpStop) {
+        if (result.lifecycleError || result.truncated || outcome.cls !== 'timeout') return { outcome, result, attempts, briefFile, invocations };
+        const sessionId = wrapUpSessionForResume ?? resolveWrapUpSession(result, current);
+        if (wrapUpUsed || !sessionId) return { outcome, result, attempts, briefFile, invocations };
+        try {
+          const stalledPath = `${req.logPath}.stalled`;
+          let existing = '';
+          try {
+            existing = ports.fs.readText(stalledPath);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
+            else throw error;
+          }
+          const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
+          const entry = `${header}\n${result.stdout ?? ''}`;
+          const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
+          ports.fs.writeText(stalledPath, combined);
+        } catch {
+          // Best effort: a copy failure skips the copy, not the resume.
+        }
+        const remainingWrapUp = deadline - ports.clock.now();
+        if (remainingWrapUp <= 0) return { outcome, result, attempts, briefFile, invocations };
+        try {
+          const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
+          const wrapGuarded = formatSafetyPrompt(`${deadlineLine}\n\n${WRAP_UP_PROMPT}`, resumeScope);
+          const wrapReserved = bytes(spec.argv({ ...current, prompt: '', resume: sessionId, timeoutMs: remainingWrapUp }, mode).argv.join(' '));
+          let resumeBriefFile: string | null = null;
+          let resumePrompt = wrapGuarded;
+          if (mustSpill(wrapGuarded, ports.platform, ports.binary, wrapReserved)) {
+            ports.fs.writeText(req.briefPath, wrapGuarded);
+            resumeBriefFile = req.briefPath;
+            resumePrompt = spillPointer(req.briefPath);
+          }
+          briefFile = resumeBriefFile;
+          current = { ...current, resume: sessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingWrapUp };
+        } catch {
+          wrapUpUsed = true;
+          return wrapUpTimeout(result);
+        }
+        wrapUpUsed = true;
+        wrapUpPrev = result;
+        pendingWrapUp = true;
+        continue;
+      }
       const isIdleKill = result.idleMs !== undefined;
       const resumable = (isIdleKill || outcome.cls === 'empty-output' || outcome.cls === 'capacity')
         && !result.lifecycleError
@@ -741,7 +864,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             stalledResult = result;
             try {
               const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-              const resumeGuarded = formatSafetyPrompt(CONTINUE_PROMPT, resumeScope);
+              const resumeGuarded = formatSafetyPrompt(`${deadlineLine}\n\n${CONTINUE_PROMPT}`, resumeScope);
               const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: lastSessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
               let resumeBriefFile: string | null = null;
               let resumePrompt = resumeGuarded;

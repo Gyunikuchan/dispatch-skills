@@ -41,6 +41,7 @@ export const copilot: ProviderSpec = {
     const extracted = extractSessionId(out.stdout, 'copilot') ?? extractSessionId(out.stderrTail, 'copilot');
     if (extracted) return validSessionId(extracted);
     if (out.idleMs !== undefined && out.stdout.trim() && req.sessionPreset) return validSessionId(req.sessionPreset);
+    if (out.wrapUpStop && out.stdout.trim() && req.sessionPreset) return validSessionId(req.sessionPreset);
     return null;
   },
   argv(req) {
