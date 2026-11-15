@@ -1,172 +1,152 @@
 # Dispatch
 
-Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; CLI read delegates do not make production changes, and a native review voice writes only its reply file. Dispatch makes your host agent an orchestrator that dispatches work to native subagents and delegates, so work is done cheaper, faster and better.
-
-Dispatch can answer a focused question, help shape a design or plan, review existing work, or carry an approved change through implementation and verification.
+Orchestrate multi-model research, planning, review, verification, and implementation from your current agent environment. Your **host agent** acts as your deputy: it routes exploration and routine tasks to utility subagents, questions and reviews to independent read delegates, and implementation to host-platform writers—checking all claims against the real code before acting.
 
 ## Contents
 
-- [How Dispatch works](#how-dispatch-works)
 - [Before you start](#before-you-start)
-- [Choose a verb](#choose-a-verb)
-- [Command pattern](#command-pattern)
+- [Command pattern and verbs](#command-pattern-and-verbs)
 - [Common workflows](#common-workflows)
+- [What to expect in a run](#what-to-expect-in-a-run)
 - [Configure routing](#configure-routing)
-- [Safety and session files](#safety-and-session-files)
+- [Safety, workspaces, and handoff](#safety-workspaces-and-handoff)
 - [Troubleshooting](#troubleshooting)
-
-## How Dispatch works
-
-Your current agent is the **host agent**. It acts as your deputy: it routes heavy reading to explorer subagents, low-risk routine tasks to utility subagents, planned changes to writers and independent opinions to read delegates. It checks their evidence against the repository and decides what to do with their findings.
-
-A typical run:
-
-1. **Understand the request.** Dispatch explores the relevant code first, using explorer subagents. They use the host platform's required `utility-subagents` entry (Doctor reports a missing entry; report a blocker); when the host has no launch tool, the host agent reads the code itself. After grounding, if the `grilling` skill is installed, Dispatch asks you questions until no open decision remains, starting with a critique of plan and design requests (problem, approach, scope, cost/risk) that lays out two or three approach options with a recommendation, where one option is the simplest worth considering and each option states its trade-off, limitation and risk, and asks only decisions that change scope, behavior or risk; when nothing is open, it skips the questions and goes straight to the confirmation, which also carries the critique without `grilling`. It then writes the spec and, in the exchange that ends the questions, confirms what it assumed and recommends `plan` or `design`.
-2. **Ground the scope, then write and review.** After you confirm the spec, Dispatch grounds the confirmed scope before authoring a standalone plan or design. It then writes the plan or design, picks a level if you did not give one, and sends the artifact to reviewers. Your host agent checks their findings and applies accepted fixes.
-3. **Approve.** You confirm the spec before authoring at every level. At `medium` and above you approve the plan or design and any proposed level before implementation; at `low`, Dispatch shows them at handoff.
-4. **Implement and verify.** A writer on your host platform makes the changes. Dispatch runs the plan's checks and a code review, then hands the result to you.
-
-The level can go up during a run if the work proves harder, but never down. Questions (`ask`) need no spec, and code review of existing work needs no approval. See [levels](references/readme/configuration.md#understand-levels-and-pins) and [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
-
-```mermaid
-flowchart TD
-    User(["👤 Your request"]) --> Ground["🔍 Explore the codebase<br/>(explorer subagents)"]
-    Ground --> Spec["📄 Clarify and write the spec"]
-    Spec --> ScopeGround["🔍 Ground confirmed scope"]
-    ScopeGround --> Artifact["📝 Write plan or design"]
-    Artifact --> Review["🎲 Independent reviewers<br/>cite evidence"]
-    Review --> Adjudicate["⚖️ Host agent checks findings<br/>and applies fixes"]
-    Adjudicate --> Approve{"You approve"}
-    Approve --> Writer["💻 Host-platform writer<br/>makes the changes"]
-    Writer --> Checks["✅ Verification + code review"]
-    Checks --> Handoff(["📦 Changes + evidence<br/>handed to you"])
-```
-
-### Canonical documents
-
-Dispatch organizes work across four canonical document layers:
-
-- **Spec (Mission brief):** Captures intent, background, decisions, constraints, and desired outcomes. The governing contract read by all participants.
-- **Design (Strategy):** Defines overarching architecture, boundaries, risks, and ordered delivery increments.
-- **Plan (Tactics):** Details tactical execution for one coherent unit: tasks, file ownership, prerequisites, requirement-linked criteria, and verification commands.
-- **Walkthrough (Debrief):** Records what was delivered, where to look, and how it was verified.
-
-Reading tips for these documents:
-
-- Start with **At a Glance**: the change, its purpose, and how it works.
-- `> [!NOTE]` marks something you need to know; `> [!IMPORTANT]` marks a decision you must make.
-- Expand `<details>` blocks for file changes, checks, and full evidence.
-- Mermaid diagrams in VS Code need a preview extension.
 
 ## Before you start
 
-You need Node.js `^22.18 || >=23.6`, at least one supported provider CLI installed and authenticated (Claude Code, Antigravity, GitHub Copilot, OpenCode, or Codex), and an active configuration with a read delegate.
+Dispatch requires Node.js `^22.18 || >=23.6`, at least one authenticated provider CLI (`claude`, `agy`, `copilot`, `opencode`, or `codex`), and an active configuration file:
 
-For installation instructions, see the [repository README](../../README.md). Copy `config.sample.jsonc` beside the Dispatch skill as `config.local.jsonc` or `config.jsonc`, then replace example model names with ones available to you. The sample is not loaded automatically. If both files exist, `config.local.jsonc` takes precedence as a complete configuration; the files are not merged.
-
-From the repository root, check your setup, with `<platform>` set to your host (`claude`, `agy`, `copilot`, `opencode` or `codex`):
+1. **Create your config:** Copy `config.sample.jsonc` beside this README to `config.local.jsonc` or `config.jsonc` (the sample is not loaded automatically; if both exist, `config.local.jsonc` wins without merging).
+2. **Pick your models:** Keep only the providers you use and replace example model names with ones available to you. See the model hints in `config.sample.jsonc`:
+   - `read-delegates`: required for `ask` and reviews (prefer strong reasoning models at `medium`+).
+   - `utility-subagents`: required per platform in use (use a fast, cheap model with at least `medium` effort so exploration and cleanup are thorough).
+   - `write-subagents`: required for `implement` on your host platform.
+3. **Check your setup** from the repository root (`<platform>` is `claude`, `agy`, `copilot`, `opencode`, or `codex`):
 
 ```bash
 node skills/dispatch/scripts/dispatch.ts session init --objective "Check Dispatch setup" --host <platform>
 node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
-Questions and reviews use `read-delegates`. Implementation also needs a `write-subagents` entry for the platform running your host agent. See [Configure Dispatch](references/readme/configuration.md).
+See [Configure Dispatch](references/readme/configuration.md) for levels, pins, and sandbox options.
 
-## Choose a verb
-
-| Verb | Use it when… | Result |
-|---|---|---|
-| [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host agent to verify |
-| [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A spec, strategy and delivery outline with configured reviews |
-| [`plan`](references/readme/plan.md) | The change is one coherent unit | A spec and tactical plan after configured review and fixes |
-| [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed rulings, applied accepted fixes, and verification |
-| [`verify`](references/readme/verify.md) | You want runtime proof | Evidence, issues and limits |
-| [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
-
-Not sure between `plan` and `design`? Dispatch checks the scope and recommends one; if your choice looks wrong for the scope, it says why and suggests a switch. You can start at any step — for example, `implement` an existing plan.
-
-## Command pattern
+## Command pattern and verbs
 
 ```text
 /dispatch [level] [(pins)] [verb:] <question, requirement, artifact, or range>
 ```
 
-- **Level**: `low`, `medium`, `high`, `xhigh`, or `max` — which configured models and how much review. If omitted, Dispatch proposes `low`–`high` for you to confirm; `xhigh` and `max` are only used when you ask. See [levels](references/readme/configuration.md#understand-levels-and-pins).
-- **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
-- **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, `verify`, and `implement`.
-- **Argument**: a question, requirement, artifact path, or Git range.
+| Part | Options | Notes |
+|---|---|---|
+| **Level** | `low`, `medium`, `high`, `xhigh`, `max` | Sets model tier and review depth. If omitted, Dispatch proposes `low`–`high` (`xhigh`/`max` are opt-in). |
+| **Pins** | `(claude,agy)`, `(3)`, `(all)` | Optional per-run filter for providers or target count. |
+| **Verb** | `ask` (default), `design`, `plan`, `implement`, `verify`, `review` | Start at any stage—for example, `implement` an existing plan. |
+
+| Verb | When to use it | Output |
+|---|---|---|
+| [`ask`](references/readme/ask.md) | Focused codebase question | Independent analysis verified by your host agent |
+| [`design`](references/readme/design.md) | Multi-increment or cross-boundary work | Spec + reviewed strategy & ordered increments |
+| [`plan`](references/readme/plan.md) | One coherent unit of change | Spec + reviewed tactical plan with task criteria |
+| [`implement`](references/readme/implement.md) | Deliver a requirement or approved plan/design | Verified code changes, code review, walkthrough |
+| [`verify`](references/readme/verify.md) | Runtime proof of behavior | Executed checks, runtime evidence, and limits |
+| [`review`](references/readme/review.md) | Existing design, plan, or code changes | Evidence-backed findings, accepted fixes, re-checks |
+
+Not sure between `plan` and `design`? Dispatch grounds the scope and recommends one, or suggests switching if your choice does not fit.
 
 ## Common workflows
 
-Ask a focused question:
-
 ```text
+# 1. Ask every configured model a focused question
 /dispatch high (all): Could concurrent refreshes issue two valid tokens?
-```
 
-Plan and deliver one change:
-
-```text
+# 2. Plan, optionally re-review, and implement one change
 /dispatch plan: Add idempotency keys to webhook delivery
 /dispatch review: <path/to/change.plan.md>
 /dispatch implement: <settled plan path>
-```
 
-`plan:` already reviews and fixes the plan as its level allows; the `review:` line is an optional extra pass. Read the plan's task summaries and verification commands, then run `implement`.
-
-Design work that needs multiple increments:
-
-```text
+# 3. Design and implement multi-increment work
 /dispatch design: Migrate billing from mutable balances to a ledger
 /dispatch implement: <approved design path>
-```
 
-Review current or committed work:
-
-```text
+# 4. Review uncommitted changes, or a Git commit range
 /dispatch review code
 /dispatch review code: main..HEAD
+
+# 5. Verify runtime behavior
+/dispatch verify: <plan or feature scope>
 ```
 
-Without a range, code review covers only uncommitted changes. Your host agent checks each finding, applies accepted safe fixes, then verifies and reviews again.
+`plan:` already runs its configured review and fix rounds; the extra `review:` line is optional. Read the plan's task summaries and verification commands, then run `implement`. Without a range, `review code` inspects only uncommitted changes.
+
+## What to expect in a run
+
+```mermaid
+flowchart TD
+    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(utility subagents)"]
+    Ground --> Spec["📄 Spec + confirm"]
+    Spec --> ScopeCheck{"Multi-increment?"}
+    ScopeCheck -->|Yes| Design["🗺️ Design + review + approve"]
+    ScopeCheck -->|No| Plan
+    Design --> Plan["📝 Plan + review + approve"]
+    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(🔴 RED tests → 🟢 GREEN code)"]
+    Tasks --> Verify["🧪 All checks + runtime verification"]
+    Verify --> Cleanup["🧹 Test cleanup"]
+    Cleanup --> Review["⚡ Final checks + code review + fixes"]
+    Review --> Deliver["📦 Deliver & clean up worktrees"]
+    Deliver -.->|Next increment| Plan
+    Deliver -->|Done| Handoff(["✅ Unstaged changes + walkthrough"])
+```
+
+1. **Ground and clarify:** Utility subagents explore relevant code first. Dispatch asks only open decisions that affect scope, behavior, or risk—laying out 2–3 approach options with a recommendation (including the simplest worth considering, each with its trade-off, limitation and risk)—then writes the **spec** for you to confirm.
+2. **Author and review:** Dispatch grounds the confirmed scope, writes the **plan** or **design**, proposes a level if omitted, and sends the artifact to independent reviewers. Your host agent checks each cited finding and applies accepted fixes.
+3. **Approve:** You confirm the spec before authoring at every level. At `medium` and above, you approve the plan or design before implementation; at `low`, Dispatch proceeds after spec confirmation and shows artifacts at handoff. The level may rise mid-run if complexity increases, never down.
+4. **Build, verify, clean up, and review:** Writers implement each task (RED failing tests first, then GREEN) in isolated worktrees. After integration, Dispatch runs plan checks and **runtime verification**, runs **test cleanup** to prune redundant tests while preserving criterion coverage, then runs **final checks + code review** (with fix and re-check rounds if needed) before delivering and cleaning up worktrees.
+
+> [!NOTE]
+> `ask` skips spec confirmation, and standalone `review code` needs no approval gate. See [levels](references/readme/configuration.md#understand-levels-and-pins) and [document layers and approvals](references/readme/concepts.md#spec-design-and-plan).
+
+### Canonical documents
+
+| Document | Role |
+|---|---|
+| **Spec** | Mission brief: intent, constraints, decisions, and acceptance conditions |
+| **Design** | Strategy: architecture, boundaries, risks, and ordered increments |
+| **Plan** | Tactics: tasks, file ownership, prerequisites, `[SC<n>]` criteria, `Check:` commands |
+| **Walkthrough** | Debrief: delivered behavior, changes, criterion evidence, and follow-ups |
+
+**Reading tips:** Start with **At a Glance**; `> [!NOTE]` highlights key context and `> [!IMPORTANT]` marks a decision for you; expand `<details>` blocks for per-file breakdowns and full logs.
 
 ## Configure routing
 
 | Setting | Controls |
 |---|---|
-| `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; when on, the host agent merges its own notes at each verb handoff and launches no subagent |
-| `write-concurrency` | Maximum number of implementation task writers running at once |
-| `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
-| `pricing` | Optional model rates that replace or extend the shipped rates behind the estimated cost in `diagnostics.md`; see [price overrides](references/readme/configuration.md#override-rates-for-cost-estimates) |
-| `read-delegates` | Models used for questions and reviews |
-| `write-subagents` | Native writer used by your host agent during implementation |
-| `utility-subagents` | Native explorers and utility subagents per platform in use; requires a token `context-limit` |
-| `phases` | Optional review breadth and round limits |
+| `read-delegates` | Provider targets and models for `ask` and reviews |
+| `write-subagents` | Native writer models used during `implement` |
+| `utility-subagents` | Native explorer and utility models per platform (`context-limit` required) |
+| `phases` | Optional review target counts, round limits, and provider filters |
+| `write-concurrency` | Max concurrent task writers (default `1`) |
+| `read-commands` | Optional host read commands (e.g. `codegraph explore`) allowed for read delegates |
+| `diagnostics` | Optional `diagnostics.md` retrospective with time, token, and cost tables |
+| `pricing` | Optional USD rate overrides for `diagnostics.md` cost estimates |
 
-The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.
+See [Configure Dispatch](references/readme/configuration.md) for full details and [rate overrides](references/readme/configuration.md#override-rates-for-cost-estimates).
 
-## Safety and session files
+## Safety, workspaces, and handoff
 
-- CLI delegates run read-only, without your credential environment variables, and in an OS sandbox where the provider supports it. `sandbox: false` turns the sandbox off for that provider. A review voice on your host platform runs as a native subagent instead: it is write-capable, writes only its reply file by prompt rule, and the review round's change comparison lists any other checkout edit. The comparison excludes git-ignored files and session artifacts.
-- Production changes use a writer configured for the host platform after the plan settles.
-- Dispatch runs the verification commands declared in the plan. Review fixes are checked and reviewed again.
-- Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
-- Dispatch creates internal commits and delivers unstaged changes to your checkout. It does not push or open a pull request. See [design delivery](references/readme/implement.md#design-delivery) for increment commits.
-
-See [Workspaces and results](references/readme/concepts.md) for session files and verification.
-
-If requirements change mid-run, completed work is kept and your host agent decides what to recheck; removing code needs your approval. See [Changing requirements](references/readme/implement.md#when-requirements-change).
+- **Read-only CLI delegates:** Run with ambient credentials stripped and OS sandboxing enabled where supported (`sandbox: false` disables it). A review voice on your host platform runs as a native subagent (prompt-restricted to its reply file, with checkout edits checked by the round diff).
+- **Isolated worktrees & unstaged delivery:** Dispatch commits inside internal worktrees, then delivers the verified result as **unstaged changes** in your checkout (no commit, push, or PR; see [design delivery](references/readme/implement.md#design-delivery) for increment commits).
+- **Session persistence:** Artifacts and state live under `.scratch/dispatch-skills/<folder>/`. Reusing the same chat resumes the session; see [Workspaces and results](references/readme/concepts.md).
+- **Mid-run changes:** Completed work is preserved and your host agent re-evaluates affected checks; removing existing code requires your approval. See [When requirements change](references/readme/implement.md#when-requirements-change).
 
 ## Troubleshooting
 
 | Problem | What to check |
 |---|---|
-| No delegates are available | Run `doctor`; check `read-delegates`, provider authentication, and the requested level |
-| The selected model or review breadth is unexpected | Check the active config, level, and pins |
-| Implementation cannot start | Configure `write-subagents` for the host platform and complete the plan prerequisites |
-| Code review finds no changes | Without a range, it reviews uncommitted changes; provide a Git range for committed work |
-| Verification fails | Read the reported log and follow the decision Dispatch presents |
-| A provider or sandbox fails | Follow the diagnostic, then check the active configuration and provider CLI installation/authentication |
+| No delegates available | Run `doctor`; check `read-delegates`, provider CLI auth, and level |
+| Unexpected model or review breadth | Check active config (`config.local.jsonc` vs `config.jsonc`), level, and pins |
+| Implementation cannot start | Add `write-subagents` for your host platform; complete plan prerequisites |
+| Code review finds no changes | Without a range, it reviews uncommitted changes; pass `base..head` for commits |
+| Verification fails | Inspect the reported log path and follow the decision prompt |
+| Provider or sandbox fails | Follow the `doctor` diagnostic, then verify CLI install and auth |
 
-For step-by-step help, see [Troubleshooting](references/readme/troubleshooting.md).
+For step-by-step recovery, see [Troubleshooting](references/readme/troubleshooting.md).

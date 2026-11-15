@@ -1,12 +1,25 @@
 # Verify
 
-Use `/dispatch verify: <target>` to run deterministic checks and exercise delivered behaviour at runtime against its governing intent. The stage runs in two layers: checks first (`check run` when a bound plan and session integration exist, or the repository's own test command as a baseline), then runtime verification by the verifier subagent. Implement runs this stage after integrated checks and before test cleanup; after review settles it re-checks proved behaviour changed by accepted review fixes.
+Use `/dispatch verify: <target>` to run deterministic checks and prove delivered behavior at runtime against its governing intent.
 
-Proof and artifacts live under the session's `verification/report.md` and `verification/`; the walkthrough links them. The report records claims (including any baseline row), methods, results, evidence and limits. When nothing runnable can be proved, a recorded no-op explains why. Missing tools are a limit; Dispatch does not install them.
+## How it works
 
-For approval rules on actions that change persistent or shared state, send messages, incur charges or use non-local environments, see [the verify guide](../verbs/verify.md).
+```mermaid
+flowchart TD
+    Target(["🎯 Target or bound plan"]) --> Checks["✅ Layer 1: Deterministic checks<br/>(plan checks or repo test command)"]
+    Checks --> Runtime["🧪 Layer 2: Runtime verification<br/>(verifier subagent drives real behavior)"]
+    Runtime --> Report["📋 verification/report.md<br/>(claims, evidence, limits)"]
+```
 
-Optionally, add a `## Verification` section to your host rule file for repository-specific guidance covering launch, health check, drive, evidence and cleanup, for example:
+- **Two layers:** Dispatch runs deterministic checks first (`check run` when a bound plan and session integration exist, or the repository's own test command as a baseline), then launches a verifier subagent for runtime verification.
+- **When it runs automatically:** `implement` runs verification after all tasks integrate and before test cleanup; after code review settles, it re-checks proved behavior changed by accepted review fixes.
+- **Artifacts & limits:** Proof and logs live under the session's `verification/report.md` and `verification/`, linked from the walkthrough. If nothing runnable can be proved, Dispatch records a no-op explaining why. Missing tools are reported as limits—Dispatch does not install them.
+
+For approval rules on actions that change persistent or shared state, send messages, incur charges, or use non-local environments, see [the verify guide](../verbs/verify.md).
+
+## Optional host rule guidance
+
+Add a `## Verification` section to your host rule file to give the verifier repository-specific instructions for launch, health checks, driving flows, evidence, and cleanup:
 
 ```markdown
 ## Verification

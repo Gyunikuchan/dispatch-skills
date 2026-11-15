@@ -40,7 +40,11 @@ For example, a host agent running on Codex can use one configured read target an
 }
 ```
 
-Replace the provider and model names with choices available in your environment. You can configure several providers or targets, but start small and add more when you need additional perspectives.
+Replace the provider and model names with choices available in your environment. Start small and add more when you need additional perspectives:
+
+- **`read-delegates`:** Prioritize strong reasoning/review models (and diverse families across providers) at `medium`+; use faster, cheaper models at `low`.
+- **`write-subagents`:** Pick reliable coding models; scale from fast/mid-tier (`low`–`medium`) to your strongest coding model (`high`–`max`).
+- **`utility-subagents`:** Pick a fast, cheap model with at least `medium` effort so exploration and routine tasks (such as test cleanup) stay thorough.
 
 ## Understand levels and pins
 
@@ -50,7 +54,9 @@ Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The lev
 - `medium` is the normal level for bounded behavior in one feature or subsystem, such as validation, forms, flags, contained refactors, or backward-compatible integration. Use it when uncertainty is meaningful but failures remain observable and recoverable.
 - `high` requires a credible consequential risk: financial or data-integrity errors, persisted-format or journal-replay invariants, security or write authority, an incompatible external contract that could materially harm callers, or cross-boundary failures that are difficult to recover. A large diff, changed external contract, finance repository, or state-machine file alone does not require high; a small rate-precision change can, while a broad reversible accessibility change may not.
 
-An explicit level stays in force. Otherwise, Dispatch proposes a level with a reason after it authors and lints a plan or design, then records it before the first review. That review uses the recorded level; you confirm the proposal with artifact approval after review. For a design, record the level before design review and carry it to its increment plans. Review or implementation may raise the level up to `high` and record the change when they find more complexity; the level never decreases mid-run. `xhigh` and `max` require your explicit choice. `ask` and standalone `review` resolve the level from the invocation, then the session ledger, then `medium`. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
+- **Explicit vs. proposed level:** An explicit level stays in force. Otherwise, Dispatch proposes a level with a reason after it authors and lints a plan or design, then records it before the first review. That review uses the recorded level; you confirm the proposal with artifact approval after review.
+- **Design runs & raises:** For a design, record the level before design review and carry it to its increment plans. Review or implementation may raise the level up to `high` and record the change when they find more complexity; the level never decreases mid-run.
+- **Opt-in & defaults:** `xhigh` and `max` require your explicit choice. `ask` and standalone `review` resolve the level from the invocation, then the session ledger, then `medium`. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
 
 Pins affect one invocation:
 
@@ -91,7 +97,11 @@ For Node.js requirements and supported provider CLIs, see the [repository README
 
 Use the strongest available model for the orchestrator, because cheap explorers and writers depend on a strong lead.
 
-`utility-subagents` configures native explorers for grounding, research and triage, and the utility subagents that do low-risk routine tasks such as test cleanup and mechanical fixes. Use a cheaper model than the host agent, so token-heavy reading stays out of the orchestrator's context. Define one `{ model, effort?, "context-limit": <tokens> }` entry per platform in use; the choice does not depend on run level. The `context-limit` is a required positive integer in tokens (e.g. 150,000 for `claude`, 300,000 for others). Without a valid entry for the host platform, Doctor reports the missing entry; report a blocker. When the host has no launch tool, the host agent does the work itself. When migrating from older configs, rename the explorer subagent table to `utility-subagents` and add `context-limit`. Independent topics can run in parallel, and the host agent can continue a subagent for a related follow-up ([routing](../../SKILL.md#routing)).
+- **`utility-subagents`:** Configures native explorers and utility subagents for grounding, research, triage, test cleanup, and mechanical fixes.
+  - Use a cheaper, fast model than the host agent (with at least `medium` effort) so token-heavy reading stays out of the orchestrator's context.
+  - Define one `{ model, effort?, "context-limit": <tokens> }` entry per platform in use (level-independent; `context-limit` is a required positive integer, e.g. `150000` for `claude`, `300000` for others).
+  - Without a valid entry for the host platform, Doctor reports a missing-entry blocker; when the host has no launch tool, the host agent reads the code itself. (When migrating older configs, rename the explorer table to `utility-subagents` and add `context-limit`.)
+  - Independent topics can run in parallel, and the host agent can continue a subagent for a related follow-up ([routing](../../SKILL.md#routing)).
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Claude and Copilot add listed commands to their allowlist, except Copilot emits `shell(<entry>:*)` rules only for single-word entries and leaves multi-word entries to its approval judge; Codex, Antigravity and OpenCode do not apply `read-commands`.

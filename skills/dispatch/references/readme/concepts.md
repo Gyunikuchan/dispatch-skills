@@ -4,67 +4,63 @@ Dispatch keeps independent review and implementation inside your current agent w
 
 ## Spec, design and plan
 
-Dispatch organizes work across four canonical document layers. The **spec (mission brief)** records why the work matters and what it must achieve: the problem, requirements with acceptance conditions, constraints, alternatives and user decisions. A **design (strategy)** chooses the strategy: architecture, boundaries, risks and ordered increments. A **plan (tactics)** gives the tactics: tasks, file ownership, prerequisites, requirement-linked criteria and verification commands. Later layers cite upstream requirements and decisions instead of repeating them. A **walkthrough (debrief)** records delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions.
+Dispatch separates intent, strategy, tactics, and delivery across four canonical documents so later layers cite upstream decisions instead of repeating them:
 
-For plan and design work, the [spec authoring](../spec-authoring.md) checks your request on problem, approach, scope and cost/risk after grounding. It lays out two or three approach options with a recommendation, where one option is the simplest worth considering and each option states its trade-off, limitation and risk, asks only decisions that change scope, behavior or risk, and takes the short path (no questions) when nothing is open; for the other lenses it proposes an alternative only when it is materially better, otherwise it states in one line why the premise holds. After you confirm the spec, Dispatch grounds the confirmed scope again before authoring a standalone plan or design.
+| Document | Purpose |
+|---|---|
+| **Spec** (mission brief) | Why the work matters: problem, requirements, acceptance conditions, constraints, alternatives, and your decisions. |
+| **Design** (strategy) | Architecture, component boundaries, risks, and ordered delivery increments. |
+| **Plan** (tactics) | Concrete tasks, file ownership, prerequisites, `[SC<n>]` criteria, and `Check:` commands. |
+| **Walkthrough** (debrief) | Delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions. |
 
-For example, a webhook spec can require safe retries without duplicate charges. The design chooses the idempotency boundary and rollout order. A plan names the storage and handler changes and checks that prove retries are safe. A standalone plan pins the spec's exact contents; an increment plan names its design increment, and that design pins the spec.
-
-Every work verb except `ask` uses one canonical governing spec. Dispatch reuses the supplied artifact's governing spec or the session spec; when none exists, your host writes one from the discussion in the session folder. A resolved supplied spec keeps its path and references, including when it belongs to another session; Dispatch does not move it to normalize placement. Standalone review also uses the diff and labels inferred requirements. If another planning skill runs during Dispatch, its spec/design output and discussion go into that resolved canonical spec. Content in a stray spec is merged before removal; deleting a tracked stray needs your approval.
-
-You confirm the spec's exact contents before design or plan authoring at every level. At `medium` and above, you also approve the resulting design or plan before implementation; at `low`, Dispatch proceeds after spec confirmation and links the artifacts at handoff. Spec confirmation is separate from design and plan approval. Standalone code review needs a spec but adds no spec approval just to review it. There is no separate delegated spec review: design and plan reviewers check governing intent as part of their review.
-
-Authors, writers and every reviewer read the whole spec. Authors also read the same quality criteria as their reviewers. A writer reads the plan's shared context and its assigned task details. This keeps the outcome available while task ownership remains bounded.
-
-If intent changes, the host records your decision in the spec and checks its new contents. At an applicable authoring gate, approval must cover those new contents; older approval does not carry over. Completed work, logs and review history remain available. Follow [recovery guidance](troubleshooting.md#resolve-spec-and-intent-changes) to identify which design or plan must change before work resumes.
+- **Clarifying intent:** For `plan` and `design`, [spec authoring](../spec-authoring.md) grounds your request on problem, approach, scope, and cost/risk. It lays out 2–3 approach options with a recommendation (including the simplest worth considering, each with its trade-off, limitation and risk), asks only decisions that change scope, behavior, or risk, and skips questions when nothing is open (for the other lenses it proposes an alternative only when materially better, otherwise stating in one line why the premise holds). After you confirm the spec, Dispatch grounds the confirmed scope before writing a standalone plan or design.
+- **One canonical spec:** Every work verb except `ask` uses one governing spec (reusing a supplied artifact's spec or authoring one in the session folder; standalone review also uses the diff and labels inferred requirements). A resolved supplied spec keeps its path, including across sessions, and any stray planning output is merged into it.
+- **Confirmation and approval gates:** You confirm the spec's exact contents before design or plan authoring at every level. At `medium` and above, you also approve the resulting design or plan before implementation; at `low`, Dispatch proceeds after spec confirmation and links the artifacts at handoff. Standalone code review adds no spec approval gate; design and plan reviewers check governing intent as part of their review.
+- **Shared visibility:** Authors, writers, and reviewers all read the whole spec (and authors read the same quality bar as reviewers). Writers read the plan's shared context and their assigned task details.
+- **If intent changes mid-run:** Your host records the decision in the spec and checks its new contents. Required approvals must cover the new version; completed work and logs stay intact. See [recovery guidance](troubleshooting.md#resolve-spec-and-intent-changes).
 
 ## Who does what
 
-- **Your host agent** is the orchestrator and your deputy. It dispatches work to the agents below, compares their claims with the code, repository instructions, and your goal, and accepts, rejects, or narrows findings with reasons. Decisions, rulings, user gates, and spec and plan authoring stay with it.
-- **Read delegates** inspect the repository and return analysis or review findings only for asks you request and for multi-provider reviews. CLI delegates use provider-specific read-only controls. A voice on your host platform runs as a native subagent instead, so you can watch it in the host UI: the first call returns its descriptor before any CLI launch, the next call runs the CLI wave alongside it, and a later call consumes its reply. A native reviewer is write-capable but writes only its reply file by prompt rule; the round's change comparison lists any other checkout edit for your host agent to inspect. Reviewers read the code themselves and launch no explorers.
-- **Explorer subagents** are native workers on the utility tier. Dispatch defines two explorer kinds: map explorers (writing an assigned map file, including nested partial maps) and research explorers (returning an inline cited reply within the size limit). Explorers write only an assigned map file and run `lint run` on its assigned map only. Explorers work solo by default, nesting only when expected reading exceeds a split threshold of 75% of the platform's configured token limit and an independent sub-topic qualifies; they then hand those sub-topics to nested explorers and consolidate the result. Coherent single-topic work stays solo past the limit, and the reply reports the overrun. The host agent can launch them at any step for grounding maps, research, log and verification triage, finding evidence, and reference sweeps, one per independent topic in parallel.
-- **Utility subagents** are the low-cost native tier configured under `utility-subagents`. In write mode, they handle low-risk routine tasks, such as [test cleanup](../templates/test-cleanup-brief.md), large map corrections over the context-guard threshold, and mechanical fixes that a deterministic check confirms. A task writer can also launch utility subagents for tedious, simple edits within its assigned paths. They edit only assigned paths, run no Git write commands and no toolkit except `lint run` on an assigned map, and the host agent or writer inspects their changes.
-- **A native writer** makes production changes from a settled plan or approved design. The writer is configured for the platform running your host agent. A writer can launch an explorer subagent for heavy reading outside its task paths, or a utility subagent for tedious, simple edits.
+- **Your host agent (orchestrator & deputy):** Dispatches work, checks every claim against the code, repository rules, and your goal, and accepts, rejects, or narrows findings with reasons. Decisions, rulings, user gates, and spec/plan authoring stay with it.
+- **Read delegates:** Inspect the repository read-only for `ask` and multi-provider reviews. CLI delegates use provider sandboxes/read-only controls; a voice on your host platform runs as a native subagent (prompt-restricted to its reply file, with any other checkout edit flagged by the round's change comparison). Reviewers read code directly and launch no explorers.
+- **Explorer subagents:** Native workers on the utility tier (`utility-subagents`) used for grounding maps, research, log/verification triage, finding evidence, and reference sweeps (one per independent topic in parallel). Map explorers write only an assigned map file and run `lint run` on its assigned map only; research explorers return concise cited replies. They work solo unless expected reading exceeds 75% of the configured `context-limit`, splitting independent sub-topics to nested explorers.
+- **Utility subagents:** Native workers on the utility tier (`utility-subagents`) for low-risk routine tasks such as [test cleanup](../templates/test-cleanup-brief.md), large map corrections, and mechanical fixes confirmed by deterministic checks. They edit only assigned paths, run no Git write commands and no toolkit except `lint run` on an assigned map, and your host agent or writer checks their edits.
+- **Native writers:** Host-platform writers that make production changes from a settled plan or approved design. A writer can launch an explorer for heavy reading outside its task paths or a utility subagent for simple tedious edits.
 
-Explorer and utility subagents use the host platform's required `utility-subagents` entry with its token limit ([routing](../../SKILL.md#routing)). The host agent can continue a subagent with a follow-up question when the answer depends on what that subagent already read.
-
-This keeps independent review useful while leaving decisions and production changes under your control.
+Explorer and utility subagents share the host platform's required `utility-subagents` entry ([routing](../../SKILL.md#routing)), and the host can continue a subagent with follow-up questions while its context is warm.
 
 ## What happens during implementation
 
-1. Dispatch settles the spec, grounds the confirmed scope, then the plan lists outcomes, files, prerequisites, requirement-linked criteria and verification steps.
-2. After approval, Dispatch works through tasks whose prerequisites are ready. Independent tasks can run at the same time when `write-concurrency` is configured above one.
-3. Your host agent checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
-4. Dispatch reports the outcome and links the artifacts and logs you may need for follow-up.
-
-The default concurrency is one. Increasing it lets independent tasks overlap, but should match the capacity of your host platform.
-
-When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host agent decide what can proceed independently.
-
-After a task finishes, the host agent checks its submitted changes before integrating them. It records setup-only RED failures as concerns, and can integrate a checked result from an older baseline while preserving unrelated work. Rechecking completed work does not repeat its implementation. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes an already-delivered source and returns the same completed outcome. Further source changes require a new run.
+1. **Plan & tasks:** After spec settlement and scope grounding, the plan defines tasks with owned paths, prerequisites, criteria, and checks. Ready tasks run in isolated worktrees (concurrently up to `write-concurrency`, default `1`).
+2. **Integrate & check:** After each task finishes, your host agent inspects the delta and evidence (recording setup-only RED failures as concerns), integrates accepted work, and runs task checks.
+3. **Verify, clean up & review:** Dispatch runs all-criteria checks, runtime verification, test cleanup, and final checks + code review before handoff.
+4. **Recover safely:** Interruptions resume from retained handles without relaunching duplicate writers, and already-delivered sources return the recorded outcome.
 
 ## Session folder
 
-Each chat has a primary session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and human deliverables: specs, designs, plans, walkthroughs, reports, and optional `diagnostics.md`. Tool internals such as prompts, logs, and the ledger live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it. A design run links separate increment sessions from its primary design session. Follow those links to find the plan, walkthrough and evidence for each increment.
+Each chat stores its primary session under `.scratch/dispatch-skills/<folder>/`:
 
-Agents put helper scripts, manually captured logs, intermediate data, and backups in `.state/scratch/`. Purpose determines placement: a backup named `before-rewrite.plan.md` goes in scratch, while the plan being delivered stays at the root. Writers use the paths supplied in their briefs. Tool-owned outputs retain their supplied paths, and production files stay in their scoped repository paths.
-
-Keep the folder while work is active or may resume. The handoff provides its path so you can inspect the saved artifacts.
+- **Top level:** `manifest.json` and human deliverables (specs, designs, plans, walkthroughs, reports, and optional `diagnostics.md`).
+- **`.state/`:** Tool internals (prompts, logs, ledger) and `.state/scratch/` for helper scripts, intermediate data, and backups.
+- **Continuity:** Continuing in the same chat reuses the session folder; design runs link separate increment sessions from the primary design session.
 
 ## What Dispatch verifies
 
-Verification follows the plan you approved. Dispatch records evidence for the plan's criteria, checks submitted changes, and runs a final review before reporting completed delivery. If a required check fails or a decision is still open, the handoff names that state rather than presenting the work as complete.
+Dispatch records evidence for every plan criterion, verifies runtime behavior, cleans up redundant tests, and runs final checks and code review before reporting completion. Open decisions or failed checks are surfaced explicitly rather than marked complete.
 
-Dispatch keeps internal task and integration commits, then delivers the verified result into your caller working tree as unstaged changes. By default it makes no commit and stages nothing; new files show as untracked in `git status`. Review the result with `git diff`, then stage and commit it yourself unless you opted in to design increment commits. Dispatch keeps the verified source at `refs/dispatch/<id>/delivered-source`; restore a file from it with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. Dispatch does not push or open a pull request.
+Internal task and integration commits stay in Dispatch's worktrees; final delivery restores the verified source into your checkout as **unstaged changes** (no commit, staging, push, or PR by default; see [design delivery](implement.md#design-delivery) for increment commits). Review with `git diff`, or restore any file from `refs/dispatch/<id>/delivered-source` with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`.
 
 ## Optional session diagnostics
 
-When `diagnostics` is on, `report complete` or `diagnostics render` at a verb's final handoff writes `diagnostics.md` from session captures, the ledger, current review results and host retro notes; it is one cumulative report per session. Captured CLI attempts retain reported provider usage. After each Claude, Codex, OpenCode and Antigravity delegate launch, Dispatch reads the delegate's own session data for that launch, including its subagents at any depth, and falls back to the delegate's reported totals when that data is unreadable or incomplete. Claude Code, Codex, and OpenCode host transcripts can also measure host and native subagent tokens, at any nesting depth, for the current host thread during the session; OpenCode reads them from the local `opencode.db` for the current host session. Other host threads are excluded; see [Troubleshooting](troubleshooting.md) for measurement limits. Native timing and usage recorded per Dispatch slot, and unsupported measurements, remain unavailable as `—`. The report groups tokens by platform and stage, with time-derived host and subagent stages, and shows review rounds, outcomes, findings and collection limits. It also estimates dollar cost (`~$`) per run, phase, platform, stage, model and effort from a shipped rate table, priced per prompt-size tier; the `pricing` setting [overrides rates](configuration.md#override-rates-for-cost-estimates), and the [toolkit reference](../toolkit.md#diagnostics-render) defines the cost columns and notes.
+When `diagnostics` is `true`, Dispatch writes a cumulative `diagnostics.md` retrospective at each verb's final handoff (or `report complete`) with per-platform/stage time, tokens, review outcomes, and estimated `~$` costs (using `references/pricing.json` and any [`pricing` overrides](configuration.md#override-rates-for-cost-estimates)). Your host agent merges terse retro notes itself and may use a research explorer when investigating logs or chat. The report stays in the session folder and is never uploaded automatically.
 
-The host agent merges its own terse notes on Dispatch instruction, driver or routing friction in the [retro format](../diagnostics.md); investigating logs or chat follows the context guard and may use a research explorer. Without observations, nothing is added. Findings cover Dispatch's own behavior. Proposed fixes are unverified.
+<details>
+<summary>How token &amp; cost measurement works</summary>
 
-The report stays in the session folder and is not uploaded automatically. Review it before sharing. When `diagnostics` is off, no report is written.
+- **Delegate usage:** Captured CLI attempts retain reported provider usage; Dispatch reads each Claude, Codex, OpenCode, and Antigravity delegate's own session data (including nested subagents), falling back to reported totals if incomplete.
+- **Host usage:** Claude Code, Codex, and OpenCode host transcripts measure host and native subagent tokens at any nesting depth for the current host thread only (OpenCode reads `opencode.db`). Other host threads are excluded.
+- **Unavailable metrics:** Native timing and usage recorded per Dispatch slot, and unsupported measurements, render as `—`. See [Troubleshooting](troubleshooting.md#understand-diagnostics-coverage) for measurement limits and [the toolkit reference](../toolkit.md#diagnostics-render) for cost columns.
+
+</details>
 
 See [Troubleshooting](troubleshooting.md) for interrupted runs, failed checks, and diagnostics coverage.
-
-See [design delivery](implement.md#design-delivery) for increment commits and the all-increments opt-in.

@@ -6,37 +6,31 @@ An objective first settles the spec, and you confirm its exact contents before p
 
 ## What happens
 
-After spec settlement, a plain-language requirement starts with a plan and its review and fix rounds enabled by the selected level's policy. The plan breaks the work into tasks with outcomes, criteria, owned paths, and prerequisites. Each task runs in an isolated worktree with a writer native to your host platform. Tasks with unmet prerequisites wait; independent tasks can overlap up to `write-concurrency` (default `1`).
-
-For each task, the writer inspects the relevant code, adds discriminating tests for the task criteria, and captures the expected failing result (RED) before production edits. The host checks the actual delta and evidence. Missing RED is a review finding. Scope checks and current integrated verification are tool gates. The writer then implements the behavior and runs the task checks. Your host agent checks and integrates each result, then Dispatch exercises runtime behaviour before test cleanup. Test cleanup starts without a full check run unless the verifier commit changed an undeclared path (it checks only automated criteria whose declared paths changed), and Dispatch runs final plan-declared verification together with the configured code-review policy, when enabled. Accepted safe findings can be fixed and rechecked within the configured review rounds before Dispatch reports the handoff.
-
-Final delivery restores the verified result into your caller working tree as unstaged changes. By default it makes no commit and stages nothing; new files show as untracked. Review with `git diff`, then stage and commit yourself unless you opted in to design increment commits. Your index must be empty, and no edited, untracked or ignored file of yours may overlap a delivered path; other changes of yours stay. A refusal preserves your work: inspect the result and reconcile the reported overlap before retrying. The verified source stays at `refs/dispatch/<id>/delivered-source`; restore a file with `git restore --source=refs/dispatch/<id>/delivered-source -- <path>`. If a crash interrupts a file write, retry can refuse and name that file; restore it with the same command. An already-delivered run returns the recorded result, while further changes need a new run. See [delivery and recovery](../toolkit.md#worktree-deliver).
+1. **Plan & tasks:** After spec settlement, a plain-language requirement starts with a plan and its configured review/fix rounds. Tasks define outcomes, criteria, owned paths, and prerequisites; each runs in an isolated worktree with a native host writer (up to `write-concurrency`, default `1`).
+2. **Test-first & integration:** For each ready task, the writer adds discriminating tests and captures the expected failing result (**RED**) before production edits (missing RED is a review finding), then implements the behavior (**GREEN**) and runs task checks. Your host agent checks the delta and integrates each result.
+3. **Verify, clean up & review:** After all tasks integrate, Dispatch runs all-criteria checks and runtime verification. Next, **test cleanup** runs (cleanup starts without a full check run unless the verifier commit changed an undeclared path—otherwise checking only automated criteria whose declared paths changed), followed by final plan-declared checks together with code review. Accepted safe findings are fixed and re-checked within configured rounds.
+4. **Deliver & clean up worktrees:** The verified result is restored into your caller working tree as **unstaged changes** (no commit or staging by default; new files show as untracked), and internal worktrees are cleaned up. Review with `git diff`, then stage and commit yourself unless you opted in to design increment commits.
+   - Delivery requires an empty index and no overlapping edited, untracked, or ignored files (other changes stay; a refusal preserves your work).
+   - The verified source remains at `refs/dispatch/<id>/delivered-source` (`git restore --source=refs/dispatch/<id>/delivered-source -- <path>`). An already-delivered run returns the recorded result; further changes need a new run. See [delivery and recovery](../toolkit.md#worktree-deliver).
 
 ### Flow at a glance
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Spec["📄 Settle spec"]
+    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(utility subagents)"]
+    Ground --> Spec["📄 Spec"]
     Spec --> SpecGate{"Confirm spec before<br/>authoring"}
-    SpecGate --> Plan["📝 Plan + plan review"]
-    Plan --> Baseline
-    Artifact(["📄 Settled plan<br/>or tech design"]) --> Resolve["Resolve governing spec<br/>and artifact approvals"]
-    Resolve --> Baseline["✅ Baseline tests"]
-    Baseline --> Tasks["🧩 Ready tasks, each<br/>in its own worktree"]
-    Tasks --> Red["🔴 Failing tests first"]
-    Red --> Green["💻 Writer makes them pass"]
-    Green --> Accept{"⚖️ Scope, tests,<br/>and checks hold?"}
-    Accept -->|Accepted| Integrate["🔗 Integrate; unblock<br/>dependent tasks"]
-    Accept -->|Needs more scope| Scope["📐 Scope request"]
-    Accept -->|Failed| Recover["🔧 Retry, revise plan,<br/>or stop"]
-    Scope -.->|Approved| Green
-    Scope -->|Disputed| Ask(["👤 Your decision"])
-    Recover -.-> Tasks
-    Integrate -.->|Tasks remain| Tasks
-    Integrate -->|All done| Runtime["Runtime verification"]
-    Runtime --> CodeReview["⚡ Code review + fixes"]
-    CodeReview --> Final["✅ Final tests, lint, build"]
-    Final --> Handoff(["📦 Changes + evidence<br/>handed to you"])
+    SpecGate --> ScopeCheck{"Multi-increment?"}
+    ScopeCheck -->|Yes| Design["🗺️ Design + review + approve"]
+    ScopeCheck -->|No| Plan
+    Design --> Plan["📝 Plan + review + approve"]
+    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(🔴 RED tests → 🟢 GREEN code)"]
+    Tasks --> Verify["🧪 All checks + runtime verification"]
+    Verify --> Cleanup["🧹 Test cleanup"]
+    Cleanup --> Review["⚡ Final checks + code review + fixes"]
+    Review --> Deliver["📦 Deliver & clean up worktrees"]
+    Deliver -.->|Next increment| Plan
+    Deliver -->|Done| Handoff(["✅ Unstaged changes + walkthrough"])
 ```
 
 ## How to use it
