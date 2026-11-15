@@ -117,7 +117,7 @@ Only `dispatch` does the work, and it runs only when you invoke it. The aliases 
 
 - [Dispatch user guide](skills/dispatch/README.md): workflow choices and common workflows
 - [Configuration](skills/dispatch/references/readme/configuration.md): setup, levels, pins, and sandbox settings
-- [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md): diagnostics and resuming interrupted work
+- [Troubleshooting](skills/dispatch/references/readme/troubleshooting.md): diagnostics, estimated cost and resuming interrupted work
 
 ## License
 

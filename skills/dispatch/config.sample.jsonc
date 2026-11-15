@@ -24,6 +24,11 @@
   // commands that write at most their own cache; Claude's sandbox permits working-directory writes.
   // Create or refresh any index these commands query before delegates launch.
   "read-commands": ["codegraph explore"],
+  // Optional; override or add USD rates per 1M tokens over references/pricing.json. Keys are model ids
+  // without the provider/ prefix or version suffix, or "provider/*"; a malformed entry is ignored and doctor reports it as a warning.
+  "pricing": {
+    "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
+  },
   // Required for asks and reviews. Keep only providers you use.
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { observeTool, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
@@ -475,6 +475,37 @@ test('diagnostics render writes the session report when enabled and reports off 
   } finally { f.cleanup(); }
 });
 
+test('cost cells render from the skill rate table and fall back to not estimated without a host or table', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    captureRuns(f.session, [
+      { phase: 'plan-review', attempt: 1, provider: 'claude', model: 'claude-sonnet-5-5', effort: 'high', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 1_000_000, output: 0 } },
+    ]);
+    const fold = { records: [], lastSeq: 0, torn: null };
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    f.deps.skillRoot = skill;
+    const host = { manifest: readManifest(f.session), deps: f.deps };
+    const render = (withHost: boolean) => fs.readFileSync(optionalDiagnostics(f.session, fold, 'complete', withHost ? host : undefined)!, 'utf8');
+    const table = path.join(skill, 'references', 'pricing.json');
+    const shipped = fs.readFileSync(new URL('../../../skills/dispatch/references/pricing.json', import.meta.url), 'utf8');
+    const stageRow = (text: string) => text.split('\n').find((line) => line.startsWith('| — | claude | delegate | claude-sonnet-5-5'))!;
+
+    assert.match(render(true), /^- Estimated cost: not estimated \(rate table unavailable\)$/m, 'missing table');
+    assert.ok(stageRow(render(true)).endsWith('| 1/1 | — |'));
+    fs.mkdirSync(path.dirname(table), { recursive: true });
+    fs.writeFileSync(table, '{ not json');
+    assert.match(render(true), /not estimated/, 'unreadable table');
+    fs.writeFileSync(table, shipped);
+    assert.match(render(false), /not estimated/, 'no host');
+    const text = render(true);
+    assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-14 · priced 1 · unpriced 0$/m);
+    assert.ok(stageRow(text).endsWith('| 1/1 | ~$2.00 |'), stageRow(text));
+
+    writeJson(path.join(skill, 'config.local.jsonc'), { pricing: { 'claude-sonnet-5-5': { rates: { input: 1, output: 1 } }, bad: 'x' } });
+    assert.match(render(true), /^- Estimated cost .*: ~\$1\.00 ·/m, 'override replaces the shipped rate and a malformed entry is ignored');
+  } finally { f.cleanup(); }
+});
+
 test('review yield renders per slot outcomes', async () => {
   const f = sessionFixture({ memory: true });
   try {
@@ -672,10 +703,10 @@ test('token table groups by effort', () => {
     assert.deepEqual(facts.invocations.find(i => i.provider === 'copilot')?.coverage, ['no usage']);
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(table, /### Tokens by stage/);
-    assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \|$/m);
-    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \|$/m);
-    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \|$/m);
-    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage \|$/m);
+    assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \| Cost \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \| — \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \| — \|$/m);
+    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage \| — \|$/m);
     assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
   } finally { f.cleanup(); }
 });
@@ -691,7 +722,7 @@ test('reasoning tokens persist', () => {
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.invocations[0]?.usage, { input: 100, output: 10, cacheRead: 20, cacheWrite: 3, reasoning: 7 });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| — \| claude \| delegate \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -719,8 +750,8 @@ test('Claude per model reasoning survives the observer capture', async () => {
       beta: {input: 5, output: 1, reasoning: 4},
     });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| — \| claude \| delegate \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \|$/m);
-    assert.match(table, /^\| — \| claude \| delegate \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \| — \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \| — \|$/m);
     assert.doesNotMatch(table, /^\| — \| claude \| delegate \| aggregate \|/m);
   } finally { f.cleanup(); }
 });
@@ -775,7 +806,7 @@ test('diagnostics render reads host usage only while enabled', async () => {
     f.lines.splice(0); fs.writeFileSync(config,'{"diagnostics":true}'); assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0);
     const rendered=fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8');
     assert.equal(reads,1); assert.match(rendered,/\| claude \| 12 \|/);
-    assert.match(rendered,/^\| spec \| claude \| host \| m \| — \| 12 \| — \| — \| 3 \| — \| — \|$/m);
+    assert.match(rendered,/^\| spec \| claude \| host \| m \| — \| 12 \| — \| — \| 3 \| — \| — \| — \|$/m);
     assert.doesNotMatch(rendered,/secret transcript/);
     f.lines.splice(0); f.deps.hostUsageFs.list=()=>{throw Object.assign(new Error('private'),{code:'EACCES'});};
     assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);

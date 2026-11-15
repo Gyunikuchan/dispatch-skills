@@ -138,6 +138,7 @@ Without a range, code review covers only uncommitted changes. Your host agent ch
 | `diagnostics` | Optional shareable retrospective for Dispatch maintainers, with per-phase time and token tables; when on, the host agent merges its own notes at each verb handoff and launches no subagent |
 | `write-concurrency` | Maximum number of implementation task writers running at once |
 | `read-commands` | Optional host read commands, such as a code-index query, that read delegates may run; create or refresh the index first |
+| `pricing` | Optional model rates that replace or extend the shipped rates behind the estimated cost in `diagnostics.md`; see [price overrides](references/readme/configuration.md#override-rates-for-cost-estimates) |
 | `read-delegates` | Models used for questions and reviews |
 | `write-subagents` | Native writer used by your host agent during implementation |
 | `utility-subagents` | Native explorers and utility subagents per platform in use; requires a token `context-limit` |

@@ -125,3 +125,15 @@ test('loadReadCommands returns none without a config and rejects an invalid list
   assert.deepEqual(loadReadCommands('/skill', (file) => file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null), []);
   assert.throws(() => loadReadCommands('/skill', config(['a | b'])), /read-commands must be an array/);
 });
+
+// SECTION: Pricing override
+
+test('pricing override is a known table that validation never inspects', () => {
+  for (const pricing of [{ 'lmstudio/*': { rates: { input: 0, output: 0 } } }, { bad: 5 }, 'x', 7]) {
+    assert.deepEqual(validateConfig({ ...minimal, pricing }), []);
+  }
+  const files: Record<string, string> = { [path.join('/s', 'config.jsonc')]: JSON.stringify({ ...minimal, pricing: { a: 1 } }) };
+  assert.deepEqual(loadConfig('/s', (file) => files[file] ?? null).config['pricing'], { a: 1 });
+  const unset: Record<string, string> = { [path.join('/s', 'config.jsonc')]: JSON.stringify(minimal) };
+  assert.equal('pricing' in loadConfig('/s', (file) => unset[file] ?? null).config, false);
+});

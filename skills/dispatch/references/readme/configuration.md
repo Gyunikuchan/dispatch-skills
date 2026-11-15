@@ -17,6 +17,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `utility-subagents` | Required per platform in use | One native entry per platform for explorer and utility subagents, with `context-limit` (tokens) |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 | `read-commands` | Optional | Host read commands, such as a code-index query, that read delegates may run |
+| `pricing` | Optional | Model rates that replace or extend the shipped rates behind the cost estimates in `diagnostics.md` |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
 
@@ -94,7 +95,39 @@ Use the strongest available model for the orchestrator, because cheap explorers 
 
 - Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"read-commands"` to host read-command prefixes, such as `["codegraph explore"]`, so read delegates can query a code index instead of reading many files. Name the read subcommand; a bare tool name also permits its write subcommands. List only commands that write at most their own cache or index: Claude delegates can still write in the working directory, even with `sandbox: true`. The host agent creates or refreshes the index before it launches delegates. Claude and Copilot add each listed command to their allowlist; Codex, Antigravity and OpenCode do not apply `read-commands`.
-- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes. At each verb handoff with observations, the host agent merges its notes itself and launches no subagent. Missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics).
+- Set `"diagnostics": true` to write a shareable `diagnostics.md` retrospective at report completion or a verb's final handoff. It uses session review results and host retro notes. At each verb handoff with observations, the host agent merges its notes itself and launches no subagent. Missing measurements remain unavailable. The report is not uploaded automatically. See [Optional session diagnostics](concepts.md#optional-session-diagnostics); cost estimates use the [`pricing` override](#override-rates-for-cost-estimates).
+
+## Override rates for cost estimates
+
+`diagnostics.md` prices token usage with the shipped table `references/pricing.json`; rendering reads no network resource. The optional `pricing` setting adds or replaces entries. An entry you leave out keeps its shipped rate.
+
+```jsonc
+{
+  "pricing": {
+    "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
+    "my-model": {
+      "reasoning": "output",
+      "rates": { "input": 0.5, "output": 2, "cacheRead": 0.05 },
+      "tiers": [{ "abovePromptTokens": 100000, "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }]
+    }
+  }
+}
+```
+
+- **Key:** a model id without its `provider/` prefix or version suffix, or `provider/*`. For `opencode-go/muse-spark-1.3-contributor`, use `muse-spark-1.3-contributor`. Keys match without regard to case. A key replaces the shipped key of the same name.
+- **`rates`:** USD per 1M tokens. `input` and `output` are required; `cacheRead`, `cacheWrite5m` and `cacheWrite1h` are optional. Each value is a number of 0 or more. List every counter rate that the model's route reports: usage with a nonzero counter that has no rate renders unpriced. A cache write that the source does not split by lifetime needs both `cacheWrite5m` and `cacheWrite1h`.
+- **`tiers`:** optional. Each tier holds `abovePromptTokens` (a positive integer, ascending across tiers) and `rates` with the same keys as the base `rates`. A request whose prompt (uncached input, cache read and cache write) is above the threshold takes that tier's rates for all its tokens.
+- **`reasoning`:** Optional. `"output"` is the only rule and the default: reasoning that the source reports apart from output (OpenCode and Antigravity) bills at the output rate.
+
+Dispatch matches each model id in this order:
+
+1. Lowercase the id. If its `provider/` prefix has a `provider/*` entry, that entry applies and matching stops.
+2. Strip a `provider/` prefix, then any version suffix: `[1m]`, `@<date>`, `-v<n>:<n>` or `-YYYYMMDD`.
+3. Take the longest key that the id ends with, at its start or after `.`, `/` or `:`.
+
+An id with no match is unpriced. For example, `bedrock.claude-opus-5-5`, `us.anthropic.claude-opus-5-5-v1:0` and `claude-opus-5-5@20261001` use the `claude-opus-5-5` rate, and `lmstudio/qwen3.8-27b-ridge` uses the `lmstudio/*` entry above. Bedrock and Vertex ids use first-party rates; add an entry when your partner rates differ.
+
+Dispatch ignores a malformed entry (unknown key, missing `input` or `output`, negative or non-numeric rate, tiers out of order or with different keys, or `reasoning` other than `"output"`). `doctor run` lists each one in `config.warnings`; the configuration stays valid and no launch is blocked. For the cost columns, tier ranges and coverage reasons, see [`diagnostics render`](../toolkit.md#diagnostics-render).
 
 ## Provider-specific settings
 

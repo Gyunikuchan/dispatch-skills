@@ -12,6 +12,7 @@ import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
 import { generateSkillHashes, readVersion } from '../lib/integrity.ts';
 import { loadConfig } from '../lib/config.ts';
+import { loadPricing, type Pricer } from '../lib/pricing.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 
@@ -379,11 +380,11 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
 }
 
 /** Writes the compact diagnostics report with a rename so readers never see a partial file. */
-export function writeDiagnostics(session: string, facts: RunFacts): string {
+export function writeDiagnostics(session: string, facts: RunFacts, pricer?: Pricer): string {
   const output = path.join(session, 'diagnostics.md');
   const temp = output + '.' + crypto.randomUUID() + '.tmp';
   try {
-    fs.writeFileSync(temp, renderDiagnostics([facts]).text, {mode: 0o600});
+    fs.writeFileSync(temp, renderDiagnostics([facts], pricer).text, {mode: 0o600});
     fs.renameSync(temp, output);
   } finally {
     fs.rmSync(temp, {force: true});
@@ -528,7 +529,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
 }
 
 export function optionalDiagnostics(session: string, fold: Fold, outcome: string, host?: {manifest: HandlerContext['manifest']; deps: CliDeps}): string | undefined {
-  try { return writeDiagnostics(session,sessionFacts(session,fold,outcome,host)); }
+  try { return writeDiagnostics(session,sessionFacts(session,fold,outcome,host),host&&loadPricing(host.deps.skillRoot)); }
   catch { return undefined; }
 }
 

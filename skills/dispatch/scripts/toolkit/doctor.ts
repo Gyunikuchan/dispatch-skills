@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_CANDIDATES, HINT, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
+import { pricingProblems } from '../lib/pricing.ts';
 import { opencodeSubagentModels, type ProviderKey } from '../lib/platform.ts';
 import { normalizeProvider, resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
@@ -17,7 +18,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   const level = (requested ?? latest(foldLedger(session), 'level')?.data['level'] ?? 'medium') as Level;
   const integrity = checkIntegrity(skillRoot);
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
-  let problems: string[] = [];
+  let problems: string[] = [], warnings: string[] = [];
   const writers: Record<string, ResolvedSubagent> = {};
   let utility: Record<string, ResolvedUtility & { subagentModels?: string[] }> = {};
   let sandboxRemoved: string[] = [], writeConcurrency = 1;
@@ -25,6 +26,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
     problems = validateConfig(loaded.config);
+    warnings = pricingProblems(loaded.config['pricing']);
     if (!problems.length) { writeConcurrency = (loaded.config['write-concurrency'] as number) ?? 1;
       const writerTable = (loaded.config['write-subagents'] ?? {}) as Record<string, LevelMap<SubagentEntry>>;
       for (const [platform, levels] of Object.entries(writerTable)) writers[platform] = resolveSubagent(resolveLevel(levels, level)!);
@@ -48,7 +50,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
     ok: reason === undefined, ...(reason ? { reason } : {}),
     host: { platform: host, source: host ? 'declared' : 'none' },
     integrity,
-    config: { path: configPath, problems }, level, writers, utility, sandboxRemoved,
+    config: { path: configPath, problems, warnings }, level, writers, utility, sandboxRemoved,
     writeConcurrency,
   };
 }

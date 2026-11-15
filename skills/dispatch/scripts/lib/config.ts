@@ -12,7 +12,7 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 export const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'utility-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands'];
+const TABLES = ['read-delegates', 'write-subagents', 'utility-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands', 'pricing'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -74,7 +74,7 @@ export const parseJsonc = (text: string): unknown => JSON.parse(stripJsonc(text)
 
 export type ReadFile = (file: string) => string | null;
 // Only ENOENT means absent: an unreadable higher-precedence file must not silently fall through.
-const readReal: ReadFile = (file) => {
+export const readReal: ReadFile = (file) => {
   try { return fs.readFileSync(file, 'utf8'); } catch (error) {
     if ((error as { code?: unknown }).code === 'ENOENT') return null;
     throw error;
@@ -107,7 +107,7 @@ export function loadReadCommands(skillRoot: string, read: ReadFile = readReal): 
 
 // SECTION: Validation
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

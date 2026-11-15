@@ -288,3 +288,34 @@ test('doctor reports configured writeConcurrency defaulting to 1 when omitted or
     assert.equal(invalid.writeConcurrency, 1);
   } finally { f.cleanup(); }
 });
+
+test('doctor pricing override problems are warnings that never fail the report', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
+    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    const base = { 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, 'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } } };
+    const run = async (config: string) => {
+      fs.writeFileSync(path.join(skill, 'config.jsonc'), config);
+      f.lines.length = 0;
+      assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    };
+    let report = await run(JSON.stringify(base));
+    assert.deepEqual([report.ok, report.config.problems, report.config.warnings], [true, [], []]);
+    report = await run(JSON.stringify({ ...base, pricing: { 'house-model': { rates: { input: 1, output: 1 } }, bad: { rates: { output: 1 } }, worse: 5 } }));
+    assert.equal(report.ok, true);
+    assert.equal(report.reason, undefined);
+    assert.deepEqual(report.config.problems, []);
+    assert.deepEqual(report.config.warnings, ['pricing.bad: rates.input missing', 'pricing.worse: not an object']);
+    report = await run(JSON.stringify({ ...base, pricing: 'cheap' }));
+    assert.deepEqual([report.ok, report.config.warnings], [true, ['pricing: not an object']]);
+    report = await run('{"unknown":true,"pricing":{"bad":1}}');
+    assert.equal(report.reason, 'config-invalid');
+    assert.deepEqual(report.config.warnings, ['pricing.bad: not an object'], 'warnings do not depend on other config problems');
+    report = await run('{');
+    assert.deepEqual([report.reason, report.config.warnings], ['config-invalid', []], 'a config that fails to load has no warnings');
+  } finally { f.cleanup(); }
+});
