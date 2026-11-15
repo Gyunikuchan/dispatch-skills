@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qualityBar, rotateTags, settledSection, type InterRound, type Settled } from './domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qualityBar, settledSection, type InterRound, type Settled } from './domain/prompt.ts';
+import { REVIEW_TAGS_BY_KIND } from './domain/report.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import type { ReviewTarget } from './findings.ts';
@@ -37,16 +38,19 @@ export function reviewPrompt(kind: ReviewKind, context: {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
   const kindBlock = read('review-prompt-' + kind + '.md');
-  const tags = sections(kindBlock, false).get('tags');
-  const rotatedKindBlock = tags === undefined ? kindBlock : kindBlock.replace(tags, rotateTags(tags, context.rotation ?? 0));
   const frameMarkdown = read('review-prompt.md');
   const specStage = fs.readFileSync(path.join(context.skillRoot, 'references/spec-stage.md'), 'utf8');
   const settled = settledSection(context.settled ?? [], false, new Set(context.interRound?.accepted.map(entry => entry.id)));
   const isRereview = context.round > 1 || settled.length > 0;
-  const rereviewBody = extractTemplate(frameMarkdown, 'Re-review template').template;
-  const template = assembleTemplate(frameMarkdown, rotatedKindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0, specStage), read('review-severity.md'), `## rereview\n\n${isRereview ? rereviewBody : ''}`]);
-  // NOTE: the map is a pre-change index, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
-  const contextMap = context.contextMapPath ? `\n- Context Map: ${context.contextMapPath} — pre-change index; verify claims at source.` : '';
+  const rereviewBody = isRereview ? extractTemplate(frameMarkdown, 'Re-review template').template : '';
+  const preregisterBody = kind !== 'code' && !isRereview ? extractTemplate(frameMarkdown, 'Pre-registration template').template : '';
+  const template = assembleTemplate(frameMarkdown, kindBlock, undefined, [qualityBar(read('quality-bar.md'), kind, context.rotation ?? 0, specStage), read('review-severity.md'), `## rereview\n\n${rereviewBody}`, `## preregister\n\n${preregisterBody}`]);
+  const renderedTags = new Set([...template.template.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map(match => match[1]!).concat('standards', 'adjacent'));
+  if (renderedTags.size !== REVIEW_TAGS_BY_KIND[kind].size || [...renderedTags].some(tag => !REVIEW_TAGS_BY_KIND[kind].has(tag))) {
+    throw new Error(`Review tags for ${kind} differ from rendered families: ${[...renderedTags].join(', ')}`);
+  }
+  // NOTE: the map is a pre-change locator, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
+  const contextMap = context.contextMapPath ? `\n- Context Map: ${context.contextMapPath} — pre-change locator, not a completeness claim: verify claims at source, and run your own consumer and caller search for each contract the artifact changes.` : '';
   const values: Record<string, string> = {
     'Spec Path': context.spec.path, 'Spec Hash': context.spec.hash,
     'Review Scope': context.scope, 'User Focus Areas': 'General review', 'Tool Turn Budget': String(context.turnTarget),

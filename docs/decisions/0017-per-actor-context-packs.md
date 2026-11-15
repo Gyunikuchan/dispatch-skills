@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-08
-- **Updated**: 2026-11-13
+- **Updated**: 2026-11-15
 - **Audience**: Maintainers
 
 ## Context
@@ -15,6 +15,8 @@ The same rules lived in several files: `qualityCriteria` tailored actor text wit
 
 Each normative rule has one canonical home and declares its audience with an `<!-- for: ... -->` tag on its own line in `quality-bar.md` (consumers `code`, `plan`, `design`, `writer`, `cleanup`, `explorer`, plus `all` for every render consumer and `author` for file readers only, which no renderer selects). `qualitySections` gains `cleanup: ['shared','testing']` and `explorer: ['shared']`; untagged bullets reach every consumer except `explorer`. Tag counts are fail-closed per `REQUIRED_TAGGED` (code 5, writer 6, plan 5, design 4, cleanup 6, explorer 3): an unknown consumer, unknown tag, empty selection or count mismatch throws instead of emitting unmodified text.
 
+Review tags come from one per-kind allow-list (`REVIEW_TAGS_BY_KIND`) in `domain/report.ts`, checked by `reviewPrompt` against the rendered quality families plus `standards` and `adjacent`; the rendered prompt names them in one line under `### Tags` without a per-tag bullet list.
+
 The toolkit renders explorer and test-cleanup briefs from their templates (`brief explorer`, `brief test-cleanup`), writing under `.state/briefs/` with fill checks that refuse missing values without writing. Rendered briefs contain no relative links.
 
 Plan and design reviewers read governed text from `.state/reviews/<review>/round-<n>.input.md`, which holds the artifact without its `Review Findings & Resolutions` section; `### Settled in earlier rounds` stays the only source of prior rulings. Hashes, review identity and the findings refresh are unchanged.
@@ -25,17 +27,17 @@ The orchestrator loads only the current step's references: each verb guide carri
 | --- | --- | --- |
 | Every verb step (linked sections + `SKILL.md` + guide) | at most 37067 bytes | at most 27781 bytes |
 | Plan authoring steps | at most 36914 bytes | at most 23985 bytes |
-| Code reviewer prompt | 14648 bytes | 14551 bytes |
-| Plan reviewer prompt | 16653 bytes | 16550 bytes |
-| Design reviewer prompt | 12439 bytes | 12337 bytes |
+| Code reviewer prompt | 14333 bytes | 14333 bytes |
+| Plan reviewer prompt | 16690 bytes | 16690 bytes |
+| Design reviewer prompt | 12475 bytes | 12475 bytes |
 | Writer brief pack | 10784 bytes | 10456 bytes |
-| Explorer brief template | 7820 bytes | 7717 bytes |
+| Explorer brief template | 7977 bytes | 7738 bytes |
 | Explorer pack | 12638 bytes | 10705 bytes |
 | Verifier brief | 4096 bytes | 3133 bytes |
 | Test-cleanup brief template | 1870 bytes | 1656 bytes |
 | Test-cleanup rendered quality | 7653 bytes | 7385 bytes |
 | Test-cleanup pack | 9523 bytes | 9041 bytes |
-| Driver TS LOC | 16591 lines | 16591 lines |
+| Driver TS LOC | 17911 lines | 17911 lines |
 | `SKILL.md` | 10100 bytes | 9950 bytes |
 | Increment orchestrator brief | 4096 bytes | 1674 bytes |
 | Ledger kinds | 14 | 14 |
@@ -64,4 +66,4 @@ Canonical homes hold one copy per rule across `SKILL.md`, `quality-bar.md`, `spe
 
 ## Consequences
 
-Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 16591 (raised for the cleanup evidence rule) against a measured 16591, and `SKILL.md` sits at 9950 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.
+Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 17911 against a measured 17911, and `SKILL.md` sits at 9950 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.

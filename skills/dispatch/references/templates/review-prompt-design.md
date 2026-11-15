@@ -11,7 +11,7 @@ Kind block for `review-prompt.md`.
 ## opener
 
 Review the technical design adversarially: challenge the requirement, its premise, and the design.
-Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews. Inspect the architecture critically; when the design is sound and no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
+Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews. Inspect the architecture critically.
 
 ## context
 
@@ -26,28 +26,9 @@ Review the unimplemented architecture and its increments, each later delivered t
 
 ## inspection
 
-Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
 For a spec finding, use § Spec: <heading>.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
-
-## tags
-
-- `intent`
-- `spec`
-- `correctness`
-- `reliability`
-- `security`
-- `performance`
-- `compatibility`
-- `maintainability`
-- `architecture`
-- `decomposition`
-- `operability`
-- `testing`
-- `usability`
-- `standards`
-- `adjacent`
 
 ## severity
 

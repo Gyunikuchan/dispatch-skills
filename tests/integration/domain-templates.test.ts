@@ -199,7 +199,7 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
 });
 
 test('review prompts offer shared family tags each defined by a quality-bar bullet', async (t) => {
-  const { REVIEW_TAGS } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
+  const { REVIEW_TAGS_BY_KIND } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
   const families = [
     'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility',
     'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
@@ -210,7 +210,9 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     design: families,
   };
   const sorted = (tags: readonly string[]) => [...tags].sort();
-  assert.deepEqual(sorted([...REVIEW_TAGS]), sorted(families), 'validator vocabulary');
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    assert.deepEqual(sorted([...REVIEW_TAGS_BY_KIND[kind]]), sorted(expectedByKind[kind]), `${kind} validator vocabulary`);
+  }
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
   const specStage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
   const section = (name: string) => quality.split(`## ${name}\n`)[1]!.split(/^## /m)[0]!;
@@ -255,10 +257,11 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   t.diagnostic(`writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer', 0, specStage), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`);
   for (const [kind, baseline] of [['code', 15627], ['plan', 19533], ['design', 15297]] as const) t.diagnostic(`${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`);
   for (const kind of ['code', 'plan', 'design'] as const) {
-    const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
-    const offered = [...block.matchAll(/^- `([^`]+)`$/gm)].map((tag) => tag[1]!);
+    const offered = [...REVIEW_TAGS_BY_KIND[kind]];
     assert.deepEqual(sorted(offered), sorted(expectedByKind[kind]), `${kind} prompt families`);
     const selectedQuality = qualityBar(quality, kind, 0, specStage);
+    const renderedFamilies = [...selectedQuality.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map((match) => match[1]!);
+    assert.deepEqual(sorted([...renderedFamilies, 'standards', 'adjacent']), sorted(offered), `${kind}: rendered families match REVIEW_TAGS_BY_KIND`);
     for (const family of offered.filter((tag) => tag !== 'standards' && tag !== 'adjacent')) {
       assert.equal(selectedQuality.split('\n').filter((line) => line.startsWith(`- **${family}** —`)).length, 1, `${kind}: ${family} quality bullet exactly once`);
     }
@@ -305,13 +308,13 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     assert.match(kindPrompt, /Cite existing code as `path\/to\/file:L<line>` inside `defect`/);
   }
   assert.doesNotMatch(quality, /^- Standards:/m);
-  for (const kind of ['plan', 'design']) {
+  const frameTags = frame.split('### Tags\n')[1]!.split('\n### ')[0]!.trim().split('\n');
+  assert.equal(frameTags.length, 1, 'frame Tags section is one line');
+  assert.doesNotMatch(frameTags[0]!, /^- `/m);
+  for (const kind of ['code', 'plan', 'design']) {
     const prompt = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
     assert.doesNotMatch(prompt, /^## quality$/m);
-    const tags = prompt.split('## tags')[1]!.split('## severity')[0]!;
-    assert.ok(tags.includes('- `decomposition`'));
-    assert.doesNotMatch(tags, /\u2014|findings/);
-    for (const line of tags.split('\n').filter((line) => line.startsWith('- '))) assert.match(line.trimEnd(), /^- `[^`]+`$/);
+    assert.doesNotMatch(prompt, /^## tags$/m);
   }
   for (const rule of ['Trace the ask to applicable REQs and DECs', 'search the repository by name and behaviour for an existing equivalent', "A task that consumes another's output without a prerequisite", 'Weigh alternatives and trade-offs']) assert.equal(quality.split(rule).length, 2, rule);
 });
@@ -394,12 +397,10 @@ test('review prompt scope strings calibrate CLEAN, replace textbook smells, and 
     assert.ok(!doc.includes('(full artifact)'), `${name} omits full artifact`);
   }
   const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
-  assert.ok(frame.includes('expected high-signal'), 'frame CLEAN calibration');
+  assert.equal(frame.split('expected high-signal').length - 1, 1, 'frame CLEAN calibration once');
   for (const kind of ['code', 'plan', 'design'] as const) {
     const doc = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8');
-    assert.ok(doc.includes('expected high-signal'), `${kind} CLEAN calibration`);
-    const opener = doc.split(/^## opener$/m)[1]?.split(/^## /m)[0] ?? '';
-    assert.ok(opener.includes('expected high-signal'), `${kind} opener CLEAN`);
+    assert.doesNotMatch(doc, /expected high-signal/, `${kind} does not repeat CLEAN calibration`);
   }
 });
 

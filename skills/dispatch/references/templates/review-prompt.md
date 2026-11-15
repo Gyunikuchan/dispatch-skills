@@ -27,19 +27,19 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 Inspect by reading and searching files, running read-only commands in the foreground. A reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.
 Read directly; launch no subagents.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to the host rule files that the quality section's discovery rule finds.
+Read the whole spec at Spec Path first.
+<<slot:preregister>>
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
 <<slot:inspection>>
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under review rules.
-The governing spec's Decisions and Non-goals, and decisions recorded in the governing design or plan, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
+The governing spec's Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
 <<slot:rereview>>
 <<slot:quality>>
 
 ### Tags
-Tag each finding with one family; the quality bar's bold family bullets define each family and its hints.
-<<slot:tags>>
+Tag each finding with one bold family from the quality criteria above, `standards` or `adjacent`; the bold bullets define each family.
 
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
@@ -68,7 +68,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Use only the tags above.
 <<slot:closing>>
 ````
 
@@ -76,4 +75,10 @@ Use only the tags above.
 
 ````markdown
 On re-review, treat any earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed; an accepted `MUST` is never closed by that rule—re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present. Rows marked `(new)` were accepted since the previous round; inspect their loci and interactions first. When Scope names changed sections or paths, raise new in-scope findings only there; `adjacent` findings may cite any locus. Stop at that blast radius. For each new finding, add `origin`: `fix-induced` when an earlier fix caused the defect, `original` when the defect predates those fixes, `unknown` when you cannot tell.
+````
+
+## Pre-registration template
+
+````markdown
+Before you open the artifact under review or the context map, read the code that the spec's REQs touch. Then write 3-5 plain-text lines that list the changes and risks you expect; this list is not part of the JSON reply. Then read the artifact and judge it against the spec and your list: an expected change that the artifact omits, or a change that you did not expect, is a candidate finding to verify at source.
 ````

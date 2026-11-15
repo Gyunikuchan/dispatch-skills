@@ -385,3 +385,30 @@ test('uncommitted consumers complete by source and ignore later caller history',
  state.head=HEAD_B;assert.equal((await invoke(f,'report','complete')).output.reason,'undelivered');
  }finally{f.cleanup();}
 });
+
+test('report complete warns on missing host retro only when diagnostics are enabled', async () => {
+  const f = await fixture(1);
+  try {
+    await integrate(f, gitState(f.session));
+    await evidenceForPlan(f, TREE_A);
+    await deliver(f, HEAD_A);
+    const retroPath = path.join(f.session, '.state', 'retro.json');
+
+    let result = await invoke(f, 'report', 'complete');
+    assert.equal(result.exit, 0, result.output.summary);
+    let value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as { warning?: string };
+    assert.equal(value.warning, undefined);
+    assert.ok(!result.output.summary.includes('merge retro notes'));
+
+    fs.writeFileSync(path.join(f.skillRoot, 'config.local.jsonc'), '{"diagnostics": true}\n');
+    result = await invoke(f, 'report', 'complete');
+    assert.equal(result.exit, 0, result.output.summary);
+    value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as { warning?: string };
+    assert.ok(value.warning?.includes(retroPath));
+    assert.ok(value.warning?.includes('merge retro notes'));
+    assert.ok(result.output.summary.includes(retroPath));
+    assert.ok(result.output.summary.includes('merge retro notes'));
+  } finally {
+    f.cleanup();
+  }
+});

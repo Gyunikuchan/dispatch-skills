@@ -187,8 +187,10 @@ test('review voices receive prompts rotated by roster position',async()=>{
       const launch=f.launches.find(item=>item.provider===slot.provider);
       assert.ok(launch,`missing launch for ${slot.provider}`);
       const prompt=fs.readFileSync(launch.request.promptPath,'utf8');
-      const firstTag=prompt.slice(prompt.indexOf('### Tags')).match(/^- `([^`]+)`/m)?.[1];
-      assert.equal(firstTag,['intent','spec'][position],`roster position ${position} (${slot.slot})`);
+      const tagsLines=prompt.split('### Tags\n')[1]!.split('\n### ')[0]!.trim().split('\n');
+      assert.equal(tagsLines.length,1,`roster position ${position} (${slot.slot}): one Tags line`);
+      const firstFamily=prompt.match(/^- \*\*([^*]+)\*\* —/m)?.[1];
+      assert.equal(firstFamily,['intent','maintainability'][position],`roster position ${position} (${slot.slot})`);
     }
   }finally{f.cleanup();}
 });

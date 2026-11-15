@@ -11,10 +11,16 @@ import type { DraftFinding, Finding, FindingOrigin, Impact, ReviewKind, Trigger 
 const SECTION_LOCUS = /^§\s+\S.*$/;
 const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[1-9]\d*$/;
 
-export const REVIEW_TAGS: ReadonlySet<string> = new Set([
+const BASE_REVIEW_TAGS = [
   'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
-  'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
-]);
+  'operability', 'testing', 'usability', 'standards', 'adjacent',
+] as const;
+const PLAN_DESIGN_TAGS: ReadonlySet<string> = new Set([...BASE_REVIEW_TAGS, 'architecture', 'decomposition']);
+export const REVIEW_TAGS_BY_KIND: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
+  code: new Set(BASE_REVIEW_TAGS),
+  plan: PLAN_DESIGN_TAGS,
+  design: PLAN_DESIGN_TAGS,
+};
 
 const LOCUS: Readonly<Record<ReviewKind, RegExp>> = { code: CODE_LOCUS, plan: SECTION_LOCUS, design: SECTION_LOCUS };
 
@@ -178,7 +184,7 @@ export function parseReport(input: ReportInput): ReportResult {
     if (!TRIGGERS.includes(trigger as Trigger)) return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
     if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
     const normalizedTag = tag.trim();
-    const known = REVIEW_TAGS.has(normalizedTag);
+    const known = REVIEW_TAGS_BY_KIND[kind].has(normalizedTag);
     // `spec` shares the intent gate.
     const category = known ? normalizedTag === 'spec' ? 'intent' : normalizedTag : 'uncategorized';
     // Markup-inert by construction; the raw spelling stays only in the provider log.

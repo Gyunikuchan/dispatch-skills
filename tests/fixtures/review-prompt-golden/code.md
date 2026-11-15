@@ -1,4 +1,4 @@
-Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance. Inspect critically; when no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
+Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance. Inspect critically.
 
 ### Context
 - Task: Add a retry budget to the fetch helper
@@ -30,12 +30,10 @@ Anchor a code `spec` finding on the changed code line and cite `§ Spec: <headin
 Inspect by reading and searching files, running read-only commands in the foreground. A reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.
 Read directly; launch no subagents.
 Verification evidence comes from the orchestrator; run no test or build commands.
-Adhere to the host rule files that the quality section's discovery rule finds.
+Read the whole spec at Spec Path first.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
-Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
-
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
@@ -45,7 +43,7 @@ caller of it and inspect each one in this round, so later rounds do not find the
 Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise
 search the repository.
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under review rules.
-The governing spec's Decisions and Non-goals, and decisions recorded in the governing design or plan, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
+The governing spec's Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
 - Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent. Host rules may tighten, never widen, scope, write boundaries, verification and safety.
 - Exclude host-rule/brief conflicts from findings.
@@ -73,20 +71,7 @@ The governing spec's Decisions and Non-goals, and decisions recorded in the gove
 - Naming: name tests, describe blocks, files, comments, section headers and fixtures for behaviour; never cite plan artifacts (criterion, task or finding IDs, plan or session paths).
 
 ### Tags
-Tag each finding with one family; the quality bar's bold family bullets define each family and its hints.
-- `intent`
-- `spec`
-- `correctness`
-- `reliability`
-- `security`
-- `performance`
-- `compatibility`
-- `maintainability`
-- `operability`
-- `testing`
-- `usability`
-- `standards`
-- `adjacent`
+Tag each finding with one bold family from the quality criteria above, `standards` or `adjacent`; the bold bullets define each family.
 
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
@@ -125,7 +110,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<relative-file>:L<line>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Use only the tags above.
 Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
 is `adjacent`.
 For an `adjacent` finding, cite code at its real `path:L<line>` locus.

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { formatCost, resolvePricing, sumCost, type Cost, type Pricer } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
-import { collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
+import { REVIEW_TAGS_BY_KIND, collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
 
 const finding = (overrides: Record<string, string> = {}) => ({
@@ -21,16 +21,12 @@ test('rejected MUST reports require exact explicit requested confirmations', () 
   if(result.ok) assert.equal(result.confirmations?.[0]?.decision,'agree');
 });
 
-const familyTags = [
-  'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
-  'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent',
-] as const;
 const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
-test('family tags are shared across review kinds and unknown tags fall back to uncategorized', () => {
+test('family tags are scoped by review kind and unknown tags fall back to uncategorized', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
     const locus = kind === 'code' ? 'src/fetch.ts:L12' : '§ Spec: Requirements';
-    for (const tag of familyTags) {
+    for (const tag of REVIEW_TAGS_BY_KIND[kind]) {
       const result = parseReport({ kind, source: 'codex[0]', text: report([finding({ tag, locus })]) });
       assert.ok(result.ok, `${kind} accepts ${tag}`);
       assert.equal(result.findings[0]?.category, tag === 'spec' ? 'intent' : tag, `${kind}: ${tag}`);
@@ -44,6 +40,14 @@ test('family tags are shared across review kinds and unknown tags fall back to u
       assert.equal(result.findings[0]?.originalTag, tag, `${kind}: ${tag}`);
     }
   }
+  const codeArch = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ tag: 'architecture', locus: 'src/fetch.ts:L12' })]) });
+  assert.ok(codeArch.ok);
+  assert.equal(codeArch.findings[0]?.category, 'uncategorized');
+  assert.equal(codeArch.findings[0]?.originalTag, 'architecture');
+  const planArch = parseReport({ kind: 'plan', source: 'codex[0]', text: report([finding({ tag: 'architecture', locus: '§ Spec: Requirements' })]) });
+  assert.ok(planArch.ok);
+  assert.equal(planArch.findings[0]?.category, 'architecture');
+  assert.equal(planArch.findings[0]?.originalTag, undefined);
 });
 const failure = (text: string, truncated = false) => {
   const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });

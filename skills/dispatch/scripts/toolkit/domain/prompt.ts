@@ -182,10 +182,6 @@ function rotateLines(markdown: string, by: number, isRotated: (line: string) => 
   return lines.join('\n');
 }
 
-export function rotateTags(kindBlockTags: string, by: number): string {
-  return rotateLines(kindBlockTags, by, (line) => line.startsWith('- '));
-}
-
 /** Joined bodies of the consumer's selected quality sections. */
 export function qualityCriteria(markdown: string, consumer: QualityConsumer, rotation: number, specStageMarkdown: string): string {
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);

@@ -111,7 +111,7 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.match(rules, /or an accepted SHOULD from a round below the saved round-1 cap/);
   assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
   assert.match(rules, /pending MUST rejection requests stay assigned/);
-  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change index when it exists/);
+  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change locator, not a completeness claim, when it exists/);
   assert.match(rules, /code review prompts never receive it/);
 
   // Review continuation and ceiling rules: one canonical home

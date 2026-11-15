@@ -10,7 +10,7 @@ Kind block for `review-prompt.md`.
 
 ## opener
 
-Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance. Inspect critically; when no grounded defect exists, return `CLEAN` — a clean review on sound work is the expected high-signal outcome.
+Review the completed implementation adversarially: challenge the requirement, the author's mental model, and the diff. Judge delivery of the original ask and success criteria, beyond plan conformance. Inspect critically.
 
 ## context
 
@@ -38,8 +38,6 @@ Anchor a code `spec` finding on the changed code line and cite `§ Spec: <headin
 
 ## inspection
 
-Read the whole spec at Spec Path before inspection; use Spec Hash as its governing identity.
-
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
@@ -48,22 +46,6 @@ On a `Full review`, when the diff changes a shared invariant, contract, or signa
 caller of it and inspect each one in this round, so later rounds do not find them one at a time.
 Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise
 search the repository.
-
-## tags
-
-- `intent`
-- `spec`
-- `correctness`
-- `reliability`
-- `security`
-- `performance`
-- `compatibility`
-- `maintainability`
-- `operability`
-- `testing`
-- `usability`
-- `standards`
-- `adjacent`
 
 ## severity
 

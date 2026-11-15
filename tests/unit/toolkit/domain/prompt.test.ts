@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -75,7 +76,7 @@ const templates = new URL('../../../../skills/dispatch/references/templates/', i
 const golden = new URL('../../../fixtures/review-prompt-golden/', import.meta.url);
 const read = (base: URL, name: string) => readFileSync(new URL(name, base), 'utf8');
 const specStage = read(templates, '../spec-stage.md');
-const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage), read(templates, 'review-severity.md'), '## rereview\n'];
+const shared = (kind: QualityConsumer) => [qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage), read(templates, 'review-severity.md'), '## rereview\n', '## preregister\n'];
 
 test('prompt fill validates declared values single-pass', () => {
   assert.throws(() => fillTemplate('<A> <B>', ['A', 'B'], { A: '1' }), /Missing value\(s\) for declared variable\(s\): B/);
@@ -129,11 +130,6 @@ const familyOrder = {
   plan: ['architecture', 'decomposition'],
   design: ['architecture', 'testing', 'decomposition'],
 } as const;
-const tagOrder = {
-  code: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
-  plan: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
-  design: ['intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability', 'architecture', 'decomposition', 'operability', 'testing', 'usability', 'standards', 'adjacent'],
-} as const;
 const rotateExpected = <T,>(items: readonly T[], by: number): T[] => {
   const shift = items.length ? ((by % items.length) + items.length) % items.length : 0;
   return [...items.slice(shift), ...items.slice(0, shift)];
@@ -148,16 +144,6 @@ const reviewContext = (kind: typeof reviewKinds[number], rotation = 0) => ({
   rotation,
   round: 1,
 });
-const sectionBullets = (prompt: string, heading: string): string[] => {
-  const lines = prompt.split('\n');
-  const start = lines.indexOf(heading);
-  assert.notEqual(start, -1, `missing ${heading} section`);
-  const body: string[] = [];
-  for (let index = start + 1; index < lines.length && !/^#{1,6}\s/.test(lines[index]!); index++) {
-    if (/^- `[^`]+`$/.test(lines[index]!)) body.push(lines[index]!.match(/`([^`]+)`/)![1]!);
-  }
-  return body;
-};
 const familyBullets = (prompt: string): string[] => [...prompt.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map((match) => match[1]!);
 const linePositions = (prompt: string, marker: string): number[] => prompt.split('\n').flatMap((line, index) => line.includes(marker) ? [index] : []);
 
@@ -168,6 +154,8 @@ test('review voices receive identical guidance in rotated axis order', () => {
   ];
   for (const kind of reviewKinds) {
     const base = reviewPrompt(kind, reviewContext(kind));
+    const tagsSection = base.split('### Tags\n')[1]!.split('\n### ')[0]!.trim().split('\n');
+    assert.equal(tagsSection.length, 1, `${kind}: one Tags line`);
     const fixedLines = [
       ...sharedFixedLines,
       ...(kind === 'code' || kind === 'plan' ? ['- Tooling: skip issues that configured linters, formatters, or type checkers enforce.'] : []),
@@ -176,10 +164,9 @@ test('review voices receive identical guidance in rotated axis order', () => {
     ];
     const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
     const familyCounts = familySections.map((section) => familyOrder[section].length);
-    const cycle = [tagOrder[kind].length, ...familyCounts].reduce<number>((left, right) => left / gcd(left, right) * right, 1);
+    const cycle = familyCounts.reduce<number>((left, right) => left / gcd(left, right) * right, 1);
     for (const rotation of [0, 1, 2, cycle]) {
       const prompt = reviewPrompt(kind, reviewContext(kind, rotation));
-      assert.deepEqual(sectionBullets(prompt, '### Tags'), rotateExpected(tagOrder[kind], rotation), `${kind}: tags at rotation ${rotation}`);
       const actualFamilies = familyBullets(prompt);
       let offset = 0;
       for (let index = 0; index < familySections.length; index++) {
@@ -607,6 +594,45 @@ test('reviewPrompt omits re-review block on round 1 and includes it once on late
     assert.doesNotMatch(rerun, /Read the full review history/, `${kind} rerun: no external log instruction`);
     const withSettled = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review', settled: [{id: 'R1-F001', locus: '§ Work', defect: 'Defect text', ruling: 'accepted', reason: 'Fixed'}]});
     assert.equal(withSettled.split('On re-review,').length - 1, 1, `${kind} round 1 with settled: single re-review block`);
+  }
+});
+
+test('pre-registration block renders once in round-1 plan and design prompts only', () => {
+  const marker = 'Before you open the artifact under review or the context map,';
+  for (const kind of reviewKinds) {
+    const first = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review'});
+    assert.equal(first.split(marker).length - 1, kind === 'code' ? 0 : 1, `${kind} round 1`);
+    const round2 = reviewPrompt(kind, {...reviewContext(kind), round: 2, scope: 'Re-review round 2 (narrowed) — changed: New work; comparison: a..b'});
+    assert.equal(round2.split(marker).length - 1, 0, `${kind} round 2`);
+    const withSettled = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review', settled: [{id: 'R1-F001', locus: '§ Work', defect: 'Defect text', ruling: 'accepted', reason: 'Fixed'}]});
+    assert.equal(withSettled.split(marker).length - 1, 0, `${kind} round 1 with settled`);
+  }
+});
+
+test('settled sentence excludes the artifact under review', () => {
+  const settledSentence = 'The governing spec\'s Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled:';
+  for (const kind of reviewKinds) {
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review'});
+    assert.ok(prompt.includes(settledSentence), `${kind}: narrowed settled sentence`);
+  }
+});
+
+test('plan and design context map renders locator wording with own-search instruction', () => {
+  for (const kind of ['plan', 'design'] as const) {
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), round: 1, contextMapPath: '.scratch/session/context-map.md'});
+    assert.ok(prompt.includes('- Context Map: .scratch/session/context-map.md — pre-change locator, not a completeness claim: verify claims at source, and run your own consumer and caller search for each contract the artifact changes.'), kind);
+  }
+});
+
+test('reviewPrompt throws when rendered families diverge from REVIEW_TAGS_BY_KIND', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'prompt-tags-'));
+  try {
+    cpSync(path.resolve('skills/dispatch/references'), path.join(dir, 'references'), { recursive: true });
+    const codeBlockPath = path.join(dir, 'references/templates/review-prompt-code.md');
+    writeFileSync(codeBlockPath, readFileSync(codeBlockPath, 'utf8').replace('## closing\n', '## closing\n- **extra** — unexpected family\n'));
+    assert.throws(() => reviewPrompt('code', { ...reviewContext('code'), skillRoot: dir }), /Review tags for code differ from rendered families:/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -533,11 +533,17 @@ export function optionalDiagnostics(session: string, fold: Fold, outcome: string
   catch { return undefined; }
 }
 
+export function retroWarning(session: string): string | undefined {
+  const file = path.join(session, '.state', 'retro.json');
+  return fs.existsSync(file) ? undefined : `Host retro missing: merge retro notes into ${file} (write [] when none), then run diagnostics render.`;
+}
+
 // NOTE: Render is not captured as a tool observation, so it cannot describe its own run.
 export async function diagnosticsRender({session, args, deps, manifest}: HandlerContext): Promise<HandlerResult> {
   if (args.length) throw new ToolError(1, 'invalid-input', 'diagnostics render takes no positional arguments');
   if (!diagnosticsEnabled(deps.skillRoot)) return {ok: true, exit: 0, summary: 'diagnostics off', value: {path: null}};
   const file = optionalDiagnostics(session, foldLedger(session), 'rendered', {manifest,deps});
   if (file === undefined) return {ok: false, exit: 4, reason: 'diagnostics-failed', summary: 'diagnostics render failed; existing diagnostics.md unchanged', value: {path: null}};
-  return {ok: true, exit: 0, summary: 'diagnostics rendered: ' + file, value: {path: file}};
+  const warning = retroWarning(session);
+  return {ok: true, exit: 0, summary: 'diagnostics rendered: ' + file + (warning ? '; ' + warning : ''), value: {path: file, ...(warning ? {warning} : {})}};
 }

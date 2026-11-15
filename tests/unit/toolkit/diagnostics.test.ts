@@ -1356,3 +1356,45 @@ test('coverage list: observeTool preserves coverage list for copilot', async () 
     f.cleanup();
   }
 });
+
+test('diagnostics render warns on missing host retro only when enabled', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    const config = path.join(skill, 'config.local.jsonc');
+    f.deps.skillRoot = skill;
+    const retroPath = path.join(f.session, '.state', 'retro.json');
+
+    fs.writeFileSync(config, '{"diagnostics": true}\n');
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    let output = f.output();
+    assert.equal(output.ok, true);
+    let value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
+    assert.ok(value.warning?.includes(retroPath));
+    assert.ok(value.warning?.includes('merge retro notes'));
+    assert.ok(output.summary.includes(retroPath));
+    assert.ok(output.summary.includes('merge retro notes'));
+
+    f.lines.splice(0);
+    writeJson(retroPath, []);
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    output = f.output();
+    assert.equal(output.ok, true);
+    value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
+    assert.equal(value.warning, undefined);
+    assert.ok(!output.summary.includes('merge retro notes'));
+
+    f.lines.splice(0);
+    fs.rmSync(retroPath);
+    fs.writeFileSync(config, '{"diagnostics": false}\n');
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    output = f.output();
+    assert.equal(output.ok, true);
+    value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
+    assert.equal(value.warning, undefined);
+    assert.equal(output.summary, 'diagnostics off');
+  } finally {
+    f.cleanup();
+  }
+});

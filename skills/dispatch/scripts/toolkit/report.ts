@@ -11,7 +11,7 @@ import { readArtifact } from './artifacts.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
 import { parseGlance, structuralLines } from './domain/plan.ts';
 import { ToolError } from './output.ts';
-import { diagnosticsEnabled, optionalDiagnostics } from './diagnostics.ts';
+import { diagnosticsEnabled, optionalDiagnostics, retroWarning } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import { reviewRows } from './review-findings.ts';
@@ -388,13 +388,14 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
   const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
   const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete', {manifest:ctx.manifest,deps:ctx.deps}) : undefined;
+  const warning = diagnostics ? retroWarning(ctx.session) : undefined;
   const counts = statusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviationCount = facts.edits.length + facts.unplannedPaths.length;
   return {
     ok: true,
     exit: 0,
-    summary: `complete: walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}`,
-    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
+    summary: `complete: walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}` + (warning ? `; ${warning}` : ''),
+    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}), ...(warning ? {warning} : {}) },
   };
 }
