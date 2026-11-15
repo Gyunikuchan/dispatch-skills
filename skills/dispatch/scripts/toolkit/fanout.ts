@@ -7,7 +7,7 @@ import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, failureDisposition } from '../policy/cascade.ts';
 import { parsePins, resolveRoster, nativeFirstRoute, normalizeProvider, type Pins, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
-import { currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
+import { claudeHostSandboxed, currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome, Invocation, LaunchRequest, ProcessResult, UsageBaseline } from '../providers/types.ts';
 import { validSessionId } from '../lib/session.ts';
@@ -96,6 +96,44 @@ export function resolveSlots(kind: 'ask' | 'plan' | 'design' | 'code', level: Le
     if (nativeFirstRoute(key, readDelegates, deps.orchestrator)) nativeFirstProviders.push(normalized);
   }
   return {...roster, nativeFirstProviders};
+}
+
+/** True when any target or reserve slot runs a non-native, non-native-first CLI provider. */
+export function hasCliSlot(roster: Roster & {nativeFirstProviders: readonly string[]}): boolean {
+  return [...roster.targets, ...roster.reserves].some(
+    slot => !slot.native && !isNativeFirstProvider(slot.provider, roster.nativeFirstProviders),
+  );
+}
+
+/** Parse `--native-failed` and `--native-failed-hash` flags into NativeFailure entries. */
+export function parseNativeFailures(values: Record<string, unknown>): NativeFailure[] {
+  const rawFailed = values['native-failed'];
+  const rawHashes = values['native-failed-hash'];
+  const failedEntries = rawFailed === undefined ? [] : Array.isArray(rawFailed) ? rawFailed as string[] : [rawFailed as string];
+  const failedHashes = rawHashes === undefined ? [] : Array.isArray(rawHashes) ? rawHashes as string[] : [rawHashes as string];
+  return failedEntries.map((entry, index) => {
+    const eq = entry.indexOf('=');
+    return {attempt: entry.slice(0, eq), reason: entry.slice(eq + 1), reasonHash: failedHashes[index] ?? ''};
+  });
+}
+
+/** Refuse CLI fan-out before state writes when a Claude host runs inside Claude Code's sandbox. */
+export function assertHostNotSandboxed(
+  deps: Pick<CliDeps, 'orchestrator' | 'env'>,
+  roster: Roster & {nativeFirstProviders: readonly string[]},
+  hasNativeFailed: boolean,
+): void {
+  if (
+    deps.orchestrator?.platform === 'claude' &&
+    claudeHostSandboxed((name) => deps.env[name]) &&
+    (hasCliSlot(roster) || hasNativeFailed)
+  ) {
+    throw new ToolError(
+      4,
+      'host-sandboxed',
+      "Claude Code's sandbox blocks CLI providers; rerun this same command with Claude Code's sandbox disabled (dangerouslyDisableSandbox: true); to make it permanent, add the dispatch command to sandbox.excludedCommands.",
+    );
+  }
 }
 
 export function underfillNote(roster: {underfill?: Underfill}): string {

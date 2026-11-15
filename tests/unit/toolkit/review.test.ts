@@ -1205,3 +1205,48 @@ test('explicit pins override saved roster on an admitted repository rerun', asyn
     assert.deepEqual(f.launches.map(l => l.provider), ['agy']);
   } finally { f.cleanup(); }
 });
+
+test('review run refuses with host-sandboxed under sandboxed claude host and proceeds when unsandboxed', async () => {
+  const f = await fixture();
+  try {
+    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+    f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+    const refused = await f.call();
+    assert.equal(refused.exit, 4);
+    assert.equal(refused.output.reason, 'host-sandboxed');
+    assert.match(refused.output.summary, /dangerouslyDisableSandbox/);
+    assert.match(refused.output.summary, /sandbox\.excludedCommands/);
+    assert.doesNotMatch(refused.output.summary, /sandbox:\s*false/i);
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
+    assert.equal(f.launches.length, 0);
+
+    const env = {...f.deps.env};
+    delete env['SANDBOX_RUNTIME'];
+    delete env['SANDBOX'];
+    f.deps.env = env;
+    const rerun = await f.call();
+    assert.equal(rerun.exit, 4);
+    assert.equal(rerun.output.reason, 'native-pending');
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
+  } finally { f.cleanup(); }
+});
+
+test('review run refuses with host-sandboxed for native-first-only roster when --native-failed is given', async () => {
+  const f = await fixture();
+  try {
+    configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}});
+    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+    f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+    const nativeOnly = await f.call();
+    assert.equal(nativeOnly.exit, 4);
+    assert.equal(nativeOnly.output.reason, 'native-pending');
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
+
+    fs.rmSync(path.join(f.session, '.state', 'reviews'), {recursive: true, force: true});
+    f.lines.length = 0;
+    const refusedExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'claude', '--native-failed', 'claude[0]=failed'], f.deps);
+    assert.equal(refusedExit, 4);
+    assert.equal(f.output().reason, 'host-sandboxed');
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
+  } finally { f.cleanup(); }
+});

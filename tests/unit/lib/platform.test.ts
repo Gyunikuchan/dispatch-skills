@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { orchestratorFor, platformFacts } from '../../../skills/dispatch/scripts/lib/platform.ts';
+import { claudeHostSandboxed, orchestratorFor, platformFacts } from '../../../skills/dispatch/scripts/lib/platform.ts';
 
 const envOf = (values: Record<string, string>) => (name: string): string | undefined => values[name];
 
@@ -20,4 +20,11 @@ test('orchestrator comes from the recorded host and that platform\'s model marke
   assert.deepEqual(orchestratorFor('codex', envOf({})), { platform: 'codex', model: null });
   // A hand-edited manifest never yields a platform outside ProviderKey, including inherited object keys.
   for (const host of ['unknown-x', 'github-copilot', '', 7, null, 'toString']) assert.equal(orchestratorFor(host, envOf({ CODEX_MODEL: 'x' })), null, String(host));
+});
+
+test('claudeHostSandboxed detects SANDBOX_RUNTIME or SANDBOX=1', () => {
+  assert.equal(claudeHostSandboxed(envOf({ SANDBOX_RUNTIME: 'seatbelt' })), true);
+  assert.equal(claudeHostSandboxed(envOf({ SANDBOX: '1' })), true);
+  assert.equal(claudeHostSandboxed(envOf({})), false);
+  assert.equal(claudeHostSandboxed(envOf({ SANDBOX: '0', SANDBOX_RUNTIME: '' })), false);
 });

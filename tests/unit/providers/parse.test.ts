@@ -99,6 +99,20 @@ test('copilot successful response may discuss an unavailable sandbox', () => {
   }
 });
 
+test('copilot policy notice in stderr with exit 0 and valid response parses as ok', () => {
+  const notice = "Sandboxing is enabled and your organization's managed policy requires it, so it can't be turned off here.";
+  const result = parse('copilot', out('R', 0, notice), { sandbox: true });
+  assert.equal(cls(result), 'ok');
+  assert.equal(result.status === 'ok' ? result.text : '', 'R');
+});
+
+test('copilot unsupported sandbox warning on non-leading stderr line with exit 0 fails closed', () => {
+  for (const stderr of ['Startup notice\n' + COPILOT_UNSUPPORTED_HOST_WARNING, '  ' + COPILOT_UNSUPPORTED_HOST_WARNING]) {
+    const result = parse('copilot', out('R', 0, stderr), { sandbox: true });
+    assert.equal(cls(result), 'sandbox-unsupported');
+  }
+});
+
 test('copilot retries an effort rejection once without the effort flag', async () => {
   for (const diagnostic of [COPILOT_INVALID_EFFORT, COPILOT_INVALID_EFFORT.replaceAll('\n', '\r\n'), 'Error: Model \"auto\" does not support reasoning effort configuration (requested: \"low\").\r\n']) {
     const ports = runnerPorts(out('', 1, diagnostic), out('ok'));

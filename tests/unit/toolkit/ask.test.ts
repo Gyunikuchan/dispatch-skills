@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasCliSlot } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { normalizeProvider } from '../../../skills/dispatch/scripts/policy/roster.ts';
 import { foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
@@ -454,4 +455,67 @@ test('ask run honors pins for all, count, and provider selection and rejects inv
       assert.equal(err.output.reason, 'invalid-input', bad);
     }
   } finally {f.cleanup();}
+});
+
+test('ask run refuses with host-sandboxed under sandboxed claude host and proceeds when unsandboxed', async () => {
+  const f = fixture(); try {
+    f.deps.orchestrator = {platform: 'claude', model: null};
+    f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+    f.script('codex', 'answer', 'ok');
+    const refused = await f.call();
+    assert.equal(refused.exit, 4);
+    assert.equal(refused.output.reason, 'host-sandboxed');
+    assert.match(refused.output.summary, /dangerouslyDisableSandbox/);
+    assert.match(refused.output.summary, /sandbox\.excludedCommands/);
+    assert.doesNotMatch(refused.output.summary, /sandbox:\s*false/i);
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'asks')), false);
+    assert.equal(f.launches.length, 0);
+
+    const env = {...f.deps.env};
+    delete env['SANDBOX_RUNTIME'];
+    delete env['SANDBOX'];
+    f.deps.env = env;
+    const rerun = await f.call();
+    assert.equal(rerun.exit, 0, JSON.stringify(rerun.output));
+    assert.equal(f.launches.length, 1);
+  } finally {f.cleanup();}
+});
+
+test('ask run host-sandboxed allows non-claude hosts and native-first-only rosters, but refuses reserves and native-failed', async () => {
+  const f1 = fixture(); try {
+    f1.deps.orchestrator = {platform: 'opencode', model: null};
+    f1.deps.env = {...f1.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+    f1.script('codex', 'answer', 'ok');
+    const nonClaude = await f1.call();
+    assert.equal(nonClaude.exit, 0, JSON.stringify(nonClaude.output));
+  } finally {f1.cleanup();}
+
+  const f2 = fixture(); try {
+    fs.writeFileSync(path.join(f2.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
+      claude: {targets: [{medium: {model: 'sonnet'}}]},
+    }}));
+    f2.deps.liveness = {claude: true};
+    f2.deps.orchestrator = {platform: 'claude', model: null};
+    f2.deps.env = {...f2.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+    const nativeOnly = await f2.call();
+    assert.equal(nativeOnly.exit, 4);
+    assert.equal(nativeOnly.output.reason, 'native-pending');
+
+    const withNativeFailed = await f2.call('--native-failed', 'claude[0]=failed');
+    assert.equal(withNativeFailed.exit, 4);
+    assert.equal(withNativeFailed.output.reason, 'host-sandboxed');
+  } finally {f2.cleanup();}
+
+  assert.equal(hasCliSlot({
+    rounds: 1,
+    targets: [{slot: 'claude[0]', provider: 'claude', index: 0, reserve: false, native: true}],
+    reserves: [{slot: 'codex[0]', provider: 'codex', index: 0, reserve: true, native: false}],
+    nativeFirstProviders: ['claude'],
+  }), true);
+  assert.equal(hasCliSlot({
+    rounds: 1,
+    targets: [{slot: 'claude[0]', provider: 'claude', index: 0, reserve: false, native: false}],
+    reserves: [],
+    nativeFirstProviders: ['claude'],
+  }), false);
 });

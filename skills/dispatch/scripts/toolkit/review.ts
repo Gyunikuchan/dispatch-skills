@@ -5,7 +5,7 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { fanOutComplete, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation, type NativeFailure } from './fanout.ts';
+import { assertHostNotSandboxed, fanOutComplete, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
@@ -268,6 +268,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   }
   const pins = parsePinsFlag(ctx.values['pins']);
   const roster = resolveSlots(kind, level, deps, pins), cap = roster.rounds;
+  const nativeFailures = parseNativeFailures(ctx.values);
+  assertHostNotSandboxed(deps, roster, nativeFailures.length > 0);
   const noReviewer = () => cap > 0 ? 'No live or usable reviewer is configured for this review; restore a provider or configure one' + underfillNote(roster) : 'Review at ' + level + ' has no reviewers; raise the level to continue';
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
   const bound = latest(fold, 'bind');
@@ -691,14 +693,6 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(dir, 'gen-' + round!.generation, 'attempts.json');
         atomic(file, [...(read<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
       const fanoutDir = path.join(dir, 'gen-' + round.generation);
-      const rawFailed = ctx.values['native-failed'];
-      const rawHashes = (ctx.values as Record<string, unknown>)['native-failed-hash'];
-      const failedEntries = rawFailed === undefined ? [] : Array.isArray(rawFailed) ? rawFailed as string[] : [rawFailed as string];
-      const failedHashes = rawHashes === undefined ? [] : Array.isArray(rawHashes) ? rawHashes as string[] : [rawHashes as string];
-      const nativeFailures: NativeFailure[] = failedEntries.map((entry, index) => {
-        const eq = entry.indexOf('=');
-        return {attempt: entry.slice(0, eq), reason: entry.slice(eq + 1), reasonHash: failedHashes[index] ?? ''};
-      });
       const replies = await fanOutComplete({dir: fanoutDir, slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed,
         nativeFirstProviders: roster.nativeFirstProviders, nativeFailures,
         onIgnoredReport: attempt => { ignoredFailureReports.push(attempt); }}, deps);

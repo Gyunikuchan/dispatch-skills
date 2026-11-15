@@ -85,6 +85,11 @@ export function orchestratorFor(host: unknown, env: EnvGet): Orchestrator | null
   return { platform: host as ProviderKey, model: MODEL_ENV[host as ProviderKey].map((name) => env(name)).find((value) => Boolean(value)) ?? null };
 }
 
+/** True when Claude Code's sandboxed Bash environment variables are present. */
+export function claudeHostSandboxed(env: EnvGet): boolean {
+  return Boolean(env('SANDBOX_RUNTIME')) || env('SANDBOX') === '1';
+}
+
 /** XDG base-dir overrides that are set; omitted entirely when none are. */
 function xdgOverrides(env: EnvGet): { xdg?: { data?: string; cache?: string; state?: string } } {
   const xdg = Object.fromEntries((['data', 'cache', 'state'] as const)

@@ -66,23 +66,30 @@ test('claude allowlists configured read commands as prefix Bash rules', () => {
   assert.ok(!SPECS.claude.argv(request(true), 'cli').argv.some((arg) => arg.includes('codegraph')));
 });
 
-test('copilot allowlists configured read commands as shell prefix rules', () => {
-  const argv = SPECS.copilot.argv({ ...request(true), readCommands: ['codegraph explore'] }, 'cli').argv;
-  const index = argv.indexOf('shell(codegraph explore:*)');
-  assert.ok(index > 0 && argv[index - 1] === '--allow-tool');
-  assert.ok(!SPECS.copilot.argv(request(true), 'cli').argv.some((arg) => arg.includes('codegraph')));
+test('copilot read-command rules emit only single-word shell rules without widening', () => {
+  const argv = SPECS.copilot.argv({ ...request(true), readCommands: ['rg', 'codegraph explore'] }, 'cli').argv;
+  const allowToolIndices = argv.flatMap((arg, i) => (arg === '--allow-tool' ? [i] : []));
+  assert.equal(allowToolIndices.length, 1);
+  assert.equal(argv[allowToolIndices[0]! + 1], 'shell(rg:*)');
+  assert.ok(!argv.some((arg) => arg.includes('codegraph')));
+  assert.ok(!SPECS.copilot.argv(request(true), 'cli').argv.some((arg) => arg.includes('rg')));
 });
 
-test('copilot sandbox argv uses GA hands-free flags in plan mode', () => {
+test('copilot argv uses assisted-approval and no-ask-user in plan mode for both sandbox values', () => {
   const sandboxed = SPECS.copilot.argv(request(true), 'cli').argv;
-  for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user', '--mode', 'plan', '--reasoning-effort', 'high']) {
+  for (const flag of ['--sandbox', '--allow-all-tools', '--assisted-approval', '--no-ask-user', '--mode', 'plan', '--reasoning-effort', 'high']) {
     assert.ok(sandboxed.includes(flag), 'sandboxed copilot argv lacks ' + flag);
   }
   for (const flag of ['--experimental', '--yolo', '--allow-all-paths', '--allow-all-urls', '--autopilot']) {
     assert.ok(!sandboxed.includes(flag), 'sandboxed copilot argv includes ' + flag);
   }
   const unsandboxed = SPECS.copilot.argv(request(false), 'cli').argv;
-  for (const flag of ['--sandbox', '--allow-all-tools', '--experimental']) assert.ok(!unsandboxed.includes(flag), 'unsandboxed copilot argv includes ' + flag);
+  for (const flag of ['--assisted-approval', '--no-ask-user', '--mode', 'plan']) {
+    assert.ok(unsandboxed.includes(flag), 'unsandboxed copilot argv lacks ' + flag);
+  }
+  for (const flag of ['--sandbox', '--allow-all-tools', '--experimental']) {
+    assert.ok(!unsandboxed.includes(flag), 'unsandboxed copilot argv includes ' + flag);
+  }
 });
 
 const okResult: ProcessResult = { exit: 0, signal: null, stdout: '{"result":"ok","session_id":"s1"}', stdoutPath: '/r/log', stderrTail: '', durationMs: 1, timedOut: false, truncated: false };
@@ -137,13 +144,13 @@ test('resume argv: opencode keeps read-only run flag and session id', () => {
   }
 });
 
-test('resume argv: copilot keeps plan mode and sandbox flags with resume and no session id', () => {
+test('resume argv: copilot argv keeps plan mode, assisted-approval and sandbox flags with resume and no session id', () => {
   for (const sandbox of [true, false]) {
     const argv = SPECS.copilot.argv({ ...request(sandbox), sessionPreset: 'preset-id-4', resume: 'preset-id-4' }, 'cli').argv;
     assert.ok(argv.includes('--resume') && argv.includes('preset-id-4'), String(sandbox));
     assert.ok(!argv.includes('--session-id'), String(sandbox));
-    for (const flag of ['--mode', 'plan']) assert.ok(argv.includes(flag), String(sandbox));
-    if (sandbox) for (const flag of ['--sandbox', '--allow-all-tools', '--no-ask-user']) assert.ok(argv.includes(flag), String(sandbox));
+    for (const flag of ['--assisted-approval', '--no-ask-user', '--mode', 'plan']) assert.ok(argv.includes(flag), `${String(sandbox)} lacks ${flag}`);
+    for (const flag of ['--sandbox', '--allow-all-tools']) assert.equal(argv.includes(flag), sandbox, `${String(sandbox)} ${flag}`);
   }
 });
 
